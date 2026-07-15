@@ -1,4 +1,3 @@
-import { put } from '@vercel/blob';
 import ffmpegPath from 'ffmpeg-static';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -7,6 +6,7 @@ import { mkdir, open, rm, stat } from 'node:fs/promises';
 import https from 'node:https';
 import { join } from 'node:path';
 import { assertAllowedMediaUrl, assertPublicDns } from '../lib/video-os-security.js';
+import { PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../lib/video-os-private-blob.js';
 
 const boundedNumber = (value, fallback, minimum, maximum) => Math.min(maximum, Math.max(minimum, Number.isFinite(Number(value)) ? Number(value) : fallback));
 const maxBytes = () => boundedNumber(process.env.VIDEO_OS_MAX_SOURCE_BYTES, 250_000_000, 1_000_000, 500_000_000);
@@ -92,6 +92,6 @@ export async function finishMedia(job, sourceUrl) {
   await runFfmpeg(['-y', '-i', input, '-f', 'lavfi', '-i', 'sine=frequency=196:sample_rate=48000', '-filter_complex', `${vf}[vout];[1:a]volume=0.025[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=1[aout]`, '-map', '[vout]', '-map', '[aout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', output]);
   const [info, sha256] = await Promise.all([stat(output), hashFile(output)]);
   const pathname = `video-os/finals/${safeName(job.accountId)}/${safeName(job.id)}-${sha256}.mp4`;
-  const blob = await put(pathname, createReadStream(output), { access: 'private', contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: true });
+  const blob = await putPrivateBlob(PRIVATE_BLOB_CLASSIFICATIONS.FINISHED_CUSTOMER_VIDEO, pathname, createReadStream(output), { contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: true });
   return { privatePathname: blob.pathname, bytes: info.size, sha256, sourceBytes, ffmpegMs: Date.now() - startedAt, width, height, filename: `${safeName(job.title)}-${job.format}.mp4` };
 }

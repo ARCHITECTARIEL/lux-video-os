@@ -1,5 +1,5 @@
-import { put } from '@vercel/blob';
 import { sessionFromRequest } from '../../lib/video-os-account.js';
+import { PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../../lib/video-os-private-blob.js';
 
 const MAX_UPLOAD_BYTES = 20_000_000;
 const ALLOWED = {
@@ -40,8 +40,7 @@ export default async function handler(req, res) {
     if (!buffer.length || buffer.length > MAX_UPLOAD_BYTES) throw new Error('Uploads must be under 20 MB.');
     if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error('BLOB_READ_WRITE_TOKEN is not configured on Vercel.');
     const pathname = `video-os/uploads/${safeName(payload.name)}-${Date.now()}${ext}`;
-    const blob = await put(pathname, buffer, {
-      access: 'private',
+    const blob = await putPrivateBlob(PRIVATE_BLOB_CLASSIFICATIONS.CUSTOMER_UPLOAD, pathname, buffer, {
       contentType: mime,
       token: process.env.BLOB_READ_WRITE_TOKEN,
       addRandomSuffix: true,
