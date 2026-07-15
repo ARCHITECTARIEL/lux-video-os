@@ -1,0 +1,64 @@
+# Dependencies and generated build output
+node_modules/
+.vercel/
+.swc/
+dist/
+coverage/
+test-results/
+playwright-report/
+
+# Workspace and containment state
+.omx/
+.lazyweb/
+.containment/
+.pytest_cache/
+.vscode/
+
+# Environment, credentials, and certificates
+.env
+.env.*
+!.env.example
+*.env
+stale-vercel-env-*
+.lux-secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Local transactional/customer state
+data/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
+# Generated customer media and operational exports
+archive/
+public/data/
+public/video-os.json
+public/exports/
+public/uploads/
+
+# Logs, caches, and process state
+*.log
+*.jsonl
+server.pid
+server-test.*
+__pycache__/
+*.py[cod]
+
+# Local QA captures, backups, and patch artifacts
+/qa-*.png
+*backup*
+*.bak
+*.tmp
+*.patch
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

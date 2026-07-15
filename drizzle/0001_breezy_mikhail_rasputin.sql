@@ -1,0 +1,1 @@
+ALTER TABLE "stripe_events" ADD CONSTRAINT "stripe_events_session_id_unique" UNIQUE("session_id");

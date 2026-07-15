@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Video OS Lite creates polished AI avatar videos from a guided brief.">
+    <title>Video OS Lite</title>
+    <link rel="icon" href="favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="lite.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Skip to app</a>
+    <header class="topbar" aria-label="Video OS Lite">
+      <a class="brand" href="/">
+        <img class="brand-logo" src="lux-logo.png" alt="LUX Digital Marketing"><span class="brand-copy"><strong>Video OS Lite</strong><small>AI video studio</small></span>
+      </a>
+      <nav aria-label="Product links">
+        <a href="#app">Create</a>
+        <a href="#preview">Preview</a>
+        <a href="#credits">Credits</a>
+        <a href="#account">Account</a>
+        <button class="nav-login" type="button" id="open-login" aria-controls="auth-modal" aria-expanded="false" data-signed-in-label="Account">Sign in</button>
+      </nav>
+    </header>
+
+    <main id="app" class="app-shell">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <div class="hero-logo-lockup" aria-label="LUX Digital Marketing"><img src="lux-logo.png" alt="LUX Digital Marketing"></div>
+          <p class="eyebrow">LUX flagship preview</p>
+          <h1 id="hero-title">AI videos that look cast, directed, and finished.</h1>
+          <p>Pick the outcome. LUX locks the presenter, voice, script, captions, music, LUT, background, and CTA into one guided render flow.</p>
+          <div class="hero-actions">
+            <button class="primary" type="button" data-start>Create video</button>
+            <span id="connection-pill" class="pill">Checking local engine...</span><span id="credits-pill" class="pill">Credits: --</span>
+          </div>
+          <div class="hero-metrics" aria-label="Product capabilities">
+            <span><strong>1,284</strong><small>avatars</small></span>
+            <span><strong>2,436</strong><small>voices</small></span>
+            <span><strong>Auto</strong><small>production kit</small></span>
+          </div>
+        </div>
+        <div class="hero-preview" aria-label="Example video preview">
+          <div class="phone-frame">
+            <div class="preview-topline"><span>Ready to render</span><b>HeyGen</b></div>
+            <div class="avatar-orb" aria-hidden="true">VO</div>
+            <div><strong>Launch offer</strong><span>Vertical 9:16 - 00:42</span></div>
+            <p>Presenter, voice, captions, music, background, and CTA motion are chosen before the first preview.</p>
+            <div class="phone-chips" aria-label="Included production choices">
+              <span>Confident voice</span><span>Studio LUT</span><span>CTA motion</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="quick-start" aria-labelledby="quick-start-title">
+        <div>
+          <p class="eyebrow">Start faster</p>
+          <h2 id="quick-start-title">Start with the outcome. LUX handles the production taste.</h2>
+        </div>
+        <div class="template-row" aria-label="Quick video goals">
+          <button type="button" data-template-goal="Sales Video"><strong>Sales video</strong><span>Offer, proof, call to action</span></button>
+          <button type="button" data-template-goal="Social Media"><strong>Social post</strong><span>Vertical hook and payoff</span></button>
+          <button type="button" data-template-goal="Product Demo"><strong>Product demo</strong><span>Problem, walkthrough, result</span></button>
+          <button type="button" data-template-goal="Testimonial"><strong>Testimonial</strong><span>Story, trust, next step</span></button>
+        </div>
+      </section>
+
+      <section class="creator creator-compressed" aria-label="Create video wizard">
+        <aside class="steps" aria-label="Workflow steps">
+          <button class="active" type="button" data-step-jump="0"><span>1</span> Brief<small>Goal + script</small></button>
+          <button type="button" data-step-jump="1"><span>2</span> Cast<small>Avatar + voice</small></button>
+          <button type="button" data-step-jump="2"><span>3</span> Finish<small>Kit + render</small></button>
+        </aside>
+
+        <form id="video-form" class="wizard wizard-compressed" novalidate>
+          <section class="wizard-panel active" data-step="0" aria-labelledby="brief-title">
+            <div class="panel-head phase-head">
+              <p class="eyebrow">Brief</p>
+              <h2 id="brief-title">Brief the video in one clean pass.</h2>
+              <p>Choose the outcome, audience, and next action. LUX turns that into a script and a production-ready direction.</p>
+            </div>
+            <div class="brief-layout">
+              <div class="brief-main">
+                <div class="choice-grid goal-grid" role="radiogroup" aria-label="Video goal">
+                  <label><input type="radio" name="goalType" value="Sales Video" checked><span>Sales Video</span><small>Pitch, follow-up, offer</small></label>
+                  <label><input type="radio" name="goalType" value="Social Media"><span>Social Media</span><small>Short vertical post</small></label>
+                  <label><input type="radio" name="goalType" value="Product Demo"><span>Product Demo</span><small>Show how it works</small></label>
+                  <label><input type="radio" name="goalType" value="Explainer"><span>Explainer</span><small>Teach a concept</small></label>
+                  <label><input type="radio" name="goalType" value="Testimonial"><span>Testimonial</span><small>Customer story</small></label>
+                  <label><input type="radio" name="goalType" value="Custom"><span>Custom</span><small>Start from scratch</small></label>
+                </div>
+                <div class="field-row">
+                  <label>Video title<input name="title" required maxlength="120" placeholder="Launch offer for our new service"></label>
+                  <label>Audience<input name="audience" required maxlength="160" placeholder="Small business owners"></label>
+                </div>
+                <label>What should the viewer do next?
+                  <textarea name="objective" required maxlength="800" rows="4" placeholder="Book a call, try the product, understand the feature, or share the video."></textarea>
+                </label>
+              </div>
+              <div class="script-card">
+                <div class="script-toolbar">
+                  <button class="secondary" type="button" id="generate-script">Generate script with AI</button>
+                  <button class="ghost" type="button" id="tighten-script">Make it shorter</button>
+                  <span id="script-status" aria-live="polite"></span>
+                </div>
+                <label>Script<textarea id="script-input" name="script" required rows="13" placeholder="Click Generate script with AI or paste your script here."></textarea></label>
+              </div>
+            </div>
+          </section>
+
+          <section class="wizard-panel" data-step="1" aria-labelledby="cast-title">
+            <div class="panel-head phase-head">
+              <p class="eyebrow">Cast</p>
+              <h2 id="cast-title">Cast the presenter and voice.</h2>
+              <p>Keep the curated default or search the library when a specific personality matters.</p>
+            </div>
+            <div class="cast-layout">
+              <section class="cast-column" aria-labelledby="avatar-title">
+                <div class="cast-column-head"><h3 id="avatar-title">Presenter</h3><span>Curated default selected</span></div>
+                <div class="choice-grid compact-choice" role="radiogroup" aria-label="Avatar type">
+                  <label><input type="radio" name="avatarType" value="AI Presenter" checked><span>AI Presenter</span><small>Fastest, no setup</small></label>
+                  <label><input type="radio" name="avatarType" value="Stock Presenter"><span>Stock Presenter</span><small>Polished library talent</small></label>
+                  <label><input type="radio" name="avatarType" value="Personal Avatar"><span>Personal Avatar</span><small>Requires consent</small></label>
+                </div>
+                <div class="library-tools"><label>Search avatars<input id="avatar-search" type="search" placeholder="Search 1,284 avatars"></label><span id="avatar-count" class="library-count">Loading avatars...</span></div>
+                <div id="avatar-list" class="card-list" aria-live="polite"></div>
+                <button class="ghost library-more" type="button" id="avatar-more">Show more avatars</button>
+              </section>
+
+              <section class="cast-column" aria-labelledby="voice-title">
+                <div class="cast-column-head"><h3 id="voice-title">Voice</h3><span>Language + tone</span></div>
+                <div class="field-row cast-fields">
+                  <label>Language<select name="language"><option>English</option><option>Spanish</option><option>French</option><option>German</option><option>Portuguese</option></select></label>
+                  <label>Tone<select name="tone"><option>Warm and clear</option><option>Confident sales</option><option>Calm expert</option><option>High-energy social</option><option>Plainspoken demo</option></select></label>
+                </div>
+                <label class="checkbox-line"><input type="checkbox" name="voiceConsent"> I have permission to use a cloned voice for this video.</label>
+                <div class="library-tools"><label>Search voices<input id="voice-search" type="search" placeholder="Search 2,436 voices"></label><span id="voice-count" class="library-count">Loading voices...</span></div>
+                <div id="voice-list" class="card-list" aria-live="polite"></div>
+                <button class="ghost library-more" type="button" id="voice-more">Show more voices</button>
+              </section>
+            </div>
+          </section>
+
+          <section class="wizard-panel" data-step="2" aria-labelledby="finish-title">
+            <div class="panel-head phase-head">
+              <p class="eyebrow">Finish</p>
+              <h2 id="finish-title">Approve the final render kit.</h2>
+              <p>Review credits, provider, brand, and the auto-picked music, LUT, background, overlay, and CTA before rendering.</p>
+            </div>
+            <div class="finish-layout">
+              <div class="finish-main">
+                <div id="summary" class="summary-box"></div>
+                <div class="finish-cost" aria-label="Render cost summary">
+                  <article><small>Balance</small><strong id="finish-credit-balance">-- credits</strong></article>
+                  <article><small>This render</small><strong id="finish-render-cost">-- credits</strong></article>
+                  <article><small>Buying power</small><strong id="finish-render-count">-- renders</strong></article>
+                </div>
+                <div class="provider-box" aria-label="Render provider">
+                  <label>Render quality<select id="provider-select"></select></label>
+                  <button class="secondary" type="button" id="add-credits">Add credits</button>
+                  <p id="provider-status" aria-live="polite">Checking render providers...</p>
+                </div>
+                <button class="primary wide" type="button" id="generate-video">Create final video</button>
+                <div id="progress" class="progress" hidden><span></span></div>
+              </div>
+              <aside class="finish-side" aria-label="Brand and production kit">
+                <details class="brand-details">
+                  <summary>Brand details</summary>
+                  <div class="field-row">
+                    <label>Brand name<input name="brandName" maxlength="80" placeholder="Acme Studio"></label>
+                    <label>Logo URL<input name="logoUrl" inputmode="url" placeholder="https://example.com/logo.png"></label>
+                  </div>
+                  <div class="field-row">
+                    <label>Primary color<input name="primaryColor" type="color" value="#111827"></label>
+                    <label>Accent color<input name="accentColor" type="color" value="#2f6df6"></label>
+                  </div>
+                  <label class="checkbox-line"><input type="checkbox" name="captions" checked> Add captions</label>
+                  <label class="checkbox-line"><input type="checkbox" name="music" checked> Add light background music</label>
+                </details>
+                <div id="production-kit" class="production-kit" aria-live="polite"></div>
+              </aside>
+            </div>
+          </section>
+
+          <div class="wizard-actions">
+            <button class="ghost" type="button" id="back-step">Back</button>
+            <button class="primary" type="button" id="next-step">Next</button>
+          </div>
+        </form>
+      </section>
+      <section id="preview" class="preview-zone" aria-labelledby="preview-title">
+        <div class="panel-head"><p class="eyebrow">Preview</p><h2 id="preview-title">Final cut preview</h2><p id="preview-empty">Watch the cast, script, captions, colors, kit, and export state come together before download.</p></div>
+        <div id="preview-card" class="preview-card empty">
+          <div class="video-stage" aria-label="Video preview"><div class="presenter">AI</div><div class="caption">Your script preview will appear here.</div></div>
+          <div class="export-panel">
+            <label>Format<select id="export-format"><option value="vertical">Vertical 9:16</option><option value="landscape">Landscape 16:9</option><option value="square">Square 1:1</option></select></label>
+            <button class="secondary recovery-action" type="button" id="render-provider" disabled hidden>Retry live render</button>
+            <button class="secondary recovery-action" type="button" id="finalize-render" disabled hidden>Retry final MP4</button>
+            <button class="ghost" type="button" id="export-mp4" disabled>Download draft MP4</button>
+            <div id="final-status" class="render-steps" aria-live="polite" aria-label="Final render status">
+              <span data-render-step="submitted">Submitted to HeyGen</span>
+              <span data-render-step="rendering">Rendering avatar video</span>
+              <span data-render-step="finishing">Applying production kit</span>
+              <span data-render-step="ready">Final MP4 ready</span>
+            </div>
+            <div id="export-effects" class="effect-list"></div>
+            <a id="download-link" class="download-link" hidden>Download ready</a>
+            <p id="export-status" aria-live="polite"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="results-zone" aria-labelledby="results-title">
+        <div class="panel-head"><p class="eyebrow">Results</p><h2 id="results-title">Latest 30 final cuts</h2><p>Your newest account-owned renders stay here across visits, with cast, voice, format, provider, kit, status, and download actions visible at a glance.</p></div>
+        <div id="result-gallery" class="result-gallery" aria-live="polite"></div>
+        <div class="result-gallery-actions"><button class="ghost" type="button" id="result-gallery-toggle" aria-expanded="false" hidden>View all videos</button></div>
+        <div class="results-grid">
+          <article><strong>Under two minutes</strong><span>Goal, script, presenter, voice, brand, generate.</span></article>
+          <article><strong>Provider-ready</strong><span>HeyGen exact avatar and voice routing, with Argil, Tavus, and D-ID options.</span></article>
+          <article><strong>Auto production kit</strong><span>Music, background, LUT, overlay, and CTA motion selected before export.</span></article>
+        </div>
+      </section>
+
+      <section id="credits" class="pricing-zone" aria-labelledby="pricing-title">
+        <div class="panel-head"><p class="eyebrow">Credits</p><h2 id="pricing-title">Credits that feel obvious.</h2><p>Show the buyer exactly what each balance can produce before they spend: renders, avatars, twins, and exports.</p></div>
+        <div class="pricing-hero">
+          <article class="credit-wallet"><small>Available now</small><strong id="pricing-balance">-- credits</strong><span id="pricing-buying-power">Enough for -- HeyGen renders.</span><button class="primary" type="button" id="pricing-add-credits">Add 500 credits</button></article>
+          <article class="credit-plan"><small>Lite plan</small><strong>Starter access</strong><span>Includes the guided creator, provider routing, production kit finishing, and MP4 exports.</span><div class="plan-pills"><span>No hidden fees</span><span>Cancel anytime</span><span>Export-ready MP4s</span></div></article>
+        </div>
+        <div class="pricing-grid">
+          <article><small>Provider render</small><strong id="pricing-render-cost">45-120 credits</strong><span id="provider-pricing">Exact provider cost appears before submission.</span></article>
+          <article><small>Photo avatar</small><strong>150 credits</strong><span>Build a reusable image-based presenter after upload and consent.</span></article>
+          <article><small>Digital twin</small><strong>300 credits</strong><span>Train a higher-fidelity clone from a consented video clip.</span></article>
+          <article><small>Best next buy</small><strong id="pricing-recommendation">500 credits</strong><span id="pricing-recommendation-copy">Covers several finished provider videos.</span></article>
+        </div>
+        <div id="provider-cost-list" class="provider-cost-list" aria-live="polite"></div>
+        <div class="credit-packages" aria-label="Credit packages">
+          <button type="button" data-credit-quantity="1"><strong>500 credits</strong><span>Starter pack</span></button>
+          <button type="button" data-credit-quantity="2"><strong>1,000 credits</strong><span>Best for a launch</span></button>
+          <button type="button" data-credit-quantity="4"><strong>2,000 credits</strong><span>Creator batch</span></button>
+        </div>
+      </section>
+      <section id="account" class="account-zone" aria-labelledby="account-title">
+        <div class="panel-head"><p class="eyebrow">Account</p><h2 id="account-title">Account, avatars, and assets</h2><p>Manage sign-in, consented avatar builds, digital twins, and production assets without crowding the creation flow.</p></div>
+        <div class="account-grid">
+          <div class="account-card">
+            <h3>Account access</h3>
+            <div id="account-summary" class="summary-box"></div>
+            <div class="account-actions">
+              <button class="primary" type="button" id="account-add-credits">Manage credits</button>
+              <button class="ghost" type="button" data-open-login aria-controls="auth-modal" aria-expanded="false" data-signed-in-label="Manage session">Sign in</button>
+            </div>
+          </div>
+          <div class="account-card">
+            <h3>Create avatar</h3>
+            <p>Upload first. If the app has a public URL, we send it straight to the provider; otherwise it stays staged safely.</p>
+            <label>Name<input id="photo-avatar-name" placeholder="Client photo avatar"></label>
+            <label class="upload-drop">Upload photo<input id="photo-avatar-file" type="file" accept="image/jpeg,image/png,image/webp"><span>JPG, PNG, or WebP under 20 MB</span></label><label>Provider-ready URL<input id="photo-avatar-url" inputmode="url" placeholder="Upload first or paste a public HTTPS photo URL"></label><p id="photo-upload-status" class="upload-status" aria-live="polite"></p>
+            <label class="checkbox-line"><input type="checkbox" id="photo-avatar-consent"> I have permission to create this avatar.</label>
+            <button class="secondary" type="button" id="create-photo-avatar">Build photo avatar</button>
+          </div>
+          <div class="account-card">
+            <h3>Create digital twin</h3>
+            <p>Upload a consented training clip first. Public HTTPS is required before provider training starts.</p>
+            <label>Name<input id="digital-twin-name" placeholder="Client digital twin"></label>
+            <label class="upload-drop">Upload training video<input id="digital-twin-file" type="file" accept="video/mp4,video/quicktime"><span>MP4 or MOV under 20 MB</span></label><label>Provider-ready URL<input id="digital-twin-url" inputmode="url" placeholder="Upload first or paste a public HTTPS video URL"></label><p id="digital-upload-status" class="upload-status" aria-live="polite"></p>
+            <label class="checkbox-line"><input type="checkbox" id="digital-twin-consent"> I have permission to create this digital twin.</label>
+            <button class="secondary" type="button" id="create-digital-twin">Build digital twin</button>
+          </div>
+        </div>
+        <div class="asset-library">
+          <div class="panel-head asset-head"><p class="eyebrow">Production kit</p><h2>Your AI video comes pre-edited</h2><p>LUX adds the finishing touches automatically: music, motion background, studio color, CTA animation, and social overlays matched to your video goal.</p></div>
+          <div id="asset-list" class="asset-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <div id="auth-modal" class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" hidden>
+      <div class="auth-backdrop" data-close-login></div>
+      <section class="auth-panel" aria-label="Sign in to Video OS Lite" tabindex="-1">
+        <button class="modal-close" type="button" id="close-login" aria-label="Close sign in">x</button>
+        <p class="eyebrow">Sign in</p>
+        <h2 id="auth-modal-title">Start rendering with LUX</h2>
+        <p>Choose the workspace your credentials belong to, or use a secure email link.</p>
+        <div class="auth-box" aria-label="Account sign in">
+          <form class="auth-method" id="password-login-form" data-auth-signed-out>
+            <strong>Workspace credentials</strong>
+            <fieldset class="access-choice">
+              <legend>Choose access</legend>
+              <label><input type="radio" name="access-type" value="demo" checked><span><b>Demo</b><small>Launch preview and test renders</small></span></label>
+              <label><input type="radio" name="access-type" value="owner"><span><b>Owner</b><small>Full LUX workspace access</small></span></label>
+            </fieldset>
+            <label>Username<input id="password-username" type="text" autocomplete="username" placeholder="Your workspace username" required></label>
+            <label>Password<input id="password-password" type="password" autocomplete="current-password" placeholder="Your workspace password" required></label>
+            <button class="primary" id="password-login" type="submit">Sign in to workspace</button>
+          </form>
+          <form class="auth-method" id="magic-link-form" data-auth-signed-out>
+            <strong>Email sign-in</strong>
+            <label>Email<input id="auth-email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" required></label>
+            <button class="ghost" type="submit" id="send-magic-link">Send sign-in link</button>
+            <small id="magic-link-hint">The link expires in 15 minutes. Check spam or promotions if it does not arrive.</small>
+          </form>
+          <div class="auth-session-summary" id="auth-session-summary" hidden>
+            <span>Signed in as</span>
+            <strong id="auth-session-email">Your LUX account</strong>
+            <small>Live rendering and account-owned results are available.</small>
+          </div>
+          <button class="ghost" type="button" id="sign-out" hidden>Sign out</button>
+          <button class="ghost auth-retry" type="button" id="auth-retry" hidden>Try again</button>
+          <p id="auth-status" aria-live="polite" data-state="idle"></p>
+        </div>
+      </section>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script src="lite.js" defer></script>
+  </body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
