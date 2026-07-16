@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { videoRenderWorkflowMetadata } from '../workflows/video-render-metadata.js';
 
 const root = new URL('../', import.meta.url);
 const output = new URL('../.vercel/output/', import.meta.url);
@@ -13,8 +14,10 @@ function run(cli, args) {
   if (result.status !== 0) process.exit(result.status || 1);
 }
 
+const target = process.argv.includes('--preview') ? 'preview' : 'production';
+
 await rm(output, { recursive: true, force: true });
-run(vercelCli, ['build', '--prod']);
+run(vercelCli, ['build', '--target', target]);
 const configUrl = new URL('config.json', output);
 const appConfig = JSON.parse(await readFile(configUrl, 'utf8'));
 run(workflowCli, ['build', '--target', 'vercel-build-output-api']);
@@ -24,5 +27,16 @@ await writeFile(configUrl, `${JSON.stringify({ ...appConfig, ...workflowConfig, 
 
 const workflowManifest = new URL('diagnostics/workflows-manifest.json', output);
 const renderFunction = new URL('functions/api/video-os-lite/render-v2.func/', output);
-if (!existsSync(workflowManifest) || !existsSync(renderFunction)) throw new Error('Production build is incomplete: workflow manifest or render function is missing.');
-console.log(`Production build complete: ${routes.length} routes, application functions, and workflow manifest verified.`);
+const workflowFlowFunction = new URL('functions/.well-known/workflow/v1/flow.func/', output);
+const workflowStepFunction = new URL('functions/.well-known/workflow/v1/step.func/', output);
+if (!existsSync(workflowManifest) || !existsSync(renderFunction) || !existsSync(workflowFlowFunction) || !existsSync(workflowStepFunction)) {
+  throw new Error(`${target} build is incomplete: render function, workflow handlers, or workflow manifest is missing.`);
+}
+
+const manifest = JSON.parse(await readFile(workflowManifest, 'utf8'));
+const registeredWorkflowId = manifest.workflows?.['workflows/video-render.js']?.videoRenderWorkflow?.workflowId;
+if (registeredWorkflowId !== videoRenderWorkflowMetadata.workflowId) {
+  throw new Error(`Workflow metadata drift: caller uses ${videoRenderWorkflowMetadata.workflowId} but the build registered ${registeredWorkflowId || 'nothing'}.`);
+}
+
+console.log(`${target} build complete: ${routes.length} routes, application functions, workflow handlers, and manifest-backed caller metadata verified.`);

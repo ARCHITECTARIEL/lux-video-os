@@ -6,6 +6,7 @@ import { getTableName } from 'drizzle-orm';
 
 import { authChallenges, authSessions, entitlements, jobEvents, videoJobs } from '../db/schema.js';
 import { initObservability, sanitizeSentryEvent } from '../lib/video-os-observability.js';
+import { videoRenderWorkflowMetadata } from '../workflows/video-render-metadata.js';
 
 function countApiFunctions(directory) {
   return readdirSync(directory, { withFileTypes: true }).reduce((count, entry) => {
@@ -62,4 +63,24 @@ test('project creation establishes its signed Postgres owner before persistence'
   assert.match(source.slice(0, ensureIndex), /if \(!payload\.id\) \{/);
   assert.match(source, /accountId:\s*session\.accountId/);
   assert.match(source, /initialCredits:\s*Number\(process\.env\.VIDEO_OS_TRIAL_CREDITS/);
+});
+
+test('render start uses immutable workflow metadata registered by the build manifest', () => {
+  assert.equal(Object.isFrozen(videoRenderWorkflowMetadata), true);
+  assert.deepEqual(videoRenderWorkflowMetadata, {
+    workflowId: 'workflow//./workflows/video-render//videoRenderWorkflow',
+  });
+
+  const source = readFileSync('api/video-os-lite/render-v2.js', 'utf8');
+  assert.match(source, /start\(videoRenderWorkflowMetadata, \[reserved\.job\.id\]\)/);
+  assert.doesNotMatch(source, /import \{ videoRenderWorkflow \}/);
+});
+
+test('Preview prebuild uses Preview-scoped Vercel configuration', () => {
+  const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
+  assert.equal(packageJson.scripts['build:preview'], 'node tools/build-production.mjs --preview');
+
+  const source = readFileSync('tools/build-production.mjs', 'utf8');
+  assert.match(source, /process\.argv\.includes\('--preview'\) \? 'preview' : 'production'/);
+  assert.match(source, /\['build', '--target', target\]/);
 });

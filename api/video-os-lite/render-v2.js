@@ -6,7 +6,7 @@ import { captureJobError } from '../../lib/video-os-observability.js';
 import { featureEnabled, requestId, requireRenderAccountAuthorization } from '../../lib/video-os-security.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { parseOrThrow, renderRequestSchema } from '../../lib/video-os-validation.js';
-import { videoRenderWorkflow } from '../../workflows/video-render.js';
+import { videoRenderWorkflowMetadata } from '../../workflows/video-render-metadata.js';
 
 export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
@@ -26,7 +26,7 @@ export default async function handler(req, res) {
     reservedJob = reserved.job;
     const claimed = await claimWorkflowStart(reserved.job.id);
     if (claimed) {
-      const run = await start(videoRenderWorkflow, [reserved.job.id]);
+      const run = await start(videoRenderWorkflowMetadata, [reserved.job.id]);
       reservedJob = await setWorkflowRun(reserved.job.id, run.runId);
     } else {
       reservedJob = await getJob(reserved.job.id);
