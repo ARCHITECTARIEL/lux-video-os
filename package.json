@@ -10,6 +10,7 @@
         "db:check": "drizzle-kit check",
         "db:generate": "drizzle-kit generate",
         "db:migrate": "drizzle-kit migrate",
+        "db:dry-run": "node tools/dry-run-migrations.mjs",
         "workflow:validate": "workflow validate --dir workflows --strict",
         "workflow:build": "workflow build --target vercel-build-output-api"
     },

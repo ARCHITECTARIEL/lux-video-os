@@ -1,5 +1,6 @@
 import { listRecentJobs } from '../../db/repositories.js';
 import { handleOptions, parseCookies, send, verifySessionToken } from '../../lib/video-os-account.js';
+import { captureRouteError } from '../../lib/video-os-observability.js';
 
 export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
@@ -16,6 +17,7 @@ export default async function handler(req, res) {
     const ready = jobs.filter((job) => job.status === 'ready').length;
     send(res, 200, { ok: true, summary: { total: jobs.length, rendering, ready, failed }, jobs });
   } catch (error) {
+    captureRouteError(error, { route: 'admin', failureCategory: error?.failureCategory || 'ADMIN' });
     send(res, error.statusCode || 400, { ok: false, error: error.message || 'Admin status failed.' });
   }
 }

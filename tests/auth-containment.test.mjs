@@ -25,7 +25,7 @@ test('rotating the session secret invalidates old sessions and accepts newly iss
 });
 
 test('magic-link persistence records a hash and never the raw token', async () => {
-  const source = await readFile('C:/Users/ariel/lux-video-os/lib/video-os-account.js', 'utf8');
+  const source = await readFile(new URL('../lib/video-os-account.js', import.meta.url), 'utf8');
   const start = source.indexOf('export async function saveMagicToken');
   const end = source.indexOf('export async function consumeMagicToken');
   assert.ok(start >= 0 && end > start, 'magic-token persistence block must remain recognizable');

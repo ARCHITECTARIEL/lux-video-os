@@ -9,6 +9,40 @@ export const users = pgTable('users', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const authChallenges = pgTable('auth_challenges', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  accountId: text('account_id').references(() => users.id, { onDelete: 'cascade' }),
+  email: text('email').notNull(),
+  tokenHash: text('token_hash').notNull().unique(),
+  challengeType: text('challenge_type').notNull().default('magic_link'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index('auth_challenges_account_created_idx').on(table.accountId, table.createdAt), index('auth_challenges_expires_idx').on(table.expiresAt)]);
+
+export const authSessions = pgTable('auth_sessions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  sessionHash: text('session_hash').notNull().unique(),
+  issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+}, (table) => [index('auth_sessions_account_expires_idx').on(table.accountId, table.expiresAt), index('auth_sessions_expires_idx').on(table.expiresAt)]);
+
+export const entitlements = pgTable('entitlements', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  entitlementKey: text('entitlement_key').notNull(),
+  enabled: boolean('enabled').notNull().default(false),
+  sourceType: text('source_type').notNull(),
+  sourceId: text('source_id'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  metadata: jsonb('metadata').notNull().default({}),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex('entitlements_account_key_uq').on(table.accountId, table.entitlementKey), index('entitlements_account_enabled_idx').on(table.accountId, table.enabled)]);
+
 export const creditAccounts = pgTable('credit_accounts', {
   accountId: text('account_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
   balance: integer('balance').notNull().default(0),
