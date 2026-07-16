@@ -20,7 +20,8 @@ async function fetchCollection(url, key) {
 
 function normalize(item, prefix) {
   const id = compact(item.id || item.avatar_id || item.voice_id || item.avatarId || item.voiceId || `${prefix}-unknown`);
-  return { id, name: compact(item.name || item.avatar_name || item.voice_name || item.display_name || item.displayName || id, 180), source: compact(item.source || 'heygen', 80), style: compact(item.style || item.gender || item.language || item.locale || 'available', 120), role: compact(item.type || item.category || 'Ready to render', 120) };
+  const previewUrl = compact(item.preview_image_url || item.preview_url || item.image_url || item.thumbnail_url, 500);
+  return { id, name: compact(item.name || item.avatar_name || item.voice_name || item.display_name || item.displayName || id, 180), source: compact(item.source || 'heygen', 80), style: compact(item.style || item.gender || item.language || item.locale || 'available', 120), role: compact(item.type || item.category || 'Ready to render', 120), ...(previewUrl ? { previewUrl } : {}) };
 }
 
 const unique = (items) => [...new Map(items.filter((item) => item.id).map((item) => [item.id, item])).values()];

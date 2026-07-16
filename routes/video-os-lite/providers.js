@@ -1,3 +1,4 @@
+// Routed through the consolidated workspace function to stay within the Vercel function limit.
 import { accountPayload, handleOptions, loadAccount, providerList, send, sessionFromRequest } from '../../lib/video-os-account.js';
 
 export default async function handler(req, res) {

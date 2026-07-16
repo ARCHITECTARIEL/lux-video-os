@@ -1,4 +1,4 @@
-const appState = { step: 0, avatar: null, voice: null, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 12, voice: 12 } };
+const appState = { step: 0, avatar: null, voice: null, project: null, uploadedAsset: null, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 12, voice: 12 } };
 const browserAccountId = (() => {
   try {
     const key = 'luxVideoOsAccountId';
@@ -86,7 +86,9 @@ async function getJson(url, options = {}) {
   const timeout = setTimeout(() => controller.abort(), 15000);
   let response;
   try {
-    response = await fetch(url, { credentials: 'same-origin', ...options, signal: controller.signal });
+    const headers = new Headers(options.headers || {});
+    if (!headers.has('x-request-id')) headers.set('x-request-id', crypto.randomUUID());
+    response = await fetch(url, { credentials: 'same-origin', ...options, headers, signal: controller.signal });
   } catch (error) {
     const message = error?.name === 'AbortError'
       ? 'Video OS took too long to respond. Check your connection and try again.'
@@ -152,7 +154,7 @@ function searchableItems(type) {
 
 function renderOptions(type, items) {
   const target = document.querySelector(type === 'avatar' ? '#avatar-list' : '#voice-list');
-  const safeItems = items.length ? items : fallbackTalent[`${type}s`];
+  const safeItems = items.length ? items : (canUseLocalApi() ? fallbackTalent[`${type}s`] : []);
   appState.libraries[type] = safeItems;
   const filtered = searchableItems(type);
   const visible = filtered.slice(0, appState.visible[type]);
@@ -162,6 +164,13 @@ function renderOptions(type, items) {
     button.className = `option-card${appState[type]?.id === item.id ? ' selected' : ''}`;
     button.dataset[`${type}Id`] = item.id;
     button.innerHTML = `<strong>${item.name || item.id}</strong><small>${item.style || item.role || 'Ready to use'} | ${item.source || 'local'}</small>`;
+    if (type === 'avatar' && item.previewUrl) {
+      const image = document.createElement('img');
+      image.src = item.previewUrl;
+      image.alt = `${item.name || 'Avatar'} preview`;
+      image.loading = 'lazy';
+      button.prepend(image);
+    }
     button.addEventListener('click', () => chooseCard(type, item));
     return button;
   }));
@@ -172,7 +181,7 @@ function renderOptions(type, items) {
     more.hidden = visible.length >= filtered.length;
     more.textContent = `Show ${Math.min(12, filtered.length - visible.length)} more ${type === 'avatar' ? 'avatars' : 'voices'}`;
   }
-  if (!appState[type] || !safeItems.some((item) => item.id === appState[type].id)) chooseCard(type, safeItems[0]);
+  if (safeItems.length && (!appState[type] || !safeItems.some((item) => item.id === appState[type].id))) chooseCard(type, safeItems[0]);
 }
 
 function rerenderLibrary(type) {
@@ -185,12 +194,12 @@ async function loadTalent() {
     const data = await getJson('/api/video-os/talent');
     renderOptions('avatar', data.talent?.avatars || []);
     renderOptions('voice', data.talent?.voices || []);
-    document.querySelector('#connection-pill').textContent = data.connection?.connected ? 'HeyGen talent connected' : 'Using safe fallback talent';
+    document.querySelector('#connection-pill').textContent = data.connection?.connected ? 'HeyGen talent connected' : 'HeyGen talent unavailable';
     appState.localEngine = true;
   } catch {
-    renderOptions('avatar', fallbackTalent.avatars);
-    renderOptions('voice', fallbackTalent.voices);
-    document.querySelector('#connection-pill').textContent = 'Browser demo mode';
+    renderOptions('avatar', canUseLocalApi() ? fallbackTalent.avatars : []);
+    renderOptions('voice', canUseLocalApi() ? fallbackTalent.voices : []);
+    document.querySelector('#connection-pill').textContent = canUseLocalApi() ? 'Browser demo mode' : 'HeyGen talent unavailable';
   }
 }
 
@@ -369,22 +378,20 @@ function renderProductionKit(kit) {
 }
 
 async function saveLocalProject(payload) {
-  if (!canUseLocalApi()) return null;
-  const data = await getJson('/api/video-os/projects', {
+  const data = await getJson('/api/video-os-lite/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      accountId: payload.accountId || currentAccountId(),
-      name: payload.title,
-      audience: payload.audience,
-      goal: payload.objective,
-      topic: payload.goalType,
-      tone: payload.tone,
-      scriptMode: 'paste_exact',
-      scriptInput: payload.script,
-      avatar: { avatarId: appState.avatar?.id, name: appState.avatar?.name, source: appState.avatar?.source },
-      voice: { voiceId: appState.voice?.id, name: appState.voice?.name, source: appState.voice?.source },
-      brand: {
+      id: appState.project?.id,
+      title: payload.title,
+      script: payload.script,
+      avatar: { id: appState.avatar?.id, name: appState.avatar?.name, source: appState.avatar?.source, ...(appState.avatar?.previewUrl ? { previewUrl: appState.avatar.previewUrl } : {}) },
+      voice: { id: appState.voice?.id, name: appState.voice?.name, source: appState.voice?.source },
+      settings: {
+        audience: payload.audience,
+        objective: payload.objective,
+        goalType: payload.goalType,
+        tone: payload.tone,
         name: payload.brandName,
         logoUrl: payload.logoUrl,
         primaryColor: payload.primaryColor,
@@ -394,7 +401,24 @@ async function saveLocalProject(payload) {
       },
     }),
   });
+  appState.project = data.project;
   return data.project;
+}
+
+async function restoreLatestProject() {
+  if (!appState.signedIn || !canUseHostedApi()) return;
+  const data = await getJson('/api/video-os-lite/projects');
+  const project = data.projects?.[0];
+  if (!project) return;
+  appState.project = project;
+  appState.avatar = project.avatar;
+  appState.voice = project.voice;
+  const title = form.elements.namedItem('title');
+  const script = form.elements.namedItem('script');
+  if (title) title.value = project.title || '';
+  if (script) script.value = project.script || '';
+  rerenderLibrary('avatar');
+  rerenderLibrary('voice');
 }
 
 function firstCaption(script) {
@@ -405,6 +429,7 @@ function firstCaption(script) {
 async function generateVideo() {
   if (!requireCurrentStep()) return;
   if (!appState.signedIn) { showToast('Sign in before live rendering.'); openAuthModal(); return; }
+  if (!appState.avatar || !appState.voice || appState.avatar.source !== 'heygen' || appState.voice.source !== 'heygen') { showToast('Choose a connected HeyGen avatar and voice before rendering.'); return; }
   const progress = document.querySelector('#progress');
   const bar = progress.querySelector('span');
   const payload = formData();
@@ -438,6 +463,14 @@ function renderPreview(options = {}) {
   const data = appState.generated;
   if (!data) return;
   const stage = document.querySelector('.video-stage');
+  stage.querySelector('.avatar-preview-media')?.remove();
+  if (data.avatar?.previewUrl) {
+    const image = document.createElement('img');
+    image.className = 'avatar-preview-media';
+    image.src = data.avatar.previewUrl;
+    image.alt = `${data.avatar.name || 'Selected avatar'} preview`;
+    stage.prepend(image);
+  }
   stage.style.background = `radial-gradient(circle at 72% 22%, ${data.accentColor || '#2f6df6'}66, transparent 28%), linear-gradient(145deg, ${data.primaryColor || '#111827'}, #283243)`;
   stage.querySelector('.presenter').textContent = (data.avatar?.name || 'AI').split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
   stage.querySelector('.caption').textContent = firstCaption(data.script);
@@ -790,7 +823,8 @@ async function uploadAvatarSource(type) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind: type, name: file.name, dataUrl }),
     });
-    urlInput.value = data.providerUrl || data.url;
+    appState.uploadedAsset = data;
+    urlInput.value = data.previewUrl || '';
     status.textContent = `${data.message} ${data.providerUrl ? 'Provider-ready.' : 'Staged locally.'}`;
   } catch (error) {
     status.textContent = error.message;
@@ -911,11 +945,13 @@ async function finalizeProviderRender(options = {}) {
   }
 }
 async function renderWithProvider(options = {}) {
+  if (appState.renderLocked) return null;
   const automatic = Boolean(options.automatic);
   const status = document.querySelector('#export-status');
   const payload = appState.generated;
   const provider = selectedProvider();
   if (!payload || !provider) return null;
+  appState.renderLocked = true;
   stopAutoFinalize();
   appState.finalizeAttempts = 0;
   setRecoveryAction('#render-provider', false, true);
@@ -927,7 +963,7 @@ async function renderWithProvider(options = {}) {
     const data = await getJson('/api/video-os-lite/render', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idempotencyKey: appState.renderIdempotencyKey || crypto.randomUUID(), provider: provider.id, title: payload.title || 'Video OS', format: document.querySelector('#export-format').value, script: payload.script || payload.scriptInput, avatar: { avatarId: payload.avatar?.avatarId || payload.avatar?.id }, voice: { voiceId: payload.voice?.voiceId || payload.voice?.id, locale: payload.voice?.locale }, productionKit: appState.productionKit || {} }),
+      body: JSON.stringify({ idempotencyKey: appState.renderIdempotencyKey || crypto.randomUUID(), projectId: payload.projectId, provider: provider.id, title: payload.title || 'Video OS', format: document.querySelector('#export-format').value, script: payload.script || payload.scriptInput, avatar: { avatarId: payload.avatar?.avatarId || payload.avatar?.id }, voice: { voiceId: payload.voice?.voiceId || payload.voice?.id, locale: payload.voice?.locale }, productionKit: appState.productionKit || {} }),
     });
     appState.credits = data.credits;
     appState.providerRender = data;
@@ -945,6 +981,8 @@ async function renderWithProvider(options = {}) {
     setRecoveryAction('#render-provider', true, false);
     showToast(error.message);
     return null;
+  } finally {
+    appState.renderLocked = false;
   }
 }
 const assetVisuals = {
@@ -1362,11 +1400,11 @@ document.querySelector('#export-format').addEventListener('change', () => {
   scheduleAutoFinalize(500);
 });
 setStep(0);
-loadTalent();
-loadProviders();
-loadAssetCatalog();
-loadResults();
-loadAccount().then(consumeAuthReturn);
+Promise.all([loadTalent(), loadProviders(), loadAssetCatalog(), loadAccount()]).then(async () => {
+  consumeAuthReturn();
+  await restoreLatestProject().catch(() => {});
+  await loadResults();
+});
 
 
 

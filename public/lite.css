@@ -1313,6 +1313,22 @@ button.secondary:hover { border-color: rgba(167,111,59,.5); background: #fffaf0;
   justify-content: center;
   margin: 20px 0 8px;
 }
+
+.option-card img, .avatar-preview-media {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.avatar-preview-media {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  aspect-ratio: auto;
+  opacity: .78;
+}
 .result-gallery-actions button[hidden] { display: none; }
 .results-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2168,6 +2184,8 @@ body { min-width: 0; }
 }
 
 .auth-panel {
+  max-height: calc(100vh - 44px);
+  overflow-y: auto;
   max-height: calc(100dvh - 24px);
   overflow-y: auto;
   overscroll-behavior: contain;

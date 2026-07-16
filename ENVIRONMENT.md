@@ -51,6 +51,18 @@ Required only for the providers you enable:
 - `DID_API_KEY` and `DID_SOURCE_URL` for D-ID talking-head renders. Optional: `DID_RENDER_URL`, `DID_BASIC_AUTH`.
 - `VIDEO_OS_STARTER_CREDITS` to set the first local credit balance. Defaults to `1530` for local MVP testing.
 
+Contained durable rendering requires all of the following in the same non-production deployment:
+
+- `VIDEO_OS_DURABLE_WORKFLOW_ENABLED=true`
+- `VIDEO_OS_RENDER_ACCOUNT_ID`: one exact authorized account ID; requests from every other account fail closed.
+- `VIDEO_OS_TRIAL_CREDITS`: optional initial balance for that contained account. The hosted default is zero.
+- `VIDEO_OS_HOSTED_FINISHING_ENABLED=true` only when bounded finishing and private final storage are being explicitly tested.
+- `VIDEO_OS_PROVIDER_MEDIA_HOSTS`: comma-separated exact provider media hostnames. Subdomain wildcards are not accepted.
+
+Do not copy Production session, Blob, or provider credentials into Preview. Provision deployment-specific resources instead.
+
+`SENTRY_DSN` is optional. When absent, Sentry stays dormant and builds, migrations, logs, and contained UI tests continue normally.
+
 Stripe credit purchase setup:
 
 - Easiest: set `STRIPE_PAYMENT_LINK_URL` to an existing Stripe Payment Link.

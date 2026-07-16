@@ -1,4 +1,5 @@
 import { parseOrThrow, providerStatusSchema, providerSubmitSchema } from '../lib/video-os-validation.js';
+import { logEvent } from '../lib/video-os-security.js';
 
 const API_ORIGIN = 'https://api.heygen.com';
 const timeoutMs = () => Number(process.env.HEYGEN_TIMEOUT_MS || 20_000);
@@ -15,6 +16,13 @@ async function responseJson(response, category) {
   try { data = JSON.parse(text); } catch { throw Object.assign(new Error('HeyGen returned invalid JSON.'), { failureCategory: category }); }
   if (!response.ok) throw Object.assign(new Error(`HeyGen request failed with HTTP ${response.status}.`), { statusCode: 502, failureCategory: category, providerHttpStatus: response.status });
   return data;
+}
+
+export function providerMediaHostname(value) {
+  let url;
+  try { url = new URL(String(value || '')); } catch { throw Object.assign(new Error('HeyGen media URL was invalid.'), { failureCategory: 'PROVIDER_POLL' }); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port) throw Object.assign(new Error('HeyGen media URL was invalid.'), { failureCategory: 'PROVIDER_POLL' });
+  return url.hostname.toLowerCase();
 }
 
 export async function submitHeygen(job) {
@@ -36,5 +44,6 @@ export async function pollHeygen(providerJobId) {
   const status = String(data.status || parsed.status || '').toLowerCase();
   const sourceUrl = [data.video_url, data.videoUrl, data.download_url, data.downloadUrl, data.url].find((value) => typeof value === 'string');
   if (status === 'failed' || status === 'error') throw Object.assign(new Error('HeyGen render failed.'), { failureCategory: 'PROVIDER_REJECTED' });
+  if (status === 'completed' && sourceUrl) logEvent('provider.media_ready', { providerHostname: providerMediaHostname(sourceUrl) });
   return { ready: status === 'completed' && Boolean(sourceUrl), status: status || 'processing', sourceUrl: sourceUrl || null };
 }

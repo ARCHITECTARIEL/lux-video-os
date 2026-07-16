@@ -3,6 +3,7 @@ import Stripe from 'stripe';
 import { issueStripeCredit } from '../../db/repositories.js';
 import { handleOptions, readRaw, send } from '../../lib/video-os-account.js';
 import { featureEnabled } from '../../lib/video-os-security.js';
+import { captureRouteError } from '../../lib/video-os-observability.js';
 import { parseOrThrow, stripeCheckoutSessionSchema } from '../../lib/video-os-validation.js';
 
 const PACKAGE_CREDITS = { credits_500: 500, credits_1000: 1000, credits_2000: 2000 };
@@ -31,5 +32,8 @@ export default async function handler(req, res) {
     if (!expectedPrice || verified.payment_status !== 'paid' || verified.client_reference_id !== session.metadata.accountId || item?.price?.id !== expectedPrice || item?.quantity !== 1) throw Object.assign(new Error('Stripe economic package verification failed.'), { statusCode: 409 });
     const result = await issueStripeCredit({ stripeEventId: event.id, eventType: event.type, livemode: event.livemode, payloadSha256: crypto.createHash('sha256').update(raw).digest('hex'), accountId: session.metadata.accountId, sessionId: session.id, credits });
     return send(res, 200, { ok: true, received: true, credited: result.applied, duplicate: result.duplicate, type: event.type });
-  } catch (error) { return send(res, error.statusCode || 400, { ok: false, error: error.message || 'Webhook failed.' }); }
+  } catch (error) {
+    captureRouteError(error, { route: 'stripe-webhook', failureCategory: error?.failureCategory || 'BILLING' });
+    return send(res, error.statusCode || 400, { ok: false, error: error.message || 'Webhook failed.' });
+  }
 }

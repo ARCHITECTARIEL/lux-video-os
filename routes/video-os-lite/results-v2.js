@@ -1,3 +1,4 @@
+// Routed through the consolidated workspace function to stay within the Vercel function limit.
 import { jobDto } from '../../db/dto.js';
 import { listAccountJobs } from '../../db/repositories.js';
 import { handleOptions, send, sessionFromRequest } from '../../lib/video-os-account.js';

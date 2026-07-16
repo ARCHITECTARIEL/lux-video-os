@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { accountIdForEmail, accountPayload, clearAdminCookie, clearSessionCookie, consumeMagicToken, handleOptions, loadAccount, makeSession, readJson, saveAccount, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest } from '../../lib/video-os-account.js';
+import { captureRouteError } from '../../lib/video-os-observability.js';
 import { publicOrigin } from '../../lib/video-os-security.js';
 
 function route(req) {
@@ -219,6 +220,7 @@ export default async function handler(req, res) {
     }
     return send(res, 404, { ok: false, error: 'Auth route not found.' });
   } catch (error) {
+    captureRouteError(error, { route: `auth:${action}`, failureCategory: error?.failureCategory || 'AUTH' });
     console.error('video_os_auth_error', {
       action,
       statusCode: error?.statusCode || 400,
