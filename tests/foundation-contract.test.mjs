@@ -110,6 +110,7 @@ test('failed provider artifact recovery is narrow and transactionally gated', ()
   const eligible = { status: 'failed', providerJobId: 'existing-provider-job', output: { message: 'Provider media hostname is not allowlisted.' } };
   assert.equal(assertFailedRenderRecoveryEligibility(eligible), true);
   assert.equal(assertFailedRenderRecoveryEligibility({ ...eligible, output: { message: 'Step failed after 3 retries: Invalid IP address: undefined' } }), true);
+  assert.equal(assertFailedRenderRecoveryEligibility({ ...eligible, output: { message: 'Step failed after 3 retries: spawn /var/task/ffmpeg ENOENT' } }), true);
   assert.throws(() => assertFailedRenderRecoveryEligibility({ ...eligible, providerJobId: null }));
   assert.throws(() => assertFailedRenderRecoveryEligibility({ ...eligible, output: { message: 'Provider rejected the render.' } }));
   assert.throws(() => assertFailedRenderRecoveryEligibility(eligible, { charged: true }));
@@ -132,4 +133,12 @@ test('pinned provider DNS lookup honors Node single and all-address callback con
     assert.deepEqual(addresses, [{ address: '93.184.216.34', family: 4 }]);
   });
   assert.throws(() => createPinnedLookup({ address: undefined, family: undefined }));
+});
+
+test('Preview build stages a verified platform-correct FFmpeg in the workflow step', () => {
+  const source = readFileSync('tools/build-production.mjs', 'utf8');
+  assert.match(source, /stageWorkflowFfmpeg\(workflowStepFunction\)/);
+  assert.match(source, /npm_config_platform:\s*'linux'/);
+  assert.match(source, /header\.subarray\(0, 4\)\.toString\('hex'\) !== '7f454c46'/);
+  assert.match(source, /await chmod\(target, 0o755\)/);
 });
