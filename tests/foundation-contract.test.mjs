@@ -109,6 +109,7 @@ test('completed provider telemetry reduces media evidence to a credential-free h
 test('failed provider artifact recovery is narrow and transactionally gated', () => {
   const eligible = { status: 'failed', providerJobId: 'existing-provider-job', output: { message: 'Provider media hostname is not allowlisted.' } };
   assert.equal(assertFailedRenderRecoveryEligibility(eligible), true);
+  assert.equal(assertFailedRenderRecoveryEligibility({ ...eligible, output: { message: 'Step failed after 3 retries: Invalid IP address: undefined' } }), true);
   assert.throws(() => assertFailedRenderRecoveryEligibility({ ...eligible, providerJobId: null }));
   assert.throws(() => assertFailedRenderRecoveryEligibility({ ...eligible, output: { message: 'Provider rejected the render.' } }));
   assert.throws(() => assertFailedRenderRecoveryEligibility(eligible, { charged: true }));

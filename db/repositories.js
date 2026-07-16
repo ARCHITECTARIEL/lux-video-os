@@ -66,7 +66,9 @@ export async function getJob(jobId) {
 export function assertFailedRenderRecoveryEligibility(job, { charged = false } = {}) {
   if (!job) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
   if (job.status !== 'failed' || !job.providerJobId) throw Object.assign(new Error('Only a failed job with an existing provider result can be recovered.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
-  if (!String(job.output?.message || '').includes('Provider media hostname is not allowlisted.')) throw Object.assign(new Error('The job did not fail at the provider-media allowlist boundary.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  const message = String(job.output?.message || '');
+  const recoverable = ['Provider media hostname is not allowlisted.', 'Invalid IP address: undefined'].some((evidence) => message.includes(evidence));
+  if (!recoverable) throw Object.assign(new Error('The job did not fail at a verified existing-media recovery boundary.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
   if (charged) throw Object.assign(new Error('The render has already been settled.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
   return true;
 }
