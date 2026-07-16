@@ -52,9 +52,22 @@ export const creditAccounts = pgTable('credit_accounts', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const projects = pgTable('projects', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  script: text('script').notNull(),
+  avatar: jsonb('avatar').notNull().default({}),
+  voice: jsonb('voice').notNull().default({}),
+  settings: jsonb('settings').notNull().default({}),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index('projects_account_updated_idx').on(table.accountId, table.updatedAt)]);
+
 export const videoJobs = pgTable('video_jobs', {
   id: text('id').primaryKey(),
   accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
   idempotencyKey: text('idempotency_key').notNull(),
   workflowRunId: text('workflow_run_id').unique(),
   correlationId: text('correlation_id').notNull(),

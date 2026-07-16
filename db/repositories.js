@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { database } from './client.js';
-import { creditAccounts, creditTransactions, jobEvents, mediaAssets, stripeEvents, users, videoJobs } from './schema.js';
+import { creditAccounts, creditTransactions, jobEvents, mediaAssets, projects, stripeEvents, users, videoJobs } from './schema.js';
 
 export async function ensureAccount({ accountId, email, name, initialCredits = 0 }) {
   return database().transaction(async (tx) => {
@@ -17,17 +17,36 @@ export async function getAccount(accountId, executor = database()) {
 
 export async function reserveRender({ jobId, accountId, idempotencyKey, correlationId, provider, title, format, costCredits, input }) {
   return database().transaction(async (tx) => {
-    const existing = await tx.select().from(videoJobs).where(and(eq(videoJobs.accountId, accountId), eq(videoJobs.idempotencyKey, idempotencyKey))).limit(1);
-    if (existing[0]) return { job: existing[0], replayed: true };
     const accounts = await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId)).for('update').limit(1);
     const account = accounts[0];
     if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
+    const existing = await tx.select().from(videoJobs).where(and(eq(videoJobs.accountId, accountId), eq(videoJobs.idempotencyKey, idempotencyKey))).limit(1);
+    if (existing[0]) return { job: existing[0], replayed: true };
     if (account.balance - account.reserved < costCredits) throw Object.assign(new Error('Insufficient credits.'), { statusCode: 402, failureCategory: 'ENTITLEMENT' });
     await tx.update(creditAccounts).set({ reserved: account.reserved + costCredits, updatedAt: new Date() }).where(eq(creditAccounts.accountId, accountId));
-    const [job] = await tx.insert(videoJobs).values({ id: jobId, accountId, idempotencyKey, correlationId, provider, status: 'reserved', title, format, costCredits, input }).returning();
+    const [job] = await tx.insert(videoJobs).values({ id: jobId, accountId, projectId: input.projectId, idempotencyKey, correlationId, provider, status: 'reserved', title, format, costCredits, input }).returning();
     await tx.insert(jobEvents).values({ jobId, correlationId, eventType: 'render.reserved', stageTo: 'reserved', details: { costCredits } });
     return { job, replayed: false };
   });
+}
+
+const ALLOWED_JOB_TRANSITIONS = Object.freeze({
+  reserved: ['workflow_starting', 'failed', 'cancelled'],
+  workflow_starting: ['workflow_started', 'failed'],
+  workflow_started: ['provider_submitting', 'failed'],
+  provider_submitting: ['provider_submitted', 'provider_submit_unknown', 'failed'],
+  provider_submit_unknown: [],
+  provider_submitted: ['provider_rendering', 'provider_ready', 'failed'],
+  provider_rendering: ['provider_rendering', 'provider_ready', 'failed'],
+  provider_ready: ['finish_contained', 'finishing', 'failed'],
+  finish_contained: ['finishing', 'failed'],
+  finishing: ['ready', 'failed'],
+  ready: [], failed: [], cancelled: [],
+});
+
+export function assertJobTransition(stageFrom, stageTo) {
+  if (!(ALLOWED_JOB_TRANSITIONS[stageFrom] || []).includes(stageTo)) throw Object.assign(new Error(`Invalid job transition: ${stageFrom} -> ${stageTo}.`), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  return true;
 }
 
 export async function setWorkflowRun(jobId, workflowRunId) {
@@ -48,8 +67,8 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
   return database().transaction(async (tx) => {
     const current = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
     if (!current) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
+    assertJobTransition(current.status, stageTo);
     const terminal = ['ready', 'failed', 'cancelled'];
-    if (terminal.includes(current.status) && current.status !== stageTo) throw Object.assign(new Error('Terminal job transitions are immutable.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
     const [job] = await tx.update(videoJobs).set({ status: stageTo, providerJobId: providerJobId || current.providerJobId, output: output || current.output, failureCategory: failureCategory || null, updatedAt: new Date(), completedAt: terminal.includes(stageTo) ? new Date() : null }).where(eq(videoJobs.id, jobId)).returning();
     await tx.insert(jobEvents).values({ jobId, correlationId: current.correlationId, eventType, stageFrom: current.status, stageTo, failureCategory, details });
     return job;
@@ -93,6 +112,28 @@ export async function issueStripeCredit({ stripeEventId, eventType, livemode, pa
 export async function addMediaAsset(asset) {
   const [created] = await database().insert(mediaAssets).values(asset).onConflictDoUpdate({ target: mediaAssets.privatePathname, set: { bytes: asset.bytes, sha256: asset.sha256, contentType: asset.contentType } }).returning();
   return created;
+}
+
+export async function getOwnedMediaAsset(accountId, assetId) {
+  return (await database().select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, assetId))).limit(1))[0] || null;
+}
+
+export async function saveProject({ id, accountId, title, script, avatar, voice, settings }) {
+  const values = { accountId, title, script, avatar, voice, settings, updatedAt: new Date() };
+  if (id) {
+    const [updated] = await database().update(projects).set(values).where(and(eq(projects.id, id), eq(projects.accountId, accountId))).returning();
+    if (!updated) throw Object.assign(new Error('Project not found.'), { statusCode: 404 });
+    return updated;
+  }
+  return (await database().insert(projects).values(values).returning())[0];
+}
+
+export async function listProjects(accountId) {
+  return database().select().from(projects).where(eq(projects.accountId, accountId)).orderBy(desc(projects.updatedAt)).limit(30);
+}
+
+export async function getOwnedProject(accountId, projectId) {
+  return (await database().select().from(projects).where(and(eq(projects.id, projectId), eq(projects.accountId, accountId))).limit(1))[0] || null;
 }
 
 export async function finalizeReadyJob(jobId, artifact) {

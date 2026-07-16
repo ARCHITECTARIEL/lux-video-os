@@ -5,7 +5,9 @@ import { parseOrThrow, renderRequestSchema, stripeCheckoutSessionSchema } from '
 describe('render validation', () => {
   it('requires a UUID idempotency key and rejects unknown fields', () => {
     expect(() => parseOrThrow(renderRequestSchema, { title: 'x' })).toThrow();
-    expect(() => parseOrThrow(renderRequestSchema, { idempotencyKey: crypto.randomUUID(), provider: 'heygen', title: 'Proof', format: 'vertical', script: 'Hello', avatar: { avatarId: 'a' }, voice: { voiceId: 'v' }, productionKit: {}, sourceUrl: 'https://evil.test' })).toThrow();
+    const valid = { idempotencyKey: crypto.randomUUID(), projectId: crypto.randomUUID(), provider: 'heygen', title: 'Proof', format: 'vertical', script: 'Hello', avatar: { avatarId: 'a' }, voice: { voiceId: 'v' }, productionKit: {} };
+    expect(() => parseOrThrow(renderRequestSchema, valid)).not.toThrow();
+    expect(() => parseOrThrow(renderRequestSchema, { ...valid, sourceUrl: 'https://evil.test' })).toThrow();
   });
 });
 

@@ -21,6 +21,14 @@
                        "dest":  "/api/video-os-lite/uploads.js"
                    },
                    {
+                       "src":  "/api/video-os-lite/asset",
+                       "dest":  "/api/video-os-lite/asset.js"
+                   },
+                   {
+                       "src":  "/api/video-os-lite/projects",
+                       "dest":  "/api/video-os-lite/projects.js"
+                   },
+                   {
                        "src":  "/api/video-os-lite/checkout",
                        "dest":  "/api/video-os-lite/checkout-v2.js"
                    },

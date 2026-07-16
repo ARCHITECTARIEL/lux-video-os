@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import { start } from 'workflow/api';
 import { accountDto, jobDto } from '../../db/dto.js';
-import { claimWorkflowStart, ensureAccount, getJob, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
+import { claimWorkflowStart, ensureAccount, getJob, getOwnedProject, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
 import { captureJobError } from '../../lib/video-os-observability.js';
-import { featureEnabled, requestId } from '../../lib/video-os-security.js';
+import { featureEnabled, requestId, requireRenderAccountAuthorization } from '../../lib/video-os-security.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { parseOrThrow, renderRequestSchema } from '../../lib/video-os-validation.js';
 import { videoRenderWorkflow } from '../../workflows/video-render.js';
@@ -15,8 +15,12 @@ export default async function handler(req, res) {
   try {
     const session = sessionFromRequest(req);
     if (!featureEnabled('VIDEO_OS_DURABLE_WORKFLOW_ENABLED')) return send(res, 503, { ok: false, code: 'durable_workflow_disabled', error: 'Live rendering is contained pending workflow verification.' });
+    requireRenderAccountAuthorization(session.accountId);
     const payload = parseOrThrow(renderRequestSchema, await readJson(req), 'Render request validation failed.');
-    const account = await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 180) });
+    const project = await getOwnedProject(session.accountId, payload.projectId);
+    if (!project) throw Object.assign(new Error('Project not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    if (project.avatar?.id !== payload.avatar.avatarId || project.voice?.id !== payload.voice.voiceId) throw Object.assign(new Error('Render inputs do not match the saved project.'), { statusCode: 409, failureCategory: 'VALIDATION' });
+    const account = await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 0) });
     const correlationId = requestId(req);
     const reserved = await reserveRender({ jobId: `job-${crypto.randomUUID()}`, accountId: session.accountId, idempotencyKey: payload.idempotencyKey, correlationId, provider: payload.provider, title: payload.title, format: payload.format, costCredits: 90, input: payload });
     reservedJob = reserved.job;

@@ -7,7 +7,9 @@ import downloadHandler from '../api/video-os-lite/download-v2.js';
 import { resolvePasswordAccess } from '../api/video-os-lite/auth.js';
 import { databaseDriver } from '../db/client.js';
 import { clearAdminCookie } from '../lib/video-os-account.js';
-import { assertAllowedMediaUrl, publicOrigin } from '../lib/video-os-security.js';
+import { assertAllowedMediaUrl, publicOrigin, requireRenderAccountAuthorization } from '../lib/video-os-security.js';
+import { assertJobTransition } from '../db/repositories.js';
+import { detectedUploadMime } from '../api/video-os-lite/uploads.js';
 import { applyStripeEvent } from '../lib/video-os-credits.js';
 
 function req(method = 'GET', headers = {}, body = {}) {
@@ -50,7 +52,29 @@ test('media policy rejects localhost, HTTP, and unallowlisted hosts', () => {
   assert.throws(() => assertAllowedMediaUrl('http://media.heygen.example/a.mp4'));
   assert.throws(() => assertAllowedMediaUrl('https://127.0.0.1/a.mp4'));
   assert.throws(() => assertAllowedMediaUrl('https://evil.example/a.mp4'));
-  assert.equal(assertAllowedMediaUrl('https://cdn.media.heygen.example/a.mp4').hostname, 'cdn.media.heygen.example');
+  assert.throws(() => assertAllowedMediaUrl('https://cdn.media.heygen.example/a.mp4'));
+  assert.equal(assertAllowedMediaUrl('https://media.heygen.example/a.mp4').hostname, 'media.heygen.example');
+});
+
+test('contained rendering requires one exact configured account', () => {
+  delete process.env.VIDEO_OS_RENDER_ACCOUNT_ID;
+  assert.throws(() => requireRenderAccountAuthorization('acct-a'), /not configured/);
+  process.env.VIDEO_OS_RENDER_ACCOUNT_ID = 'acct-a';
+  assert.equal(requireRenderAccountAuthorization('acct-a'), true);
+  assert.throws(() => requireRenderAccountAuthorization('acct-b'), /not authorized/);
+  delete process.env.VIDEO_OS_RENDER_ACCOUNT_ID;
+});
+
+test('render state machine rejects regressions and terminal rewrites', () => {
+  assert.equal(assertJobTransition('provider_submitted', 'provider_rendering'), true);
+  assert.equal(assertJobTransition('provider_rendering', 'provider_rendering'), true);
+  assert.throws(() => assertJobTransition('provider_ready', 'provider_rendering'), /Invalid job transition/);
+  assert.throws(() => assertJobTransition('ready', 'failed'), /Invalid job transition/);
+});
+
+test('upload type is derived from file bytes', () => {
+  assert.equal(detectedUploadMime(Buffer.from([0xff, 0xd8, 0xff, 0x00])), 'image/jpeg');
+  assert.equal(detectedUploadMime(Buffer.from('not-an-image')), null);
 });
 
 test('download requires a customer session before selecting a job', async () => {
