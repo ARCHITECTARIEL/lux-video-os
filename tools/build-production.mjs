@@ -14,7 +14,7 @@ function run(cli, args) {
 }
 
 await rm(output, { recursive: true, force: true });
-run(vercelCli, ['build', '--prod', '--yes']);
+run(vercelCli, ['build', '--prod']);
 const configUrl = new URL('config.json', output);
 const appConfig = JSON.parse(await readFile(configUrl, 'utf8'));
 run(workflowCli, ['build', '--target', 'vercel-build-output-api']);

@@ -26,6 +26,11 @@ jobs:
       - run: npm run db:check
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run workflow:validate
+      - name: Prepare offline Vercel build metadata
+        run: |
+          mkdir -p .vercel
+          printf '%s' '{"projectId":"prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW","orgId":"team_rTOCyHyMxhhdoLk4LtT2kD9X","projectName":"lux-video-os","settings":{"framework":null,"devCommand":null,"installCommand":null,"buildCommand":null,"outputDirectory":null,"rootDirectory":null,"directoryListing":false,"nodeVersion":"24.x"}}' > .vercel/project.json
+          : > .vercel/.env.production.local
       - run: npm run build:production
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
