@@ -1,3 +1,4 @@
+// Routed through the consolidated workspace function to stay within the Vercel function limit.
 import { listRecentJobs } from '../../db/repositories.js';
 import { handleOptions, parseCookies, send, verifySessionToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';

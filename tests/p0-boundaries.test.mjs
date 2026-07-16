@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import adminHandler from '../api/video-os-lite/admin.js';
+import adminHandler from '../routes/video-os-lite/admin.js';
 import checkoutHandler from '../api/video-os-lite/checkout-v2.js';
 import downloadHandler from '../api/video-os-lite/download-v2.js';
 import { resolvePasswordAccess } from '../api/video-os-lite/auth.js';

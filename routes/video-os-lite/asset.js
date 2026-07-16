@@ -1,3 +1,4 @@
+// Routed through the consolidated workspace function to stay within the Vercel function limit.
 import { get } from '@vercel/blob';
 import { getOwnedMediaAsset } from '../../db/repositories.js';
 import { sessionFromRequest } from '../../lib/video-os-account.js';

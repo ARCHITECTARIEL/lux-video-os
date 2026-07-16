@@ -1,3 +1,4 @@
+// Routed through the consolidated workspace function to stay within the Vercel function limit.
 import { listProjects, saveProject } from '../../db/repositories.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { parseOrThrow, projectRequestSchema } from '../../lib/video-os-validation.js';
