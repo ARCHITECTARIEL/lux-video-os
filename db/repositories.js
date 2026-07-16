@@ -63,6 +63,33 @@ export async function getJob(jobId) {
   return (await database().select().from(videoJobs).where(eq(videoJobs.id, jobId)).limit(1))[0] || null;
 }
 
+export function assertFailedRenderRecoveryEligibility(job, { charged = false, recoveryReserved = false } = {}) {
+  if (!job) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
+  if (job.status !== 'failed' || !job.providerJobId) throw Object.assign(new Error('Only a failed job with an existing provider result can be recovered.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  if (!String(job.output?.message || '').includes('Provider media hostname is not allowlisted.')) throw Object.assign(new Error('The job did not fail at the provider-media allowlist boundary.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  if (charged) throw Object.assign(new Error('The render has already been settled.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  if (recoveryReserved) throw Object.assign(new Error('A recovery reservation already exists.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  return true;
+}
+
+export async function reserveFailedRenderRecovery(jobId) {
+  return database().transaction(async (tx) => {
+    const job = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
+    const sourceId = `render:${jobId}`;
+    const charged = await tx.select().from(creditTransactions).where(and(eq(creditTransactions.sourceType, 'render'), eq(creditTransactions.sourceId, sourceId))).limit(1);
+    const recoveryReserved = await tx.select().from(jobEvents).where(and(eq(jobEvents.jobId, jobId), eq(jobEvents.eventType, 'workflow.recovery_reserved'))).limit(1);
+    assertFailedRenderRecoveryEligibility(job, { charged: Boolean(charged[0]), recoveryReserved: Boolean(recoveryReserved[0]) });
+    const account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, job.accountId)).for('update').limit(1))[0];
+    if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
+    if (account.balance - account.reserved < job.costCredits) throw Object.assign(new Error('Insufficient credits for recovery.'), { statusCode: 402, failureCategory: 'ENTITLEMENT' });
+    await tx.update(creditAccounts).set({ reserved: account.reserved + job.costCredits, updatedAt: new Date() }).where(eq(creditAccounts.accountId, job.accountId));
+    const [recovered] = await tx.update(videoJobs).set({ status: 'provider_submitted', workflowRunId: null, output: {}, failureCategory: null, updatedAt: new Date(), completedAt: null }).where(and(eq(videoJobs.id, jobId), eq(videoJobs.status, 'failed'))).returning();
+    if (!recovered) throw Object.assign(new Error('Recovery claim lost.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    await tx.insert(jobEvents).values({ jobId, correlationId: job.correlationId, eventType: 'workflow.recovery_reserved', stageFrom: 'failed', stageTo: 'provider_submitted', details: { costCredits: job.costCredits, existingProviderJob: true } });
+    return { job: recovered, reservedCredits: job.costCredits };
+  });
+}
+
 export async function transitionJob({ jobId, stageTo, eventType, providerJobId, output, failureCategory, details = {} }) {
   return database().transaction(async (tx) => {
     const current = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];

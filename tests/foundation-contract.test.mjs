@@ -5,7 +5,9 @@ import test from 'node:test';
 import { getTableName } from 'drizzle-orm';
 
 import { authChallenges, authSessions, entitlements, jobEvents, videoJobs } from '../db/schema.js';
+import { assertFailedRenderRecoveryEligibility } from '../db/repositories.js';
 import { initObservability, sanitizeSentryEvent } from '../lib/video-os-observability.js';
+import { providerMediaHostname } from '../services/heygen.js';
 import { videoRenderWorkflowMetadata } from '../workflows/video-render-metadata.js';
 
 function countApiFunctions(directory) {
@@ -91,4 +93,27 @@ test('finishing retries resume idempotently and failures reach credit release', 
   assert.match(source, /else if \(job\.status !== 'finishing'\) throw/);
   assert.match(source, /\['provider_ready', 'finishing'\]\.includes\(job\.status\) && status\.ready/);
   assert.match(source, /return await finishProviderMedia\(jobId, status\.sourceUrl\)/);
+});
+
+test('completed provider telemetry reduces media evidence to a credential-free hostname', () => {
+  assert.equal(providerMediaHostname('https://Media.Example.test/video.mp4?signature=secret'), 'media.example.test');
+  assert.throws(() => providerMediaHostname('http://media.example.test/video.mp4'));
+  assert.throws(() => providerMediaHostname('https://user:secret@media.example.test/video.mp4'));
+
+  const source = readFileSync('services/heygen.js', 'utf8');
+  assert.match(source, /logEvent\('provider\.media_ready', \{ providerHostname: providerMediaHostname\(sourceUrl\) \}\)/);
+  assert.doesNotMatch(source, /logEvent\('provider\.media_ready',\s*\{\s*sourceUrl\s*[,:}]/);
+});
+
+test('failed provider artifact recovery is narrow and single-use', () => {
+  const eligible = { status: 'failed', providerJobId: 'existing-provider-job', output: { message: 'Provider media hostname is not allowlisted.' } };
+  assert.equal(assertFailedRenderRecoveryEligibility(eligible), true);
+  assert.throws(() => assertFailedRenderRecoveryEligibility({ ...eligible, providerJobId: null }));
+  assert.throws(() => assertFailedRenderRecoveryEligibility({ ...eligible, output: { message: 'Provider rejected the render.' } }));
+  assert.throws(() => assertFailedRenderRecoveryEligibility(eligible, { charged: true }));
+  assert.throws(() => assertFailedRenderRecoveryEligibility(eligible, { recoveryReserved: true }));
+
+  const source = readFileSync('db/repositories.js', 'utf8');
+  assert.match(source, /eventType:\s*'workflow\.recovery_reserved'/);
+  assert.match(source, /existingProviderJob:\s*true/);
 });
