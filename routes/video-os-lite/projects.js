@@ -10,12 +10,14 @@ export default async function handler(req, res) {
     if (req.method === 'GET') return send(res, 200, { ok: true, projects: await listProjects(session.accountId) });
     if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use GET or POST for projects.' });
     const payload = parseOrThrow(projectRequestSchema, await readJson(req), 'Project validation failed.');
-    await ensureAccount({
-      accountId: session.accountId,
-      email: session.email,
-      name: session.email || 'Video OS Account',
-      initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 0),
-    });
+    if (!payload.id) {
+      await ensureAccount({
+        accountId: session.accountId,
+        email: session.email,
+        name: session.email || 'Video OS Account',
+        initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 0),
+      });
+    }
     const project = await saveProject({ ...payload, accountId: session.accountId });
     return send(res, payload.id ? 200 : 201, { ok: true, project });
   } catch (error) {

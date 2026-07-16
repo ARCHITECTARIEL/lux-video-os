@@ -59,6 +59,7 @@ test('project creation establishes its signed Postgres owner before persistence'
   const saveIndex = source.indexOf('await saveProject({');
   assert.ok(ensureIndex >= 0, 'project route must synchronize the signed account');
   assert.ok(saveIndex > ensureIndex, 'account synchronization must precede project insertion');
+  assert.match(source.slice(0, ensureIndex), /if \(!payload\.id\) \{/);
   assert.match(source, /accountId:\s*session\.accountId/);
   assert.match(source, /initialCredits:\s*Number\(process\.env\.VIDEO_OS_TRIAL_CREDITS/);
 });
