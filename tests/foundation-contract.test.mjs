@@ -52,3 +52,13 @@ test('Preview deployment stays within the Hobby serverless function budget', () 
     '/api/video-os-lite/results',
   ]);
 });
+
+test('project creation establishes its signed Postgres owner before persistence', () => {
+  const source = readFileSync('routes/video-os-lite/projects.js', 'utf8');
+  const ensureIndex = source.indexOf('await ensureAccount({');
+  const saveIndex = source.indexOf('await saveProject({');
+  assert.ok(ensureIndex >= 0, 'project route must synchronize the signed account');
+  assert.ok(saveIndex > ensureIndex, 'account synchronization must precede project insertion');
+  assert.match(source, /accountId:\s*session\.accountId/);
+  assert.match(source, /initialCredits:\s*Number\(process\.env\.VIDEO_OS_TRIAL_CREDITS/);
+});
