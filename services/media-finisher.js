@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import https from 'node:https';
+import net from 'node:net';
 import { join } from 'node:path';
 import { assertAllowedMediaUrl, assertPublicDns } from '../lib/video-os-security.js';
 import { PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../lib/video-os-private-blob.js';
@@ -12,6 +13,16 @@ const boundedNumber = (value, fallback, minimum, maximum) => Math.min(maximum, M
 const maxBytes = () => boundedNumber(process.env.VIDEO_OS_MAX_SOURCE_BYTES, 250_000_000, 1_000_000, 500_000_000);
 const timeoutMs = () => boundedNumber(process.env.VIDEO_OS_SOURCE_TIMEOUT_MS, 60_000, 5_000, 120_000);
 const safeName = (value) => String(value || 'video-os').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'video-os';
+
+export function createPinnedLookup(pinned) {
+  const address = String(pinned?.address || '');
+  const family = net.isIP(address);
+  if (!family) throw Object.assign(new Error('Pinned provider address is invalid.'), { failureCategory: 'SOURCE_POLICY' });
+  return (_host, options, callback) => {
+    if (options?.all) callback(null, [{ address, family }]);
+    else callback(null, address, family);
+  };
+}
 
 async function downloadPinned(sourceUrl, target) {
   const url = assertAllowedMediaUrl(sourceUrl);
@@ -25,7 +36,7 @@ async function downloadPinned(sourceUrl, target) {
   }, timeoutMs());
   try {
     response = await new Promise((resolve, reject) => {
-    request = https.get(url, { timeout: timeoutMs(), lookup: (_host, _options, callback) => callback(null, pinned.address, pinned.family) }, resolve);
+    request = https.get(url, { timeout: timeoutMs(), lookup: createPinnedLookup(pinned) }, resolve);
     request.on('timeout', () => request.destroy(Object.assign(new Error('Provider media timed out.'), { failureCategory: 'SOURCE_TIMEOUT' })));
     request.on('error', reject);
   });

@@ -8,6 +8,7 @@ import { authChallenges, authSessions, entitlements, jobEvents, videoJobs } from
 import { assertFailedRenderRecoveryEligibility } from '../db/repositories.js';
 import { initObservability, sanitizeSentryEvent } from '../lib/video-os-observability.js';
 import { providerMediaHostname } from '../services/heygen.js';
+import { createPinnedLookup } from '../services/media-finisher.js';
 import { videoRenderWorkflowMetadata } from '../workflows/video-render-metadata.js';
 
 function countApiFunctions(directory) {
@@ -105,15 +106,29 @@ test('completed provider telemetry reduces media evidence to a credential-free h
   assert.doesNotMatch(source, /logEvent\('provider\.media_ready',\s*\{\s*sourceUrl\s*[,:}]/);
 });
 
-test('failed provider artifact recovery is narrow and single-use', () => {
+test('failed provider artifact recovery is narrow and transactionally gated', () => {
   const eligible = { status: 'failed', providerJobId: 'existing-provider-job', output: { message: 'Provider media hostname is not allowlisted.' } };
   assert.equal(assertFailedRenderRecoveryEligibility(eligible), true);
   assert.throws(() => assertFailedRenderRecoveryEligibility({ ...eligible, providerJobId: null }));
   assert.throws(() => assertFailedRenderRecoveryEligibility({ ...eligible, output: { message: 'Provider rejected the render.' } }));
   assert.throws(() => assertFailedRenderRecoveryEligibility(eligible, { charged: true }));
-  assert.throws(() => assertFailedRenderRecoveryEligibility(eligible, { recoveryReserved: true }));
+  assert.throws(() => assertFailedRenderRecoveryEligibility({ ...eligible, status: 'provider_submitted' }));
 
   const source = readFileSync('db/repositories.js', 'utf8');
   assert.match(source, /eventType:\s*'workflow\.recovery_reserved'/);
   assert.match(source, /existingProviderJob:\s*true/);
+});
+
+test('pinned provider DNS lookup honors Node single and all-address callback contracts', () => {
+  const lookup = createPinnedLookup({ address: '93.184.216.34', family: 4 });
+  lookup('media.example.test', { all: false }, (error, address, family) => {
+    assert.equal(error, null);
+    assert.equal(address, '93.184.216.34');
+    assert.equal(family, 4);
+  });
+  lookup('media.example.test', { all: true }, (error, addresses) => {
+    assert.equal(error, null);
+    assert.deepEqual(addresses, [{ address: '93.184.216.34', family: 4 }]);
+  });
+  assert.throws(() => createPinnedLookup({ address: undefined, family: undefined }));
 });
