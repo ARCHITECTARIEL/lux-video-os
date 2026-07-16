@@ -84,3 +84,11 @@ test('Preview prebuild uses Preview-scoped Vercel configuration', () => {
   assert.match(source, /process\.argv\.includes\('--preview'\) \? 'preview' : 'production'/);
   assert.match(source, /\['build', '--target', target\]/);
 });
+
+test('finishing retries resume idempotently and failures reach credit release', () => {
+  const source = readFileSync('workflows/video-render.js', 'utf8');
+  assert.match(source, /if \(job\.status === 'provider_ready'\) await transitionJob\(/);
+  assert.match(source, /else if \(job\.status !== 'finishing'\) throw/);
+  assert.match(source, /\['provider_ready', 'finishing'\]\.includes\(job\.status\) && status\.ready/);
+  assert.match(source, /return await finishProviderMedia\(jobId, status\.sourceUrl\)/);
+});

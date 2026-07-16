@@ -26,7 +26,11 @@ async function submitProvider(jobId) {
 
 async function pollProvider(jobId, providerJobId) {
   'use step';
+  const job = await getJob(jobId);
+  if (!job) throw new FatalError('Video job not found.');
   const status = await pollHeygen(providerJobId);
+  if (['provider_ready', 'finishing'].includes(job.status) && status.ready) return status;
+  if (['provider_ready', 'finishing'].includes(job.status)) throw Object.assign(new FatalError('Provider state regressed after media became ready.'), { failureCategory: 'RECONCILIATION' });
   if (!status.ready) await transitionJob({ jobId, stageTo: 'provider_rendering', eventType: 'provider.polled', details: { providerStatus: status.status } });
   else await transitionJob({ jobId, stageTo: 'provider_ready', eventType: 'provider.ready' });
   return status;
@@ -40,7 +44,9 @@ async function finishProviderMedia(jobId, sourceUrl) {
     await transitionJob({ jobId, stageTo: 'finish_contained', eventType: 'finish.contained', details: { reason: 'hosted_finishing_disabled' } });
     return { contained: true };
   }
-  await transitionJob({ jobId, stageTo: 'finishing', eventType: 'finish.started' });
+  if (job.status === 'ready') return job.output;
+  if (job.status === 'provider_ready') await transitionJob({ jobId, stageTo: 'finishing', eventType: 'finish.started' });
+  else if (job.status !== 'finishing') throw Object.assign(new FatalError(`Finishing cannot resume from ${job.status}.`), { failureCategory: 'RECONCILIATION' });
   const artifact = await finishMedia(job, sourceUrl);
   await finalizeReadyJob(jobId, artifact);
   return artifact;
@@ -59,7 +65,7 @@ export async function videoRenderWorkflow(jobId) {
     const { providerJobId } = await submitProvider(jobId);
     for (let attempt = 0; attempt < 120; attempt += 1) {
       const status = await pollProvider(jobId, providerJobId);
-      if (status.ready) return finishProviderMedia(jobId, status.sourceUrl);
+      if (status.ready) return await finishProviderMedia(jobId, status.sourceUrl);
       await sleep('15s');
     }
     throw Object.assign(new Error('Provider render exceeded the 30 minute workflow deadline.'), { failureCategory: 'PROVIDER_TIMEOUT' });
