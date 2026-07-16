@@ -12,6 +12,7 @@ const expectedTables = [
   'entitlements',
   'job_events',
   'media_assets',
+  'projects',
   'rate_limits',
   'stripe_events',
   'users',
@@ -52,6 +53,26 @@ try {
   const inside = await presentTables();
   const missing = expectedTables.filter((table) => !inside.includes(table));
   if (missing.length) throw new Error(`Migration dry run did not create expected tables: ${missing.join(', ')}`);
+  const projectRelationship = await client.query(`
+    select
+      exists (
+        select 1 from information_schema.columns
+        where table_schema = current_schema() and table_name = 'video_jobs' and column_name = 'project_id'
+      ) as project_id_column,
+      exists (
+        select 1
+        from information_schema.table_constraints tc
+        join information_schema.constraint_column_usage ccu
+          on ccu.constraint_schema = tc.constraint_schema and ccu.constraint_name = tc.constraint_name
+        where tc.constraint_schema = current_schema()
+          and tc.table_name = 'video_jobs'
+          and tc.constraint_type = 'FOREIGN KEY'
+          and ccu.table_name = 'projects'
+      ) as project_foreign_key
+  `);
+  if (!projectRelationship.rows[0]?.project_id_column || !projectRelationship.rows[0]?.project_foreign_key) {
+    throw new Error('Migration dry run did not establish video_jobs.project_id -> projects.');
+  }
   await client.query('rollback');
 
   const after = await presentTables();

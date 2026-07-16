@@ -31,7 +31,7 @@ export async function reserveRender({ jobId, accountId, idempotencyKey, correlat
 }
 
 const ALLOWED_JOB_TRANSITIONS = Object.freeze({
-  reserved: ['workflow_starting', 'failed', 'cancelled'],
+  reserved: ['workflow_starting', 'workflow_started', 'failed', 'cancelled'],
   workflow_starting: ['workflow_started', 'failed'],
   workflow_started: ['provider_submitting', 'failed'],
   provider_submitting: ['provider_submitted', 'provider_submit_unknown', 'failed'],
@@ -50,13 +50,26 @@ export function assertJobTransition(stageFrom, stageTo) {
 }
 
 export async function setWorkflowRun(jobId, workflowRunId) {
-  const [job] = await database().update(videoJobs).set({ workflowRunId, status: 'workflow_started', updatedAt: new Date() }).where(and(eq(videoJobs.id, jobId), eq(videoJobs.status, 'workflow_starting'))).returning();
-  return job || null;
+  return database().transaction(async (tx) => {
+    const current = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
+    if (!current) return null;
+    if (current.workflowRunId && current.workflowRunId !== workflowRunId) throw Object.assign(new Error('Workflow run identity conflict.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    if (current.workflowRunId) return current;
+    const [job] = await tx.update(videoJobs).set({ workflowRunId, updatedAt: new Date() }).where(eq(videoJobs.id, jobId)).returning();
+    await tx.insert(jobEvents).values({ jobId, correlationId: current.correlationId, eventType: 'workflow.run_recorded', stageFrom: current.status, stageTo: current.status, details: { workflowRunId } });
+    return job;
+  });
 }
 
 export async function claimWorkflowStart(jobId) {
-  const [job] = await database().update(videoJobs).set({ status: 'workflow_starting', updatedAt: new Date() }).where(and(eq(videoJobs.id, jobId), eq(videoJobs.status, 'reserved'))).returning();
-  return job || null;
+  return database().transaction(async (tx) => {
+    const current = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
+    if (!current || current.status !== 'reserved') return null;
+    const [job] = await tx.update(videoJobs).set({ status: 'workflow_started', updatedAt: new Date() }).where(and(eq(videoJobs.id, jobId), eq(videoJobs.status, 'reserved'))).returning();
+    if (!job) return null;
+    await tx.insert(jobEvents).values({ jobId, correlationId: current.correlationId, eventType: 'workflow.prepared', stageFrom: 'reserved', stageTo: 'workflow_started' });
+    return job;
+  });
 }
 
 export async function getJob(jobId) {

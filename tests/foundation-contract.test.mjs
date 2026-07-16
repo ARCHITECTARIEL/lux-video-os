@@ -6,6 +6,7 @@ import { getTableName } from 'drizzle-orm';
 
 import { authChallenges, authSessions, entitlements, jobEvents, videoJobs } from '../db/schema.js';
 import { assertFailedRenderRecoveryEligibility } from '../db/repositories.js';
+import { shouldReleaseWorkflowReservation } from '../api/video-os-lite/render-v2.js';
 import { initObservability, sanitizeSentryEvent } from '../lib/video-os-observability.js';
 import { providerMediaHostname } from '../services/heygen.js';
 import { createPinnedLookup } from '../services/media-finisher.js';
@@ -77,6 +78,20 @@ test('render start uses immutable workflow metadata registered by the build mani
   const source = readFileSync('api/video-os-lite/render-v2.js', 'utf8');
   assert.match(source, /start\(videoRenderWorkflowMetadata, \[reserved\.job\.id\]\)/);
   assert.doesNotMatch(source, /import \{ videoRenderWorkflow \}/);
+});
+
+test('workflow acceptance preserves its reservation when run tracking persistence fails', () => {
+  const prepared = { id: 'job-proof', status: 'workflow_started', workflowRunId: null };
+  assert.equal(shouldReleaseWorkflowReservation({ job: prepared, workflowDispatchAttempted: false }), true);
+  assert.equal(shouldReleaseWorkflowReservation({ job: prepared, workflowDispatchAttempted: true }), false);
+  assert.equal(shouldReleaseWorkflowReservation({ job: { ...prepared, workflowRunId: 'wrun-proof' }, workflowDispatchAttempted: false }), false);
+
+  const routeSource = readFileSync('api/video-os-lite/render-v2.js', 'utf8');
+  assert.match(routeSource, /workflowDispatchAttempted = true;\s+const run = await start/);
+  assert.match(routeSource, /code: workflowAccepted \? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain'/);
+  const repositorySource = readFileSync('db/repositories.js', 'utf8');
+  assert.match(repositorySource, /status:\s*'workflow_started'.+eq\(videoJobs\.status, 'reserved'\)/s);
+  assert.doesNotMatch(repositorySource, /set\(\{ workflowRunId, status: 'workflow_started'/);
 });
 
 test('Preview prebuild uses Preview-scoped Vercel configuration', () => {

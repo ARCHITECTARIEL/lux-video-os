@@ -12,6 +12,8 @@ export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
   if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST to render.' });
   let reservedJob;
+  let workflowDispatchAttempted = false;
+  let workflowAccepted = false;
   try {
     const session = sessionFromRequest(req);
     if (!featureEnabled('VIDEO_OS_DURABLE_WORKFLOW_ENABLED')) return send(res, 503, { ok: false, code: 'durable_workflow_disabled', error: 'Live rendering is contained pending workflow verification.' });
@@ -26,15 +28,25 @@ export default async function handler(req, res) {
     reservedJob = reserved.job;
     const claimed = await claimWorkflowStart(reserved.job.id);
     if (claimed) {
+      reservedJob = claimed;
+      workflowDispatchAttempted = true;
       const run = await start(videoRenderWorkflowMetadata, [reserved.job.id]);
-      reservedJob = await setWorkflowRun(reserved.job.id, run.runId);
+      workflowAccepted = true;
+      const trackedJob = await setWorkflowRun(reserved.job.id, run.runId);
+      if (!trackedJob) throw Object.assign(new Error('Accepted workflow run could not be attached to its job.'), { statusCode: 202, failureCategory: 'RECONCILIATION' });
+      reservedJob = trackedJob;
     } else {
       reservedJob = await getJob(reserved.job.id);
     }
     return send(res, reserved.replayed ? 200 : 202, { ok: true, ...accountDto(account), provider: { id: 'heygen', name: 'HeyGen', configured: true }, job: jobDto(reservedJob), workflowRunId: reservedJob.workflowRunId, correlationId: reservedJob.correlationId, status: reservedJob.status, stage: reservedJob.status, message: reserved.replayed ? 'Existing render workflow recovered.' : 'Render workflow started.' });
   } catch (error) {
-    if (reservedJob && !reservedJob.workflowRunId) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.').catch(() => {});
+    if (shouldReleaseWorkflowReservation({ job: reservedJob, workflowDispatchAttempted })) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.').catch(() => {});
     captureJobError(error, { jobId: reservedJob?.id, accountId: reservedJob?.accountId, correlationId: reservedJob?.correlationId, route: 'render' });
+    if (workflowDispatchAttempted) return send(res, 202, { ok: true, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', job: jobDto(reservedJob), correlationId: reservedJob?.correlationId, status: reservedJob?.status, stage: reservedJob?.status, message: 'Workflow dispatch may have been accepted; reservation is preserved pending reconciliation.' });
     return send(res, error.statusCode || 400, { ok: false, error: error.message || 'Render failed.', issues: error.issues });
   }
+}
+
+export function shouldReleaseWorkflowReservation({ job, workflowDispatchAttempted }) {
+  return Boolean(job && !workflowDispatchAttempted && !job.workflowRunId);
 }
