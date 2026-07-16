@@ -35,5 +35,5 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
         env:
-          PLAYWRIGHT_BASE_URL: http://127.0.0.1:4173
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:4187
           VIDEO_OS_E2E_OFFLINE: 'true'
