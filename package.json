@@ -1,4 +1,5 @@
 {
+    "name": "lux-video-os",
     "private": true,
     "type": "module",
     "scripts": {
