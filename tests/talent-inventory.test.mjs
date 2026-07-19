@@ -45,6 +45,19 @@ test('HeyGen v3 pagination fails closed on a repeated cursor', async () => {
   );
 });
 
+test('HeyGen v3 pagination can intentionally cap a large public catalog', async () => {
+  const fetchImpl = async () => response({ data: [{ id: 'one' }, { id: 'two' }], has_more: true, next_token: 'page-2' });
+  const result = await fetchPaginatedCollection(
+    'https://api.heygen.com/v3/avatars/looks?ownership=public&limit=50',
+    'secret',
+    { fetchImpl, maxPages: 4, maxItems: 2 },
+  );
+  assert.deepEqual(result.items.map((item) => item.id), ['one', 'two']);
+  assert.equal(result.pages, 1);
+  assert.equal(result.complete, false);
+  assert.equal(result.truncated, true);
+});
+
 test('featured presenters are matched only by exact renderable look ID', () => {
   const [ariel, oso, kd] = buildFeaturedAvatars([
     { id: 'ddd0cccc81334e50b493a12c34fb47b1', name: 'Wrong display name', status: 'completed', preview_image_url: 'https://files.heygen.ai/ariel.jpg' },
@@ -90,7 +103,13 @@ test('talent handler uses paginated private and public v3 looks', async (t) => {
   await talentHandler({ method: 'GET' }, res);
   assert.equal(body.connection.featuredReady, 3);
   assert.equal(body.connection.privateLookCount, 3);
-  assert.deepEqual(body.connection.pagination, { privateLooksPages: 1, publicLooksPages: 1 });
+  assert.deepEqual(body.connection.pagination, {
+    privateLooksPages: 1,
+    publicLooksPages: 1,
+    privateLooksComplete: true,
+    publicLooksComplete: true,
+    publicLooksTruncated: false,
+  });
   assert(urls.some((url) => url.includes('/v3/avatars/looks?ownership=private&limit=50')));
   assert(urls.some((url) => url.includes('/v3/avatars/looks?ownership=public&limit=50')));
 });

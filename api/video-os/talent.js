@@ -28,6 +28,7 @@ function pagination(payload) {
 export async function fetchPaginatedCollection(url, key, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const maxPages = Number.isInteger(options.maxPages) ? options.maxPages : 10;
+  const maxItems = Number.isInteger(options.maxItems) && options.maxItems > 0 ? options.maxItems : Number.POSITIVE_INFINITY;
   const items = [];
   const itemIds = new Set();
   const tokens = new Set();
@@ -44,7 +45,8 @@ export async function fetchPaginatedCollection(url, key, options = {}) {
       items.push(item);
     }
     const { hasMore, nextToken } = pagination(payload);
-    if (!hasMore) return { items, pages: page };
+    if (items.length >= maxItems) return { items: items.slice(0, maxItems), pages: page, complete: !hasMore, truncated: hasMore || items.length > maxItems };
+    if (!hasMore) return { items, pages: page, complete: true, truncated: false };
     if (!nextToken) throw new Error('HeyGen inventory pagination did not return a next token.');
     if (tokens.has(nextToken)) throw new Error('HeyGen inventory returned a repeated pagination token.');
     tokens.add(nextToken);
@@ -133,7 +135,7 @@ export default async function handler(req, res) {
   const accountAvatarsUrl = process.env.HEYGEN_ACCOUNT_AVATARS_URL || 'https://api.heygen.com/v3/avatars/looks?ownership=private&limit=50';
   const publicLooksUrl = process.env.HEYGEN_AVATARS_URL || 'https://api.heygen.com/v3/avatars/looks?ownership=public&limit=50';
   const voicesUrl = process.env.HEYGEN_VOICES_URL || 'https://api.heygen.com/v2/voices';
-  const settled = await Promise.allSettled([fetchPaginatedCollection(accountAvatarsUrl, key), fetchPaginatedCollection(publicLooksUrl, key), fetchCollection(voicesUrl, key)]);
+  const settled = await Promise.allSettled([fetchPaginatedCollection(accountAvatarsUrl, key), fetchPaginatedCollection(publicLooksUrl, key, { maxItems: 50 }), fetchCollection(voicesUrl, key)]);
   const accountAvatars = settled[0].status === 'fulfilled' ? settled[0].value.items : [];
   const publicLooks = settled[1].status === 'fulfilled' ? settled[1].value.items : [];
   const voices = settled[2].status === 'fulfilled' ? settled[2].value : [];
@@ -161,6 +163,9 @@ export default async function handler(req, res) {
       pagination: {
         privateLooksPages: settled[0].status === 'fulfilled' ? settled[0].value.pages : 0,
         publicLooksPages: settled[1].status === 'fulfilled' ? settled[1].value.pages : 0,
+        privateLooksComplete: settled[0].status === 'fulfilled' ? settled[0].value.complete : false,
+        publicLooksComplete: settled[1].status === 'fulfilled' ? settled[1].value.complete : false,
+        publicLooksTruncated: settled[1].status === 'fulfilled' ? settled[1].value.truncated : false,
       },
     },
   });
