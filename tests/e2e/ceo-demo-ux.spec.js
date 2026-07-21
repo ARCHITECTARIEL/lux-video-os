@@ -24,7 +24,7 @@ function voice(item, overrides = {}) {
   return { id: item.voiceId, name: `${item.label} voice`, source: 'heygen', providerReady: true, archived: false, blocked: false, ...overrides };
 }
 
-async function installAppRoutes(page, { results = [], project = null, omitVoiceId = null } = {}) {
+async function installAppRoutes(page, { results = [], project = null, identities = [], omitVoiceId = null } = {}) {
   const shared = Array.from({ length: 24 }, (_, index) => ({
     id: `shared-${String(index).padStart(2, '0')}`,
     name: `Shared ${String(index).padStart(2, '0')}`,
@@ -46,10 +46,38 @@ async function installAppRoutes(page, { results = [], project = null, omitVoiceI
   await page.route('**/api/video-os-lite/session', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, signedIn: true, email: 'proof@example.test', account: { accountId: 'acct-proof', name: 'CEO Proof' }, credits: { accountId: 'acct-proof', balance: 180, reserved: 0 } }) }));
   await page.route('**/api/video-os-lite/providers', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, providers: [{ id: 'heygen', name: 'HeyGen', configured: true, cost: 90 }], credits: { accountId: 'acct-proof', balance: 180, reserved: 0 } }) }));
   await page.route('**/api/video-os-lite/results*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, results }) }));
+  await page.route('**/api/video-os-lite/identities*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, identities }) }));
   await page.route('**/api/video-os-lite/projects', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, projects: project ? [project] : [] }) }));
   await page.route('**/api/video-os-lite/render', (route) => { renderRequests += 1; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'Render forbidden in CEO UX test' }) }); });
   return { renderRequests: () => renderRequests };
 }
+
+test('ready private identity appears before shared Cast and restores its recommended cloned voice', async ({ page }) => {
+  const identity = { id: '4c2f26b6-cdd4-4d53-8e37-17e7858c679c', displayName: 'CEO Identity', overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY', portraitUrl: '/api/video-os-lite/asset?assetId=portrait-proof', ready: true };
+  const project = {
+    id: 'project-identity',
+    identityId: identity.id,
+    title: 'Private identity proof',
+    script: 'Use only the internal identity reference.',
+    avatar: { id: `identity-avatar:${identity.id}`, identityId: identity.id, name: identity.displayName, source: 'identity' },
+    voice: { id: `identity-voice:${identity.id}`, identityId: identity.id, name: `${identity.displayName} cloned voice`, source: 'identity' },
+  };
+  const guard = await installAppRoutes(page, { identities: [identity], project });
+  await page.route('**/api/video-os-lite/asset*', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }));
+  await page.goto('/');
+
+  const privateCard = page.locator(`#my-cast-list [data-identity-id="${identity.id}"]`);
+  await expect(privateCard).toHaveCount(1);
+  await expect(privateCard).toHaveClass(/selected/);
+  await expect(page.locator('#voice-list [data-voice-id]').first()).toHaveAttribute('data-voice-id', `identity-voice:${identity.id}`);
+  await expect(page.locator(`[data-voice-id="identity-voice:${identity.id}"] .recommended-badge`)).toHaveText('Recommended');
+  expect(await page.evaluate(() => Boolean(document.querySelector('#my-cast-list')?.compareDocumentPosition(document.querySelector('#avatar-list')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+
+  await page.reload();
+  await expect(page.locator(`#my-cast-list [data-identity-id="${identity.id}"]`)).toHaveClass(/selected/);
+  await expect(page.locator('#voice-list [data-voice-id]').first()).toHaveAttribute('data-voice-id', `identity-voice:${identity.id}`);
+  expect(guard.renderRequests()).toBe(0);
+});
 
 test('featured cast, curated list, voice priority, persistence, and completed Final Cut are connected', async ({ page }) => {
   const ready = {

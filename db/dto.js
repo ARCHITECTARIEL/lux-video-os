@@ -15,6 +15,7 @@ export function jobDto(job) {
     title: job.title,
     format: job.format,
     projectId: job.projectId,
+    identityId: job.input?.identityId || null,
     avatar: output.avatar || job.input?.avatar,
     voice: output.voice || job.input?.voice,
     productionKit: job.input?.productionKit || {},

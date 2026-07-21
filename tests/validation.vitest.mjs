@@ -9,6 +9,11 @@ describe('render validation', () => {
     expect(() => parseOrThrow(renderRequestSchema, valid)).not.toThrow();
     expect(() => parseOrThrow(renderRequestSchema, { ...valid, sourceUrl: 'https://evil.test' })).toThrow();
   });
+
+  it('accepts an internal identity reference without browser provider IDs', () => {
+    const valid = { idempotencyKey: crypto.randomUUID(), projectId: crypto.randomUUID(), identityId: crypto.randomUUID(), provider: 'heygen', title: 'Identity proof', format: 'vertical', script: 'Hello', productionKit: {} };
+    expect(parseOrThrow(renderRequestSchema, valid).identityId).toBe(valid.identityId);
+  });
 });
 
 describe('Stripe validation', () => {

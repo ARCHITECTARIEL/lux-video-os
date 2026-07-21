@@ -4,7 +4,7 @@ import ws from 'ws';
 neonConfig.webSocketConstructor = ws;
 const connectionString = String(process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL || '').trim();
 if (!connectionString) throw new Error('DATABASE_URL_UNPOOLED or DATABASE_URL is required.');
-const expected = ['auth_challenges', 'auth_sessions', 'credit_accounts', 'credit_transactions', 'entitlements', 'job_events', 'media_assets', 'projects', 'rate_limits', 'stripe_events', 'users', 'video_jobs'];
+const expected = ['auth_challenges', 'auth_sessions', 'credit_accounts', 'credit_transactions', 'entitlements', 'identity_consents', 'job_events', 'media_assets', 'projects', 'rate_limits', 'stripe_events', 'user_identities', 'users', 'video_jobs'];
 const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 10_000 });
 const client = await pool.connect();
 try {

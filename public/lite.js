@@ -1,6 +1,6 @@
 import { FEATURED_CAST, curateDefaultCast, matchedVoiceId, prioritizeVoices } from './video-os-cast.js';
 
-const appState = { step: 0, avatar: null, voice: null, voiceSelectionExplicit: false, project: null, uploadedAsset: null, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultsState: 'signed-out', activeResult: null, resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 20, voice: 20 } };
+const appState = { step: 0, avatar: null, voice: null, identityId: null, identities: [], voiceSelectionExplicit: false, project: null, uploadedAsset: null, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultsState: 'signed-out', activeResult: null, resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 20, voice: 20 } };
 const browserAccountId = (() => {
   try {
     const key = 'luxVideoOsAccountId';
@@ -149,7 +149,85 @@ function availableAvatarItems() {
 function availableVoiceItems() {
   const items = appState.libraries.voice || [];
   const prioritized = prioritizeVoices(items, appState.avatar?.id);
-  return prioritized.length || !canUseLocalApi() ? prioritized : items;
+  const privateVoice = appState.voice?.source === 'identity' && appState.voice.identityId === appState.identityId ? [appState.voice] : [];
+  const available = prioritized.length || !canUseLocalApi() ? prioritized : items;
+  return [...privateVoice, ...available.filter((item) => item.id !== privateVoice[0]?.id)];
+}
+
+function identityAvatar(identity) {
+  return { id: `identity-avatar:${identity.id}`, identityId: identity.id, name: identity.displayName || identity.name || 'My identity', source: 'identity', providerReady: true, previewUrl: identity.portraitUrl || '' };
+}
+
+function identityVoice(identity) {
+  return { id: `identity-voice:${identity.id}`, identityId: identity.id, name: `${identity.displayName || identity.name || 'My identity'} cloned voice`, source: 'identity', providerReady: true };
+}
+
+function chooseIdentity(identity) {
+  if (!identity?.id) return;
+  appState.identityId = identity.id;
+  appState.avatar = identityAvatar(identity);
+  if (!appState.voiceSelectionExplicit || appState.voice?.source === 'identity') appState.voice = identityVoice(identity);
+  renderMyCast();
+  renderFeaturedCast();
+  renderOptions('avatar');
+  renderOptions('voice');
+}
+
+function renderMyCast() {
+  const target = document.querySelector('#my-cast-list');
+  if (!target) return;
+  if (!appState.signedIn) {
+    target.innerHTML = '<p class="my-cast-empty">Sign in to use your private video identities.</p>';
+    return;
+  }
+  if (!appState.identities.length) {
+    target.innerHTML = '<p class="my-cast-empty">No ready identities yet. Create one in Identity Studio.</p>';
+    return;
+  }
+  target.replaceChildren(...appState.identities.map((identity) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `my-cast-card${appState.identityId === identity.id ? ' selected' : ''}`;
+    button.dataset.identityId = identity.id;
+    button.setAttribute('aria-pressed', String(appState.identityId === identity.id));
+    const avatar = identityAvatar(identity);
+    if (avatar.previewUrl) {
+      const image = document.createElement('img');
+      image.src = avatar.previewUrl;
+      image.alt = `${avatar.name} private identity preview`;
+      button.append(image);
+    } else {
+      const fallback = document.createElement('span');
+      fallback.className = 'my-cast-avatar';
+      fallback.textContent = avatar.name.slice(0, 2).toUpperCase();
+      button.append(fallback);
+    }
+    const copy = document.createElement('span');
+    copy.className = 'my-cast-copy';
+    const name = document.createElement('strong');
+    name.textContent = avatar.name;
+    const status = document.createElement('small');
+    status.textContent = 'Photo avatar + cloned voice ready';
+    copy.append(name, status);
+    button.append(copy);
+    button.addEventListener('click', () => chooseIdentity(identity));
+    return button;
+  }));
+}
+
+async function loadMyCast() {
+  if (!appState.signedIn || !canUseHostedApi()) {
+    appState.identities = [];
+    renderMyCast();
+    return;
+  }
+  try {
+    const data = await getJson('/api/video-os-lite/identities');
+    appState.identities = (data.identities || []).filter((identity) => !identity.archivedAt && [identity.overallStatus, identity.avatarStatus, identity.voiceStatus].every((status) => String(status || '').toUpperCase() === 'READY'));
+  } catch {
+    appState.identities = [];
+  }
+  renderMyCast();
 }
 
 function renderFeaturedCast() {
@@ -203,6 +281,7 @@ function chooseCard(type, item, options = {}) {
   }
   const explicit = options.explicit !== false;
   if (type === 'voice' && explicit) appState.voiceSelectionExplicit = true;
+  if (type === 'avatar' && item.source !== 'identity') appState.identityId = null;
   appState[type] = item;
   if (type === 'avatar') {
     if (!appState.voiceSelectionExplicit && recommended) appState.voice = recommended;
@@ -246,7 +325,7 @@ function renderOptions(type) {
     const meta = document.createElement('small');
     meta.textContent = `${item.style || item.role || 'Ready to use'} | ${item.source || 'local'}`;
     button.append(name, meta);
-    if (recommendation && item.id === recommendation) {
+    if ((recommendation && item.id === recommendation) || (item.source === 'identity' && item.identityId === appState.identityId)) {
       const badge = document.createElement('span');
       badge.className = 'recommended-badge';
       badge.textContent = 'Recommended';
@@ -263,6 +342,7 @@ function renderOptions(type) {
     more.textContent = `Show ${Math.min(20, filtered.length - visible.length)} more voices`;
   }
   if (!appState[type] || !filtered.some((item) => item.id === appState[type].id)) {
+    if (type === 'avatar' && appState.identityId) return;
     const first = visible.find((item) => item.providerReady !== false);
     if (first) chooseCard(type, first, { explicit: false });
   }
@@ -473,11 +553,13 @@ async function saveLocalProject(payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       id: appState.project?.id,
+      identityId: appState.identityId || undefined,
       title: payload.title,
       script: payload.script,
       avatar: { id: appState.avatar?.id, name: appState.avatar?.name, source: appState.avatar?.source, ...(appState.avatar?.previewUrl ? { previewUrl: appState.avatar.previewUrl } : {}) },
       voice: { id: appState.voice?.id, name: appState.voice?.name, source: appState.voice?.source },
       settings: {
+        identityId: appState.identityId || undefined,
         audience: payload.audience,
         objective: payload.objective,
         goalType: payload.goalType,
@@ -501,9 +583,12 @@ async function restoreLatestProject() {
   const project = data.projects?.[0];
   if (!project) return;
   appState.project = project;
-  appState.avatar = project.avatar;
-  appState.voice = project.voice;
+  appState.identityId = project.identityId || project.settings?.identityId || null;
+  const restoredIdentity = appState.identityId ? appState.identities.find((identity) => identity.id === appState.identityId) : null;
+  appState.avatar = restoredIdentity ? identityAvatar(restoredIdentity) : project.avatar;
+  appState.voice = restoredIdentity && project.voice?.source === 'identity' ? identityVoice(restoredIdentity) : project.voice;
   appState.voiceSelectionExplicit = Boolean(project.voice?.id);
+  renderMyCast();
   const title = form.elements.namedItem('title');
   const script = form.elements.namedItem('script');
   if (title) title.value = project.title || '';
@@ -511,6 +596,23 @@ async function restoreLatestProject() {
   renderFeaturedCast();
   rerenderLibrary('avatar');
   rerenderLibrary('voice');
+}
+
+function consumeIdentitySelection() {
+  if (!appState.signedIn) return;
+  const url = new URL(window.location.href);
+  const identityId = url.searchParams.get('identityId');
+  if (!identityId) return;
+  url.searchParams.delete('identityId');
+  window.history.replaceState({}, '', url);
+  const identity = appState.identities.find((item) => item.id === identityId);
+  if (!identity) {
+    showToast('That private identity is unavailable for this account.');
+    return;
+  }
+  chooseIdentity(identity);
+  setStep(1);
+  showToast((identity.displayName || 'Private identity') + ' is ready in Cast.');
 }
 
 function firstCaption(script) {
@@ -521,7 +623,8 @@ function firstCaption(script) {
 async function generateVideo() {
   if (!requireCurrentStep()) return;
   if (!appState.signedIn) { showToast('Sign in before live rendering.'); openAuthModal(); return; }
-  if (!appState.avatar || !appState.voice || appState.avatar.source !== 'heygen' || appState.voice.source !== 'heygen') { showToast('Choose a connected HeyGen avatar and voice before rendering.'); return; }
+  const privateIdentityReady = Boolean(appState.identityId && appState.avatar?.source === 'identity' && appState.voice);
+  if (!appState.avatar || !appState.voice || (!privateIdentityReady && (appState.avatar.source !== 'heygen' || appState.voice.source !== 'heygen'))) { showToast('Choose a connected HeyGen avatar and voice before rendering.'); return; }
   const progress = document.querySelector('#progress');
   const bar = progress.querySelector('span');
   const payload = formData();
@@ -1125,10 +1228,19 @@ async function renderWithProvider(options = {}) {
   setFinalRenderStep('submitted', `Submitting to ${providerBuyerLabel(provider)}...`);
   try {
     if (!canUseHostedApi()) throw new Error('Live render needs the Video OS engine.');
+    const requestPayload = { idempotencyKey: appState.renderIdempotencyKey || crypto.randomUUID(), projectId: payload.projectId, provider: provider.id, title: payload.title || 'Video OS', format: document.querySelector('#export-format').value, script: payload.script || payload.scriptInput, productionKit: appState.productionKit || {} };
+    if (appState.identityId) {
+      requestPayload.identityId = appState.identityId;
+      if (appState.voiceSelectionExplicit && payload.voice?.source === 'heygen') requestPayload.voice = { voiceId: payload.voice.voiceId || payload.voice.id, locale: payload.voice.locale };
+    }
+    else {
+      requestPayload.avatar = { avatarId: payload.avatar?.avatarId || payload.avatar?.id };
+      requestPayload.voice = { voiceId: payload.voice?.voiceId || payload.voice?.id, locale: payload.voice?.locale };
+    }
     const data = await getJson('/api/video-os-lite/render', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idempotencyKey: appState.renderIdempotencyKey || crypto.randomUUID(), projectId: payload.projectId, provider: provider.id, title: payload.title || 'Video OS', format: document.querySelector('#export-format').value, script: payload.script || payload.scriptInput, avatar: { avatarId: payload.avatar?.avatarId || payload.avatar?.id }, voice: { voiceId: payload.voice?.voiceId || payload.voice?.id, locale: payload.voice?.locale }, productionKit: appState.productionKit || {} }),
+      body: JSON.stringify(requestPayload),
     });
     appState.credits = data.credits;
     appState.providerRender = data;
@@ -1298,6 +1410,7 @@ async function loadAccount() {
     renderProviderStatus();
     renderPricing();
     renderAccount();
+    await loadMyCast();
     await loadResults();
   } catch {
     if (!appState.account) appState.account = publicDemoAccount;
@@ -1400,7 +1513,10 @@ async function passwordLogin() {
     document.querySelector('#auth-retry').hidden = true;
     setAuthStatus(data.message || 'Signed in. Live rendering is ready.', 'success');
     await loadProviders();
-    await loadResults();
+    await loadMyCast().catch(() => {});
+    await restoreLatestProject().catch(() => {});
+    consumeIdentitySelection();
+    await loadResults().catch(() => {});
     renderAccount();
     closeAuthModal();
     showToast('Signed in. You can render videos now.');
@@ -1441,7 +1557,17 @@ async function signOut() {
     appState.signedIn = false;
     appState.userEmail = null;
     appState.results = [];
+    appState.identities = [];
+    appState.identityId = null;
+    appState.project = null;
+    appState.avatar = null;
+    appState.voice = null;
+    appState.voiceSelectionExplicit = false;
     authLastAction = null;
+    renderMyCast();
+    renderFeaturedCast();
+    renderOptions('avatar');
+    renderOptions('voice');
     await loadProviders();
     await loadAccount();
     renderResultGallery();
@@ -1568,6 +1694,7 @@ setStep(0);
 Promise.all([loadTalent(), loadProviders(), loadAssetCatalog(), loadAccount()]).then(async () => {
   consumeAuthReturn();
   await restoreLatestProject().catch(() => {});
+  consumeIdentitySelection();
   await loadResults();
 });
 

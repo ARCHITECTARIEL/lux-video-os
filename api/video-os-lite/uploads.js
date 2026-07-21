@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { addMediaAsset } from '../../db/repositories.js';
+import { addMediaAsset, ensureAccount } from '../../db/repositories.js';
+import { validateIdentityUpload } from '../../lib/identity-upload.js';
 import { sessionFromRequest } from '../../lib/video-os-account.js';
 import { PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../../lib/video-os-private-blob.js';
 import { accountHash } from '../../lib/video-os-security.js';
@@ -41,6 +42,38 @@ export default async function handler(req, res) {
   try {
     const payload = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const session = sessionFromRequest(req);
+    await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email, initialCredits: 0 });
+    if (payload.kind === 'identity_photo' || payload.kind === 'identity_voice') {
+      const identityKind = payload.kind === 'identity_photo' ? 'photo' : 'voice';
+      const validated = validateIdentityUpload({ dataUrl: payload.dataUrl, kind: identityKind });
+      if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error('BLOB_READ_WRITE_TOKEN is not configured on Vercel.');
+      const pathname = `video-os/uploads/${accountHash(session.accountId)}/${safeName(payload.name)}-${crypto.randomUUID()}${validated.extension}`;
+      const blob = await putPrivateBlob(PRIVATE_BLOB_CLASSIFICATIONS.CUSTOMER_UPLOAD, pathname, validated.buffer, {
+        contentType: validated.contentType,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+        addRandomSuffix: true,
+      });
+      const asset = await addMediaAsset({
+        accountId: session.accountId,
+        kind: identityKind === 'photo' ? 'identity-photo-source' : 'identity-voice-source',
+        privatePathname: blob.pathname || pathname,
+        contentType: validated.contentType,
+        bytes: validated.buffer.length,
+        sha256: validated.sha256,
+        widthPx: validated.width || null,
+        heightPx: validated.height || null,
+        durationMs: validated.durationSeconds ? Math.round(validated.durationSeconds * 1000) : null,
+      });
+      return send(res, 201, {
+        ok: true,
+        assetId: asset.id,
+        previewUrl: `/api/video-os-lite/asset?assetId=${encodeURIComponent(asset.id)}`,
+        mime: validated.contentType,
+        kind: payload.kind,
+        size: validated.buffer.length,
+        message: 'Identity source stored privately.',
+      });
+    }
     const dataUrl = String(payload.dataUrl || '');
     if (!dataUrl.startsWith('data:') || !dataUrl.includes(',')) throw new Error('Choose an image or video file to upload first.');
     const [header, encoded] = dataUrl.split(',', 2);
@@ -77,6 +110,6 @@ export default async function handler(req, res) {
       message: 'Upload stored privately. Provider submission remains disabled until short-lived private delivery is verified.',
     });
   } catch (error) {
-    return send(res, 400, { ok: false, error: error.message || 'Upload failed.' });
+    return send(res, error.statusCode || 400, { ok: false, error: error.message || 'Upload failed.' });
   }
 }
