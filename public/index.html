@@ -69,6 +69,11 @@
         </div>
       </section>
 
+      <section id="featured-cast" class="featured-cast featured-cast-cover" aria-labelledby="featured-cast-title">
+        <div class="featured-cast-head"><div><p class="eyebrow">LUX featured cast</p><h2 id="featured-cast-title">Ariel, OSO, and KD</h2></div><span>Provider-verified identities</span></div>
+        <div id="featured-cast-list" class="featured-cast-list" aria-live="polite"></div>
+      </section>
+
       <section class="creator creator-compressed" aria-label="Create video wizard">
         <aside class="steps" aria-label="Workflow steps">
           <button class="active" type="button" data-step-jump="0"><span>1</span> Brief<small>Goal + script</small></button>
@@ -192,7 +197,7 @@
           </div>
         </form>
       </section>
-      <section id="preview" class="preview-zone" aria-labelledby="preview-title">
+      <section id="preview" class="preview-zone" data-preview-state="empty" aria-labelledby="preview-title">
         <div class="panel-head"><p class="eyebrow">Preview</p><h2 id="preview-title">Final cut preview</h2><p id="preview-empty">Watch the cast, script, captions, colors, kit, and export state come together before download.</p></div>
         <div id="preview-card" class="preview-card empty">
           <div class="video-stage" aria-label="Video preview"><div class="presenter">AI</div><div class="caption">Your script preview will appear here.</div></div>
@@ -316,7 +321,7 @@
       </section>
     </div>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-    <script src="lite.js" defer></script>
+    <script src="lite.js" type="module"></script>
   </body>
 </html>
 

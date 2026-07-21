@@ -1,4 +1,6 @@
-const appState = { step: 0, avatar: null, voice: null, project: null, uploadedAsset: null, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 12, voice: 12 } };
+import { FEATURED_CAST, curateDefaultCast, matchedVoiceId, prioritizeVoices } from './video-os-cast.js';
+
+const appState = { step: 0, avatar: null, voice: null, voiceSelectionExplicit: false, project: null, uploadedAsset: null, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultsState: 'signed-out', activeResult: null, resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 20, voice: 20 } };
 const browserAccountId = (() => {
   try {
     const key = 'luxVideoOsAccountId';
@@ -138,67 +140,155 @@ function requireCurrentStep() {
   return true;
 }
 
-function chooseCard(type, item) {
+function availableAvatarItems() {
+  const items = appState.libraries.avatar || [];
+  const curated = curateDefaultCast(items, appState.results, 20);
+  return curated.length || !canUseLocalApi() ? curated : items.slice(0, 20);
+}
+
+function availableVoiceItems() {
+  const items = appState.libraries.voice || [];
+  const prioritized = prioritizeVoices(items, appState.avatar?.id);
+  return prioritized.length || !canUseLocalApi() ? prioritized : items;
+}
+
+function renderFeaturedCast() {
+  const target = document.querySelector('#featured-cast-list');
+  if (!target) return;
+  const avatars = new Map((appState.libraries.avatar || []).map((item) => [item.id, item]));
+  const voices = new Map((appState.libraries.voice || []).map((item) => [item.id, item]));
+  target.replaceChildren(...FEATURED_CAST.map((featured) => {
+    const item = avatars.get(featured.avatarId) || { id: featured.avatarId, name: featured.label, source: 'heygen', providerReady: false, unavailableReason: 'Provider availability has not been confirmed.' };
+    const matchedVoice = voices.get(featured.voiceId);
+    const pairReady = item.providerReady === true && matchedVoice?.providerReady !== false && Boolean(matchedVoice);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `featured-cast-card${appState.avatar?.id === item.id ? ' selected' : ''}${pairReady ? '' : ' unavailable'}`;
+    button.dataset.featuredAvatarId = featured.avatarId;
+    button.setAttribute('aria-pressed', String(appState.avatar?.id === item.id));
+    button.disabled = !pairReady;
+    if (item.previewUrl) {
+      const image = document.createElement('img');
+      image.src = item.previewUrl;
+      image.alt = `${featured.label} provider preview`;
+      image.loading = 'eager';
+      button.append(image);
+    } else {
+      const fallback = document.createElement('span');
+      fallback.className = 'featured-cast-fallback';
+      fallback.textContent = featured.label.slice(0, 2).toUpperCase();
+      button.append(fallback);
+    }
+    const copy = document.createElement('span');
+    copy.className = 'featured-cast-copy';
+    const name = document.createElement('strong');
+    name.textContent = featured.label;
+    const state = document.createElement('small');
+    state.textContent = pairReady ? 'Presenter + matched voice ready' : item.providerReady !== true ? (item.unavailableReason || 'Provider unavailable') : `${featured.label}'s matched voice is unavailable.`;
+    copy.append(name, state);
+    button.append(copy);
+    if (pairReady) button.addEventListener('click', () => chooseCard('avatar', item));
+    return button;
+  }));
+}
+
+function chooseCard(type, item, options = {}) {
+  if (!item || item.providerReady === false) return;
+  const recommendedId = type === 'avatar' ? matchedVoiceId(item.id) : null;
+  const recommended = recommendedId ? (appState.libraries.voice || []).find((voice) => voice.id === recommendedId && voice.providerReady !== false) : null;
+  if (recommendedId && !recommended) {
+    const label = FEATURED_CAST.find((entry) => entry.avatarId === item.id)?.label || 'This presenter';
+    showToast(`${label}'s exact matched voice is unavailable. Choose another provider-ready presenter.`);
+    return;
+  }
+  const explicit = options.explicit !== false;
+  if (type === 'voice' && explicit) appState.voiceSelectionExplicit = true;
   appState[type] = item;
+  if (type === 'avatar') {
+    if (!appState.voiceSelectionExplicit && recommended) appState.voice = recommended;
+    renderFeaturedCast();
+    renderOptions('voice');
+  }
   document.querySelectorAll(`[data-${type}-id]`).forEach((card) => {
-    card.classList.toggle('selected', card.dataset[`${type}Id`] === item.id);
+    const selected = card.dataset[`${type}Id`] === item.id;
+    card.classList.toggle('selected', selected);
+    card.setAttribute('aria-pressed', String(selected));
   });
 }
 
 function searchableItems(type) {
   const query = document.querySelector(`#${type}-search`)?.value.trim().toLowerCase() || '';
-  const items = appState.libraries[type] || [];
+  const items = type === 'avatar' ? availableAvatarItems() : availableVoiceItems();
   if (!query) return items;
   return items.filter((item) => `${item.name || ''} ${item.id || ''} ${item.style || ''} ${item.role || ''}`.toLowerCase().includes(query));
 }
 
-function renderOptions(type, items) {
+function renderOptions(type) {
   const target = document.querySelector(type === 'avatar' ? '#avatar-list' : '#voice-list');
-  const safeItems = items.length ? items : (canUseLocalApi() ? fallbackTalent[`${type}s`] : []);
-  appState.libraries[type] = safeItems;
   const filtered = searchableItems(type);
   const visible = filtered.slice(0, appState.visible[type]);
+  const recommendation = type === 'voice' ? matchedVoiceId(appState.avatar?.id) : null;
   target.replaceChildren(...visible.map((item) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `option-card${appState[type]?.id === item.id ? ' selected' : ''}`;
     button.dataset[`${type}Id`] = item.id;
-    button.innerHTML = `<strong>${item.name || item.id}</strong><small>${item.style || item.role || 'Ready to use'} | ${item.source || 'local'}</small>`;
+    button.setAttribute('aria-pressed', String(appState[type]?.id === item.id));
     if (type === 'avatar' && item.previewUrl) {
       const image = document.createElement('img');
       image.src = item.previewUrl;
       image.alt = `${item.name || 'Avatar'} preview`;
       image.loading = 'lazy';
-      button.prepend(image);
+      button.append(image);
+    }
+    const name = document.createElement('strong');
+    name.textContent = item.name || item.id;
+    const meta = document.createElement('small');
+    meta.textContent = `${item.style || item.role || 'Ready to use'} | ${item.source || 'local'}`;
+    button.append(name, meta);
+    if (recommendation && item.id === recommendation) {
+      const badge = document.createElement('span');
+      badge.className = 'recommended-badge';
+      badge.textContent = 'Recommended';
+      button.append(badge);
     }
     button.addEventListener('click', () => chooseCard(type, item));
     return button;
   }));
   const count = document.querySelector(`#${type}-count`);
-  if (count) count.textContent = `${filtered.length.toLocaleString()} ${type === 'avatar' ? 'avatars' : 'voices'} available`;
+  if (count) count.textContent = type === 'avatar' ? `${filtered.length} of 20 curated avatars` : `${filtered.length.toLocaleString()} voices available`;
   const more = document.querySelector(`#${type}-more`);
   if (more) {
-    more.hidden = visible.length >= filtered.length;
-    more.textContent = `Show ${Math.min(12, filtered.length - visible.length)} more ${type === 'avatar' ? 'avatars' : 'voices'}`;
+    more.hidden = visible.length >= filtered.length || type === 'avatar';
+    more.textContent = `Show ${Math.min(20, filtered.length - visible.length)} more voices`;
   }
-  if (safeItems.length && (!appState[type] || !safeItems.some((item) => item.id === appState[type].id))) chooseCard(type, safeItems[0]);
+  if (!appState[type] || !filtered.some((item) => item.id === appState[type].id)) {
+    const first = visible.find((item) => item.providerReady !== false);
+    if (first) chooseCard(type, first, { explicit: false });
+  }
 }
 
 function rerenderLibrary(type) {
-  renderOptions(type, appState.libraries[type] || []);
+  renderOptions(type);
 }
 
 async function loadTalent() {
   try {
     if (!canUseHostedApi()) throw new Error('Static mode');
     const data = await getJson('/api/video-os/talent');
-    renderOptions('avatar', data.talent?.avatars || []);
-    renderOptions('voice', data.talent?.voices || []);
-    document.querySelector('#connection-pill').textContent = data.connection?.connected ? 'HeyGen talent connected' : 'HeyGen talent unavailable';
+    appState.libraries.avatar = data.talent?.avatars || [];
+    appState.libraries.voice = data.talent?.voices || [];
+    renderFeaturedCast();
+    renderOptions('avatar');
+    renderOptions('voice');
+    document.querySelector('#connection-pill').textContent = data.connection?.connected ? 'HeyGen talent connected' : 'HeyGen talent partially available';
     appState.localEngine = true;
   } catch {
-    renderOptions('avatar', canUseLocalApi() ? fallbackTalent.avatars : []);
-    renderOptions('voice', canUseLocalApi() ? fallbackTalent.voices : []);
+    appState.libraries.avatar = canUseLocalApi() ? fallbackTalent.avatars : [];
+    appState.libraries.voice = canUseLocalApi() ? fallbackTalent.voices : [];
+    renderFeaturedCast();
+    renderOptions('avatar');
+    renderOptions('voice');
     document.querySelector('#connection-pill').textContent = canUseLocalApi() ? 'Browser demo mode' : 'HeyGen talent unavailable';
   }
 }
@@ -413,10 +503,12 @@ async function restoreLatestProject() {
   appState.project = project;
   appState.avatar = project.avatar;
   appState.voice = project.voice;
+  appState.voiceSelectionExplicit = Boolean(project.voice?.id);
   const title = form.elements.namedItem('title');
   const script = form.elements.namedItem('script');
   if (title) title.value = project.title || '';
   if (script) script.value = project.script || '';
+  renderFeaturedCast();
   rerenderLibrary('avatar');
   rerenderLibrary('voice');
 }
@@ -576,23 +668,83 @@ function formatResultLabel(value) {
   return String(value || 'Auto').replace(/\.[a-z0-9]+$/i, '').replace(/[:_]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function inlineMediaUrl(value) {
+  const url = new URL(value, location.origin);
+  url.searchParams.set('disposition', 'inline');
+  return `${url.pathname}${url.search}`;
+}
+
+function setFinalCutState(state, message) {
+  const preview = document.querySelector('#preview');
+  const card = document.querySelector('#preview-card');
+  const stage = document.querySelector('.video-stage');
+  preview.dataset.previewState = state;
+  document.querySelector('#preview-empty').textContent = message;
+  if (state !== 'completed') {
+    stage.querySelector('.final-preview-media')?.remove();
+    stage.querySelector('.presenter').hidden = false;
+    stage.querySelector('.caption').hidden = false;
+    card.classList.toggle('empty', state === 'empty');
+    document.querySelector('#download-link').hidden = true;
+  }
+  if (state === 'rendering') setFinalRenderStep('rendering', message);
+  if (state === 'failed') setFinalRenderStep('error', message);
+}
+
+function bindFinalCutResult(item, options = {}) {
+  if (!item?.url || item.status !== 'ready') return false;
+  const stage = document.querySelector('.video-stage');
+  stage.querySelector('.final-preview-media')?.remove();
+  const video = document.createElement('video');
+  video.className = 'final-preview-media';
+  video.src = inlineMediaUrl(item.url);
+  video.controls = true;
+  video.playsInline = true;
+  video.preload = 'metadata';
+  video.setAttribute('aria-label', `Play ${item.title || item.filename || 'completed final cut'}`);
+  stage.prepend(video);
+  stage.querySelector('.presenter').hidden = true;
+  stage.querySelector('.caption').hidden = true;
+  appState.activeResult = item;
+  document.querySelector('#preview').dataset.previewState = 'completed';
+  document.querySelector('#preview-card').classList.remove('empty');
+  document.querySelector('#preview-empty').textContent = `${item.title || 'Final cut'} is complete and ready to play.`;
+  const format = document.querySelector('#export-format');
+  if (format && [...format.options].some((option) => option.value === item.format)) format.value = item.format;
+  const link = document.querySelector('#download-link');
+  link.href = item.url;
+  link.download = item.filename || 'video-os-final.mp4';
+  link.textContent = `Download ${item.filename || 'final MP4'}`;
+  link.hidden = false;
+  setFinalRenderStep('ready', item.message || 'Final MP4 ready.');
+  if (options.scroll) document.querySelector('#preview').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return true;
+}
+
+function hydrateFinalCutFromResults() {
+  const latest = appState.results[0];
+  if (latest?.status === 'ready' && latest.url) return bindFinalCutResult(latest);
+  if (latest && !['ready', 'failed', 'cancelled'].includes(latest.status)) return setFinalCutState('rendering', `${latest.title || 'Your video'} is still rendering. Refresh safely to recover its status.`);
+  if (latest?.status === 'failed') return setFinalCutState('failed', `${latest.title || 'The latest render'} could not be completed. Review the saved project and use the contained retry path when authorized.`);
+  if (appState.resultsState === 'signed-out') return setFinalCutState('empty', 'Sign in to recover completed videos in Final Cut Preview.');
+  if (appState.resultsState === 'error') return setFinalCutState('failed', 'Video history could not be loaded. Refresh or sign in again; no render was submitted.');
+  return setFinalCutState('empty', 'No video yet. Complete a contained render and it will appear here automatically.');
+}
+
 function resultCard(item) {
   const status = item.status || item.stage || (item.url ? 'ready' : 'rendering');
   const card = document.createElement('article');
   card.className = `result-card ${status === 'ready' ? 'is-final' : 'is-draft'}`;
-
-  const media = item.url ? document.createElement('a') : document.createElement('div');
+  card.dataset.jobId = item.id || '';
+  const media = document.createElement('div');
   media.className = `result-media ${item.format || 'mp4'}`;
   if (item.url) {
-    media.href = item.url;
-    media.target = '_blank';
-    media.rel = 'noreferrer';
-    media.setAttribute('aria-label', `Preview ${item.title || item.filename}`);
     const video = document.createElement('video');
-    video.src = item.url;
+    video.src = inlineMediaUrl(item.url);
     video.muted = true;
     video.playsInline = true;
     video.preload = 'metadata';
+    video.setAttribute('aria-label', `Completed preview for ${item.title || item.filename}`);
     media.append(video);
   } else {
     media.innerHTML = '<div class="result-pending">Rendering</div>';
@@ -601,7 +753,6 @@ function resultCard(item) {
   badge.className = `result-badge status-${status}`;
   badge.textContent = status === 'ready' ? 'Final MP4' : status === 'failed' ? 'Needs attention' : status === 'finishing' ? 'Finishing' : 'Rendering';
   media.append(badge);
-
   const body = document.createElement('div');
   body.className = 'result-body';
   const title = document.createElement('strong');
@@ -617,7 +768,6 @@ function resultCard(item) {
   message.className = 'result-message';
   message.textContent = item.message || (status === 'ready' ? 'Ready to download.' : 'Lux is still finishing this video.');
   body.append(title, meta, talent, message);
-
   const kit = document.createElement('div');
   kit.className = 'result-kit';
   const kitItems = item.effects || item.kit || item.productionKit || {};
@@ -626,15 +776,14 @@ function resultCard(item) {
     chip.textContent = formatResultLabel(kitItems[key]?.name || kitItems[key]);
     kit.append(chip);
   });
-
   const actions = document.createElement('div');
   actions.className = 'result-actions';
   if (item.url) {
-    const preview = document.createElement('a');
-    preview.href = item.url;
-    preview.target = '_blank';
-    preview.rel = 'noreferrer';
+    const preview = document.createElement('button');
+    preview.type = 'button';
+    preview.className = 'secondary';
     preview.textContent = 'Preview';
+    preview.addEventListener('click', () => bindFinalCutResult(item, { scroll: true }));
     const download = document.createElement('a');
     download.className = 'download-link';
     download.href = item.url;
@@ -652,7 +801,6 @@ function resultCard(item) {
     document.querySelector('.creator').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
   actions.append(regenerate);
-
   card.append(media, body, kit, actions);
   return card;
 }
@@ -663,7 +811,13 @@ function renderResultGallery() {
   if (!target) return;
   const items = (appState.results || []).slice(0, 30);
   if (!items.length) {
-    target.innerHTML = '<article class="empty-result"><strong>No final videos yet</strong><span>Finish a provider render and the MP4 will appear here with preview, kit, and download.</span></article>';
+    const messages = {
+      'signed-out': ['Sign in to recover your videos', 'Completed account-owned videos will return here and in Final Cut Preview.'],
+      error: ['Video history is temporarily unavailable', 'Refresh or sign in again. No new render has been submitted.'],
+      empty: ['No final videos yet', 'Your first completed private MP4 will appear here automatically.'],
+    };
+    const [title, copy] = messages[appState.resultsState] || messages.empty;
+    target.innerHTML = `<article class="empty-result" data-results-state="${appState.resultsState}"><strong>${title}</strong><span>${copy}</span></article>`;
     if (toggle) toggle.hidden = true;
     return;
   }
@@ -677,14 +831,25 @@ function renderResultGallery() {
 }
 
 async function loadResults() {
+  if (!canUseHostedApi() || !appState.signedIn) {
+    appState.results = [];
+    appState.resultsState = 'signed-out';
+    renderResultGallery();
+    hydrateFinalCutFromResults();
+    return;
+  }
   try {
-    if (!canUseHostedApi() || !appState.signedIn) throw new Error('Sign in to load results.');
+    appState.resultsState = 'loading';
     const data = await getJson('/api/video-os-lite/results');
     appState.results = data.results || [];
+    appState.resultsState = appState.results.length ? 'ready' : 'empty';
   } catch {
     appState.results = [];
+    appState.resultsState = 'error';
   }
   renderResultGallery();
+  hydrateFinalCutFromResults();
+  rerenderLibrary('avatar');
 }
 
 function renderPricing() {
@@ -1352,10 +1517,10 @@ stepButtons.forEach((button) => button.addEventListener('click', () => {
   const target = Number(button.dataset.stepJump);
   if (target <= appState.step || requireCurrentStep()) setStep(target);
 }));
-document.querySelector('#avatar-search').addEventListener('input', () => { appState.visible.avatar = 12; rerenderLibrary('avatar'); });
-document.querySelector('#voice-search').addEventListener('input', () => { appState.visible.voice = 12; rerenderLibrary('voice'); });
-document.querySelector('#avatar-more').addEventListener('click', () => { appState.visible.avatar += 12; rerenderLibrary('avatar'); });
-document.querySelector('#voice-more').addEventListener('click', () => { appState.visible.voice += 12; rerenderLibrary('voice'); });
+document.querySelector('#avatar-search').addEventListener('input', () => { appState.visible.avatar = 20; rerenderLibrary('avatar'); });
+document.querySelector('#voice-search').addEventListener('input', () => { appState.visible.voice = 20; rerenderLibrary('voice'); });
+document.querySelector('#avatar-more').addEventListener('click', () => { appState.visible.avatar = 20; rerenderLibrary('avatar'); });
+document.querySelector('#voice-more').addEventListener('click', () => { appState.visible.voice += 20; rerenderLibrary('voice'); });
 document.querySelector('#generate-script').addEventListener('click', generateScript);
 document.querySelector('#tighten-script').addEventListener('click', tightenScript);
 document.querySelector('#generate-video').addEventListener('click', generateVideo);
