@@ -1,5 +1,5 @@
 import { parseOrThrow, providerStatusSchema, providerSubmitSchema } from '../lib/video-os-validation.js';
-import { logEvent } from '../lib/video-os-security.js';
+import { logEvent, timingSafeMatch } from '../lib/video-os-security.js';
 
 const API_ORIGIN = 'https://api.heygen.com';
 const timeoutMs = () => Number(process.env.HEYGEN_TIMEOUT_MS || 20_000);
@@ -8,10 +8,15 @@ const PROVIDER_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,255}$/;
 const TERMINAL_READY = new Set(['complete', 'completed', 'ready', 'success', 'succeeded']);
 const TERMINAL_FAILED = new Set(['error', 'failed', 'failure', 'rejected']);
 
+export function assertHeygenConfigured(env = process.env) {
+  const configured = Boolean(String(env.HEYGEN_API_KEY || env.HEYGEN_TOKEN || '').trim());
+  if (!configured) throw Object.assign(new Error('HEYGEN_API_KEY is not configured.'), { statusCode: 503, failureCategory: 'CONFIG_MISSING' });
+  return true;
+}
+
 function key() {
-  const value = String(process.env.HEYGEN_API_KEY || process.env.HEYGEN_TOKEN || '').trim();
-  if (!value) throw Object.assign(new Error('HEYGEN_API_KEY is not configured.'), { statusCode: 503, failureCategory: 'CONFIG_MISSING' });
-  return value;
+  assertHeygenConfigured();
+  return String(process.env.HEYGEN_API_KEY || process.env.HEYGEN_TOKEN).trim();
 }
 
 async function responseJson(response, category) {
@@ -76,6 +81,72 @@ export function assertIdentityProviderMutationEnabled(env = process.env) {
   if (!enabled(env.HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED)) {
     throw Object.assign(new Error('HeyGen identity asset privacy has not been confirmed.'), { statusCode: 503, failureCategory: 'IDENTITY_ASSET_PRIVACY_UNCONFIRMED' });
   }
+}
+
+export function assertIdentityProviderAccountAuthorized(accountId, env = process.env) {
+  const allowed = String(env.VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID || '').trim();
+  if (!allowed) throw Object.assign(new Error('Identity provider account is not configured.'), { statusCode: 503, failureCategory: 'CONFIG_MISSING' });
+  if (!timingSafeMatch(accountId, allowed)) throw Object.assign(new Error('This account is not authorized for identity provider creation.'), { statusCode: 403, failureCategory: 'ENTITLEMENT' });
+  return true;
+}
+
+function inventoryCollection(payload) {
+  const data = payload?.data ?? payload;
+  if (Array.isArray(data)) return data;
+  for (const field of ['avatars', 'voices', 'items', 'list']) if (Array.isArray(data?.[field])) return data[field];
+  return [];
+}
+
+function inventoryPagination(payload) {
+  const data = payload?.data;
+  return {
+    hasMore: Boolean(payload?.has_more ?? data?.has_more),
+    nextToken: String(payload?.next_token ?? data?.next_token ?? '').trim().slice(0, 512),
+  };
+}
+
+function inventoryUrl(value) {
+  let url;
+  try { url = new URL(String(value || '')); } catch { throw Object.assign(new Error('HeyGen inventory URL was invalid.'), { statusCode: 503, failureCategory: 'CONFIG_INVALID' }); }
+  if (url.origin !== API_ORIGIN || url.username || url.password || url.hash) throw Object.assign(new Error('HeyGen inventory URL must use the configured provider API origin.'), { statusCode: 503, failureCategory: 'CONFIG_INVALID' });
+  return url;
+}
+
+async function fetchHeygenInventoryPage(url, { fetchImpl = fetch } = {}) {
+  const response = await fetchImpl(inventoryUrl(url).href, { signal: AbortSignal.timeout(8_000), headers: { Accept: 'application/json', 'X-Api-Key': key() } });
+  if (!response.ok) throw new Error(`HeyGen inventory HTTP ${response.status}`);
+  return response.json();
+}
+
+export async function fetchHeygenCollection(url, options = {}) {
+  return inventoryCollection(await fetchHeygenInventoryPage(url, options));
+}
+
+export async function fetchHeygenPaginatedCollection(url, options = {}) {
+  const maxPages = Number.isInteger(options.maxPages) ? options.maxPages : 10;
+  const maxItems = Number.isInteger(options.maxItems) && options.maxItems > 0 ? options.maxItems : Number.POSITIVE_INFINITY;
+  const items = [];
+  const itemIds = new Set();
+  const tokens = new Set();
+  const pageUrl = inventoryUrl(url);
+  for (let page = 1; page <= maxPages; page += 1) {
+    const payload = await fetchHeygenInventoryPage(pageUrl, options);
+    for (const item of inventoryCollection(payload)) {
+      const id = String(item?.id || item?.avatar_id || item?.avatarId || '').trim().slice(0, 160);
+      if (id && itemIds.has(id)) continue;
+      if (id) itemIds.add(id);
+      items.push(item);
+    }
+    const { hasMore, nextToken } = inventoryPagination(payload);
+    if (items.length >= maxItems) return { items: items.slice(0, maxItems), pages: page, complete: !hasMore, truncated: hasMore || items.length > maxItems };
+    if (!hasMore) return { items, pages: page, complete: true, truncated: false };
+    if (page === maxPages && options.allowTruncatedPageLimit === true) return { items, pages: page, complete: false, truncated: true };
+    if (!nextToken) throw new Error('HeyGen inventory pagination did not return a next token.');
+    if (tokens.has(nextToken)) throw new Error('HeyGen inventory returned a repeated pagination token.');
+    tokens.add(nextToken);
+    pageUrl.searchParams.set('token', nextToken);
+  }
+  throw new Error(`HeyGen inventory exceeded the ${maxPages}-page safety limit.`);
 }
 
 export function buildPhotoAvatarRequest({ assetId, name }) {
@@ -153,8 +224,9 @@ export function providerMediaHostname(value) {
   return url.hostname.toLowerCase();
 }
 
-export async function uploadHeygenIdentityAsset({ buffer, contentType, filename }) {
+export async function uploadHeygenIdentityAsset({ accountId, buffer, contentType, filename }) {
   assertIdentityProviderMutationEnabled();
+  assertIdentityProviderAccountAuthorized(accountId);
   const normalizedType = String(contentType || '').trim().toLowerCase();
   if (!IDENTITY_CONTENT_TYPES.has(normalizedType)) throw Object.assign(new Error('Identity asset type is not supported by HeyGen.'), { statusCode: 400, failureCategory: 'UNSUPPORTED_IDENTITY_ASSET' });
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer || []);
@@ -171,8 +243,9 @@ export async function uploadHeygenIdentityAsset({ buffer, contentType, filename 
   };
 }
 
-export async function createHeygenPhotoAvatar({ assetId, name, idempotencyKey }) {
+export async function createHeygenPhotoAvatar({ accountId, assetId, name, idempotencyKey }) {
   assertIdentityProviderMutationEnabled();
+  assertIdentityProviderAccountAuthorized(accountId);
   const requestKey = cleanProviderId(idempotencyKey, 'HeyGen idempotency key');
   const response = await fetch(`${API_ORIGIN}/v3/avatars`, {
     method: 'POST',
@@ -201,8 +274,9 @@ export async function getHeygenPhotoAvatarStatus({ groupId, lookId }) {
   };
 }
 
-export async function cloneHeygenVoice({ assetId, name, language, removeBackgroundNoise }) {
+export async function cloneHeygenVoice({ accountId, assetId, name, language, removeBackgroundNoise }) {
   assertIdentityProviderMutationEnabled();
+  assertIdentityProviderAccountAuthorized(accountId);
   const response = await fetch(`${API_ORIGIN}/v3/voices/clone`, {
     method: 'POST',
     signal: AbortSignal.timeout(timeoutMs()),

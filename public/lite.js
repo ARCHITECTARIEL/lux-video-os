@@ -1,18 +1,7 @@
 import { FEATURED_CAST, curateDefaultCast, matchedVoiceId, prioritizeVoices } from './video-os-cast.js';
 
 const appState = { step: 0, avatar: null, voice: null, identityId: null, identities: [], voiceSelectionExplicit: false, project: null, uploadedAsset: null, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultsState: 'signed-out', activeResult: null, resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 20, voice: 20 } };
-const browserAccountId = (() => {
-  try {
-    const key = 'luxVideoOsAccountId';
-    const existing = localStorage.getItem(key);
-    if (existing) return existing;
-    const created = `acct-${crypto.randomUUID()}`;
-    localStorage.setItem(key, created);
-    return created;
-  } catch {
-    return `acct-${Date.now().toString(36)}`;
-  }
-})();
+
 const fallbackTalent = {
   avatars: [
     { id: 'ai-presenter', name: 'AI Presenter', style: 'balanced', source: 'lite' },
@@ -62,16 +51,13 @@ function showToast(message) {
   showToast.timer = setTimeout(() => { toast.hidden = true; }, 3600);
 }
 
-function currentAccountId() {
-  return appState.signedIn ? (appState.account?.account?.accountId || appState.account?.accountId || appState.credits?.accountId || browserAccountId) : 'signed-out';
-}
+
 
 function formData() {
   const data = Object.fromEntries(new FormData(form).entries());
   data.captions = Boolean(data.captions);
   data.music = Boolean(data.music);
   data.voiceConsent = Boolean(data.voiceConsent);
-  data.accountId = currentAccountId();
   return data;
 }
 
@@ -162,11 +148,14 @@ function identityVoice(identity) {
   return { id: `identity-voice:${identity.id}`, identityId: identity.id, name: `${identity.displayName || identity.name || 'My identity'} cloned voice`, source: 'identity', providerReady: true };
 }
 
-function chooseIdentity(identity) {
+function chooseIdentity(identity, { forcePairedVoice = false } = {}) {
   if (!identity?.id) return;
   appState.identityId = identity.id;
   appState.avatar = identityAvatar(identity);
-  if (!appState.voiceSelectionExplicit || appState.voice?.source === 'identity') appState.voice = identityVoice(identity);
+  if (forcePairedVoice || !appState.voiceSelectionExplicit || appState.voice?.source === 'identity') {
+    appState.voice = identityVoice(identity);
+    appState.voiceSelectionExplicit = false;
+  }
   renderMyCast();
   renderFeaturedCast();
   renderOptions('avatar');
@@ -583,11 +572,14 @@ async function restoreLatestProject() {
   const project = data.projects?.[0];
   if (!project) return;
   appState.project = project;
-  appState.identityId = project.identityId || project.settings?.identityId || null;
-  const restoredIdentity = appState.identityId ? appState.identities.find((identity) => identity.id === appState.identityId) : null;
-  appState.avatar = restoredIdentity ? identityAvatar(restoredIdentity) : project.avatar;
-  appState.voice = restoredIdentity && project.voice?.source === 'identity' ? identityVoice(restoredIdentity) : project.voice;
-  appState.voiceSelectionExplicit = Boolean(project.voice?.id);
+  const requestedIdentityId = project.identityId || project.settings?.identityId || null;
+  const restoredIdentity = requestedIdentityId ? appState.identities.find((identity) => identity.id === requestedIdentityId) : null;
+  appState.identityId = restoredIdentity ? requestedIdentityId : null;
+  appState.avatar = restoredIdentity ? identityAvatar(restoredIdentity) : (project.avatar?.source === 'identity' ? null : project.avatar);
+  appState.voice = restoredIdentity && project.voice?.source === 'identity'
+    ? identityVoice(restoredIdentity)
+    : (project.voice?.source === 'identity' ? null : project.voice);
+  appState.voiceSelectionExplicit = Boolean(appState.voice?.id);
   renderMyCast();
   const title = form.elements.namedItem('title');
   const script = form.elements.namedItem('script');
@@ -610,7 +602,7 @@ function consumeIdentitySelection() {
     showToast('That private identity is unavailable for this account.');
     return;
   }
-  chooseIdentity(identity);
+  chooseIdentity(identity, { forcePairedVoice: true });
   setStep(1);
   showToast((identity.displayName || 'Private identity') + ' is ready in Cast.');
 }
@@ -1034,7 +1026,7 @@ async function addCredits(quantity = 1) {
     const data = await getJson('/api/video-os-lite/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId: currentAccountId(), origin: location.origin, quantity: packageQuantity }),
+      body: JSON.stringify({ origin: location.origin, quantity: packageQuantity }),
     });
     if (!data.url) throw new Error('Stripe did not return a checkout URL.');
     location.href = data.url;
@@ -1608,7 +1600,7 @@ async function createAvatarBuild(type) {
     const data = await getJson('/api/video-os-lite/avatar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId: currentAccountId(), type, name, fileUrl, consent }),
+      body: JSON.stringify({ type, name, fileUrl, consent }),
     });
     appState.credits = data.credits;
     showToast(data.message || `${isTwin ? 'Digital twin' : 'Photo avatar'} submitted.`);

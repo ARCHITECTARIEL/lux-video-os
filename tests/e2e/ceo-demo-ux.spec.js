@@ -208,3 +208,49 @@ test('anonymous and cross-account media responses remain denied', async ({ page 
   });
   expect(statuses).toEqual([401, 404]);
 });
+
+test('Identity Studio handoff overrides a restored public voice with the ready paired voice', async ({ page }) => {
+  const identity = { id: '6e5c233e-f798-4b74-8605-9e45e06fe831', displayName: 'Private Pair', overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY', portraitUrl: '/api/video-os-lite/asset?assetId=portrait-pair' };
+  const project = { id: 'project-public-voice', title: 'Existing project', script: 'Use the requested private pair.', avatar: avatar(KD), voice: { id: 'other-voice', name: 'Other voice', source: 'heygen' } };
+  const guard = await installAppRoutes(page, { identities: [identity], project });
+  await page.route('**/api/video-os-lite/asset*', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }));
+
+  await page.goto('/?identityId=' + identity.id);
+
+  await expect(page).toHaveURL('/');
+  await expect(page.locator('#my-cast-list [data-identity-id="' + identity.id + '"]')).toHaveClass(/selected/);
+  await expect(page.locator('[data-voice-id="identity-voice:' + identity.id + '"]')).toHaveClass(/selected/);
+  expect(guard.renderRequests()).toBe(0);
+});
+
+test('unavailable Identity Studio handoff is consumed without selecting private media', async ({ page }) => {
+  const guard = await installAppRoutes(page);
+  await page.goto('/?identityId=6e5c233e-f798-4b74-8605-9e45e06fe899');
+
+  await expect(page).toHaveURL('/');
+  await expect(page.locator('#toast')).toContainText('unavailable for this account');
+  await expect(page.locator('#my-cast-list .selected')).toHaveCount(0);
+  await expect(page.locator('#voice-list [data-voice-id^="identity-voice:"]')).toHaveCount(0);
+  expect(guard.renderRequests()).toBe(0);
+});
+
+test('a stale saved private identity fails closed to the authorized shared Cast', async ({ page }) => {
+  const staleId = '6e5c233e-f798-4b74-8605-9e45e06fe877';
+  const project = {
+    id: 'project-stale-identity',
+    identityId: staleId,
+    title: 'Stale identity project',
+    script: 'The archived identity must not restore.',
+    avatar: { id: 'identity-avatar:' + staleId, identityId: staleId, name: 'Archived identity', source: 'identity' },
+    voice: { id: 'identity-voice:' + staleId, identityId: staleId, name: 'Archived identity voice', source: 'identity' },
+  };
+  const guard = await installAppRoutes(page, { project, identities: [] });
+
+  await page.goto('/');
+
+  await expect(page.locator('#my-cast-list .selected')).toHaveCount(0);
+  await expect(page.locator('#avatar-list [data-avatar-id^="identity-avatar:"]')).toHaveCount(0);
+  await expect(page.locator('#voice-list [data-voice-id^="identity-voice:"]')).toHaveCount(0);
+  await expect(page.locator('[data-featured-avatar-id="' + ARIEL.avatarId + '"]')).toHaveClass(/selected/);
+  expect(guard.renderRequests()).toBe(0);
+});

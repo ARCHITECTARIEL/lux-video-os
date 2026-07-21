@@ -1,10 +1,11 @@
 import crypto from 'node:crypto';
 import { start } from 'workflow/api';
 import { accountDto, jobDto } from '../../db/dto.js';
-import { claimWorkflowStart, ensureAccount, getJob, getOwnedIdentity, getOwnedProject, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
+import { claimWorkflowStart, ensureAccount, getJob, getOwnedProject, getRenderAuthorizedIdentity, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
 import { captureJobError } from '../../lib/video-os-observability.js';
 import { featureEnabled, requestId, requireRenderAccountAuthorization } from '../../lib/video-os-security.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { IDENTITY_CONSENT_POLICY_VERSION } from '../../lib/video-os-identity-policy.js';
 import { parseOrThrow, renderRequestSchema } from '../../lib/video-os-validation.js';
 import { videoRenderWorkflowMetadata } from '../../workflows/video-render-metadata.js';
 
@@ -31,7 +32,7 @@ export default async function handler(req, res) {
     if (!project) throw Object.assign(new Error('Project not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
     let authorizedInput = payload;
     if (payload.identityId) {
-      const identity = await getOwnedIdentity(session.accountId, payload.identityId);
+      const identity = await getRenderAuthorizedIdentity(session.accountId, payload.identityId, IDENTITY_CONSENT_POLICY_VERSION);
       if (!identity) throw Object.assign(new Error('Video identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
       authorizedInput = authorizedIdentityInput(project, payload, identity);
     } else if (project.avatar?.id !== payload.avatar?.avatarId || project.voice?.id !== payload.voice?.voiceId) {

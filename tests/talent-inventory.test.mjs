@@ -4,9 +4,15 @@ import test from 'node:test';
 import {
   buildFeaturedAvatars,
   buildSharedAvatars,
-  fetchPaginatedCollection,
 } from '../api/video-os/talent.js';
+import { fetchHeygenPaginatedCollection } from '../services/heygen.js';
 import talentHandler from '../api/video-os/talent.js';
+
+function withTestKey(t) {
+  const originalKey = process.env.HEYGEN_API_KEY;
+  process.env.HEYGEN_API_KEY = 'test-key';
+  t.after(() => { if (originalKey === undefined) delete process.env.HEYGEN_API_KEY; else process.env.HEYGEN_API_KEY = originalKey; });
+}
 
 function response(payload, status = 200) {
   return {
@@ -16,7 +22,8 @@ function response(payload, status = 200) {
   };
 }
 
-test('HeyGen v3 pagination retrieves every page once, deduplicates, and preserves order', async () => {
+test('shared HeyGen client retrieves every private page once, deduplicates, and preserves order', async (t) => {
+  withTestKey(t);
   const urls = [];
   const fetchImpl = async (url) => {
     urls.push(String(url));
@@ -25,9 +32,8 @@ test('HeyGen v3 pagination retrieves every page once, deduplicates, and preserve
       : response({ data: [{ id: 'look-duplicate' }, { id: 'look-b' }], has_more: false, next_token: null });
   };
 
-  const result = await fetchPaginatedCollection(
+  const result = await fetchHeygenPaginatedCollection(
     'https://api.heygen.com/v3/avatars/looks?ownership=private&limit=50',
-    'secret',
     { fetchImpl, maxPages: 4 },
   );
 
@@ -37,25 +43,33 @@ test('HeyGen v3 pagination retrieves every page once, deduplicates, and preserve
   assert.equal(new URL(urls[1]).searchParams.get('ownership'), 'private');
 });
 
-test('HeyGen v3 pagination fails closed on a repeated cursor', async () => {
+test('shared HeyGen client fails closed on a repeated cursor', async (t) => {
+  withTestKey(t);
   const fetchImpl = async () => response({ data: [], has_more: true, next_token: 'same-token' });
   await assert.rejects(
-    fetchPaginatedCollection('https://api.heygen.com/v3/avatars/looks?limit=50', 'secret', { fetchImpl, maxPages: 4 }),
+    fetchHeygenPaginatedCollection('https://api.heygen.com/v3/avatars/looks?limit=50', { fetchImpl, maxPages: 4 }),
     /repeated pagination token/i,
   );
 });
 
-test('HeyGen v3 pagination can intentionally cap a large public catalog', async () => {
+test('shared HeyGen client intentionally caps public inventory to one page', async (t) => {
+  withTestKey(t);
   const fetchImpl = async () => response({ data: [{ id: 'one' }, { id: 'two' }], has_more: true, next_token: 'page-2' });
-  const result = await fetchPaginatedCollection(
+  const result = await fetchHeygenPaginatedCollection(
     'https://api.heygen.com/v3/avatars/looks?ownership=public&limit=50',
-    'secret',
-    { fetchImpl, maxPages: 4, maxItems: 2 },
+    { fetchImpl, maxPages: 1, maxItems: 2, allowTruncatedPageLimit: true },
   );
   assert.deepEqual(result.items.map((item) => item.id), ['one', 'two']);
   assert.equal(result.pages, 1);
   assert.equal(result.complete, false);
   assert.equal(result.truncated, true);
+});
+
+test('shared HeyGen client rejects alternate origins before attaching authentication', async (t) => {
+  withTestKey(t);
+  let calls = 0;
+  await assert.rejects(fetchHeygenPaginatedCollection('https://example.test/v3/avatars', { fetchImpl: async () => { calls += 1; return response({}); } }), /provider API origin/i);
+  assert.equal(calls, 0);
 });
 
 test('featured presenters are matched only by exact renderable look ID', () => {

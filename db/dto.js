@@ -1,7 +1,16 @@
 export function accountDto(record) {
+  const role = record.user.role || 'customer';
+  const subscriptions = {
+    owner: { plan: 'Video OS Owner Access', status: 'active', renewal: 'Owner-managed workspace' },
+    ceo: { plan: 'Video OS Lite CEO Preview', status: 'active', renewal: 'Full-access executive preview' },
+    demo: { plan: 'Video OS Lite Demo Access', status: 'active', renewal: 'Password access enabled' },
+    customer: { plan: 'Video OS', status: 'contained' },
+  };
   return {
-    account: { accountId: record.user.id, name: record.user.name, subscription: { plan: 'Video OS', status: 'contained' } },
+    accountId: record.user.id,
+    account: { accountId: record.user.id, name: record.user.name, role, subscription: subscriptions[role] || subscriptions.customer },
     credits: { accountId: record.user.id, balance: record.credits.balance, reserved: record.credits.reserved, currency: 'credits' },
+    entitlements: record.entitlements || {},
   };
 }
 

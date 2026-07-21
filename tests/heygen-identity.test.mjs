@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
+  assertIdentityProviderAccountAuthorized,
   assertIdentityProviderMutationEnabled,
   buildPhotoAvatarRequest,
   buildVoiceCloneRequest,
@@ -14,18 +16,22 @@ import {
   safeProviderErrorCode,
   uploadHeygenIdentityAsset,
 } from '../services/heygen.js';
+import { assertIdentitySubmissionAllowed } from '../routes/video-os-lite/identities.js';
 
 const originalFetch = globalThis.fetch;
 const originalEnvironment = {
   HEYGEN_API_KEY: process.env.HEYGEN_API_KEY,
+  HEYGEN_TOKEN: process.env.HEYGEN_TOKEN,
   VIDEO_OS_IDENTITY_PROVIDER_ENABLED: process.env.VIDEO_OS_IDENTITY_PROVIDER_ENABLED,
   HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED: process.env.HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED,
+  VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID: process.env.VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID,
 };
 
 function enableProviderMutations() {
   process.env.HEYGEN_API_KEY = 'test-key';
   process.env.VIDEO_OS_IDENTITY_PROVIDER_ENABLED = 'true';
   process.env.HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED = 'true';
+  process.env.VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID = 'acct-proof';
 }
 
 function restoreEnvironment() {
@@ -44,6 +50,44 @@ test('identity provider mutations require both independent safety gates', () => 
   assert.doesNotThrow(() => assertIdentityProviderMutationEnabled({ VIDEO_OS_IDENTITY_PROVIDER_ENABLED: 'TRUE', HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED: 'true' }));
 });
 
+test('identity provider creation requires the exact server-configured account', () => {
+  const env = { VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID: 'acct-proof' };
+  assert.equal(assertIdentityProviderAccountAuthorized('acct-proof', env), true);
+  assert.throws(() => assertIdentityProviderAccountAuthorized('acct-other', env), { failureCategory: 'ENTITLEMENT' });
+  assert.throws(() => assertIdentityProviderAccountAuthorized('acct-proof', {}), { failureCategory: 'CONFIG_MISSING' });
+});
+
+test('an unauthorized account is rejected before any provider request', async () => {
+  enableProviderMutations();
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; throw new Error('must not be called'); };
+  await assert.rejects(cloneHeygenVoice({ accountId: 'acct-other', assetId: 'asset_2', name: 'Blocked Voice' }), { failureCategory: 'ENTITLEMENT' });
+  assert.equal(calls, 0);
+});
+
+test('identity route rejects an unauthorized account before provider submission', () => {
+  enableProviderMutations();
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; throw new Error('must not be called'); };
+  assert.throws(() => assertIdentitySubmissionAllowed('acct-other'), { failureCategory: 'ENTITLEMENT' });
+  assert.equal(calls, 0);
+});
+test('identity route rejects missing provider configuration before reservation or fetch', async () => {
+  process.env.VIDEO_OS_IDENTITY_PROVIDER_ENABLED = 'true';
+  process.env.HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED = 'true';
+  process.env.VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID = 'acct-proof';
+  delete process.env.HEYGEN_API_KEY;
+  delete process.env.HEYGEN_TOKEN;
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; throw new Error('must not be called'); };
+  assert.throws(() => assertIdentitySubmissionAllowed('acct-proof'), { failureCategory: 'CONFIG_MISSING' });
+  assert.equal(calls, 0);
+
+  const route = await readFile(new URL('../routes/video-os-lite/identities.js', import.meta.url), 'utf8');
+  const preflightAt = route.indexOf('assertIdentitySubmissionAllowed(accountId);');
+  const reserveAt = route.indexOf('await reserveIdentityComponentCreation', preflightAt);
+  assert.ok(preflightAt >= 0 && preflightAt < reserveAt);
+});
 test('photo-avatar and voice-clone builders use current v3 asset-id contracts', () => {
   assert.deepEqual(buildPhotoAvatarRequest({ assetId: 'asset_123', name: 'CEO Identity' }), {
     type: 'photo',
@@ -82,7 +126,7 @@ test('identity asset upload is multipart, bounded, and does not set a broken con
     return new Response(JSON.stringify({ data: { asset_id: 'asset_uploaded', mime_type: 'image/png', size_bytes: 4 } }), { status: 200 });
   };
 
-  const result = await uploadHeygenIdentityAsset({ buffer: new Uint8Array([1, 2, 3, 4]), contentType: 'image/png', filename: '../CEO photo.png' });
+  const result = await uploadHeygenIdentityAsset({ accountId: 'acct-proof', buffer: new Uint8Array([1, 2, 3, 4]), contentType: 'image/png', filename: '../CEO photo.png' });
   assert.equal(result.providerAssetId, 'asset_uploaded');
   assert.equal(captured.url, 'https://api.heygen.com/v3/assets');
   assert.equal(captured.options.method, 'POST');
@@ -104,7 +148,7 @@ test('photo-avatar creation sends one idempotent v3 request and normalizes both 
     } }), { status: 200 });
   };
 
-  const result = await createHeygenPhotoAvatar({ assetId: 'asset_1', name: 'CEO', idempotencyKey: 'identity:avatar:1' });
+  const result = await createHeygenPhotoAvatar({ accountId: 'acct-proof', assetId: 'asset_1', name: 'CEO', idempotencyKey: 'identity:avatar:1' });
   assert.equal(calls, 1);
   assert.equal(captured.url, 'https://api.heygen.com/v3/avatars');
   assert.equal(captured.options.headers['Idempotency-Key'], 'identity:avatar:1');
@@ -121,7 +165,7 @@ test('voice cloning uses local-reservation semantics without inventing a provide
     return new Response(JSON.stringify({ data: { voice_clone_id: 'voice_clone_1' } }), { status: 200 });
   };
 
-  const result = await cloneHeygenVoice({ assetId: 'asset_2', name: 'CEO Voice' });
+  const result = await cloneHeygenVoice({ accountId: 'acct-proof', assetId: 'asset_2', name: 'CEO Voice' });
   assert.equal(result.providerVoiceId, 'voice_clone_1');
   assert.equal(captured.url, 'https://api.heygen.com/v3/voices/clone');
   assert.equal(Object.keys(captured.options.headers).some((name) => name.toLowerCase() === 'idempotency-key'), false);
@@ -152,7 +196,7 @@ test('provider HTTP failures expose only a sanitized code and generic message', 
   enableProviderMutations();
   globalThis.fetch = async () => new Response(JSON.stringify({ error: { code: 'plan_upgrade_required', message: 'private signed url https://secret.example' } }), { status: 403 });
   await assert.rejects(
-    cloneHeygenVoice({ assetId: 'asset_2', name: 'CEO Voice' }),
+    cloneHeygenVoice({ accountId: 'acct-proof', assetId: 'asset_2', name: 'CEO Voice' }),
     (error) => error.message === 'HeyGen request failed with HTTP 403.' && error.providerErrorCode === 'plan_upgrade_required' && !error.message.includes('secret.example'),
   );
 });

@@ -30,9 +30,15 @@ test('consent UI contains every versioned authorization represented by the serve
 });
 
 test('identity provider submission is doubly gated and private DTOs hide provider IDs', async () => {
-  const route = await read('routes/video-os-lite/identities.js');
-  assert.match(route, /VIDEO_OS_IDENTITY_PROVIDER_ENABLED === 'true'/);
-  assert.match(route, /HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED === 'true'/);
+  const [route, service] = await Promise.all([
+    read('routes/video-os-lite/identities.js'),
+    read('services/heygen.js'),
+  ]);
+  assert.match(route, /assertIdentityProviderMutationEnabled\(\)/);
+  assert.match(route, /assertIdentityProviderAccountAuthorized\(accountId\)/);
+  assert.match(route, /assertHeygenConfigured\(\)/);
+  assert.match(service, /VIDEO_OS_IDENTITY_PROVIDER_ENABLED/);
+  assert.match(service, /HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED/);
   const dtoBody = route.slice(route.indexOf('function identityForClient'), route.indexOf('function validateName'));
   assert.doesNotMatch(dtoBody, /providerAvatar|providerVoice|providerAsset|privatePathname/);
   assert.match(route, /getOwnedIdentity\(accountId, identityId\)/);
@@ -45,7 +51,7 @@ test('composer handoff selects only an authenticated ready private identity', as
   assert.match(handoff, /if \(!appState\.signedIn\) return/);
   assert.match(handoff, /appState\.identities\.find\(\(item\) => item\.id === identityId\)/);
   assert.match(handoff, /That private identity is unavailable for this account/);
-  assert.match(handoff, /chooseIdentity\(identity\)/);
+  assert.match(handoff, /chooseIdentity\(identity, \{ forcePairedVoice: true \}\)/);
   assert.doesNotMatch(handoff, /getJson|fetch\(/);
   assert.equal((client.match(/consumeIdentitySelection\(\);/g) || []).length, 2);
 });

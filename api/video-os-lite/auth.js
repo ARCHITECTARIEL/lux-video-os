@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
-import { accountIdForEmail, accountPayload, clearAdminCookie, clearSessionCookie, consumeMagicToken, handleOptions, loadAccount, makeSession, readJson, saveAccount, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest } from '../../lib/video-os-account.js';
+import { accountDto } from '../../db/dto.js';
+import { getAccountContext, updateAuthenticatedAccount } from '../../db/repositories.js';
+import { accountIdForEmail, clearAdminCookie, clearSessionCookie, consumeMagicToken, handleOptions, makeSession, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { publicOrigin } from '../../lib/video-os-security.js';
 
@@ -61,48 +63,23 @@ function adminCookie(token) {
 async function loadPasswordAccount(username) {
   const email = String(process.env.VIDEO_OS_DEMO_EMAIL || 'demo@luxvideoos.local').trim().toLowerCase();
   const credits = Math.max(500, Number(process.env.VIDEO_OS_DEMO_CREDITS || 5000));
-  const account = await loadAccount(accountIdForEmail(email));
-  account.email = email;
-  account.name = process.env.VIDEO_OS_DEMO_NAME || String(username || 'LUX Demo').trim() || 'LUX Demo';
-  account.role = 'demo';
-  account.subscription = {
-    plan: 'Video OS Lite Demo Access',
-    status: 'active',
-    renewal: 'Password access enabled',
-  };
-  account.credits = {
-    accountId: account.accountId,
-    balance: Math.max(Number(account.credits?.balance || 0), credits),
-    currency: 'credits',
-  };
-  account.entitlements = {
-    ...(account.entitlements || {}),
-    passwordAccess: true,
-    liveRendering: true,
-  };
-  return saveAccount(account);
+  return updateAuthenticatedAccount({
+    accountId: accountIdForEmail(email), email,
+    name: process.env.VIDEO_OS_DEMO_NAME || String(username || 'LUX Demo').trim() || 'LUX Demo',
+    role: 'demo', initialCredits: credits,
+    entitlementKeys: ['passwordAccess', 'liveRendering'], sourceId: 'demo_password',
+  });
 }
 
 async function loadOwnerAccount(username) {
   const email = String(process.env.VIDEO_OS_ADMIN_EMAIL || process.env.VIDEO_OS_CEO_EMAIL || 'owner@luxvideoos.local').trim().toLowerCase();
   const credits = Math.max(1000, Number(process.env.VIDEO_OS_CEO_CREDITS || 10000));
-  const account = await loadAccount(accountIdForEmail(email));
-  account.email = email;
-  account.name = process.env.VIDEO_OS_CEO_NAME || String(username || 'LUX Owner').trim() || 'LUX Owner';
-  account.role = 'owner';
-  account.subscription = { plan: 'Video OS Owner Access', status: 'active', renewal: 'Owner-managed workspace' };
-  account.credits = {
-    accountId: account.accountId,
-    balance: Math.max(Number(account.credits?.balance || 0), credits),
-    currency: 'credits',
-  };
-  account.entitlements = {
-    ...(account.entitlements || {}),
-    ownerAccess: true,
-    fullAccess: true,
-    liveRendering: true,
-  };
-  return saveAccount(account);
+  return updateAuthenticatedAccount({
+    accountId: accountIdForEmail(email), email,
+    name: process.env.VIDEO_OS_CEO_NAME || String(username || 'LUX Owner').trim() || 'LUX Owner',
+    role: 'owner', initialCredits: credits,
+    entitlementKeys: ['ownerAccess', 'fullAccess', 'liveRendering'], sourceId: 'owner_password',
+  });
 }
 
 function publicAuthError(error) {
@@ -122,26 +99,11 @@ function publicAuthError(error) {
 async function loadCeoAccount() {
   const email = String(process.env.VIDEO_OS_CEO_EMAIL || 'ariel@luxmarketingcompany.com').trim().toLowerCase();
   const credits = Math.max(1000, Number(process.env.VIDEO_OS_CEO_CREDITS || 10000));
-  const account = await loadAccount(accountIdForEmail(email));
-  account.email = email;
-  account.name = process.env.VIDEO_OS_CEO_NAME || 'CEO Preview';
-  account.role = 'ceo';
-  account.subscription = {
-    plan: 'Video OS Lite CEO Preview',
-    status: 'active',
-    renewal: 'Full-access executive preview',
-  };
-  account.credits = {
-    accountId: account.accountId,
-    balance: Math.max(Number(account.credits?.balance || 0), credits),
-    currency: 'credits',
-  };
-  account.entitlements = {
-    ...(account.entitlements || {}),
-    ceoPreview: true,
-    fullAccess: true,
-  };
-  return saveAccount(account);
+  return updateAuthenticatedAccount({
+    accountId: accountIdForEmail(email), email, name: process.env.VIDEO_OS_CEO_NAME || 'CEO Preview',
+    role: 'ceo', initialCredits: credits,
+    entitlementKeys: ['ceoPreview', 'fullAccess'], sourceId: 'ceo_access_token',
+  });
 }
 export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
@@ -152,7 +114,7 @@ export default async function handler(req, res) {
       const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
       assertCeoToken(url.searchParams.get('token'));
       const account = await loadCeoAccount();
-      const session = makeSession(account.accountId, account.email, 60 * 60 * 24 * 30);
+      const session = makeSession(account.user.id, account.user.email, 60 * 60 * 24 * 30);
       res.setHeader('Set-Cookie', sessionCookie(session));
       res.statusCode = 302;
       res.setHeader('Location', '/?ceo_access=1');
@@ -163,17 +125,17 @@ export default async function handler(req, res) {
       const payload = await readJson(req, 50_000);
       const accessType = resolvePasswordAccess(payload.accessType || 'demo', payload.username, payload.password);
       const account = accessType === 'owner' ? await loadOwnerAccount(payload.username) : await loadPasswordAccount(payload.username);
-      const session = makeSession(account.accountId, account.email, 60 * 60 * 24 * 30);
+      const session = makeSession(account.user.id, account.user.email, 60 * 60 * 24 * 30);
       const cookies = [sessionCookie(session)];
-      if (accessType === 'owner') cookies.push(adminCookie(makeSession('admin', account.email, 60 * 60 * 12)));
+      if (accessType === 'owner') cookies.push(adminCookie(makeSession('admin', account.user.email, 60 * 60 * 12)));
       res.setHeader('Set-Cookie', cookies);
       return send(res, 200, {
         ok: true,
         signedIn: true,
         accessType,
-        email: account.email,
+        email: account.user.email,
         message: accessType === 'owner' ? 'Owner workspace unlocked.' : 'Demo workspace unlocked.',
-        ...accountPayload(account),
+        ...accountDto(account),
       });
     }
     if (action === 'admin-login') {
@@ -197,8 +159,11 @@ export default async function handler(req, res) {
     }
     if (action === 'auth-verify') {
       const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
-      const { account, email } = await consumeMagicToken(url.searchParams.get('token'));
-      const session = makeSession(account.accountId, email);
+      const token = url.searchParams.get('token');
+      const { accountId, email } = await validateMagicToken(token);
+      await updateAuthenticatedAccount({ accountId, email, name: email, role: 'customer', initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 180), entitlementKeys: ['magicLinkAccess'], sourceId: 'magic_link' });
+      await consumeMagicToken(token);
+      const session = makeSession(accountId, email);
       res.setHeader('Set-Cookie', sessionCookie(session));
       res.statusCode = 302;
       res.setHeader('Location', '/?signed_in=1');
@@ -212,8 +177,9 @@ export default async function handler(req, res) {
       if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'Use GET for session status.' });
       try {
         const session = sessionFromRequest(req);
-        const account = await loadAccount(session.accountId);
-        return send(res, 200, { ok: true, signedIn: true, email: session.email, ...accountPayload(account) });
+        const account = await getAccountContext(session.accountId);
+        if (!account) throw Object.assign(new Error('Account not found.'), { statusCode: 401 });
+        return send(res, 200, { ok: true, signedIn: true, email: session.email, ...accountDto(account) });
       } catch (error) {
         return send(res, 200, { ok: true, signedIn: false, error: error.message || 'Signed out.' });
       }

@@ -15,7 +15,11 @@ import {
   reserveIdentityComponentCreation,
 } from '../../db/repositories.js';
 import { handleOptions, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { IDENTITY_CONSENT_POLICY_VERSION } from '../../lib/video-os-identity-policy.js';
 import {
+  assertHeygenConfigured,
+  assertIdentityProviderAccountAuthorized,
+  assertIdentityProviderMutationEnabled,
   cloneHeygenVoice,
   createHeygenPhotoAvatar,
   getHeygenPhotoAvatarStatus,
@@ -24,13 +28,16 @@ import {
   uploadHeygenIdentityAsset,
 } from '../../services/heygen.js';
 
-export const IDENTITY_CONSENT_POLICY_VERSION = 'video-os-identity-2026-07-v1';
 const ACTIVE = new Set(['CREATING', 'PROCESSING']);
 const SAFE_PROVIDER_HOSTS = ['heygen.ai', 'heygen.com'];
 
-function providerEnabled() {
-  return process.env.VIDEO_OS_IDENTITY_PROVIDER_ENABLED === 'true'
-    && process.env.HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED === 'true';
+function providerEnabled(accountId) {
+  try {
+    assertIdentitySubmissionAllowed(accountId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function identityForClient(identity) {
@@ -86,6 +93,7 @@ async function providerAssetFor(accountId, identity, component) {
   const { asset, buffer } = await ownedAssetBytes(accountId, assetId);
   if (asset.provider === 'heygen' && asset.providerAssetId) return asset.providerAssetId;
   const uploaded = await uploadHeygenIdentityAsset({
+    accountId,
     buffer,
     contentType: asset.contentType,
     filename: component === 'avatar' ? 'identity-photo' : 'identity-voice',
@@ -94,8 +102,14 @@ async function providerAssetFor(accountId, identity, component) {
   return uploaded.providerAssetId;
 }
 
+export function assertIdentitySubmissionAllowed(accountId) {
+  assertIdentityProviderMutationEnabled();
+  assertIdentityProviderAccountAuthorized(accountId);
+  return assertHeygenConfigured();
+}
+
 async function submitComponent(accountId, identityId, component) {
-  if (!providerEnabled()) throw Object.assign(new Error('Identity provider submission is disabled until preview entitlement, privacy, consent, and cost checks pass.'), { statusCode: 503, failureCategory: 'CAPABILITY_BLOCKED' });
+  assertIdentitySubmissionAllowed(accountId);
   const key = operationKey();
   const reservation = await reserveIdentityComponentCreation({ accountId, identityId, component, operationKey: key });
   if (reservation.replayed) return reservation.identity;
@@ -103,7 +117,7 @@ async function submitComponent(accountId, identityId, component) {
   try {
     const assetId = await providerAssetFor(accountId, identity, component);
     if (component === 'avatar') {
-      const created = await createHeygenPhotoAvatar({ assetId, name: identity.displayName, idempotencyKey: key });
+      const created = await createHeygenPhotoAvatar({ accountId, assetId, name: identity.displayName, idempotencyKey: key });
       return recordIdentityProviderSubmission({
         accountId,
         identityId,
@@ -114,7 +128,7 @@ async function submitComponent(accountId, identityId, component) {
         providerRenderableAvatarId: created.avatarLook.providerLookId,
       });
     }
-    const created = await cloneHeygenVoice({ assetId, name: identity.displayName });
+    const created = await cloneHeygenVoice({ accountId, assetId, name: identity.displayName });
     return recordIdentityProviderSubmission({ accountId, identityId, component, operationKey: key, providerVoiceId: created.providerVoiceId });
   } catch (error) {
     if (['PROVIDER_TIMEOUT', 'PROVIDER_NETWORK', 'PROVIDER_SUBMIT_UNKNOWN'].includes(error.failureCategory)) throw error;
@@ -196,7 +210,7 @@ export default async function handler(req, res) {
         ok: true,
         identities: identities.map(identityForClient),
         consentPolicyVersion: IDENTITY_CONSENT_POLICY_VERSION,
-        providerSubmissionEnabled: providerEnabled(),
+        providerSubmissionEnabled: providerEnabled(session.accountId),
       });
     }
     if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Method not allowed.' });
@@ -223,9 +237,10 @@ export default async function handler(req, res) {
       for (const component of draftComponents) {
         try {
           await submitComponent(session.accountId, body.identityId, component);
-        } catch {
-          // Each deliberate DRAFT submission gets one attempt. Failure or an
-          // ambiguous provider response must not block its sibling or retry.
+        } catch (error) {
+          if (['IDENTITY_PROVIDER_DISABLED', 'IDENTITY_ASSET_PRIVACY_UNCONFIRMED', 'CONFIG_MISSING', 'ENTITLEMENT', 'CONSENT', 'OWNERSHIP', 'VALIDATION'].includes(error.failureCategory)) throw error;
+          // A contained component-level provider failure must not prevent its
+          // sibling from reaching its own durable terminal state.
         }
       }
       identity = await getOwnedIdentity(session.accountId, body.identityId);

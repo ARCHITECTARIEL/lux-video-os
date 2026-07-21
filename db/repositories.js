@@ -1,9 +1,23 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { database } from './client.js';
-import { creditAccounts, creditTransactions, identityConsents, jobEvents, mediaAssets, projects, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
+import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
+import { creditAccounts, creditTransactions, entitlements, identityConsents, jobEvents, mediaAssets, projects, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
 
 export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING', 'PROCESSING', 'READY', 'FAILED']);
 export const IDENTITY_OVERALL_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING', 'READY', 'PARTIAL_FAILURE', 'FAILED', 'ARCHIVED']);
+const AUTH_ENTITLEMENT_SOURCE = 'validated_auth';
+
+export function reconcileAuthenticatedEntitlements(existingGrants = [], entitlementKeys = []) {
+  const desiredKeys = [...new Set(entitlementKeys)];
+  const desired = new Set(desiredKeys);
+  const collision = existingGrants.find((grant) => desired.has(grant.entitlementKey) && grant.sourceType !== AUTH_ENTITLEMENT_SOURCE);
+  if (collision) throw Object.assign(new Error('Authenticated entitlement conflicts with another authority.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  return {
+    desiredKeys,
+    disableKeys: existingGrants.filter((grant) => grant.sourceType === AUTH_ENTITLEMENT_SOURCE && grant.enabled && !desired.has(grant.entitlementKey)).map((grant) => grant.entitlementKey),
+    preservedKeys: existingGrants.filter((grant) => grant.sourceType !== AUTH_ENTITLEMENT_SOURCE && grant.enabled).map((grant) => grant.entitlementKey),
+  };
+}
 
 const ACTIVE_COMPONENT_STATUSES = new Set(['UPLOADING', 'CREATING', 'PROCESSING']);
 
@@ -21,15 +35,37 @@ export function deriveIdentityStatus({ avatarStatus = 'DRAFT', voiceStatus = 'DR
 
 export async function ensureAccount({ accountId, email, name, initialCredits = 0 }) {
   return database().transaction(async (tx) => {
-    await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account' }).onConflictDoUpdate({ target: users.id, set: { email: email || null, name: name || 'Video OS Account', updatedAt: new Date() } });
+    await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account' }).onConflictDoNothing();
     await tx.insert(creditAccounts).values({ accountId, balance: initialCredits }).onConflictDoNothing();
     return getAccount(accountId, tx);
+  });
+}
+
+export async function updateAuthenticatedAccount({ accountId, email, name, role = 'customer', initialCredits = 0, entitlementKeys = [], sourceId = null }) {
+  return database().transaction(async (tx) => {
+    const now = new Date();
+    await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account', role })
+      .onConflictDoUpdate({ target: users.id, set: { email: email || null, name: name || 'Video OS Account', role, updatedAt: now } });
+    await tx.insert(creditAccounts).values({ accountId, balance: initialCredits }).onConflictDoNothing();
+    const existingGrants = await tx.select().from(entitlements).where(eq(entitlements.accountId, accountId));
+    const { desiredKeys } = reconcileAuthenticatedEntitlements(existingGrants, entitlementKeys);
+    await tx.update(entitlements).set({ enabled: false, updatedAt: now }).where(and(eq(entitlements.accountId, accountId), eq(entitlements.sourceType, AUTH_ENTITLEMENT_SOURCE), eq(entitlements.enabled, true)));
+    for (const entitlementKey of desiredKeys) await tx.insert(entitlements).values({ accountId, entitlementKey, enabled: true, sourceType: AUTH_ENTITLEMENT_SOURCE, sourceId })
+      .onConflictDoUpdate({ target: [entitlements.accountId, entitlements.entitlementKey], set: { enabled: true, sourceType: AUTH_ENTITLEMENT_SOURCE, sourceId, updatedAt: now } });
+    return getAccountContext(accountId, tx);
   });
 }
 
 export async function getAccount(accountId, executor = database()) {
   const rows = await executor.select({ user: users, credits: creditAccounts }).from(users).innerJoin(creditAccounts, eq(users.id, creditAccounts.accountId)).where(eq(users.id, accountId)).limit(1);
   return rows[0] || null;
+}
+
+export async function getAccountContext(accountId, executor = database()) {
+  const account = await getAccount(accountId, executor);
+  if (!account) return null;
+  const grants = await executor.select().from(entitlements).where(and(eq(entitlements.accountId, accountId), eq(entitlements.enabled, true)));
+  return { ...account, entitlements: Object.fromEntries(grants.map((grant) => [grant.entitlementKey, true])) };
 }
 
 export async function reserveRender({ jobId, accountId, idempotencyKey, correlationId, provider, title, format, costCredits, input }) {
@@ -222,6 +258,14 @@ export async function getOwnedIdentity(accountId, identityId) {
   return (await database().select().from(userIdentities).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).limit(1))[0] || null;
 }
 
+export async function getRenderAuthorizedIdentity(accountId, identityId, policyVersion = IDENTITY_CONSENT_POLICY_VERSION) {
+  return database().transaction(async (tx) => {
+    const identity = (await tx.select().from(userIdentities).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).limit(1))[0] || null;
+    if (!identity) return null;
+    await assertActiveIdentityConsent(tx, identity, policyVersion);
+    return identity;
+  });
+}
 export async function getReadyOwnedIdentity(accountId, identityId) {
   return (await database().select().from(userIdentities).where(and(
     eq(userIdentities.accountId, accountId),
@@ -272,10 +316,11 @@ export async function recordIdentityConsent({ accountId, identityId, policyVersi
   });
 }
 
-async function assertActiveIdentityConsent(tx, identity) {
+async function assertActiveIdentityConsent(tx, identity, policyVersion = IDENTITY_CONSENT_POLICY_VERSION) {
   const consent = (await tx.select().from(identityConsents).where(and(
     eq(identityConsents.accountId, identity.accountId),
     eq(identityConsents.identityId, identity.id),
+    eq(identityConsents.policyVersion, policyVersion),
     isNull(identityConsents.revokedAt),
   )).orderBy(desc(identityConsents.acceptedAt)).limit(1))[0];
   if (!consent) throw Object.assign(new Error('Identity consent is required.'), { statusCode: 409, failureCategory: 'CONSENT' });
