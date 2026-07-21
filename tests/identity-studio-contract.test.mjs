@@ -19,6 +19,16 @@ test('Identity Studio is a separate five-step authenticated experience', async (
   assert.match(client, /pollCount >= 45/);
 });
 
+test('Digital Twin is explicitly unavailable and has no legacy submit path', async () => {
+  const [studio, root, client] = await Promise.all([read('public/identity.html'), read('public/index.html'), read('public/lite.js')]);
+  assert.match(studio, /Digital Twin/);
+  assert.match(studio, /COMING NEXT/);
+  assert.match(root, /Digital Twin/);
+  assert.match(root, /Coming later/);
+  assert.doesNotMatch(root, /Build digital twin|digital-twin-(?:name|file|url|consent)|create-digital-twin/);
+  assert.doesNotMatch(client, /digital_twin|digital-twin|create-digital-twin/);
+});
+
 test('consent UI contains every versioned authorization represented by the server', async () => {
   const [html, route] = await Promise.all([read('public/identity.html'), read('routes/video-os-lite/identities.js')]);
   assert.match(html, /This photo is of me, or I have documented authorization from this person\./);

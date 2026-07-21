@@ -1065,12 +1065,11 @@ function readFileAsDataUrl(file) {
   });
 }
 
-async function uploadAvatarSource(type) {
+async function uploadAvatarSource() {
   if (!appState.signedIn) { showToast('Sign in before uploading avatar assets.'); openAuthModal(); return; }
-  const isTwin = type === 'digital_twin';
-  const fileInput = document.querySelector(isTwin ? '#digital-twin-file' : '#photo-avatar-file');
-  const urlInput = document.querySelector(isTwin ? '#digital-twin-url' : '#photo-avatar-url');
-  const status = document.querySelector(isTwin ? '#digital-upload-status' : '#photo-upload-status');
+  const fileInput = document.querySelector('#photo-avatar-file');
+  const urlInput = document.querySelector('#photo-avatar-url');
+  const status = document.querySelector('#photo-upload-status');
   const file = fileInput?.files?.[0];
   if (!file) return;
   status.textContent = `Uploading ${file.name}...`;
@@ -1081,7 +1080,7 @@ async function uploadAvatarSource(type) {
     const data = await getJson('/api/video-os-lite/uploads', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: type, name: file.name, dataUrl }),
+      body: JSON.stringify({ kind: 'photo', name: file.name, dataUrl }),
     });
     appState.uploadedAsset = data;
     urlInput.value = data.previewUrl || '';
@@ -1589,22 +1588,21 @@ function consumeAuthReturn() {
   openAuthModal();
   setAuthStatus('The sign-in link could not be confirmed. Request a new link and try again.', 'error');
 }
-async function createAvatarBuild(type) {
+async function createAvatarBuild() {
   if (!appState.signedIn) { showToast('Sign in before creating avatars.'); openAuthModal(); return; }
-  const isTwin = type === 'digital_twin';
-  const name = document.querySelector(isTwin ? '#digital-twin-name' : '#photo-avatar-name').value.trim();
-  const fileUrl = document.querySelector(isTwin ? '#digital-twin-url' : '#photo-avatar-url').value.trim();
-  const consent = document.querySelector(isTwin ? '#digital-twin-consent' : '#photo-avatar-consent').checked;
+  const name = document.querySelector('#photo-avatar-name').value.trim();
+  const fileUrl = document.querySelector('#photo-avatar-url').value.trim();
+  const consent = document.querySelector('#photo-avatar-consent').checked;
   try {
     if (!canUseLocalApi()) throw new Error('Avatar builds need the local Video OS engine.');
     const data = await getJson('/api/video-os-lite/avatar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, name, fileUrl, consent }),
+      body: JSON.stringify({ type: 'photo', name, fileUrl, consent }),
     });
     appState.credits = data.credits;
-    showToast(data.message || `${isTwin ? 'Digital twin' : 'Photo avatar'} submitted.`);
-    document.querySelector(isTwin ? '#digital-upload-status' : '#photo-upload-status').textContent = data.message || 'Avatar build submitted.';
+    showToast(data.message || 'Photo avatar submitted.');
+    document.querySelector('#photo-upload-status').textContent = data.message || 'Avatar build submitted.';
     await loadAccount();
   } catch (error) {
     showToast(error.message);
@@ -1668,10 +1666,8 @@ document.querySelector('#result-gallery-toggle').addEventListener('click', () =>
   renderResultGallery();
 });
 document.querySelectorAll('[data-credit-quantity]').forEach((button) => button.addEventListener('click', () => addCredits(button.dataset.creditQuantity)));
-document.querySelector('#photo-avatar-file').addEventListener('change', () => uploadAvatarSource('photo'));
-document.querySelector('#digital-twin-file').addEventListener('change', () => uploadAvatarSource('digital_twin'));
-document.querySelector('#create-photo-avatar').addEventListener('click', () => createAvatarBuild('photo'));
-document.querySelector('#create-digital-twin').addEventListener('click', () => createAvatarBuild('digital_twin'));
+document.querySelector('#photo-avatar-file').addEventListener('change', uploadAvatarSource);
+document.querySelector('#create-photo-avatar').addEventListener('click', createAvatarBuild);
 document.querySelector('#render-provider').addEventListener('click', renderWithProvider);
 document.querySelector('#finalize-render').addEventListener('click', finalizeProviderRender);
 document.querySelector('#export-mp4').addEventListener('click', exportMp4);
