@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { start } from 'workflow/api';
 import { accountDto, jobDto } from '../../db/dto.js';
 import { claimWorkflowStart, ensureAccount, getJob, getOwnedProject, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
+import { assertTalentSelectionsAvailable, loadTalentInventory } from '../video-os/talent.js';
 import { captureJobError } from '../../lib/video-os-observability.js';
 import { featureEnabled, requestId, requireRenderAccountAuthorization } from '../../lib/video-os-security.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
@@ -22,6 +23,8 @@ export default async function handler(req, res) {
     const project = await getOwnedProject(session.accountId, payload.projectId);
     if (!project) throw Object.assign(new Error('Project not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
     if (project.avatar?.id !== payload.avatar.avatarId || project.voice?.id !== payload.voice.voiceId) throw Object.assign(new Error('Render inputs do not match the saved project.'), { statusCode: 409, failureCategory: 'VALIDATION' });
+    const inventory = await loadTalentInventory();
+    assertTalentSelectionsAvailable(inventory.talent, payload);
     const account = await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 0) });
     const correlationId = requestId(req);
     const reserved = await reserveRender({ jobId: `job-${crypto.randomUUID()}`, accountId: session.accountId, idempotencyKey: payload.idempotencyKey, correlationId, provider: payload.provider, title: payload.title, format: payload.format, costCredits: 90, input: payload });
