@@ -6,6 +6,7 @@
         "check:imports": "node tools/check-imports.mjs",
         "build:production": "node tools/build-production.mjs",
         "build:preview": "node tools/build-production.mjs --preview",
+        "scan:client-privacy": "node tools/scan-client-provider-privacy.mjs",
         "test": "npm run test:unit",
         "test:unit": "node --test tests/*.test.mjs && vitest run",
         "test:e2e": "playwright test",

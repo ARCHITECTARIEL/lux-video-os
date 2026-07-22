@@ -42,10 +42,10 @@ const publicDemoAccount = {
 };
 
 const publicDemoProviders = [
-  { id: 'heygen', name: 'HeyGen', cost: 90, configured: true, missing: [] },
-  { id: 'argil', name: 'Argil', cost: 80, configured: true, missing: [] },
-  { id: 'tavus', name: 'Tavus', cost: 120, configured: true, missing: [] },
-  { id: 'did', name: 'D-ID', cost: 45, configured: true, missing: [] },
+  { id: 'heygen', name: 'HeyGen', cost: 90 },
+  { id: 'argil', name: 'Argil', cost: 80 },
+  { id: 'tavus', name: 'Tavus', cost: 120 },
+  { id: 'did', name: 'D-ID', cost: 45 },
 ];
 const panels = [...document.querySelectorAll('.wizard-panel')];
 const stepButtons = [...document.querySelectorAll('[data-step-jump]')];
@@ -148,23 +148,23 @@ function availableAvatarItems() {
 
 function availableVoiceItems() {
   const items = appState.libraries.voice || [];
-  const prioritized = prioritizeVoices(items, appState.avatar?.id);
+  const prioritized = prioritizeVoices(items, appState.avatar);
   return prioritized.length || !canUseLocalApi() ? prioritized : items;
 }
 
 function renderFeaturedCast() {
   const target = document.querySelector('#featured-cast-list');
   if (!target) return;
-  const avatars = new Map((appState.libraries.avatar || []).map((item) => [item.id, item]));
-  const voices = new Map((appState.libraries.voice || []).map((item) => [item.id, item]));
+  const avatars = new Map((appState.libraries.avatar || []).filter((item) => item.featuredKey).map((item) => [item.featuredKey, item]));
+  const voices = new Map((appState.libraries.voice || []).filter((item) => item.featuredKey).map((item) => [item.featuredKey, item]));
   target.replaceChildren(...FEATURED_CAST.map((featured) => {
-    const item = avatars.get(featured.avatarId) || { id: featured.avatarId, name: featured.label, source: 'heygen', providerReady: false, unavailableReason: 'Provider availability has not been confirmed.' };
-    const matchedVoice = voices.get(featured.voiceId);
+    const item = avatars.get(featured.key) || { id: `featured:${featured.key}`, name: featured.label, source: 'heygen', featuredKey: featured.key, matchedVoiceId: `featured:${featured.key}:voice`, providerReady: false, unavailableReason: 'Provider availability has not been confirmed.' };
+    const matchedVoice = voices.get(featured.key);
     const pairReady = item.providerReady === true && matchedVoice?.providerReady !== false && Boolean(matchedVoice);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `featured-cast-card${appState.avatar?.id === item.id ? ' selected' : ''}${pairReady ? '' : ' unavailable'}`;
-    button.dataset.featuredAvatarId = featured.avatarId;
+    button.dataset.featuredKey = featured.key;
     button.setAttribute('aria-pressed', String(appState.avatar?.id === item.id));
     button.disabled = !pairReady;
     if (item.previewUrl) {
@@ -194,10 +194,10 @@ function renderFeaturedCast() {
 
 function chooseCard(type, item, options = {}) {
   if (!item || item.providerReady === false) return;
-  const recommendedId = type === 'avatar' ? matchedVoiceId(item.id) : null;
+  const recommendedId = type === 'avatar' ? matchedVoiceId(item) : null;
   const recommended = recommendedId ? (appState.libraries.voice || []).find((voice) => voice.id === recommendedId && voice.providerReady !== false) : null;
   if (recommendedId && !recommended) {
-    const label = FEATURED_CAST.find((entry) => entry.avatarId === item.id)?.label || 'This presenter';
+    const label = FEATURED_CAST.find((entry) => entry.key === item.featuredKey)?.label || 'This presenter';
     showToast(`${label}'s exact matched voice is unavailable. Choose another provider-ready presenter.`);
     return;
   }
@@ -227,7 +227,7 @@ function renderOptions(type) {
   const target = document.querySelector(type === 'avatar' ? '#avatar-list' : '#voice-list');
   const filtered = searchableItems(type);
   const visible = filtered.slice(0, appState.visible[type]);
-  const recommendation = type === 'voice' ? matchedVoiceId(appState.avatar?.id) : null;
+  const recommendation = type === 'voice' ? matchedVoiceId(appState.avatar) : null;
   target.replaceChildren(...visible.map((item) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -272,7 +272,23 @@ function rerenderLibrary(type) {
   renderOptions(type);
 }
 
+function clearTalent() {
+  appState.libraries.avatar = [];
+  appState.libraries.voice = [];
+  appState.avatar = null;
+  appState.voice = null;
+  appState.voiceSelectionExplicit = false;
+  renderFeaturedCast();
+  renderOptions('avatar');
+  renderOptions('voice');
+  document.querySelector('#connection-pill').textContent = 'Sign in to view provider talent';
+}
+
 async function loadTalent() {
+  if (!appState.signedIn && !canUseLocalApi()) {
+    clearTalent();
+    return;
+  }
   try {
     if (!canUseHostedApi()) throw new Error('Static mode');
     const data = await getJson('/api/video-os/talent');
@@ -1400,6 +1416,7 @@ async function passwordLogin() {
     document.querySelector('#auth-retry').hidden = true;
     setAuthStatus(data.message || 'Signed in. Live rendering is ready.', 'success');
     await loadProviders();
+    await loadTalent();
     await loadResults();
     renderAccount();
     closeAuthModal();
@@ -1444,6 +1461,7 @@ async function signOut() {
     authLastAction = null;
     await loadProviders();
     await loadAccount();
+    clearTalent();
     renderResultGallery();
     closeAuthModal();
     showToast('Signed out.');
@@ -1565,7 +1583,9 @@ document.querySelector('#export-format').addEventListener('change', () => {
   scheduleAutoFinalize(500);
 });
 setStep(0);
-Promise.all([loadTalent(), loadProviders(), loadAssetCatalog(), loadAccount()]).then(async () => {
+Promise.all([loadProviders(), loadAssetCatalog(), loadAccount()]).then(async () => {
+  if (appState.signedIn) await loadTalent();
+  else clearTalent();
   consumeAuthReturn();
   await restoreLatestProject().catch(() => {});
   await loadResults();

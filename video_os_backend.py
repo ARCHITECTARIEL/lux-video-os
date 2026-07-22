@@ -1497,8 +1497,6 @@ def publish_public_snapshot(store=None):
             "last30days": last30days_health(),
             "scheduler": scheduler_status(),
         },
-        "talentInventory": load_talent_inventory(),
-        "talentConnection": talent_connection_status(),
         "discoverOptions": {**load_discover_options(), "watchlists": load_watchlists(), "scanSchedules": load_scan_schedules()},
         "projects": public_projects,
         "trends": {

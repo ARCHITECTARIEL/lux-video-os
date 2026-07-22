@@ -149,3 +149,16 @@ def test_hosted_talent_inventory_uses_v3_public_avatar_iv_looks(monkeypatch):
 
     assert any("/v3/avatars/looks?ownership=public" in url for url in requested_urls)
     assert [item["id"] for item in result["talent"]["avatars"]] == ["avatar-iv"]
+
+
+def test_legacy_local_talent_routes_fail_closed_before_provider_access():
+    source = (ROOT / "server.py").read_text(encoding="utf-8")
+    get_guard = source.index('if self.path == "/api/video-os/talent":')
+    refresh_guard = source.index('if self.path == "/api/video-os/talent/refresh":')
+    get_block = source[get_guard:source.index("return", get_guard) + len("return")]
+    refresh_block = source[refresh_guard:source.index("return", refresh_guard) + len("return")]
+
+    assert "HTTPStatus.UNAUTHORIZED" in get_block
+    assert "HTTPStatus.UNAUTHORIZED" in refresh_block
+    assert "hosted_talent_inventory" not in get_block
+    assert "refresh_talent" not in refresh_block

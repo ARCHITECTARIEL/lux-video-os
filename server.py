@@ -187,8 +187,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({"ok": True, "jobs": video_os.list_jobs()})
             return
         if self.path == "/api/video-os/talent":
-            talent = video_os.load_talent_inventory()
-            self.send_json({"ok": True, "talent": talent, "connection": video_os.talent_connection_status(talent)})
+            self.send_json({"ok": False, "error": "Provider talent requires the authenticated hosted application."}, HTTPStatus.UNAUTHORIZED)
             return
         if self.path == "/api/video-os-lite/providers":
             account_id, cookie, _payload = self.with_account()
@@ -317,13 +316,7 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": True, "job": job, "videoOs": video_os.publish_public_snapshot()})
                 return
             if self.path == "/api/video-os/talent/refresh":
-                talent = video_os.load_talent_inventory(refresh=True)
-                self.send_json({
-                    "ok": True,
-                    "talent": talent,
-                    "connection": video_os.talent_connection_status(talent),
-                    "videoOs": video_os.publish_public_snapshot(),
-                })
+                self.send_json({"ok": False, "error": "Provider talent refresh is unavailable on the anonymous local control plane."}, HTTPStatus.UNAUTHORIZED)
                 return
             if self.path == "/api/video-os/discover-options":
                 discover_options = video_os.update_discover_config(payload)

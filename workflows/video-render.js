@@ -1,6 +1,7 @@
 import { FatalError, sleep } from 'workflow';
 import { finalizeReadyJob, getJob, markJobFailedAndRelease, transitionJob } from '../db/repositories.js';
 import { featureEnabled } from '../lib/video-os-security.js';
+import { resolveFeaturedProviderSelections } from '../lib/video-os-featured-cast.js';
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
 import { pollHeygen, submitHeygen } from '../services/heygen.js';
@@ -14,7 +15,7 @@ async function submitProvider(jobId) {
   if (job.status === 'provider_submitting' || job.status === 'provider_submit_unknown') throw Object.assign(new FatalError('Provider submission requires reconciliation.'), { failureCategory: 'PROVIDER_SUBMIT_UNKNOWN' });
   try {
     await transitionJob({ jobId, stageTo: 'provider_submitting', eventType: 'provider.submit_started' });
-    const submitted = await submitHeygen(job);
+    const submitted = await submitHeygen({ ...job, input: resolveFeaturedProviderSelections(job.input) });
     await transitionJob({ jobId, stageTo: 'provider_submitted', eventType: 'provider.submitted', providerJobId: submitted.providerJobId });
     return submitted;
   } catch (error) {
