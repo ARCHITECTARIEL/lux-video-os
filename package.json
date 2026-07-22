@@ -32,7 +32,7 @@
     "devDependencies": {
         "@playwright/test": "^1.61.1",
         "drizzle-kit": "^0.31.10",
-        "vercel": "^56.2.0",
+        "vercel": "^56.5.0",
         "vitest": "^4.1.10"
     }
 }
