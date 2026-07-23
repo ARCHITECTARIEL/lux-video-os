@@ -9,6 +9,8 @@
         "scan:client-privacy": "node tools/scan-client-provider-privacy.mjs",
         "test": "npm run test:unit",
         "test:unit": "node --test tests/*.test.mjs && vitest run",
+        "test:codeql-gate": "node --test tests/codeql-sarif-gate.test.mjs",
+        "codeql:enforce": "node tools/enforce-codeql-sarif.mjs",
         "test:e2e": "playwright test",
         "db:check": "drizzle-kit check",
         "db:generate": "drizzle-kit generate",

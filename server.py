@@ -6,6 +6,7 @@ import os
 import queue
 import re
 import shutil
+import stat
 import subprocess
 import threading
 import time
@@ -26,6 +27,9 @@ UPLOADS = PUBLIC / "uploads"
 ASSETS = ROOT / "data" / "video-os" / "assets"
 ASSET_MANIFEST = ASSETS / "asset-manifest.json"
 MAX_POST_BYTES = 25_000_000
+ALLOWED_ASSET_FOLDERS = ("music", "backgrounds", "luts", "cta", "overlays")
+ALLOWED_ASSET_EXTENSIONS = {".wav", ".mp3", ".mp4", ".mov", ".gif", ".cube"}
+ASSET_FOLDER_ROOTS = {folder: ASSETS / folder for folder in ALLOWED_ASSET_FOLDERS}
 
 
 SESSION_COOKIE = "video_os_lite_session"
@@ -259,13 +263,14 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND, "Asset not found")
             return
         folder = parts[4]
-        filename = urllib.parse.unquote(parts[5])
-        allowed = {"music", "backgrounds", "luts", "cta", "overlays"}
-        if folder not in allowed:
+        filename = parts[5]
+        if folder not in ALLOWED_ASSET_FOLDERS:
             self.send_error(HTTPStatus.NOT_FOUND, "Asset not found")
             return
+        folder_root = canonical_asset_root(folder)
         path = resolve_asset_file(filename, folder)
-        if not path:
+        handle = open_validated_asset(path, folder_root) if path and folder_root else None
+        if not path or not handle:
             self.send_error(HTTPStatus.NOT_FOUND, "Asset not found")
             return
         mime = {
@@ -276,12 +281,12 @@ class Handler(SimpleHTTPRequestHandler):
             ".gif": "image/gif",
             ".cube": "text/plain",
         }.get(path.suffix.lower(), "application/octet-stream")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", mime)
-        self.send_header("Cache-Control", "public, max-age=3600")
-        self.send_header("Content-Length", str(path.stat().st_size))
-        self.end_headers()
-        with path.open("rb") as handle:
+        with handle:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", mime)
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.send_header("Content-Length", str(os.fstat(handle.fileno()).st_size))
+            self.end_headers()
             shutil.copyfileobj(handle, self.wfile)
     def handle_video_os_post(self):
         try:
@@ -455,6 +460,106 @@ def normalize_asset_name(value):
     return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
 
 
+def path_within_root(root, candidate):
+    try:
+        candidate.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def canonical_asset_root(folder):
+    folder_root = ASSET_FOLDER_ROOTS.get(folder)
+    if not folder_root:
+        return None
+    assets_root = ASSETS.resolve(strict=False)
+    resolved_root = folder_root.resolve(strict=False)
+    return resolved_root if path_within_root(assets_root, resolved_root) else None
+
+
+def decode_asset_selector(value):
+    decoded = str(value or "")
+    for _ in range(2):
+        decoded = urllib.parse.unquote(decoded)
+    decoded = decoded.strip()
+    if not decoded or "\x00" in decoded:
+        return None
+    if decoded.startswith(("/", "\\", "//", "\\\\")):
+        return None
+    if re.match(r"^[A-Za-z]:([/\\]|$)", decoded):
+        return None
+    if "/" in decoded or "\\" in decoded or ".." in decoded:
+        return None
+    return decoded
+
+
+def asset_candidate_within_root(path, folder_root):
+    try:
+        resolved_root = folder_root.resolve(strict=False)
+        resolved_path = path.resolve(strict=False)
+    except OSError:
+        return False
+    if not path_within_root(resolved_root, resolved_path):
+        return False
+    if resolved_path.suffix.lower() not in ALLOWED_ASSET_EXTENSIONS:
+        return False
+    try:
+        file_stat = resolved_path.stat()
+        return stat.S_ISREG(file_stat.st_mode) and file_stat.st_size > 0
+    except OSError:
+        return False
+
+
+def asset_content_is_valid(handle, suffix):
+    prefix = handle.read(4096)
+    handle.seek(0)
+    if suffix == ".wav":
+        return len(prefix) >= 12 and prefix[:4] == b"RIFF" and prefix[8:12] == b"WAVE"
+    if suffix == ".mp3":
+        return prefix.startswith(b"ID3") or (
+            len(prefix) >= 2 and prefix[0] == 0xFF and (prefix[1] & 0xE0) == 0xE0
+        )
+    if suffix in {".mp4", ".mov"}:
+        return len(prefix) >= 12 and prefix[4:8] == b"ftyp"
+    if suffix == ".gif":
+        return prefix.startswith((b"GIF87a", b"GIF89a"))
+    if suffix == ".cube":
+        try:
+            text = prefix.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return False
+        return "LUT_3D_SIZE" in text or "LUT_1D_SIZE" in text
+    return False
+
+
+def open_validated_asset(path, folder_root):
+    if not asset_candidate_within_root(path, folder_root):
+        return None
+    try:
+        handle = path.open("rb")
+        opened_stat = os.fstat(handle.fileno())
+        current_stat = path.stat()
+        if (
+            not stat.S_ISREG(opened_stat.st_mode)
+            or opened_stat.st_size <= 0
+            or (opened_stat.st_dev, opened_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino)
+            or not asset_content_is_valid(handle, path.suffix.lower())
+        ):
+            handle.close()
+            return None
+        return handle
+    except OSError:
+        return None
+
+
+def validated_asset_path(path, folder_root):
+    handle = open_validated_asset(path, folder_root)
+    if not handle:
+        return None
+    handle.close()
+    return path.resolve(strict=False)
+
+
 def load_asset_manifest():
     if not ASSET_MANIFEST.exists():
         return []
@@ -466,8 +571,10 @@ def load_asset_manifest():
 
 
 def resolve_asset_file(name, folder):
-    needle = normalize_asset_name(name)
-    if not needle:
+    folder_root = canonical_asset_root(folder)
+    decoded_name = decode_asset_selector(name)
+    needle = normalize_asset_name(decoded_name)
+    if not folder_root or not needle:
         return None
     for item in load_asset_manifest():
         if item.get("folder") != folder:
@@ -475,13 +582,17 @@ def resolve_asset_file(name, folder):
         candidates = [item.get("title"), item.get("file"), Path(item.get("path") or "").name]
         if any(normalize_asset_name(candidate) == needle for candidate in candidates):
             path = Path(item.get("path") or "")
-            if path.exists() and path.is_file() and path.stat().st_size > 0:
-                return path
-    folder_path = ASSETS / folder
-    if folder_path.exists():
-        for path in folder_path.iterdir():
-            if path.is_file() and normalize_asset_name(path.name) == needle:
-                return path
+            if not path.is_absolute():
+                path = ASSETS / path
+            validated = validated_asset_path(path, folder_root)
+            if validated:
+                return validated
+    if folder_root.exists():
+        for path in folder_root.iterdir():
+            if normalize_asset_name(path.name) == needle:
+                validated = validated_asset_path(path, folder_root)
+                if validated:
+                    return validated
     return None
 
 
