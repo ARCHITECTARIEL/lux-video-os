@@ -407,6 +407,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .render-steps span.error { color: #9f1239; }
 .render-steps span.error::before { border-color: #fb7185; background: #fb7185; }
 .recovery-action[hidden] { display: none; }
+.download-link[hidden] { display: none; }
 .effect-list { display: grid; gap: 8px; }
 .effect-list:empty { display: none; }
 .effect-list div {

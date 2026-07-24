@@ -39,6 +39,7 @@ http://127.0.0.1:8789/dashboard
 - Export controls for vertical, landscape, and square.
 - Local FFmpeg MP4 draft export through `/api/video-os-lite/export`.
 - Browser fallback that downloads a project brief when the local engine/export is unavailable.
+- Local `server.py` upload persistence is intentionally disabled; authenticated private uploads are available only through the hosted JavaScript API, which enforces database/Blob consistency.
 
 ## Worker
 

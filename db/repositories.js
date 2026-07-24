@@ -211,6 +211,32 @@ export async function getOwnedMediaAsset(accountId, assetId) {
   return (await database().select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, assetId))).limit(1))[0] || null;
 }
 
+export function classifyDatabaseCommitOutcome(error) {
+  const code = String(error?.code || '');
+  return /^(22|23|40|42)/.test(code) ? 'not_committed' : 'unknown';
+}
+
+function uploadPersistenceError(commitOutcome) {
+  return Object.assign(new Error('Media persistence is unavailable.'), {
+    statusCode: 503,
+    failureCategory: 'PERSISTENCE',
+    commitOutcome,
+  });
+}
+
+export async function addUploadMediaAsset(asset) {
+  try {
+    const [created] = await database().insert(mediaAssets).values(asset).onConflictDoNothing().returning();
+    if (created) return created;
+    const existing = await getOwnedMediaAsset(asset.accountId, asset.id);
+    if (existing) return existing;
+    throw uploadPersistenceError('not_committed');
+  } catch (error) {
+    if (error?.commitOutcome) throw error;
+    throw uploadPersistenceError(classifyDatabaseCommitOutcome(error));
+  }
+}
+
 export async function attachProviderMediaAsset({ accountId, assetId, provider, providerAssetId }) {
   const [updated] = await database().update(mediaAssets).set({ provider, providerAssetId, providerUploadedAt: new Date() })
     .where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, assetId), isNull(mediaAssets.providerAssetId))).returning();
@@ -481,8 +507,25 @@ export async function archiveOwnedIdentity(accountId, identityId) {
   });
 }
 
-export async function saveProject({ id, accountId, identityId, title, script, avatar, voice, settings }) {
-  const values = { accountId, identityId, title, script, avatar, voice, settings, updatedAt: new Date() };
+function projectSelectionForStorage(value) {
+  const id = String(value?.id || '').trim().slice(0, 160);
+  if (!id) return null;
+  const name = String(value?.name || '').trim().slice(0, 180);
+  const source = String(value?.source || '').trim().slice(0, 80);
+  return { id, ...(name ? { name } : {}), ...(source ? { source } : {}) };
+}
+
+export async function saveProject({ id, accountId, identityId, title, script, avatar, voice }) {
+  const values = {
+    accountId,
+    identityId,
+    title,
+    script,
+    avatar: projectSelectionForStorage(avatar),
+    voice: projectSelectionForStorage(voice),
+    settings: {},
+    updatedAt: new Date(),
+  };
   return database().transaction(async (tx) => {
     if (identityId) {
       const ownedIdentity = (await tx.select({ id: userIdentities.id }).from(userIdentities).where(and(

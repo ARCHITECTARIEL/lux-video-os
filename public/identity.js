@@ -248,6 +248,11 @@ function updateProgress() {
     const value = document.createElement('span'); value.textContent = statusLabel(identity?.[key] || 'DRAFT');
     card.append(title, value); container.append(card);
   }
+  const readyUseLink = $('#ready-use-link');
+  if (readyUseLink) {
+    readyUseLink.href = identity?.ready && identity.id ? '/?identityId=' + encodeURIComponent(identity.id) : '/';
+    readyUseLink.setAttribute('aria-disabled', String(!(identity?.ready && identity.id)));
+  }
   if (identity?.ready) setStep(5);
 }
 

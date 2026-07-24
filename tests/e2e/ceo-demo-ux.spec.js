@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test';
 
-const ARIEL = { avatarId: 'ddd0cccc81334e50b493a12c34fb47b1', voiceId: 'ae2cee128a094fb4b9ea3f669ee46099', label: 'Ariel' };
-const OSO = { avatarId: 'e8083119a1024dd0814b6ba7e9addfc4', voiceId: 'b874056efca4441aaa8befa518076eee', label: 'OSO' };
-const KD = { avatarId: '880ad1223ca84f9590f21a0df4bf66b2', voiceId: 'ef08711aa68b400ba0213075e8d0b421', label: 'KD' };
+const ARIEL = { key: 'ariel', avatarId: 'featured:ariel', voiceId: 'featured:ariel:voice', label: 'Ariel' };
+const OSO = { key: 'oso', avatarId: 'featured:oso', voiceId: 'featured:oso:voice', label: 'OSO' };
+const KD = { key: 'kd', avatarId: 'featured:kd', voiceId: 'featured:kd:voice', label: 'KD' };
 const FEATURED = [ARIEL, OSO, KD];
 
 function avatar(item, overrides = {}) {
@@ -13,6 +13,7 @@ function avatar(item, overrides = {}) {
     shared: false,
     active: true,
     providerReady: true,
+    ...(item.key ? { featuredKey: item.key, matchedVoiceId: item.voiceId } : {}),
     archived: false,
     blocked: false,
     previewUrl: `https://images.example/${item.label.toLowerCase()}.jpg`,
@@ -21,7 +22,7 @@ function avatar(item, overrides = {}) {
 }
 
 function voice(item, overrides = {}) {
-  return { id: item.voiceId, name: `${item.label} voice`, source: 'heygen', providerReady: true, archived: false, blocked: false, ...overrides };
+  return { id: item.voiceId, name: `${item.label} voice`, source: 'heygen', providerReady: true, ...(item.key ? { featuredKey: item.key } : {}), archived: false, blocked: false, ...overrides };
 }
 
 async function installAppRoutes(page, { results = [], project = null, identities = [], omitVoiceId = null } = {}) {
@@ -94,9 +95,9 @@ test('featured cast, curated list, voice priority, persistence, and completed Fi
   const guard = await installAppRoutes(page, { results: [ready], project });
   await page.goto('/');
 
-  const cover = page.locator('#featured-cast-list [data-featured-avatar-id]');
+  const cover = page.locator('#featured-cast-list [data-featured-key]');
   await expect(cover).toHaveCount(3);
-  expect(await cover.evaluateAll((nodes) => nodes.map((node) => node.dataset.featuredAvatarId))).toEqual(FEATURED.map((item) => item.avatarId));
+  expect(await cover.evaluateAll((nodes) => nodes.map((node) => node.dataset.featuredKey))).toEqual(FEATURED.map((item) => item.key));
 
   const cast = page.locator('#avatar-list [data-avatar-id]');
   await expect(cast).toHaveCount(20);
@@ -115,11 +116,11 @@ test('featured cast, curated list, voice priority, persistence, and completed Fi
   await page.locator('[data-step-jump="1"]').click();
   await page.locator('#voice-search').fill('Other voice');
   await page.locator('[data-voice-id="other-voice"]').click();
-  await page.locator(`[data-featured-avatar-id="${ARIEL.avatarId}"]`).click();
+  await page.locator(`[data-featured-key="${ARIEL.key}"]`).click();
   await expect(page.locator('[data-voice-id="other-voice"]')).toHaveClass(/selected/);
 
   await page.reload();
-  await expect(page.locator(`[data-featured-avatar-id="${KD.avatarId}"]`)).toHaveClass(/selected/);
+  await expect(page.locator(`[data-featured-key="${KD.key}"]`)).toHaveClass(/selected/);
   await expect(page.locator(`[data-voice-id="${KD.voiceId}"]`)).toHaveClass(/selected/);
 
   await expect(page.locator('#preview')).toHaveAttribute('data-preview-state', 'completed');
@@ -142,7 +143,7 @@ test('an explicit valid voice beyond the first 20 survives restoration and avata
   await page.locator('textarea[name="objective"]').fill('Preserve the selected voice');
   await page.locator('textarea[name="script"]').fill('Preserve the selected voice.');
   await page.locator('[data-step-jump="1"]').click();
-  await page.locator(`[data-featured-avatar-id="${KD.avatarId}"]`).click();
+  await page.locator(`[data-featured-key="${KD.key}"]`).click();
   await page.locator('#voice-search').fill('Late 24');
   await expect(page.locator('[data-voice-id="late-24"]')).toHaveClass(/selected/);
   await expect(page.locator('[data-voice-id="late-24"]')).toHaveAttribute('aria-pressed', 'true');
@@ -152,7 +153,7 @@ test('an explicit valid voice beyond the first 20 survives restoration and avata
 test('a featured presenter fails visibly when its exact matched voice is unavailable', async ({ page }) => {
   await installAppRoutes(page, { omitVoiceId: KD.voiceId });
   await page.goto('/');
-  const kd = page.locator(`[data-featured-avatar-id="${KD.avatarId}"]`);
+  const kd = page.locator(`[data-featured-key="${KD.key}"]`);
   await expect(kd).toBeDisabled();
   await expect(kd).toContainText("KD's matched voice is unavailable");
   await expect(kd).toHaveAttribute('aria-pressed', 'false');
@@ -173,10 +174,10 @@ test('mobile keeps Ariel, OSO, and KD visible and ordered', async ({ page }) => 
   await page.setViewportSize({ width: 390, height: 844 });
   await installAppRoutes(page);
   await page.goto('/');
-  const cover = page.locator('#featured-cast-list [data-featured-avatar-id]');
+  const cover = page.locator('#featured-cast-list [data-featured-key]');
   await expect(cover).toHaveCount(3);
-  expect(await cover.evaluateAll((nodes) => nodes.map((node) => node.dataset.featuredAvatarId))).toEqual(FEATURED.map((item) => item.avatarId));
-  for (const item of FEATURED) await expect(page.locator(`[data-featured-avatar-id="${item.avatarId}"]`)).toBeVisible();
+  expect(await cover.evaluateAll((nodes) => nodes.map((node) => node.dataset.featuredKey))).toEqual(FEATURED.map((item) => item.key));
+  for (const item of FEATURED) await expect(page.locator(`[data-featured-key="${item.key}"]`)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 

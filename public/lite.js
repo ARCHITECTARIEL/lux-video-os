@@ -1,6 +1,6 @@
 import { FEATURED_CAST, curateDefaultCast, matchedVoiceId, prioritizeVoices } from './video-os-cast.js';
 
-const appState = { step: 0, avatar: null, voice: null, identityId: null, identities: [], voiceSelectionExplicit: false, project: null, uploadedAsset: null, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultsState: 'signed-out', activeResult: null, resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 20, voice: 20 } };
+const appState = { step: 0, avatar: null, voice: null, identityId: null, identities: [], voiceSelectionExplicit: false, project: null, uploadedAsset: null, uploadOperations: {}, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultsState: 'signed-out', activeResult: null, resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 20, voice: 20 } };
 
 const fallbackTalent = {
   avatars: [
@@ -31,10 +31,10 @@ const publicDemoAccount = {
 };
 
 const publicDemoProviders = [
-  { id: 'heygen', name: 'HeyGen', cost: 90, configured: true, missing: [] },
-  { id: 'argil', name: 'Argil', cost: 80, configured: true, missing: [] },
-  { id: 'tavus', name: 'Tavus', cost: 120, configured: true, missing: [] },
-  { id: 'did', name: 'D-ID', cost: 45, configured: true, missing: [] },
+  { id: 'heygen', name: 'HeyGen', cost: 90 },
+  { id: 'argil', name: 'Argil', cost: 80 },
+  { id: 'tavus', name: 'Tavus', cost: 120 },
+  { id: 'did', name: 'D-ID', cost: 45 },
 ];
 const panels = [...document.querySelectorAll('.wizard-panel')];
 const stepButtons = [...document.querySelectorAll('[data-step-jump]')];
@@ -134,7 +134,7 @@ function availableAvatarItems() {
 
 function availableVoiceItems() {
   const items = appState.libraries.voice || [];
-  const prioritized = prioritizeVoices(items, appState.avatar?.id);
+  const prioritized = prioritizeVoices(items, appState.avatar);
   const privateVoice = appState.voice?.source === 'identity' && appState.voice.identityId === appState.identityId ? [appState.voice] : [];
   const available = prioritized.length || !canUseLocalApi() ? prioritized : items;
   return [...privateVoice, ...available.filter((item) => item.id !== privateVoice[0]?.id)];
@@ -225,13 +225,16 @@ function renderFeaturedCast() {
   const avatars = new Map((appState.libraries.avatar || []).map((item) => [item.id, item]));
   const voices = new Map((appState.libraries.voice || []).map((item) => [item.id, item]));
   target.replaceChildren(...FEATURED_CAST.map((featured) => {
-    const item = avatars.get(featured.avatarId) || { id: featured.avatarId, name: featured.label, source: 'heygen', providerReady: false, unavailableReason: 'Provider availability has not been confirmed.' };
-    const matchedVoice = voices.get(featured.voiceId);
+    const avatarId = `featured:${featured.key}`;
+    const voiceId = `featured:${featured.key}:voice`;
+    const item = avatars.get(avatarId) || { id: avatarId, name: featured.label, featuredKey: featured.key, matchedVoiceId: voiceId, source: 'heygen', providerReady: false, unavailableReason: 'Provider availability has not been confirmed.' };
+    const matchedVoice = voices.get(voiceId);
     const pairReady = item.providerReady === true && matchedVoice?.providerReady !== false && Boolean(matchedVoice);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `featured-cast-card${appState.avatar?.id === item.id ? ' selected' : ''}${pairReady ? '' : ' unavailable'}`;
-    button.dataset.featuredAvatarId = featured.avatarId;
+    button.dataset.featuredKey = featured.key;
+    button.dataset.featuredAvatarId = avatarId;
     button.setAttribute('aria-pressed', String(appState.avatar?.id === item.id));
     button.disabled = !pairReady;
     if (item.previewUrl) {
@@ -261,10 +264,10 @@ function renderFeaturedCast() {
 
 function chooseCard(type, item, options = {}) {
   if (!item || item.providerReady === false) return;
-  const recommendedId = type === 'avatar' ? matchedVoiceId(item.id) : null;
+  const recommendedId = type === 'avatar' ? matchedVoiceId(item) : null;
   const recommended = recommendedId ? (appState.libraries.voice || []).find((voice) => voice.id === recommendedId && voice.providerReady !== false) : null;
   if (recommendedId && !recommended) {
-    const label = FEATURED_CAST.find((entry) => entry.avatarId === item.id)?.label || 'This presenter';
+    const label = FEATURED_CAST.find((entry) => entry.key === item.featuredKey)?.label || 'This presenter';
     showToast(`${label}'s exact matched voice is unavailable. Choose another provider-ready presenter.`);
     return;
   }
@@ -295,7 +298,7 @@ function renderOptions(type) {
   const target = document.querySelector(type === 'avatar' ? '#avatar-list' : '#voice-list');
   const filtered = searchableItems(type);
   const visible = filtered.slice(0, appState.visible[type]);
-  const recommendation = type === 'voice' ? matchedVoiceId(appState.avatar?.id) : null;
+  const recommendation = type === 'voice' ? matchedVoiceId(appState.avatar) : null;
   target.replaceChildren(...visible.map((item) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -341,7 +344,23 @@ function rerenderLibrary(type) {
   renderOptions(type);
 }
 
+function clearTalent() {
+  appState.libraries.avatar = [];
+  appState.libraries.voice = [];
+  appState.avatar = null;
+  appState.voice = null;
+  appState.voiceSelectionExplicit = false;
+  renderFeaturedCast();
+  renderOptions('avatar');
+  renderOptions('voice');
+  document.querySelector('#connection-pill').textContent = 'Sign in to view provider talent';
+}
+
 async function loadTalent() {
+  if (!appState.signedIn && !canUseLocalApi()) {
+    clearTalent();
+    return;
+  }
   try {
     if (!canUseHostedApi()) throw new Error('Static mode');
     const data = await getJson('/api/video-os/talent');
@@ -545,10 +564,9 @@ async function saveLocalProject(payload) {
       identityId: appState.identityId || undefined,
       title: payload.title,
       script: payload.script,
-      avatar: { id: appState.avatar?.id, name: appState.avatar?.name, source: appState.avatar?.source, ...(appState.avatar?.previewUrl ? { previewUrl: appState.avatar.previewUrl } : {}) },
+      avatar: { id: appState.avatar?.id, name: appState.avatar?.name, source: appState.avatar?.source },
       voice: { id: appState.voice?.id, name: appState.voice?.name, source: appState.voice?.source },
       settings: {
-        identityId: appState.identityId || undefined,
         audience: payload.audience,
         objective: payload.objective,
         goalType: payload.goalType,
@@ -572,7 +590,7 @@ async function restoreLatestProject() {
   const project = data.projects?.[0];
   if (!project) return;
   appState.project = project;
-  const requestedIdentityId = project.identityId || project.settings?.identityId || null;
+  const requestedIdentityId = project.identityId || null;
   const restoredIdentity = requestedIdentityId ? appState.identities.find((identity) => identity.id === requestedIdentityId) : null;
   appState.identityId = restoredIdentity ? requestedIdentityId : null;
   appState.avatar = restoredIdentity ? identityAvatar(restoredIdentity) : (project.avatar?.source === 'identity' ? null : project.avatar);
@@ -1065,7 +1083,7 @@ function readFileAsDataUrl(file) {
   });
 }
 
-async function uploadAvatarSource() {
+async function uploadAvatarSource(type) {
   if (!appState.signedIn) { showToast('Sign in before uploading avatar assets.'); openAuthModal(); return; }
   const fileInput = document.querySelector('#photo-avatar-file');
   const urlInput = document.querySelector('#photo-avatar-url');
@@ -1077,15 +1095,23 @@ async function uploadAvatarSource() {
     if (!canUseHostedApi()) throw new Error('Uploads need the Video OS engine.');
     if (file.size > 20_000_000) throw new Error('Use a file under 20 MB for the local MVP.');
     const dataUrl = await readFileAsDataUrl(file);
+    const fingerprint = `${file.name}:${file.size}:${file.lastModified}:${file.type}`;
+    const pending = appState.uploadOperations[type];
+    const operation = pending?.fingerprint === fingerprint
+      ? pending
+      : { fingerprint, requestId: crypto.randomUUID() };
+    appState.uploadOperations[type] = operation;
     const data = await getJson('/api/video-os-lite/uploads', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'photo', name: file.name, dataUrl }),
+      headers: { 'Content-Type': 'application/json', 'x-request-id': operation.requestId },
+      body: JSON.stringify({ kind: type, name: file.name, dataUrl }),
     });
+    delete appState.uploadOperations[type];
     appState.uploadedAsset = data;
     urlInput.value = data.previewUrl || '';
     status.textContent = `${data.message} ${data.providerUrl ? 'Provider-ready.' : 'Staged locally.'}`;
   } catch (error) {
+    if (!error?.retryable) delete appState.uploadOperations[type];
     status.textContent = error.message;
     showToast(error.message);
   }
@@ -1103,7 +1129,11 @@ function resetFinalRenderStep() {
   stopAutoFinalize();
   setRecoveryAction('#render-provider', false, true);
   setRecoveryAction('#finalize-render', false, true);
-  document.querySelector('#download-link').hidden = true;
+  const downloadLink = document.querySelector('#download-link');
+  downloadLink.hidden = true;
+  downloadLink.removeAttribute('href');
+  downloadLink.removeAttribute('download');
+  downloadLink.textContent = 'Download final video';
   document.querySelector('#export-status').textContent = '';
   document.querySelectorAll('[data-render-step]').forEach((item) => item.classList.remove('active', 'done', 'error'));
 }
@@ -1504,6 +1534,7 @@ async function passwordLogin() {
     document.querySelector('#auth-retry').hidden = true;
     setAuthStatus(data.message || 'Signed in. Live rendering is ready.', 'success');
     await loadProviders();
+    await loadTalent().catch(() => {});
     await loadMyCast().catch(() => {});
     await restoreLatestProject().catch(() => {});
     consumeIdentitySelection();
@@ -1554,6 +1585,10 @@ async function signOut() {
     appState.avatar = null;
     appState.voice = null;
     appState.voiceSelectionExplicit = false;
+    appState.generated = null;
+    appState.activeResult = null;
+    resetFinalRenderStep();
+    setFinalCutState('empty', 'Sign in to recover completed videos.');
     authLastAction = null;
     renderMyCast();
     renderFeaturedCast();
@@ -1561,6 +1596,7 @@ async function signOut() {
     renderOptions('voice');
     await loadProviders();
     await loadAccount();
+    clearTalent();
     renderResultGallery();
     closeAuthModal();
     showToast('Signed out.');
@@ -1666,7 +1702,7 @@ document.querySelector('#result-gallery-toggle').addEventListener('click', () =>
   renderResultGallery();
 });
 document.querySelectorAll('[data-credit-quantity]').forEach((button) => button.addEventListener('click', () => addCredits(button.dataset.creditQuantity)));
-document.querySelector('#photo-avatar-file').addEventListener('change', uploadAvatarSource);
+document.querySelector('#photo-avatar-file').addEventListener('change', () => uploadAvatarSource('photo'));
 document.querySelector('#create-photo-avatar').addEventListener('click', createAvatarBuild);
 document.querySelector('#render-provider').addEventListener('click', renderWithProvider);
 document.querySelector('#finalize-render').addEventListener('click', finalizeProviderRender);
@@ -1679,7 +1715,9 @@ document.querySelector('#export-format').addEventListener('change', () => {
   scheduleAutoFinalize(500);
 });
 setStep(0);
-Promise.all([loadTalent(), loadProviders(), loadAssetCatalog(), loadAccount()]).then(async () => {
+Promise.all([loadProviders(), loadAssetCatalog(), loadAccount()]).then(async () => {
+  if (appState.signedIn) await loadTalent();
+  else clearTalent();
   consumeAuthReturn();
   await restoreLatestProject().catch(() => {});
   consumeIdentitySelection();

@@ -17,6 +17,9 @@ test('Identity Studio is a separate five-step authenticated experience', async (
   assert.match(client, /\/api\/video-os-lite\/session/);
   assert.match(client, /\/api\/video-os-lite\/identities/);
   assert.match(client, /pollCount >= 45/);
+  assert.match(html, /ready-use-link/);
+  assert.doesNotMatch(html, /useIdentity/);
+  assert.match(client, /readyUseLink\.href[\s\S]*encodeURIComponent\(identity\.id\)/);
 });
 
 test('Digital Twin is explicitly unavailable and has no legacy submit path', async () => {

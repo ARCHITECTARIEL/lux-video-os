@@ -21,13 +21,23 @@ function assertCeoToken(value) {
 }
 
 
+const MAX_CREDENTIAL_BYTES = 1024;
+
 function timingSafeMatch(input, expected) {
   const value = String(input || '').trim();
   const target = String(expected || '').trim();
   if (!target) return false;
   const valueBuffer = Buffer.from(value);
   const targetBuffer = Buffer.from(target);
-  return valueBuffer.length === targetBuffer.length && crypto.timingSafeEqual(valueBuffer, targetBuffer);
+  const valuePadded = Buffer.alloc(MAX_CREDENTIAL_BYTES);
+  const targetPadded = Buffer.alloc(MAX_CREDENTIAL_BYTES);
+  valueBuffer.copy(valuePadded, 0, 0, MAX_CREDENTIAL_BYTES);
+  targetBuffer.copy(targetPadded, 0, 0, MAX_CREDENTIAL_BYTES);
+  const contentsMatch = crypto.timingSafeEqual(valuePadded, targetPadded);
+  return contentsMatch
+    && valueBuffer.length === targetBuffer.length
+    && valueBuffer.length <= MAX_CREDENTIAL_BYTES
+    && targetBuffer.length <= MAX_CREDENTIAL_BYTES;
 }
 
 export function resolvePasswordAccess(accessType, username, password) {
@@ -60,15 +70,19 @@ function adminCookie(token) {
   return `vos_admin=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${60 * 60 * 12}`;
 }
 
-async function loadPasswordAccount(username) {
+async function loadDemoWorkspaceAccount() {
   const email = String(process.env.VIDEO_OS_DEMO_EMAIL || 'demo@luxvideoos.local').trim().toLowerCase();
   const credits = Math.max(500, Number(process.env.VIDEO_OS_DEMO_CREDITS || 5000));
   return updateAuthenticatedAccount({
     accountId: accountIdForEmail(email), email,
-    name: process.env.VIDEO_OS_DEMO_NAME || String(username || 'LUX Demo').trim() || 'LUX Demo',
+    name: process.env.VIDEO_OS_DEMO_NAME || 'LUX Demo',
     role: 'demo', initialCredits: credits,
     entitlementKeys: ['passwordAccess', 'liveRendering'], sourceId: 'demo_password',
   });
+}
+
+export function issueAccountSession(account, maxAgeSeconds = 60 * 60 * 24 * 30) {
+  return makeSession(account?.accountId || account?.user?.id, account?.email || account?.user?.email, maxAgeSeconds);
 }
 
 async function loadOwnerAccount(username) {
@@ -124,8 +138,8 @@ export default async function handler(req, res) {
       if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST to sign in with password.' });
       const payload = await readJson(req, 50_000);
       const accessType = resolvePasswordAccess(payload.accessType || 'demo', payload.username, payload.password);
-      const account = accessType === 'owner' ? await loadOwnerAccount(payload.username) : await loadPasswordAccount(payload.username);
-      const session = makeSession(account.user.id, account.user.email, 60 * 60 * 24 * 30);
+      const account = accessType === 'owner' ? await loadOwnerAccount(payload.username) : await loadDemoWorkspaceAccount();
+      const session = issueAccountSession(account, 60 * 60 * 24 * 30);
       const cookies = [sessionCookie(session)];
       if (accessType === 'owner') cookies.push(adminCookie(makeSession('admin', account.user.email, 60 * 60 * 12)));
       res.setHeader('Set-Cookie', cookies);

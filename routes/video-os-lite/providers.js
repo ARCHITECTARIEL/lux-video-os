@@ -27,7 +27,7 @@ export default async function handler(req, res) {
         account: { accountId: 'signed-out', name: 'Sign in to render', subscription: { plan: 'Video OS Lite', status: 'preview', renewal: 'Sign in to unlock live rendering' } },
         credits: { accountId: 'signed-out', balance: 0, currency: 'credits' },
         security: { status: 'locked', message: 'Sign in with email to use credits and live rendering.' },
-        providers: providerList(),
+        providers: providerList().map(({ id, name, label, cost }) => ({ id, name, label, cost })),
         assetLibraries: [],
       });
     }
