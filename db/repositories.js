@@ -158,6 +158,32 @@ export async function getOwnedMediaAsset(accountId, assetId) {
   return (await database().select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, assetId))).limit(1))[0] || null;
 }
 
+export function classifyDatabaseCommitOutcome(error) {
+  const code = String(error?.code || '');
+  return /^(22|23|40|42)/.test(code) ? 'not_committed' : 'unknown';
+}
+
+function uploadPersistenceError(commitOutcome) {
+  return Object.assign(new Error('Media persistence is unavailable.'), {
+    statusCode: 503,
+    failureCategory: 'PERSISTENCE',
+    commitOutcome,
+  });
+}
+
+export async function addUploadMediaAsset(asset) {
+  try {
+    const [created] = await database().insert(mediaAssets).values(asset).onConflictDoNothing().returning();
+    if (created) return created;
+    const existing = await getOwnedMediaAsset(asset.accountId, asset.id);
+    if (existing) return existing;
+    throw uploadPersistenceError('not_committed');
+  } catch (error) {
+    if (error?.commitOutcome) throw error;
+    throw uploadPersistenceError(classifyDatabaseCommitOutcome(error));
+  }
+}
+
 export async function saveProject({ id, accountId, title, script, avatar, voice, settings }) {
   const values = { accountId, title, script, avatar, voice, settings, updatedAt: new Date() };
   if (id) {

@@ -9,9 +9,24 @@ let client;
 let pool;
 export const databaseDriver = 'neon-serverless';
 
-export function database() {
+function configuredDatabaseUrl() {
   const url = String(process.env.DATABASE_URL || '').trim();
-  if (!url) throw Object.assign(new Error('DATABASE_URL is not configured.'), { statusCode: 503, failureCategory: 'CONFIG_MISSING' });
+  try {
+    const parsed = new URL(url);
+    if (!['postgres:', 'postgresql:'].includes(parsed.protocol) || !parsed.hostname || !parsed.pathname || parsed.pathname === '/') throw new Error('invalid');
+  } catch {
+    throw Object.assign(new Error('Database configuration is unavailable.'), { statusCode: 503, failureCategory: 'CONFIG_MISSING' });
+  }
+  return url;
+}
+
+export function assertDatabaseConfigured() {
+  configuredDatabaseUrl();
+  return true;
+}
+
+export function database() {
+  const url = configuredDatabaseUrl();
   pool ||= new Pool({ connectionString: url, max: 4, connectionTimeoutMillis: 10_000, idleTimeoutMillis: 10_000 });
   client ||= drizzle({ client: pool, schema });
   return client;
