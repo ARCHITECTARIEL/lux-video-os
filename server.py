@@ -361,8 +361,11 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": True, "accountId": account_id, **result}, status, cookie=cookie)
                 return
             if self.path == "/api/video-os-lite/uploads":
-                result = save_lite_upload(payload)
-                self.send_json({"ok": True, "accountId": account_id, **result}, HTTPStatus.CREATED, cookie=cookie)
+                self.send_json({
+                    "ok": False,
+                    "code": "upload_unavailable",
+                    "error": "Uploads require the hosted Video OS service.",
+                }, HTTPStatus.SERVICE_UNAVAILABLE, cookie=cookie)
                 return
             if self.path == "/api/video-os-lite/render":
                 result = provider_gateway.render_with_provider(payload)

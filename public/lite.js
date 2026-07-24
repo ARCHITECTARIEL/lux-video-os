@@ -1,6 +1,6 @@
 import { FEATURED_CAST, curateDefaultCast, matchedVoiceId, prioritizeVoices } from './video-os-cast.js';
 
-const appState = { step: 0, avatar: null, voice: null, voiceSelectionExplicit: false, project: null, uploadedAsset: null, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultsState: 'signed-out', activeResult: null, resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 20, voice: 20 } };
+const appState = { step: 0, avatar: null, voice: null, voiceSelectionExplicit: false, project: null, uploadedAsset: null, uploadOperations: {}, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultsState: 'signed-out', activeResult: null, resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 20, voice: 20 } };
 const browserAccountId = (() => {
   try {
     const key = 'luxVideoOsAccountId';
@@ -999,15 +999,23 @@ async function uploadAvatarSource(type) {
     if (!canUseHostedApi()) throw new Error('Uploads need the Video OS engine.');
     if (file.size > 20_000_000) throw new Error('Use a file under 20 MB for the local MVP.');
     const dataUrl = await readFileAsDataUrl(file);
+    const fingerprint = `${file.name}:${file.size}:${file.lastModified}:${file.type}`;
+    const pending = appState.uploadOperations[type];
+    const operation = pending?.fingerprint === fingerprint
+      ? pending
+      : { fingerprint, requestId: crypto.randomUUID() };
+    appState.uploadOperations[type] = operation;
     const data = await getJson('/api/video-os-lite/uploads', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-request-id': operation.requestId },
       body: JSON.stringify({ kind: type, name: file.name, dataUrl }),
     });
+    delete appState.uploadOperations[type];
     appState.uploadedAsset = data;
     urlInput.value = data.previewUrl || '';
     status.textContent = `${data.message} ${data.providerUrl ? 'Provider-ready.' : 'Staged locally.'}`;
   } catch (error) {
+    if (!error?.retryable) delete appState.uploadOperations[type];
     status.textContent = error.message;
     showToast(error.message);
   }

@@ -151,6 +151,16 @@ def test_hosted_talent_inventory_uses_v3_public_avatar_iv_looks(monkeypatch):
     assert [item["id"] for item in result["talent"]["avatars"]] == ["avatar-iv"]
 
 
+def test_local_python_upload_route_is_explicitly_fail_closed():
+    source = (ROOT / 'server.py').read_text(encoding='utf-8')
+    guard = source.index('/api/video-os-lite/uploads')
+    block = source[guard:source.index('return', guard) + len('return')]
+
+    assert 'HTTPStatus.SERVICE_UNAVAILABLE' in block
+    assert 'upload_unavailable' in block
+    assert 'save_lite_upload(payload)' not in block
+
+
 def test_legacy_local_talent_routes_fail_closed_before_provider_access():
     source = (ROOT / "server.py").read_text(encoding="utf-8")
     get_guard = source.index('if self.path == "/api/video-os/talent":')

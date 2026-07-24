@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createUploadHandler } from '../api/video-os-lite/uploads.js';
 import { assertDatabaseConfigured } from '../db/client.js';
+import { classifyDatabaseCommitOutcome } from '../db/repositories.js';
 
 const PNG_DATA_URL = `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64')}`;
 
@@ -25,6 +27,7 @@ function harness(overrides = {}) {
   const calls = {
     blobWrites: 0,
     blobDeletes: [],
+    databaseReads: 0,
     databaseWrites: 0,
     logs: [],
     providers: 0,
@@ -36,15 +39,19 @@ function harness(overrides = {}) {
     blobToken: () => 'test-token-never-sent',
     putPrivateBlob: async (_classification, pathname) => {
       calls.blobWrites += 1;
-      return { pathname: `${pathname.slice(0, -4)}-blob-suffix.png`, etag: 'created-object-etag' };
+      return { pathname, etag: 'created-object-etag' };
     },
     deletePrivateBlob: async (classification, pathname, options) => {
       calls.blobDeletes.push({ classification, pathname, options });
       return { deleted: true };
     },
-    addMediaAsset: async (asset) => {
+    getOwnedMediaAsset: async () => {
+      calls.databaseReads += 1;
+      return null;
+    },
+    addUploadMediaAsset: async (asset) => {
       calls.databaseWrites += 1;
-      return { id: 'asset-one', ...asset };
+      return asset;
     },
     logUploadPersistenceError: (entry) => calls.logs.push(entry),
     ...overrides,
@@ -95,9 +102,9 @@ test('missing database configuration fails with 503 before Blob or database writ
 test('database persistence failure deletes only the newly created Blob version', async () => {
   let calls;
   const setup = harness({
-    addMediaAsset: async () => {
+    addUploadMediaAsset: async () => {
       setup.calls.databaseWrites += 1;
-      throw Object.assign(new Error('database connection detail'), { failureCategory: 'PERSISTENCE' });
+      throw Object.assign(new Error('database connection detail'), { failureCategory: 'PERSISTENCE', commitOutcome: 'not_committed' });
     },
   });
   ({ calls } = setup);
@@ -107,7 +114,7 @@ test('database persistence failure deletes only the newly created Blob version',
   assert.equal(calls.blobWrites, 1);
   assert.equal(calls.databaseWrites, 1);
   assert.equal(calls.blobDeletes.length, 1);
-  assert.match(calls.blobDeletes[0].pathname, /^video-os\/uploads\/[^/]+\/portrait-[\w-]+-blob-suffix\.png$/);
+  assert.match(calls.blobDeletes[0].pathname, /^video-os\/uploads\/[^/]+\/portrait-[\w-]+\.png$/);
   assert.equal(calls.blobDeletes[0].options.ifMatch, 'created-object-etag');
   assert.equal(calls.logs[0].cleanup.succeeded, true);
   assert.doesNotMatch(JSON.stringify({ response: res.body, log: calls.logs[0] }), /connection detail|DATABASE_URL|test-token|signed|portrait/i);
@@ -115,9 +122,9 @@ test('database persistence failure deletes only the newly created Blob version',
 
 test('cleanup failure stays sanitized and preserves the original persistence category', async () => {
   const setup = harness({
-    addMediaAsset: async () => {
+    addUploadMediaAsset: async () => {
       setup.calls.databaseWrites += 1;
-      throw Object.assign(new Error('secret database host'), { failureCategory: 'CONFIG_MISSING' });
+      throw Object.assign(new Error('secret database host'), { failureCategory: 'CONFIG_MISSING', commitOutcome: 'not_committed' });
     },
     deletePrivateBlob: async (classification, pathname, options) => {
       setup.calls.blobDeletes.push({ classification, pathname, options });
@@ -128,21 +135,20 @@ test('cleanup failure stays sanitized and preserves the original persistence cat
   assert.equal(res.statusCode, 503);
   assert.equal(res.body.code, 'database_unavailable');
   assert.equal(setup.calls.blobDeletes.length, 1);
-  assert.deepEqual(setup.calls.logs[0], {
-    correlationId: 'upload-correlation-123',
-    failureCategory: 'CONFIG_MISSING',
-    cleanup: { attempted: true, succeeded: false },
-  });
+  assert.equal(setup.calls.logs[0].correlationId, 'upload-correlation-123');
+  assert.equal(setup.calls.logs[0].failureCategory, 'CONFIG_MISSING');
+  assert.equal(setup.calls.logs[0].commitOutcome, 'not_committed');
+  assert.deepEqual(setup.calls.logs[0].cleanup, { attempted: true, succeeded: false });
   assert.doesNotMatch(JSON.stringify({ response: res.body, log: setup.calls.logs[0] }), /secret|host|token|DATABASE_URL/i);
 });
 
 test('successful upload creates one private Blob and one owned media asset', async () => {
   let persisted;
   const setup = harness({
-    addMediaAsset: async (asset) => {
+    addUploadMediaAsset: async (asset) => {
       setup.calls.databaseWrites += 1;
       persisted = asset;
-      return { id: 'asset-one', ...asset };
+      return asset;
     },
   });
   const res = await invoke(setup.handler);
@@ -154,6 +160,117 @@ test('successful upload creates one private Blob and one owned media asset', asy
   assert.equal(persisted.privatePathname, res.body.pathname);
   assert.equal(res.body.url, null);
   assert.equal(res.body.providerUrl, null);
+});
+
+test('confirmed commit recovery returns the owned media record without deleting Blob', async () => {
+  let attempted;
+  let reads = 0;
+  const setup = harness({
+    getOwnedMediaAsset: async () => {
+      setup.calls.databaseReads += 1;
+      reads += 1;
+      return reads === 1 ? null : attempted;
+    },
+    addUploadMediaAsset: async (asset) => {
+      setup.calls.databaseWrites += 1;
+      attempted = asset;
+      throw Object.assign(new Error('connection closed after commit'), { failureCategory: 'PERSISTENCE', commitOutcome: 'unknown' });
+    },
+  });
+  const res = await invoke(setup.handler);
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.recovered, true);
+  assert.equal(res.body.assetId, attempted.id);
+  assert.equal(setup.calls.blobDeletes.length, 0);
+  assert.equal(setup.calls.logs.length, 0);
+});
+
+test('unknown commit outcome retains Blob and emits only reconciliation metadata', async () => {
+  const setup = harness({
+    addUploadMediaAsset: async () => {
+      setup.calls.databaseWrites += 1;
+      throw Object.assign(new Error('private database endpoint'), { failureCategory: 'PERSISTENCE', commitOutcome: 'unknown' });
+    },
+  });
+  const res = await invoke(setup.handler);
+  assert.equal(res.statusCode, 503);
+  assert.equal(setup.calls.blobDeletes.length, 0);
+  assert.equal(setup.calls.logs.length, 1);
+  assert.deepEqual(Object.keys(setup.calls.logs[0]).sort(), [
+    'accountRef',
+    'commitOutcome',
+    'correlationId',
+    'failureCategory',
+    'mediaAssetId',
+    'objectPathHash',
+  ]);
+  assert.equal(setup.calls.logs[0].commitOutcome, 'unknown');
+  assert.match(setup.calls.logs[0].objectPathHash, /^[a-f0-9]{64}$/);
+  assert.doesNotMatch(JSON.stringify({ response: res.body, log: setup.calls.logs[0] }), /private database|DATABASE_URL|test-token|signed|portrait/i);
+});
+
+test('retry with the same correlation ID reuses the owned row without duplicate writes', async () => {
+  let stored = null;
+  const setup = harness({
+    getOwnedMediaAsset: async () => {
+      setup.calls.databaseReads += 1;
+      return stored;
+    },
+    addUploadMediaAsset: async (asset) => {
+      setup.calls.databaseWrites += 1;
+      stored = asset;
+      return asset;
+    },
+  });
+  const first = await invoke(setup.handler);
+  const retry = await invoke(setup.handler);
+  assert.equal(first.statusCode, 201);
+  assert.equal(retry.statusCode, 200);
+  assert.equal(retry.body.idempotent, true);
+  assert.equal(retry.body.assetId, first.body.assetId);
+  assert.equal(setup.calls.blobWrites, 1);
+  assert.equal(setup.calls.databaseWrites, 1);
+  assert.equal(setup.calls.blobDeletes.length, 0);
+});
+
+test('shipped client pins one request ID across retryable upload failures', () => {
+  const client = readFileSync(new URL('../public/lite.js', import.meta.url), 'utf8');
+  const start = client.indexOf('async function uploadAvatarSource(type)');
+  const end = client.indexOf('function setRecoveryAction', start);
+  const upload = client.slice(start, end);
+  assert.match(upload, /appState\.uploadOperations\[type\] = operation/);
+  assert.match(upload, /'x-request-id': operation\.requestId/);
+  assert.match(upload, /if \(!error\?\.retryable\) delete appState\.uploadOperations\[type\]/);
+});
+
+test('same request ID with changed upload input fails closed without another Blob write', async () => {
+  let stored = null;
+  const setup = harness({
+    getOwnedMediaAsset: async () => {
+      setup.calls.databaseReads += 1;
+      return stored;
+    },
+    addUploadMediaAsset: async (asset) => {
+      setup.calls.databaseWrites += 1;
+      stored = asset;
+      return asset;
+    },
+  });
+  const first = await invoke(setup.handler);
+  const conflict = await invoke(setup.handler, request({ name: 'different.png' }));
+  assert.equal(first.statusCode, 201);
+  assert.equal(conflict.statusCode, 409);
+  assert.equal(conflict.body.code, 'upload_conflict');
+  assert.equal(setup.calls.blobWrites, 1);
+  assert.equal(setup.calls.databaseWrites, 1);
+  assert.equal(setup.calls.blobDeletes.length, 0);
+});
+
+test('database error classification proves non-commit only for statement rejection classes', () => {
+  assert.equal(classifyDatabaseCommitOutcome({ code: '23505' }), 'not_committed');
+  assert.equal(classifyDatabaseCommitOutcome({ code: '40001' }), 'not_committed');
+  assert.equal(classifyDatabaseCommitOutcome({ code: 'ECONNRESET' }), 'unknown');
+  assert.equal(classifyDatabaseCommitOutcome(new Error('timeout')), 'unknown');
 });
 
 test('anonymous and cross-account denials happen before Blob or database activity', async (t) => {
