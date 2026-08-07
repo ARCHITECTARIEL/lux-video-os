@@ -10,7 +10,7 @@ test('Identity Studio is a separate five-step authenticated experience', async (
     read('public/identity.js'),
     read('vercel.json'),
   ]);
-  assert.match(routes, /"src"\s*:\s*"\/identity"[\s\S]*?identity\.html/);
+  assert.match(routes, /"src"\s*:\s*"\/identity"[\s\S]*?"dest"\s*:\s*"\/identity\.html"/);
   for (const label of ['Your Photo', 'Your Voice', 'Consent', 'Creating', 'Ready']) assert.match(html, new RegExp(label));
   assert.match(html, /Digital Twin/);
   assert.match(html, /disabled>Not available in this phase/);
