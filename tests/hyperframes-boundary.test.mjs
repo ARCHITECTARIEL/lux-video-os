@@ -39,8 +39,9 @@ test('the bundled composition exactly matches the authoring HTML', async () => {
     import('node:fs/promises'),
     import('../media/hyperframes/lux-marketing-proof/composition.js'),
   ]);
-  const authored = (await readFile(new URL('../media/hyperframes/lux-marketing-proof/index.html', import.meta.url), 'utf8')).trimEnd();
-  assert.equal(LUX_MARKETING_COMPOSITION_HTML.trimEnd(), authored);
+  const normalizeHtml = (value) => value.replace(/\r\n/g, '\n').trimEnd();
+  const authored = normalizeHtml(await readFile(new URL('../media/hyperframes/lux-marketing-proof/index.html', import.meta.url), 'utf8'));
+  assert.equal(normalizeHtml(LUX_MARKETING_COMPOSITION_HTML), authored);
 });
 
 test('render command invokes HyperFrames directly and rejects best-effort output', () => {
