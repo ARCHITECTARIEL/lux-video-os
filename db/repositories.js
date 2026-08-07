@@ -1,12 +1,58 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { database } from './client.js';
-import { creditAccounts, creditTransactions, jobEvents, mediaAssets, stripeEvents, users, videoJobs } from './schema.js';
+import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
+import { creditAccounts, creditTransactions, entitlements, identityConsents, jobEvents, mediaAssets, projects, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
+
+export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING', 'PROCESSING', 'READY', 'FAILED']);
+export const IDENTITY_OVERALL_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING', 'READY', 'PARTIAL_FAILURE', 'FAILED', 'ARCHIVED']);
+const AUTH_ENTITLEMENT_SOURCE = 'validated_auth';
+
+export function reconcileAuthenticatedEntitlements(existingGrants = [], entitlementKeys = []) {
+  const desiredKeys = [...new Set(entitlementKeys)];
+  const desired = new Set(desiredKeys);
+  const collision = existingGrants.find((grant) => desired.has(grant.entitlementKey) && grant.sourceType !== AUTH_ENTITLEMENT_SOURCE);
+  if (collision) throw Object.assign(new Error('Authenticated entitlement conflicts with another authority.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  return {
+    desiredKeys,
+    disableKeys: existingGrants.filter((grant) => grant.sourceType === AUTH_ENTITLEMENT_SOURCE && grant.enabled && !desired.has(grant.entitlementKey)).map((grant) => grant.entitlementKey),
+    preservedKeys: existingGrants.filter((grant) => grant.sourceType !== AUTH_ENTITLEMENT_SOURCE && grant.enabled).map((grant) => grant.entitlementKey),
+  };
+}
+
+const ACTIVE_COMPONENT_STATUSES = new Set(['UPLOADING', 'CREATING', 'PROCESSING']);
+
+export function deriveIdentityStatus({ avatarStatus = 'DRAFT', voiceStatus = 'DRAFT', archivedAt = null } = {}) {
+  if (archivedAt) return 'ARCHIVED';
+  if (avatarStatus === 'READY' && voiceStatus === 'READY') return 'READY';
+  if (avatarStatus === 'FAILED' && voiceStatus === 'FAILED') return 'FAILED';
+  if (avatarStatus === 'FAILED' || voiceStatus === 'FAILED') return 'PARTIAL_FAILURE';
+  if (avatarStatus === 'UPLOADING' || voiceStatus === 'UPLOADING') return 'UPLOADING';
+  if (avatarStatus === 'CREATING' && voiceStatus === 'DRAFT') return 'CREATING_AVATAR';
+  if (voiceStatus === 'CREATING' && avatarStatus === 'DRAFT') return 'CLONING_VOICE';
+  if (ACTIVE_COMPONENT_STATUSES.has(avatarStatus) || ACTIVE_COMPONENT_STATUSES.has(voiceStatus)) return 'PROCESSING';
+  return 'DRAFT';
+}
 
 export async function ensureAccount({ accountId, email, name, initialCredits = 0 }) {
   return database().transaction(async (tx) => {
-    await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account' }).onConflictDoUpdate({ target: users.id, set: { email: email || null, name: name || 'Video OS Account', updatedAt: new Date() } });
+    await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account' }).onConflictDoNothing();
     await tx.insert(creditAccounts).values({ accountId, balance: initialCredits }).onConflictDoNothing();
     return getAccount(accountId, tx);
+  });
+}
+
+export async function updateAuthenticatedAccount({ accountId, email, name, role = 'customer', initialCredits = 0, entitlementKeys = [], sourceId = null }) {
+  return database().transaction(async (tx) => {
+    const now = new Date();
+    await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account', role })
+      .onConflictDoUpdate({ target: users.id, set: { email: email || null, name: name || 'Video OS Account', role, updatedAt: now } });
+    await tx.insert(creditAccounts).values({ accountId, balance: initialCredits }).onConflictDoNothing();
+    const existingGrants = await tx.select().from(entitlements).where(eq(entitlements.accountId, accountId));
+    const { desiredKeys } = reconcileAuthenticatedEntitlements(existingGrants, entitlementKeys);
+    await tx.update(entitlements).set({ enabled: false, updatedAt: now }).where(and(eq(entitlements.accountId, accountId), eq(entitlements.sourceType, AUTH_ENTITLEMENT_SOURCE), eq(entitlements.enabled, true)));
+    for (const entitlementKey of desiredKeys) await tx.insert(entitlements).values({ accountId, entitlementKey, enabled: true, sourceType: AUTH_ENTITLEMENT_SOURCE, sourceId })
+      .onConflictDoUpdate({ target: [entitlements.accountId, entitlements.entitlementKey], set: { enabled: true, sourceType: AUTH_ENTITLEMENT_SOURCE, sourceId, updatedAt: now } });
+    return getAccountContext(accountId, tx);
   });
 }
 
@@ -15,41 +61,107 @@ export async function getAccount(accountId, executor = database()) {
   return rows[0] || null;
 }
 
+export async function getAccountContext(accountId, executor = database()) {
+  const account = await getAccount(accountId, executor);
+  if (!account) return null;
+  const grants = await executor.select().from(entitlements).where(and(eq(entitlements.accountId, accountId), eq(entitlements.enabled, true)));
+  return { ...account, entitlements: Object.fromEntries(grants.map((grant) => [grant.entitlementKey, true])) };
+}
+
 export async function reserveRender({ jobId, accountId, idempotencyKey, correlationId, provider, title, format, costCredits, input }) {
   return database().transaction(async (tx) => {
-    const existing = await tx.select().from(videoJobs).where(and(eq(videoJobs.accountId, accountId), eq(videoJobs.idempotencyKey, idempotencyKey))).limit(1);
-    if (existing[0]) return { job: existing[0], replayed: true };
     const accounts = await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId)).for('update').limit(1);
     const account = accounts[0];
     if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
+    const existing = await tx.select().from(videoJobs).where(and(eq(videoJobs.accountId, accountId), eq(videoJobs.idempotencyKey, idempotencyKey))).limit(1);
+    if (existing[0]) return { job: existing[0], replayed: true };
     if (account.balance - account.reserved < costCredits) throw Object.assign(new Error('Insufficient credits.'), { statusCode: 402, failureCategory: 'ENTITLEMENT' });
     await tx.update(creditAccounts).set({ reserved: account.reserved + costCredits, updatedAt: new Date() }).where(eq(creditAccounts.accountId, accountId));
-    const [job] = await tx.insert(videoJobs).values({ id: jobId, accountId, idempotencyKey, correlationId, provider, status: 'reserved', title, format, costCredits, input }).returning();
+    const [job] = await tx.insert(videoJobs).values({ id: jobId, accountId, projectId: input.projectId, idempotencyKey, correlationId, provider, status: 'reserved', title, format, costCredits, input }).returning();
     await tx.insert(jobEvents).values({ jobId, correlationId, eventType: 'render.reserved', stageTo: 'reserved', details: { costCredits } });
     return { job, replayed: false };
   });
 }
 
+const ALLOWED_JOB_TRANSITIONS = Object.freeze({
+  reserved: ['workflow_starting', 'workflow_started', 'failed', 'cancelled'],
+  workflow_starting: ['workflow_started', 'failed'],
+  workflow_started: ['provider_submitting', 'failed'],
+  provider_submitting: ['provider_submitted', 'provider_submit_unknown', 'failed'],
+  provider_submit_unknown: [],
+  provider_submitted: ['provider_rendering', 'provider_ready', 'failed'],
+  provider_rendering: ['provider_rendering', 'provider_ready', 'failed'],
+  provider_ready: ['finish_contained', 'finishing', 'failed'],
+  finish_contained: ['finishing', 'failed'],
+  finishing: ['ready', 'failed'],
+  ready: [], failed: [], cancelled: [],
+});
+
+export function assertJobTransition(stageFrom, stageTo) {
+  if (!(ALLOWED_JOB_TRANSITIONS[stageFrom] || []).includes(stageTo)) throw Object.assign(new Error(`Invalid job transition: ${stageFrom} -> ${stageTo}.`), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  return true;
+}
+
 export async function setWorkflowRun(jobId, workflowRunId) {
-  const [job] = await database().update(videoJobs).set({ workflowRunId, status: 'workflow_started', updatedAt: new Date() }).where(and(eq(videoJobs.id, jobId), eq(videoJobs.status, 'workflow_starting'))).returning();
-  return job || null;
+  return database().transaction(async (tx) => {
+    const current = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
+    if (!current) return null;
+    if (current.workflowRunId && current.workflowRunId !== workflowRunId) throw Object.assign(new Error('Workflow run identity conflict.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    if (current.workflowRunId) return current;
+    const [job] = await tx.update(videoJobs).set({ workflowRunId, updatedAt: new Date() }).where(eq(videoJobs.id, jobId)).returning();
+    await tx.insert(jobEvents).values({ jobId, correlationId: current.correlationId, eventType: 'workflow.run_recorded', stageFrom: current.status, stageTo: current.status, details: { workflowRunId } });
+    return job;
+  });
 }
 
 export async function claimWorkflowStart(jobId) {
-  const [job] = await database().update(videoJobs).set({ status: 'workflow_starting', updatedAt: new Date() }).where(and(eq(videoJobs.id, jobId), eq(videoJobs.status, 'reserved'))).returning();
-  return job || null;
+  return database().transaction(async (tx) => {
+    const current = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
+    if (!current || current.status !== 'reserved') return null;
+    const [job] = await tx.update(videoJobs).set({ status: 'workflow_started', updatedAt: new Date() }).where(and(eq(videoJobs.id, jobId), eq(videoJobs.status, 'reserved'))).returning();
+    if (!job) return null;
+    await tx.insert(jobEvents).values({ jobId, correlationId: current.correlationId, eventType: 'workflow.prepared', stageFrom: 'reserved', stageTo: 'workflow_started' });
+    return job;
+  });
 }
 
 export async function getJob(jobId) {
   return (await database().select().from(videoJobs).where(eq(videoJobs.id, jobId)).limit(1))[0] || null;
 }
 
+export function assertFailedRenderRecoveryEligibility(job, { charged = false } = {}) {
+  if (!job) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
+  if (job.status !== 'failed' || !job.providerJobId) throw Object.assign(new Error('Only a failed job with an existing provider result can be recovered.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  const message = String(job.output?.message || '');
+  const recoverable = ['Provider media hostname is not allowlisted.', 'Invalid IP address: undefined', 'spawn /var/task/ffmpeg ENOENT'].some((evidence) => message.includes(evidence));
+  if (!recoverable) throw Object.assign(new Error('The job did not fail at a verified existing-media recovery boundary.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  if (charged) throw Object.assign(new Error('The render has already been settled.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  return true;
+}
+
+export async function reserveFailedRenderRecovery(jobId) {
+  return database().transaction(async (tx) => {
+    const job = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
+    const sourceId = `render:${jobId}`;
+    const charged = await tx.select().from(creditTransactions).where(and(eq(creditTransactions.sourceType, 'render'), eq(creditTransactions.sourceId, sourceId))).limit(1);
+    assertFailedRenderRecoveryEligibility(job, { charged: Boolean(charged[0]) });
+    const account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, job.accountId)).for('update').limit(1))[0];
+    if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
+    if (account.balance - account.reserved < job.costCredits) throw Object.assign(new Error('Insufficient credits for recovery.'), { statusCode: 402, failureCategory: 'ENTITLEMENT' });
+    await tx.update(creditAccounts).set({ reserved: account.reserved + job.costCredits, updatedAt: new Date() }).where(eq(creditAccounts.accountId, job.accountId));
+    const [recovered] = await tx.update(videoJobs).set({ status: 'provider_submitted', workflowRunId: null, output: {}, failureCategory: null, updatedAt: new Date(), completedAt: null }).where(and(eq(videoJobs.id, jobId), eq(videoJobs.status, 'failed'))).returning();
+    if (!recovered) throw Object.assign(new Error('Recovery claim lost.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    await tx.insert(jobEvents).values({ jobId, correlationId: job.correlationId, eventType: 'workflow.recovery_reserved', stageFrom: 'failed', stageTo: 'provider_submitted', details: { costCredits: job.costCredits, existingProviderJob: true } });
+    return { job: recovered, reservedCredits: job.costCredits };
+  });
+}
+
 export async function transitionJob({ jobId, stageTo, eventType, providerJobId, output, failureCategory, details = {} }) {
   return database().transaction(async (tx) => {
     const current = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
     if (!current) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
+    assertJobTransition(current.status, stageTo);
     const terminal = ['ready', 'failed', 'cancelled'];
-    if (terminal.includes(current.status) && current.status !== stageTo) throw Object.assign(new Error('Terminal job transitions are immutable.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
     const [job] = await tx.update(videoJobs).set({ status: stageTo, providerJobId: providerJobId || current.providerJobId, output: output || current.output, failureCategory: failureCategory || null, updatedAt: new Date(), completedAt: terminal.includes(stageTo) ? new Date() : null }).where(eq(videoJobs.id, jobId)).returning();
     await tx.insert(jobEvents).values({ jobId, correlationId: current.correlationId, eventType, stageFrom: current.status, stageTo, failureCategory, details });
     return job;
@@ -93,6 +205,351 @@ export async function issueStripeCredit({ stripeEventId, eventType, livemode, pa
 export async function addMediaAsset(asset) {
   const [created] = await database().insert(mediaAssets).values(asset).onConflictDoUpdate({ target: mediaAssets.privatePathname, set: { bytes: asset.bytes, sha256: asset.sha256, contentType: asset.contentType } }).returning();
   return created;
+}
+
+export async function getOwnedMediaAsset(accountId, assetId) {
+  return (await database().select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, assetId))).limit(1))[0] || null;
+}
+
+export function classifyDatabaseCommitOutcome(error) {
+  const code = String(error?.code || '');
+  return /^(22|23|40|42)/.test(code) ? 'not_committed' : 'unknown';
+}
+
+function uploadPersistenceError(commitOutcome) {
+  return Object.assign(new Error('Media persistence is unavailable.'), {
+    statusCode: 503,
+    failureCategory: 'PERSISTENCE',
+    commitOutcome,
+  });
+}
+
+export async function addUploadMediaAsset(asset) {
+  try {
+    const [created] = await database().insert(mediaAssets).values(asset).onConflictDoNothing().returning();
+    if (created) return created;
+    const existing = await getOwnedMediaAsset(asset.accountId, asset.id);
+    if (existing) return existing;
+    throw uploadPersistenceError('not_committed');
+  } catch (error) {
+    if (error?.commitOutcome) throw error;
+    throw uploadPersistenceError(classifyDatabaseCommitOutcome(error));
+  }
+}
+
+export async function attachProviderMediaAsset({ accountId, assetId, provider, providerAssetId }) {
+  const [updated] = await database().update(mediaAssets).set({ provider, providerAssetId, providerUploadedAt: new Date() })
+    .where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, assetId), isNull(mediaAssets.providerAssetId))).returning();
+  if (updated) return { asset: updated, replayed: false };
+  const existing = await getOwnedMediaAsset(accountId, assetId);
+  if (!existing) throw Object.assign(new Error('Asset not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+  if (existing.provider === provider && existing.providerAssetId === providerAssetId) return { asset: existing, replayed: true };
+  throw Object.assign(new Error('Asset provider identity is already reserved.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+}
+
+async function ownedIdentityForUpdate(tx, accountId, identityId) {
+  return (await tx.select().from(userIdentities).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).for('update').limit(1))[0] || null;
+}
+
+export function assertIdentitySourceAssets(photo, voice) {
+  if (!photo || !voice) throw Object.assign(new Error('Identity source asset not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+  if (photo.kind !== 'identity-photo-source' || !photo.contentType.startsWith('image/')) {
+    throw Object.assign(new Error('Identity photo source is invalid.'), { statusCode: 400, failureCategory: 'VALIDATION' });
+  }
+  if (voice.kind !== 'identity-voice-source' || !voice.contentType.startsWith('audio/')) {
+    throw Object.assign(new Error('Identity voice source is invalid.'), { statusCode: 400, failureCategory: 'VALIDATION' });
+  }
+  return true;
+}
+
+export async function createIdentityDraft({ accountId, displayName, sourcePhotoAssetId, sourceVoiceAssetId, provider = 'heygen' }) {
+  return database().transaction(async (tx) => {
+    const photo = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, sourcePhotoAssetId))).limit(1))[0];
+    const voice = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, sourceVoiceAssetId))).limit(1))[0];
+    assertIdentitySourceAssets(photo, voice);
+    const name = String(displayName || '').trim();
+    if (!name) throw Object.assign(new Error('Identity name is required.'), { statusCode: 400, failureCategory: 'VALIDATION' });
+    const [identity] = await tx.insert(userIdentities).values({
+      accountId,
+      displayName: name,
+      provider,
+      sourcePhotoAssetId,
+      sourceVoiceAssetId,
+    }).returning();
+    return identity;
+  });
+}
+
+export async function getOwnedIdentity(accountId, identityId) {
+  return (await database().select().from(userIdentities).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).limit(1))[0] || null;
+}
+
+export async function getRenderAuthorizedIdentity(accountId, identityId, policyVersion = IDENTITY_CONSENT_POLICY_VERSION) {
+  return database().transaction(async (tx) => {
+    const identity = (await tx.select().from(userIdentities).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).limit(1))[0] || null;
+    if (!identity) return null;
+    await assertActiveIdentityConsent(tx, identity, policyVersion);
+    return identity;
+  });
+}
+export async function getReadyOwnedIdentity(accountId, identityId) {
+  return (await database().select().from(userIdentities).where(and(
+    eq(userIdentities.accountId, accountId),
+    eq(userIdentities.id, identityId),
+    eq(userIdentities.overallStatus, 'READY'),
+    isNull(userIdentities.archivedAt),
+  )).limit(1))[0] || null;
+}
+
+export async function listOwnedIdentities(accountId, { includeArchived = false } = {}) {
+  const ownership = eq(userIdentities.accountId, accountId);
+  const predicate = includeArchived ? ownership : and(ownership, isNull(userIdentities.archivedAt));
+  return database().select().from(userIdentities).where(predicate).orderBy(desc(userIdentities.updatedAt)).limit(50);
+}
+
+export async function recordIdentityConsent({ accountId, identityId, policyVersion, faceAuthorization, voiceAuthorization, providerProcessingAuthorization, archiveDeleteAcknowledgment }) {
+  if (![faceAuthorization, voiceAuthorization, providerProcessingAuthorization, archiveDeleteAcknowledgment].every((value) => value === true)) {
+    throw Object.assign(new Error('All identity authorizations are required.'), { statusCode: 400, failureCategory: 'CONSENT' });
+  }
+  return database().transaction(async (tx) => {
+    const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
+    if (!identity || identity.archivedAt) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    const photo = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, identity.sourcePhotoAssetId))).limit(1))[0];
+    const voice = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, identity.sourceVoiceAssetId))).limit(1))[0];
+    if (!photo || !voice) throw Object.assign(new Error('Identity source asset not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    const existing = (await tx.select().from(identityConsents).where(and(
+      eq(identityConsents.accountId, accountId),
+      eq(identityConsents.identityId, identityId),
+      eq(identityConsents.policyVersion, policyVersion),
+      isNull(identityConsents.revokedAt),
+    )).limit(1))[0];
+    if (existing) {
+      if (existing.photoSha256 === photo.sha256 && existing.voiceSha256 === voice.sha256) return { consent: existing, replayed: true };
+      throw Object.assign(new Error('Identity consent source fingerprint conflict.'), { statusCode: 409, failureCategory: 'CONSENT' });
+    }
+    const [consent] = await tx.insert(identityConsents).values({
+      accountId,
+      identityId,
+      faceAuthorization,
+      voiceAuthorization,
+      providerProcessingAuthorization,
+      archiveDeleteAcknowledgment,
+      policyVersion,
+      photoSha256: photo.sha256,
+      voiceSha256: voice.sha256,
+    }).returning();
+    return { consent, replayed: false };
+  });
+}
+
+async function assertActiveIdentityConsent(tx, identity, policyVersion = IDENTITY_CONSENT_POLICY_VERSION) {
+  const consent = (await tx.select().from(identityConsents).where(and(
+    eq(identityConsents.accountId, identity.accountId),
+    eq(identityConsents.identityId, identity.id),
+    eq(identityConsents.policyVersion, policyVersion),
+    isNull(identityConsents.revokedAt),
+  )).orderBy(desc(identityConsents.acceptedAt)).limit(1))[0];
+  if (!consent) throw Object.assign(new Error('Identity consent is required.'), { statusCode: 409, failureCategory: 'CONSENT' });
+  const photo = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, identity.accountId), eq(mediaAssets.id, identity.sourcePhotoAssetId))).limit(1))[0];
+  const voice = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, identity.accountId), eq(mediaAssets.id, identity.sourceVoiceAssetId))).limit(1))[0];
+  if (!photo || !voice || photo.sha256 !== consent.photoSha256 || voice.sha256 !== consent.voiceSha256) {
+    throw Object.assign(new Error('Identity consent no longer matches its source assets.'), { statusCode: 409, failureCategory: 'CONSENT' });
+  }
+  return consent;
+}
+
+function componentFields(component) {
+  if (component === 'avatar') return { status: 'avatarStatus', operation: 'avatarOperationKey', code: 'avatarFailureCode', message: 'avatarFailureMessage' };
+  if (component === 'voice') return { status: 'voiceStatus', operation: 'voiceOperationKey', code: 'voiceFailureCode', message: 'voiceFailureMessage' };
+  throw Object.assign(new Error('Identity component is invalid.'), { statusCode: 400, failureCategory: 'VALIDATION' });
+}
+
+function assertProviderResourceConsistency(identity, proposed) {
+  for (const [field, value] of Object.entries(proposed)) {
+    if (value && identity[field] && value !== identity[field]) {
+      throw Object.assign(new Error('Provider identity resource conflict.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    }
+  }
+}
+
+export function redactIdentityFailure(code, message) {
+  const safeCode = String(code || 'PROVIDER_FAILED').toUpperCase().replace(/[^A-Z0-9_-]+/g, '_').slice(0, 64) || 'PROVIDER_FAILED';
+  const safeMessage = String(message || 'Identity creation failed.')
+    .replace(/https?:\/\/\S+/gi, '[redacted-url]')
+    .replace(/\b(?:api[_-]?key|authorization|token|cookie|signature)\s*[:=]\s*\S+/gi, '[redacted-secret]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .trim()
+    .slice(0, 240) || 'Identity creation failed.';
+  return { code: safeCode, message: safeMessage };
+}
+
+export async function reserveIdentityComponentCreation({ accountId, identityId, component, operationKey }) {
+  const fields = componentFields(component);
+  return database().transaction(async (tx) => {
+    const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
+    if (!identity || identity.archivedAt) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    if (identity[fields.operation] === operationKey) return { identity, replayed: true };
+    if (ACTIVE_COMPONENT_STATUSES.has(identity[fields.status])) throw Object.assign(new Error('Identity component creation is already in progress.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    if (identity[fields.status] === 'READY') throw Object.assign(new Error('Identity component is already ready.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    if (!['DRAFT', 'FAILED'].includes(identity[fields.status])) throw Object.assign(new Error('Identity component cannot be submitted from its current state.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    await assertActiveIdentityConsent(tx, identity);
+    const retryReset = identity[fields.status] !== 'FAILED'
+      ? {}
+      : component === 'avatar'
+        ? { providerAvatarRequestId: null, providerAvatarGroupId: null, providerRenderableAvatarId: null }
+        : { providerVoiceId: null };
+    const avatarStatus = component === 'avatar' ? 'CREATING' : identity.avatarStatus;
+    const voiceStatus = component === 'voice' ? 'CREATING' : identity.voiceStatus;
+    const [updated] = await tx.update(userIdentities).set({
+      [fields.status]: 'CREATING',
+      [fields.operation]: operationKey,
+      [fields.code]: null,
+      [fields.message]: null,
+      ...retryReset,
+      overallStatus: deriveIdentityStatus({ avatarStatus, voiceStatus }),
+      updatedAt: new Date(),
+    }).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).returning();
+    return { identity: updated, replayed: false };
+  });
+}
+
+export async function recordIdentityProviderSubmission({ accountId, identityId, component, operationKey, providerRequestId, providerAvatarGroupId, providerRenderableAvatarId, providerVoiceId }) {
+  const fields = componentFields(component);
+  return database().transaction(async (tx) => {
+    const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
+    if (!identity || identity.archivedAt) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    if (identity[fields.operation] !== operationKey) throw Object.assign(new Error('Identity operation does not match the reserved submission.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    if (!['CREATING', 'PROCESSING'].includes(identity[fields.status])) throw Object.assign(new Error('Identity component is not awaiting a provider submission.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    if (component === 'avatar' && !providerRequestId && !identity.providerAvatarRequestId) throw Object.assign(new Error('Provider avatar request identity is required.'), { statusCode: 400, failureCategory: 'VALIDATION' });
+    if (component === 'voice' && !providerVoiceId && !identity.providerVoiceId) throw Object.assign(new Error('Provider voice identity is required.'), { statusCode: 400, failureCategory: 'VALIDATION' });
+    assertProviderResourceConsistency(identity, { providerAvatarRequestId: providerRequestId, providerAvatarGroupId, providerRenderableAvatarId, providerVoiceId });
+    const avatarStatus = component === 'avatar' ? 'PROCESSING' : identity.avatarStatus;
+    const voiceStatus = component === 'voice' ? 'PROCESSING' : identity.voiceStatus;
+    const [updated] = await tx.update(userIdentities).set({
+      [fields.status]: 'PROCESSING',
+      providerAvatarRequestId: providerRequestId || identity.providerAvatarRequestId,
+      providerAvatarGroupId: providerAvatarGroupId || identity.providerAvatarGroupId,
+      providerRenderableAvatarId: providerRenderableAvatarId || identity.providerRenderableAvatarId,
+      providerVoiceId: providerVoiceId || identity.providerVoiceId,
+      overallStatus: deriveIdentityStatus({ avatarStatus, voiceStatus }),
+      updatedAt: new Date(),
+    }).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).returning();
+    return updated;
+  });
+}
+
+export async function markIdentityComponentReady({ accountId, identityId, component, operationKey, providerAvatarGroupId, providerRenderableAvatarId, providerVoiceId }) {
+  const fields = componentFields(component);
+  return database().transaction(async (tx) => {
+    const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
+    if (!identity || identity.archivedAt) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    if (identity[fields.operation] !== operationKey) throw Object.assign(new Error('Identity operation does not match the reserved submission.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    if (identity[fields.status] === 'READY') return identity;
+    if (!['CREATING', 'PROCESSING'].includes(identity[fields.status])) throw Object.assign(new Error('Identity component is not processing.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    assertProviderResourceConsistency(identity, { providerAvatarGroupId, providerRenderableAvatarId, providerVoiceId });
+    const avatarGroupId = providerAvatarGroupId || identity.providerAvatarGroupId;
+    const renderableAvatarId = providerRenderableAvatarId || identity.providerRenderableAvatarId;
+    const voiceId = providerVoiceId || identity.providerVoiceId;
+    if (component === 'avatar' && (!avatarGroupId || !renderableAvatarId)) throw Object.assign(new Error('A renderable provider avatar is required.'), { statusCode: 409, failureCategory: 'PROVIDER_RESPONSE' });
+    if (component === 'voice' && !voiceId) throw Object.assign(new Error('A completed provider voice is required.'), { statusCode: 409, failureCategory: 'PROVIDER_RESPONSE' });
+    const avatarStatus = component === 'avatar' ? 'READY' : identity.avatarStatus;
+    const voiceStatus = component === 'voice' ? 'READY' : identity.voiceStatus;
+    const [updated] = await tx.update(userIdentities).set({
+      [fields.status]: 'READY',
+      providerAvatarGroupId: avatarGroupId,
+      providerRenderableAvatarId: renderableAvatarId,
+      providerVoiceId: voiceId,
+      [fields.code]: null,
+      [fields.message]: null,
+      overallStatus: deriveIdentityStatus({ avatarStatus, voiceStatus }),
+      updatedAt: new Date(),
+    }).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).returning();
+    return updated;
+  });
+}
+
+export async function markIdentityComponentFailed({ accountId, identityId, component, operationKey, failureCode, failureMessage }) {
+  const fields = componentFields(component);
+  const failure = redactIdentityFailure(failureCode, failureMessage);
+  return database().transaction(async (tx) => {
+    const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
+    if (!identity || identity.archivedAt) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    if (identity[fields.operation] !== operationKey) throw Object.assign(new Error('Identity operation does not match the reserved submission.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    if (identity[fields.status] === 'READY') throw Object.assign(new Error('A ready identity component cannot be failed.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    if (identity[fields.status] === 'FAILED') return identity;
+    const avatarStatus = component === 'avatar' ? 'FAILED' : identity.avatarStatus;
+    const voiceStatus = component === 'voice' ? 'FAILED' : identity.voiceStatus;
+    const [updated] = await tx.update(userIdentities).set({
+      [fields.status]: 'FAILED',
+      [fields.code]: failure.code,
+      [fields.message]: failure.message,
+      overallStatus: deriveIdentityStatus({ avatarStatus, voiceStatus }),
+      updatedAt: new Date(),
+    }).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).returning();
+    return updated;
+  });
+}
+
+export async function archiveOwnedIdentity(accountId, identityId) {
+  return database().transaction(async (tx) => {
+    const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
+    if (!identity) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    if (identity.archivedAt) return identity;
+    const archivedAt = new Date();
+    await tx.update(identityConsents).set({ revokedAt: archivedAt }).where(and(
+      eq(identityConsents.accountId, accountId),
+      eq(identityConsents.identityId, identityId),
+      isNull(identityConsents.revokedAt),
+    ));
+    const [archived] = await tx.update(userIdentities).set({ overallStatus: 'ARCHIVED', archivedAt, updatedAt: archivedAt })
+      .where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).returning();
+    return archived;
+  });
+}
+
+function projectSelectionForStorage(value) {
+  const id = String(value?.id || '').trim().slice(0, 160);
+  if (!id) return null;
+  const name = String(value?.name || '').trim().slice(0, 180);
+  const source = String(value?.source || '').trim().slice(0, 80);
+  return { id, ...(name ? { name } : {}), ...(source ? { source } : {}) };
+}
+
+export async function saveProject({ id, accountId, identityId, title, script, avatar, voice }) {
+  const values = {
+    accountId,
+    identityId,
+    title,
+    script,
+    avatar: projectSelectionForStorage(avatar),
+    voice: projectSelectionForStorage(voice),
+    settings: {},
+    updatedAt: new Date(),
+  };
+  return database().transaction(async (tx) => {
+    if (identityId) {
+      const ownedIdentity = (await tx.select({ id: userIdentities.id }).from(userIdentities).where(and(
+        eq(userIdentities.accountId, accountId),
+        eq(userIdentities.id, identityId),
+        isNull(userIdentities.archivedAt),
+      )).limit(1))[0];
+      if (!ownedIdentity) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    }
+    if (id) {
+      const [updated] = await tx.update(projects).set(values).where(and(eq(projects.id, id), eq(projects.accountId, accountId))).returning();
+      if (!updated) throw Object.assign(new Error('Project not found.'), { statusCode: 404 });
+      return updated;
+    }
+    return (await tx.insert(projects).values(values).returning())[0];
+  });
+}
+
+export async function listProjects(accountId) {
+  return database().select().from(projects).where(eq(projects.accountId, accountId)).orderBy(desc(projects.updatedAt)).limit(30);
+}
+
+export async function getOwnedProject(accountId, projectId) {
+  return (await database().select().from(projects).where(and(eq(projects.id, projectId), eq(projects.accountId, accountId))).limit(1))[0] || null;
 }
 
 export async function finalizeReadyJob(jobId, artifact) {

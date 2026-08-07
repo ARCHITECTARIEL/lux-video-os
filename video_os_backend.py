@@ -1278,6 +1278,11 @@ def last30days_health():
 
 
 def normalize_talent_item(item, fallback_prefix):
+    item = item if isinstance(item, dict) else {}
+    source = clamp_text(item.get("source") or "heygen", 80)
+    raw_style = item.get("style")
+    safe_local_sources = {"local", "local-fallback", "seed", "featured"}
+    safe_style = clamp_text(raw_style or "available", 120) if source.lower() in safe_local_sources and raw_style else "available"
     return {
         "id": clamp_text(item.get("id") or item.get("avatar_id") or item.get("voice_id") or item.get("avatarId") or item.get("voiceId") or f"{fallback_prefix}-{uuid4().hex[:8]}", 160),
         "name": clamp_text(
@@ -1292,8 +1297,9 @@ def normalize_talent_item(item, fallback_prefix):
             or "Unnamed",
             180,
         ),
-        "source": clamp_text(item.get("source") or "heygen", 80),
-        "style": clamp_text(item.get("style") or item.get("gender") or item.get("language") or "available", 120),
+        "source": source,
+        # Provider inventory must not persist raw gender/language/style labels from upstream catalogs.
+        "style": safe_style,
     }
 
 
@@ -1375,6 +1381,12 @@ def talent_connection_status(inventory=None):
 def load_talent_inventory(refresh=False):
     ensure_dirs()
     inventory = read_json(TALENT_INVENTORY_FILE, {**DEFAULT_TALENT_INVENTORY, "source": "local-fallback"})
+    inventory["avatars"] = unique_talent_items(
+        [normalize_talent_item(item, "avatar") for item in inventory.get("avatars", [])]
+    )
+    inventory["voices"] = unique_talent_items(
+        [normalize_talent_item(item, "voice") for item in inventory.get("voices", [])]
+    )
     should_refresh = refresh or os.environ.get("HEYGEN_SYNC_TALENT") == "1"
     if should_refresh:
         try:
@@ -1497,8 +1509,6 @@ def publish_public_snapshot(store=None):
             "last30days": last30days_health(),
             "scheduler": scheduler_status(),
         },
-        "talentInventory": load_talent_inventory(),
-        "talentConnection": talent_connection_status(),
         "discoverOptions": {**load_discover_options(), "watchlists": load_watchlists(), "scanSchedules": load_scan_schedules()},
         "projects": public_projects,
         "trends": {

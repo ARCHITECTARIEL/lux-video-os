@@ -1,16 +1,7 @@
-const appState = { step: 0, avatar: null, voice: null, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 12, voice: 12 } };
-const browserAccountId = (() => {
-  try {
-    const key = 'luxVideoOsAccountId';
-    const existing = localStorage.getItem(key);
-    if (existing) return existing;
-    const created = `acct-${crypto.randomUUID()}`;
-    localStorage.setItem(key, created);
-    return created;
-  } catch {
-    return `acct-${Date.now().toString(36)}`;
-  }
-})();
+import { FEATURED_CAST, curateDefaultCast, matchedVoiceId, prioritizeVoices } from './video-os-cast.js';
+
+const appState = { step: 0, avatar: null, voice: null, identityId: null, identities: [], voiceSelectionExplicit: false, project: null, uploadedAsset: null, uploadOperations: {}, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultsState: 'signed-out', activeResult: null, resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 20, voice: 20 } };
+
 const fallbackTalent = {
   avatars: [
     { id: 'ai-presenter', name: 'AI Presenter', style: 'balanced', source: 'lite' },
@@ -40,10 +31,10 @@ const publicDemoAccount = {
 };
 
 const publicDemoProviders = [
-  { id: 'heygen', name: 'HeyGen', cost: 90, configured: true, missing: [] },
-  { id: 'argil', name: 'Argil', cost: 80, configured: true, missing: [] },
-  { id: 'tavus', name: 'Tavus', cost: 120, configured: true, missing: [] },
-  { id: 'did', name: 'D-ID', cost: 45, configured: true, missing: [] },
+  { id: 'heygen', name: 'HeyGen', cost: 90 },
+  { id: 'argil', name: 'Argil', cost: 80 },
+  { id: 'tavus', name: 'Tavus', cost: 120 },
+  { id: 'did', name: 'D-ID', cost: 45 },
 ];
 const panels = [...document.querySelectorAll('.wizard-panel')];
 const stepButtons = [...document.querySelectorAll('[data-step-jump]')];
@@ -60,16 +51,13 @@ function showToast(message) {
   showToast.timer = setTimeout(() => { toast.hidden = true; }, 3600);
 }
 
-function currentAccountId() {
-  return appState.signedIn ? (appState.account?.account?.accountId || appState.account?.accountId || appState.credits?.accountId || browserAccountId) : 'signed-out';
-}
+
 
 function formData() {
   const data = Object.fromEntries(new FormData(form).entries());
   data.captions = Boolean(data.captions);
   data.music = Boolean(data.music);
   data.voiceConsent = Boolean(data.voiceConsent);
-  data.accountId = currentAccountId();
   return data;
 }
 
@@ -86,7 +74,9 @@ async function getJson(url, options = {}) {
   const timeout = setTimeout(() => controller.abort(), 15000);
   let response;
   try {
-    response = await fetch(url, { credentials: 'same-origin', ...options, signal: controller.signal });
+    const headers = new Headers(options.headers || {});
+    if (!headers.has('x-request-id')) headers.set('x-request-id', crypto.randomUUID());
+    response = await fetch(url, { credentials: 'same-origin', ...options, headers, signal: controller.signal });
   } catch (error) {
     const message = error?.name === 'AbortError'
       ? 'Video OS took too long to respond. Check your connection and try again.'
@@ -136,61 +126,258 @@ function requireCurrentStep() {
   return true;
 }
 
-function chooseCard(type, item) {
+function availableAvatarItems() {
+  const items = appState.libraries.avatar || [];
+  const curated = curateDefaultCast(items, appState.results, 20);
+  return curated.length || !canUseLocalApi() ? curated : items.slice(0, 20);
+}
+
+function availableVoiceItems() {
+  const items = appState.libraries.voice || [];
+  const prioritized = prioritizeVoices(items, appState.avatar);
+  const privateVoice = appState.voice?.source === 'identity' && appState.voice.identityId === appState.identityId ? [appState.voice] : [];
+  const available = prioritized.length || !canUseLocalApi() ? prioritized : items;
+  return [...privateVoice, ...available.filter((item) => item.id !== privateVoice[0]?.id)];
+}
+
+function identityAvatar(identity) {
+  return { id: `identity-avatar:${identity.id}`, identityId: identity.id, name: identity.displayName || identity.name || 'My identity', source: 'identity', providerReady: true, previewUrl: identity.portraitUrl || '' };
+}
+
+function identityVoice(identity) {
+  return { id: `identity-voice:${identity.id}`, identityId: identity.id, name: `${identity.displayName || identity.name || 'My identity'} cloned voice`, source: 'identity', providerReady: true };
+}
+
+function chooseIdentity(identity, { forcePairedVoice = false } = {}) {
+  if (!identity?.id) return;
+  appState.identityId = identity.id;
+  appState.avatar = identityAvatar(identity);
+  if (forcePairedVoice || !appState.voiceSelectionExplicit || appState.voice?.source === 'identity') {
+    appState.voice = identityVoice(identity);
+    appState.voiceSelectionExplicit = false;
+  }
+  renderMyCast();
+  renderFeaturedCast();
+  renderOptions('avatar');
+  renderOptions('voice');
+}
+
+function renderMyCast() {
+  const target = document.querySelector('#my-cast-list');
+  if (!target) return;
+  if (!appState.signedIn) {
+    target.innerHTML = '<p class="my-cast-empty">Sign in to use your private video identities.</p>';
+    return;
+  }
+  if (!appState.identities.length) {
+    target.innerHTML = '<p class="my-cast-empty">No ready identities yet. Create one in Identity Studio.</p>';
+    return;
+  }
+  target.replaceChildren(...appState.identities.map((identity) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `my-cast-card${appState.identityId === identity.id ? ' selected' : ''}`;
+    button.dataset.identityId = identity.id;
+    button.setAttribute('aria-pressed', String(appState.identityId === identity.id));
+    const avatar = identityAvatar(identity);
+    if (avatar.previewUrl) {
+      const image = document.createElement('img');
+      image.src = avatar.previewUrl;
+      image.alt = `${avatar.name} private identity preview`;
+      button.append(image);
+    } else {
+      const fallback = document.createElement('span');
+      fallback.className = 'my-cast-avatar';
+      fallback.textContent = avatar.name.slice(0, 2).toUpperCase();
+      button.append(fallback);
+    }
+    const copy = document.createElement('span');
+    copy.className = 'my-cast-copy';
+    const name = document.createElement('strong');
+    name.textContent = avatar.name;
+    const status = document.createElement('small');
+    status.textContent = 'Photo avatar + cloned voice ready';
+    copy.append(name, status);
+    button.append(copy);
+    button.addEventListener('click', () => chooseIdentity(identity));
+    return button;
+  }));
+}
+
+async function loadMyCast() {
+  if (!appState.signedIn || !canUseHostedApi()) {
+    appState.identities = [];
+    renderMyCast();
+    return;
+  }
+  try {
+    const data = await getJson('/api/video-os-lite/identities');
+    appState.identities = (data.identities || []).filter((identity) => !identity.archivedAt && [identity.overallStatus, identity.avatarStatus, identity.voiceStatus].every((status) => String(status || '').toUpperCase() === 'READY'));
+  } catch {
+    appState.identities = [];
+  }
+  renderMyCast();
+}
+
+function renderFeaturedCast() {
+  const target = document.querySelector('#featured-cast-list');
+  if (!target) return;
+  const avatars = new Map((appState.libraries.avatar || []).map((item) => [item.id, item]));
+  const voices = new Map((appState.libraries.voice || []).map((item) => [item.id, item]));
+  target.replaceChildren(...FEATURED_CAST.map((featured) => {
+    const avatarId = `featured:${featured.key}`;
+    const voiceId = `featured:${featured.key}:voice`;
+    const item = avatars.get(avatarId) || { id: avatarId, name: featured.label, featuredKey: featured.key, matchedVoiceId: voiceId, source: 'heygen', providerReady: false, unavailableReason: 'Provider availability has not been confirmed.' };
+    const matchedVoice = voices.get(voiceId);
+    const pairReady = item.providerReady === true && matchedVoice?.providerReady !== false && Boolean(matchedVoice);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `featured-cast-card${appState.avatar?.id === item.id ? ' selected' : ''}${pairReady ? '' : ' unavailable'}`;
+    button.dataset.featuredKey = featured.key;
+    button.dataset.featuredAvatarId = avatarId;
+    button.setAttribute('aria-pressed', String(appState.avatar?.id === item.id));
+    button.disabled = !pairReady;
+    if (item.previewUrl) {
+      const image = document.createElement('img');
+      image.src = item.previewUrl;
+      image.alt = `${featured.label} provider preview`;
+      image.loading = 'eager';
+      button.append(image);
+    } else {
+      const fallback = document.createElement('span');
+      fallback.className = 'featured-cast-fallback';
+      fallback.textContent = featured.label.slice(0, 2).toUpperCase();
+      button.append(fallback);
+    }
+    const copy = document.createElement('span');
+    copy.className = 'featured-cast-copy';
+    const name = document.createElement('strong');
+    name.textContent = featured.label;
+    const state = document.createElement('small');
+    state.textContent = pairReady ? 'Presenter + matched voice ready' : item.providerReady !== true ? (item.unavailableReason || 'Provider unavailable') : `${featured.label}'s matched voice is unavailable.`;
+    copy.append(name, state);
+    button.append(copy);
+    if (pairReady) button.addEventListener('click', () => chooseCard('avatar', item));
+    return button;
+  }));
+}
+
+function chooseCard(type, item, options = {}) {
+  if (!item || item.providerReady === false) return;
+  const recommendedId = type === 'avatar' ? matchedVoiceId(item) : null;
+  const recommended = recommendedId ? (appState.libraries.voice || []).find((voice) => voice.id === recommendedId && voice.providerReady !== false) : null;
+  if (recommendedId && !recommended) {
+    const label = FEATURED_CAST.find((entry) => entry.key === item.featuredKey)?.label || 'This presenter';
+    showToast(`${label}'s exact matched voice is unavailable. Choose another provider-ready presenter.`);
+    return;
+  }
+  const explicit = options.explicit !== false;
+  if (type === 'voice' && explicit) appState.voiceSelectionExplicit = true;
+  if (type === 'avatar' && item.source !== 'identity') appState.identityId = null;
   appState[type] = item;
+  if (type === 'avatar') {
+    if (!appState.voiceSelectionExplicit && recommended) appState.voice = recommended;
+    renderFeaturedCast();
+    renderOptions('voice');
+  }
   document.querySelectorAll(`[data-${type}-id]`).forEach((card) => {
-    card.classList.toggle('selected', card.dataset[`${type}Id`] === item.id);
+    const selected = card.dataset[`${type}Id`] === item.id;
+    card.classList.toggle('selected', selected);
+    card.setAttribute('aria-pressed', String(selected));
   });
 }
 
 function searchableItems(type) {
   const query = document.querySelector(`#${type}-search`)?.value.trim().toLowerCase() || '';
-  const items = appState.libraries[type] || [];
+  const items = type === 'avatar' ? availableAvatarItems() : availableVoiceItems();
   if (!query) return items;
   return items.filter((item) => `${item.name || ''} ${item.id || ''} ${item.style || ''} ${item.role || ''}`.toLowerCase().includes(query));
 }
 
-function renderOptions(type, items) {
+function renderOptions(type) {
   const target = document.querySelector(type === 'avatar' ? '#avatar-list' : '#voice-list');
-  const safeItems = items.length ? items : fallbackTalent[`${type}s`];
-  appState.libraries[type] = safeItems;
   const filtered = searchableItems(type);
   const visible = filtered.slice(0, appState.visible[type]);
+  const recommendation = type === 'voice' ? matchedVoiceId(appState.avatar) : null;
   target.replaceChildren(...visible.map((item) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `option-card${appState[type]?.id === item.id ? ' selected' : ''}`;
     button.dataset[`${type}Id`] = item.id;
-    button.innerHTML = `<strong>${item.name || item.id}</strong><small>${item.style || item.role || 'Ready to use'} | ${item.source || 'local'}</small>`;
+    button.setAttribute('aria-pressed', String(appState[type]?.id === item.id));
+    if (type === 'avatar' && item.previewUrl) {
+      const image = document.createElement('img');
+      image.src = item.previewUrl;
+      image.alt = `${item.name || 'Avatar'} preview`;
+      image.loading = 'lazy';
+      button.append(image);
+    }
+    const name = document.createElement('strong');
+    name.textContent = item.name || item.id;
+    const meta = document.createElement('small');
+    meta.textContent = `${item.style || item.role || 'Ready to use'} | ${item.source || 'local'}`;
+    button.append(name, meta);
+    if ((recommendation && item.id === recommendation) || (item.source === 'identity' && item.identityId === appState.identityId)) {
+      const badge = document.createElement('span');
+      badge.className = 'recommended-badge';
+      badge.textContent = 'Recommended';
+      button.append(badge);
+    }
     button.addEventListener('click', () => chooseCard(type, item));
     return button;
   }));
   const count = document.querySelector(`#${type}-count`);
-  if (count) count.textContent = `${filtered.length.toLocaleString()} ${type === 'avatar' ? 'avatars' : 'voices'} available`;
+  if (count) count.textContent = type === 'avatar' ? `${filtered.length} of 20 curated avatars` : `${filtered.length.toLocaleString()} voices available`;
   const more = document.querySelector(`#${type}-more`);
   if (more) {
-    more.hidden = visible.length >= filtered.length;
-    more.textContent = `Show ${Math.min(12, filtered.length - visible.length)} more ${type === 'avatar' ? 'avatars' : 'voices'}`;
+    more.hidden = visible.length >= filtered.length || type === 'avatar';
+    more.textContent = `Show ${Math.min(20, filtered.length - visible.length)} more voices`;
   }
-  if (!appState[type] || !safeItems.some((item) => item.id === appState[type].id)) chooseCard(type, safeItems[0]);
+  if (!appState[type] || !filtered.some((item) => item.id === appState[type].id)) {
+    if (type === 'avatar' && appState.identityId) return;
+    const first = visible.find((item) => item.providerReady !== false);
+    if (first) chooseCard(type, first, { explicit: false });
+  }
 }
 
 function rerenderLibrary(type) {
-  renderOptions(type, appState.libraries[type] || []);
+  renderOptions(type);
+}
+
+function clearTalent() {
+  appState.libraries.avatar = [];
+  appState.libraries.voice = [];
+  appState.avatar = null;
+  appState.voice = null;
+  appState.voiceSelectionExplicit = false;
+  renderFeaturedCast();
+  renderOptions('avatar');
+  renderOptions('voice');
+  document.querySelector('#connection-pill').textContent = 'Sign in to view provider talent';
 }
 
 async function loadTalent() {
+  if (!appState.signedIn && !canUseLocalApi()) {
+    clearTalent();
+    return;
+  }
   try {
     if (!canUseHostedApi()) throw new Error('Static mode');
     const data = await getJson('/api/video-os/talent');
-    renderOptions('avatar', data.talent?.avatars || []);
-    renderOptions('voice', data.talent?.voices || []);
-    document.querySelector('#connection-pill').textContent = data.connection?.connected ? 'HeyGen talent connected' : 'Using safe fallback talent';
+    appState.libraries.avatar = data.talent?.avatars || [];
+    appState.libraries.voice = data.talent?.voices || [];
+    renderFeaturedCast();
+    renderOptions('avatar');
+    renderOptions('voice');
+    document.querySelector('#connection-pill').textContent = data.connection?.connected ? 'HeyGen talent connected' : 'HeyGen talent partially available';
     appState.localEngine = true;
   } catch {
-    renderOptions('avatar', fallbackTalent.avatars);
-    renderOptions('voice', fallbackTalent.voices);
-    document.querySelector('#connection-pill').textContent = 'Browser demo mode';
+    appState.libraries.avatar = canUseLocalApi() ? fallbackTalent.avatars : [];
+    appState.libraries.voice = canUseLocalApi() ? fallbackTalent.voices : [];
+    renderFeaturedCast();
+    renderOptions('avatar');
+    renderOptions('voice');
+    document.querySelector('#connection-pill').textContent = canUseLocalApi() ? 'Browser demo mode' : 'HeyGen talent unavailable';
   }
 }
 
@@ -369,22 +556,21 @@ function renderProductionKit(kit) {
 }
 
 async function saveLocalProject(payload) {
-  if (!canUseLocalApi()) return null;
-  const data = await getJson('/api/video-os/projects', {
+  const data = await getJson('/api/video-os-lite/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      accountId: payload.accountId || currentAccountId(),
-      name: payload.title,
-      audience: payload.audience,
-      goal: payload.objective,
-      topic: payload.goalType,
-      tone: payload.tone,
-      scriptMode: 'paste_exact',
-      scriptInput: payload.script,
-      avatar: { avatarId: appState.avatar?.id, name: appState.avatar?.name, source: appState.avatar?.source },
-      voice: { voiceId: appState.voice?.id, name: appState.voice?.name, source: appState.voice?.source },
-      brand: {
+      id: appState.project?.id,
+      identityId: appState.identityId || undefined,
+      title: payload.title,
+      script: payload.script,
+      avatar: { id: appState.avatar?.id, name: appState.avatar?.name, source: appState.avatar?.source },
+      voice: { id: appState.voice?.id, name: appState.voice?.name, source: appState.voice?.source },
+      settings: {
+        audience: payload.audience,
+        objective: payload.objective,
+        goalType: payload.goalType,
+        tone: payload.tone,
         name: payload.brandName,
         logoUrl: payload.logoUrl,
         primaryColor: payload.primaryColor,
@@ -394,7 +580,49 @@ async function saveLocalProject(payload) {
       },
     }),
   });
+  appState.project = data.project;
   return data.project;
+}
+
+async function restoreLatestProject() {
+  if (!appState.signedIn || !canUseHostedApi()) return;
+  const data = await getJson('/api/video-os-lite/projects');
+  const project = data.projects?.[0];
+  if (!project) return;
+  appState.project = project;
+  const requestedIdentityId = project.identityId || null;
+  const restoredIdentity = requestedIdentityId ? appState.identities.find((identity) => identity.id === requestedIdentityId) : null;
+  appState.identityId = restoredIdentity ? requestedIdentityId : null;
+  appState.avatar = restoredIdentity ? identityAvatar(restoredIdentity) : (project.avatar?.source === 'identity' ? null : project.avatar);
+  appState.voice = restoredIdentity && project.voice?.source === 'identity'
+    ? identityVoice(restoredIdentity)
+    : (project.voice?.source === 'identity' ? null : project.voice);
+  appState.voiceSelectionExplicit = Boolean(appState.voice?.id);
+  renderMyCast();
+  const title = form.elements.namedItem('title');
+  const script = form.elements.namedItem('script');
+  if (title) title.value = project.title || '';
+  if (script) script.value = project.script || '';
+  renderFeaturedCast();
+  rerenderLibrary('avatar');
+  rerenderLibrary('voice');
+}
+
+function consumeIdentitySelection() {
+  if (!appState.signedIn) return;
+  const url = new URL(window.location.href);
+  const identityId = url.searchParams.get('identityId');
+  if (!identityId) return;
+  url.searchParams.delete('identityId');
+  window.history.replaceState({}, '', url);
+  const identity = appState.identities.find((item) => item.id === identityId);
+  if (!identity) {
+    showToast('That private identity is unavailable for this account.');
+    return;
+  }
+  chooseIdentity(identity, { forcePairedVoice: true });
+  setStep(1);
+  showToast((identity.displayName || 'Private identity') + ' is ready in Cast.');
 }
 
 function firstCaption(script) {
@@ -405,6 +633,8 @@ function firstCaption(script) {
 async function generateVideo() {
   if (!requireCurrentStep()) return;
   if (!appState.signedIn) { showToast('Sign in before live rendering.'); openAuthModal(); return; }
+  const privateIdentityReady = Boolean(appState.identityId && appState.avatar?.source === 'identity' && appState.voice);
+  if (!appState.avatar || !appState.voice || (!privateIdentityReady && (appState.avatar.source !== 'heygen' || appState.voice.source !== 'heygen'))) { showToast('Choose a connected HeyGen avatar and voice before rendering.'); return; }
   const progress = document.querySelector('#progress');
   const bar = progress.querySelector('span');
   const payload = formData();
@@ -438,6 +668,14 @@ function renderPreview(options = {}) {
   const data = appState.generated;
   if (!data) return;
   const stage = document.querySelector('.video-stage');
+  stage.querySelector('.avatar-preview-media')?.remove();
+  if (data.avatar?.previewUrl) {
+    const image = document.createElement('img');
+    image.className = 'avatar-preview-media';
+    image.src = data.avatar.previewUrl;
+    image.alt = `${data.avatar.name || 'Selected avatar'} preview`;
+    stage.prepend(image);
+  }
   stage.style.background = `radial-gradient(circle at 72% 22%, ${data.accentColor || '#2f6df6'}66, transparent 28%), linear-gradient(145deg, ${data.primaryColor || '#111827'}, #283243)`;
   stage.querySelector('.presenter').textContent = (data.avatar?.name || 'AI').split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
   stage.querySelector('.caption').textContent = firstCaption(data.script);
@@ -543,23 +781,83 @@ function formatResultLabel(value) {
   return String(value || 'Auto').replace(/\.[a-z0-9]+$/i, '').replace(/[:_]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function inlineMediaUrl(value) {
+  const url = new URL(value, location.origin);
+  url.searchParams.set('disposition', 'inline');
+  return `${url.pathname}${url.search}`;
+}
+
+function setFinalCutState(state, message) {
+  const preview = document.querySelector('#preview');
+  const card = document.querySelector('#preview-card');
+  const stage = document.querySelector('.video-stage');
+  preview.dataset.previewState = state;
+  document.querySelector('#preview-empty').textContent = message;
+  if (state !== 'completed') {
+    stage.querySelector('.final-preview-media')?.remove();
+    stage.querySelector('.presenter').hidden = false;
+    stage.querySelector('.caption').hidden = false;
+    card.classList.toggle('empty', state === 'empty');
+    document.querySelector('#download-link').hidden = true;
+  }
+  if (state === 'rendering') setFinalRenderStep('rendering', message);
+  if (state === 'failed') setFinalRenderStep('error', message);
+}
+
+function bindFinalCutResult(item, options = {}) {
+  if (!item?.url || item.status !== 'ready') return false;
+  const stage = document.querySelector('.video-stage');
+  stage.querySelector('.final-preview-media')?.remove();
+  const video = document.createElement('video');
+  video.className = 'final-preview-media';
+  video.src = inlineMediaUrl(item.url);
+  video.controls = true;
+  video.playsInline = true;
+  video.preload = 'metadata';
+  video.setAttribute('aria-label', `Play ${item.title || item.filename || 'completed final cut'}`);
+  stage.prepend(video);
+  stage.querySelector('.presenter').hidden = true;
+  stage.querySelector('.caption').hidden = true;
+  appState.activeResult = item;
+  document.querySelector('#preview').dataset.previewState = 'completed';
+  document.querySelector('#preview-card').classList.remove('empty');
+  document.querySelector('#preview-empty').textContent = `${item.title || 'Final cut'} is complete and ready to play.`;
+  const format = document.querySelector('#export-format');
+  if (format && [...format.options].some((option) => option.value === item.format)) format.value = item.format;
+  const link = document.querySelector('#download-link');
+  link.href = item.url;
+  link.download = item.filename || 'video-os-final.mp4';
+  link.textContent = `Download ${item.filename || 'final MP4'}`;
+  link.hidden = false;
+  setFinalRenderStep('ready', item.message || 'Final MP4 ready.');
+  if (options.scroll) document.querySelector('#preview').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return true;
+}
+
+function hydrateFinalCutFromResults() {
+  const latest = appState.results[0];
+  if (latest?.status === 'ready' && latest.url) return bindFinalCutResult(latest);
+  if (latest && !['ready', 'failed', 'cancelled'].includes(latest.status)) return setFinalCutState('rendering', `${latest.title || 'Your video'} is still rendering. Refresh safely to recover its status.`);
+  if (latest?.status === 'failed') return setFinalCutState('failed', `${latest.title || 'The latest render'} could not be completed. Review the saved project and use the contained retry path when authorized.`);
+  if (appState.resultsState === 'signed-out') return setFinalCutState('empty', 'Sign in to recover completed videos in Final Cut Preview.');
+  if (appState.resultsState === 'error') return setFinalCutState('failed', 'Video history could not be loaded. Refresh or sign in again; no render was submitted.');
+  return setFinalCutState('empty', 'No video yet. Complete a contained render and it will appear here automatically.');
+}
+
 function resultCard(item) {
   const status = item.status || item.stage || (item.url ? 'ready' : 'rendering');
   const card = document.createElement('article');
   card.className = `result-card ${status === 'ready' ? 'is-final' : 'is-draft'}`;
-
-  const media = item.url ? document.createElement('a') : document.createElement('div');
+  card.dataset.jobId = item.id || '';
+  const media = document.createElement('div');
   media.className = `result-media ${item.format || 'mp4'}`;
   if (item.url) {
-    media.href = item.url;
-    media.target = '_blank';
-    media.rel = 'noreferrer';
-    media.setAttribute('aria-label', `Preview ${item.title || item.filename}`);
     const video = document.createElement('video');
-    video.src = item.url;
+    video.src = inlineMediaUrl(item.url);
     video.muted = true;
     video.playsInline = true;
     video.preload = 'metadata';
+    video.setAttribute('aria-label', `Completed preview for ${item.title || item.filename}`);
     media.append(video);
   } else {
     media.innerHTML = '<div class="result-pending">Rendering</div>';
@@ -568,7 +866,6 @@ function resultCard(item) {
   badge.className = `result-badge status-${status}`;
   badge.textContent = status === 'ready' ? 'Final MP4' : status === 'failed' ? 'Needs attention' : status === 'finishing' ? 'Finishing' : 'Rendering';
   media.append(badge);
-
   const body = document.createElement('div');
   body.className = 'result-body';
   const title = document.createElement('strong');
@@ -584,7 +881,6 @@ function resultCard(item) {
   message.className = 'result-message';
   message.textContent = item.message || (status === 'ready' ? 'Ready to download.' : 'Lux is still finishing this video.');
   body.append(title, meta, talent, message);
-
   const kit = document.createElement('div');
   kit.className = 'result-kit';
   const kitItems = item.effects || item.kit || item.productionKit || {};
@@ -593,15 +889,14 @@ function resultCard(item) {
     chip.textContent = formatResultLabel(kitItems[key]?.name || kitItems[key]);
     kit.append(chip);
   });
-
   const actions = document.createElement('div');
   actions.className = 'result-actions';
   if (item.url) {
-    const preview = document.createElement('a');
-    preview.href = item.url;
-    preview.target = '_blank';
-    preview.rel = 'noreferrer';
+    const preview = document.createElement('button');
+    preview.type = 'button';
+    preview.className = 'secondary';
     preview.textContent = 'Preview';
+    preview.addEventListener('click', () => bindFinalCutResult(item, { scroll: true }));
     const download = document.createElement('a');
     download.className = 'download-link';
     download.href = item.url;
@@ -619,7 +914,6 @@ function resultCard(item) {
     document.querySelector('.creator').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
   actions.append(regenerate);
-
   card.append(media, body, kit, actions);
   return card;
 }
@@ -630,7 +924,13 @@ function renderResultGallery() {
   if (!target) return;
   const items = (appState.results || []).slice(0, 30);
   if (!items.length) {
-    target.innerHTML = '<article class="empty-result"><strong>No final videos yet</strong><span>Finish a provider render and the MP4 will appear here with preview, kit, and download.</span></article>';
+    const messages = {
+      'signed-out': ['Sign in to recover your videos', 'Completed account-owned videos will return here and in Final Cut Preview.'],
+      error: ['Video history is temporarily unavailable', 'Refresh or sign in again. No new render has been submitted.'],
+      empty: ['No final videos yet', 'Your first completed private MP4 will appear here automatically.'],
+    };
+    const [title, copy] = messages[appState.resultsState] || messages.empty;
+    target.innerHTML = `<article class="empty-result" data-results-state="${appState.resultsState}"><strong>${title}</strong><span>${copy}</span></article>`;
     if (toggle) toggle.hidden = true;
     return;
   }
@@ -644,14 +944,25 @@ function renderResultGallery() {
 }
 
 async function loadResults() {
+  if (!canUseHostedApi() || !appState.signedIn) {
+    appState.results = [];
+    appState.resultsState = 'signed-out';
+    renderResultGallery();
+    hydrateFinalCutFromResults();
+    return;
+  }
   try {
-    if (!canUseHostedApi() || !appState.signedIn) throw new Error('Sign in to load results.');
+    appState.resultsState = 'loading';
     const data = await getJson('/api/video-os-lite/results');
     appState.results = data.results || [];
+    appState.resultsState = appState.results.length ? 'ready' : 'empty';
   } catch {
     appState.results = [];
+    appState.resultsState = 'error';
   }
   renderResultGallery();
+  hydrateFinalCutFromResults();
+  rerenderLibrary('avatar');
 }
 
 function renderPricing() {
@@ -733,7 +1044,7 @@ async function addCredits(quantity = 1) {
     const data = await getJson('/api/video-os-lite/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId: currentAccountId(), origin: location.origin, quantity: packageQuantity }),
+      body: JSON.stringify({ origin: location.origin, quantity: packageQuantity }),
     });
     if (!data.url) throw new Error('Stripe did not return a checkout URL.');
     location.href = data.url;
@@ -774,10 +1085,9 @@ function readFileAsDataUrl(file) {
 
 async function uploadAvatarSource(type) {
   if (!appState.signedIn) { showToast('Sign in before uploading avatar assets.'); openAuthModal(); return; }
-  const isTwin = type === 'digital_twin';
-  const fileInput = document.querySelector(isTwin ? '#digital-twin-file' : '#photo-avatar-file');
-  const urlInput = document.querySelector(isTwin ? '#digital-twin-url' : '#photo-avatar-url');
-  const status = document.querySelector(isTwin ? '#digital-upload-status' : '#photo-upload-status');
+  const fileInput = document.querySelector('#photo-avatar-file');
+  const urlInput = document.querySelector('#photo-avatar-url');
+  const status = document.querySelector('#photo-upload-status');
   const file = fileInput?.files?.[0];
   if (!file) return;
   status.textContent = `Uploading ${file.name}...`;
@@ -785,14 +1095,23 @@ async function uploadAvatarSource(type) {
     if (!canUseHostedApi()) throw new Error('Uploads need the Video OS engine.');
     if (file.size > 20_000_000) throw new Error('Use a file under 20 MB for the local MVP.');
     const dataUrl = await readFileAsDataUrl(file);
+    const fingerprint = `${file.name}:${file.size}:${file.lastModified}:${file.type}`;
+    const pending = appState.uploadOperations[type];
+    const operation = pending?.fingerprint === fingerprint
+      ? pending
+      : { fingerprint, requestId: crypto.randomUUID() };
+    appState.uploadOperations[type] = operation;
     const data = await getJson('/api/video-os-lite/uploads', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-request-id': operation.requestId },
       body: JSON.stringify({ kind: type, name: file.name, dataUrl }),
     });
-    urlInput.value = data.providerUrl || data.url;
+    delete appState.uploadOperations[type];
+    appState.uploadedAsset = data;
+    urlInput.value = data.previewUrl || '';
     status.textContent = `${data.message} ${data.providerUrl ? 'Provider-ready.' : 'Staged locally.'}`;
   } catch (error) {
+    if (!error?.retryable) delete appState.uploadOperations[type];
     status.textContent = error.message;
     showToast(error.message);
   }
@@ -810,7 +1129,11 @@ function resetFinalRenderStep() {
   stopAutoFinalize();
   setRecoveryAction('#render-provider', false, true);
   setRecoveryAction('#finalize-render', false, true);
-  document.querySelector('#download-link').hidden = true;
+  const downloadLink = document.querySelector('#download-link');
+  downloadLink.hidden = true;
+  downloadLink.removeAttribute('href');
+  downloadLink.removeAttribute('download');
+  downloadLink.textContent = 'Download final video';
   document.querySelector('#export-status').textContent = '';
   document.querySelectorAll('[data-render-step]').forEach((item) => item.classList.remove('active', 'done', 'error'));
 }
@@ -911,11 +1234,13 @@ async function finalizeProviderRender(options = {}) {
   }
 }
 async function renderWithProvider(options = {}) {
+  if (appState.renderLocked) return null;
   const automatic = Boolean(options.automatic);
   const status = document.querySelector('#export-status');
   const payload = appState.generated;
   const provider = selectedProvider();
   if (!payload || !provider) return null;
+  appState.renderLocked = true;
   stopAutoFinalize();
   appState.finalizeAttempts = 0;
   setRecoveryAction('#render-provider', false, true);
@@ -924,10 +1249,19 @@ async function renderWithProvider(options = {}) {
   setFinalRenderStep('submitted', `Submitting to ${providerBuyerLabel(provider)}...`);
   try {
     if (!canUseHostedApi()) throw new Error('Live render needs the Video OS engine.');
+    const requestPayload = { idempotencyKey: appState.renderIdempotencyKey || crypto.randomUUID(), projectId: payload.projectId, provider: provider.id, title: payload.title || 'Video OS', format: document.querySelector('#export-format').value, script: payload.script || payload.scriptInput, productionKit: appState.productionKit || {} };
+    if (appState.identityId) {
+      requestPayload.identityId = appState.identityId;
+      if (appState.voiceSelectionExplicit && payload.voice?.source === 'heygen') requestPayload.voice = { voiceId: payload.voice.voiceId || payload.voice.id, locale: payload.voice.locale };
+    }
+    else {
+      requestPayload.avatar = { avatarId: payload.avatar?.avatarId || payload.avatar?.id };
+      requestPayload.voice = { voiceId: payload.voice?.voiceId || payload.voice?.id, locale: payload.voice?.locale };
+    }
     const data = await getJson('/api/video-os-lite/render', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idempotencyKey: appState.renderIdempotencyKey || crypto.randomUUID(), provider: provider.id, title: payload.title || 'Video OS', format: document.querySelector('#export-format').value, script: payload.script || payload.scriptInput, avatar: { avatarId: payload.avatar?.avatarId || payload.avatar?.id }, voice: { voiceId: payload.voice?.voiceId || payload.voice?.id, locale: payload.voice?.locale }, productionKit: appState.productionKit || {} }),
+      body: JSON.stringify(requestPayload),
     });
     appState.credits = data.credits;
     appState.providerRender = data;
@@ -945,6 +1279,8 @@ async function renderWithProvider(options = {}) {
     setRecoveryAction('#render-provider', true, false);
     showToast(error.message);
     return null;
+  } finally {
+    appState.renderLocked = false;
   }
 }
 const assetVisuals = {
@@ -1095,6 +1431,7 @@ async function loadAccount() {
     renderProviderStatus();
     renderPricing();
     renderAccount();
+    await loadMyCast();
     await loadResults();
   } catch {
     if (!appState.account) appState.account = publicDemoAccount;
@@ -1197,7 +1534,11 @@ async function passwordLogin() {
     document.querySelector('#auth-retry').hidden = true;
     setAuthStatus(data.message || 'Signed in. Live rendering is ready.', 'success');
     await loadProviders();
-    await loadResults();
+    await loadTalent().catch(() => {});
+    await loadMyCast().catch(() => {});
+    await restoreLatestProject().catch(() => {});
+    consumeIdentitySelection();
+    await loadResults().catch(() => {});
     renderAccount();
     closeAuthModal();
     showToast('Signed in. You can render videos now.');
@@ -1238,9 +1579,24 @@ async function signOut() {
     appState.signedIn = false;
     appState.userEmail = null;
     appState.results = [];
+    appState.identities = [];
+    appState.identityId = null;
+    appState.project = null;
+    appState.avatar = null;
+    appState.voice = null;
+    appState.voiceSelectionExplicit = false;
+    appState.generated = null;
+    appState.activeResult = null;
+    resetFinalRenderStep();
+    setFinalCutState('empty', 'Sign in to recover completed videos.');
     authLastAction = null;
+    renderMyCast();
+    renderFeaturedCast();
+    renderOptions('avatar');
+    renderOptions('voice');
     await loadProviders();
     await loadAccount();
+    clearTalent();
     renderResultGallery();
     closeAuthModal();
     showToast('Signed out.');
@@ -1268,22 +1624,21 @@ function consumeAuthReturn() {
   openAuthModal();
   setAuthStatus('The sign-in link could not be confirmed. Request a new link and try again.', 'error');
 }
-async function createAvatarBuild(type) {
+async function createAvatarBuild() {
   if (!appState.signedIn) { showToast('Sign in before creating avatars.'); openAuthModal(); return; }
-  const isTwin = type === 'digital_twin';
-  const name = document.querySelector(isTwin ? '#digital-twin-name' : '#photo-avatar-name').value.trim();
-  const fileUrl = document.querySelector(isTwin ? '#digital-twin-url' : '#photo-avatar-url').value.trim();
-  const consent = document.querySelector(isTwin ? '#digital-twin-consent' : '#photo-avatar-consent').checked;
+  const name = document.querySelector('#photo-avatar-name').value.trim();
+  const fileUrl = document.querySelector('#photo-avatar-url').value.trim();
+  const consent = document.querySelector('#photo-avatar-consent').checked;
   try {
     if (!canUseLocalApi()) throw new Error('Avatar builds need the local Video OS engine.');
     const data = await getJson('/api/video-os-lite/avatar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId: currentAccountId(), type, name, fileUrl, consent }),
+      body: JSON.stringify({ type: 'photo', name, fileUrl, consent }),
     });
     appState.credits = data.credits;
-    showToast(data.message || `${isTwin ? 'Digital twin' : 'Photo avatar'} submitted.`);
-    document.querySelector(isTwin ? '#digital-upload-status' : '#photo-upload-status').textContent = data.message || 'Avatar build submitted.';
+    showToast(data.message || 'Photo avatar submitted.');
+    document.querySelector('#photo-upload-status').textContent = data.message || 'Avatar build submitted.';
     await loadAccount();
   } catch (error) {
     showToast(error.message);
@@ -1314,10 +1669,10 @@ stepButtons.forEach((button) => button.addEventListener('click', () => {
   const target = Number(button.dataset.stepJump);
   if (target <= appState.step || requireCurrentStep()) setStep(target);
 }));
-document.querySelector('#avatar-search').addEventListener('input', () => { appState.visible.avatar = 12; rerenderLibrary('avatar'); });
-document.querySelector('#voice-search').addEventListener('input', () => { appState.visible.voice = 12; rerenderLibrary('voice'); });
-document.querySelector('#avatar-more').addEventListener('click', () => { appState.visible.avatar += 12; rerenderLibrary('avatar'); });
-document.querySelector('#voice-more').addEventListener('click', () => { appState.visible.voice += 12; rerenderLibrary('voice'); });
+document.querySelector('#avatar-search').addEventListener('input', () => { appState.visible.avatar = 20; rerenderLibrary('avatar'); });
+document.querySelector('#voice-search').addEventListener('input', () => { appState.visible.voice = 20; rerenderLibrary('voice'); });
+document.querySelector('#avatar-more').addEventListener('click', () => { appState.visible.avatar = 20; rerenderLibrary('avatar'); });
+document.querySelector('#voice-more').addEventListener('click', () => { appState.visible.voice += 20; rerenderLibrary('voice'); });
 document.querySelector('#generate-script').addEventListener('click', generateScript);
 document.querySelector('#tighten-script').addEventListener('click', tightenScript);
 document.querySelector('#generate-video').addEventListener('click', generateVideo);
@@ -1348,9 +1703,7 @@ document.querySelector('#result-gallery-toggle').addEventListener('click', () =>
 });
 document.querySelectorAll('[data-credit-quantity]').forEach((button) => button.addEventListener('click', () => addCredits(button.dataset.creditQuantity)));
 document.querySelector('#photo-avatar-file').addEventListener('change', () => uploadAvatarSource('photo'));
-document.querySelector('#digital-twin-file').addEventListener('change', () => uploadAvatarSource('digital_twin'));
-document.querySelector('#create-photo-avatar').addEventListener('click', () => createAvatarBuild('photo'));
-document.querySelector('#create-digital-twin').addEventListener('click', () => createAvatarBuild('digital_twin'));
+document.querySelector('#create-photo-avatar').addEventListener('click', createAvatarBuild);
 document.querySelector('#render-provider').addEventListener('click', renderWithProvider);
 document.querySelector('#finalize-render').addEventListener('click', finalizeProviderRender);
 document.querySelector('#export-mp4').addEventListener('click', exportMp4);
@@ -1362,11 +1715,14 @@ document.querySelector('#export-format').addEventListener('change', () => {
   scheduleAutoFinalize(500);
 });
 setStep(0);
-loadTalent();
-loadProviders();
-loadAssetCatalog();
-loadResults();
-loadAccount().then(consumeAuthReturn);
+Promise.all([loadProviders(), loadAssetCatalog(), loadAccount()]).then(async () => {
+  if (appState.signedIn) await loadTalent();
+  else clearTalent();
+  consumeAuthReturn();
+  await restoreLatestProject().catch(() => {});
+  consumeIdentitySelection();
+  await loadResults();
+});
 
 
 

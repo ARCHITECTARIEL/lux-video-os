@@ -69,6 +69,11 @@
         </div>
       </section>
 
+      <section id="featured-cast" class="featured-cast featured-cast-cover" aria-labelledby="featured-cast-title">
+        <div class="featured-cast-head"><div><p class="eyebrow">LUX featured cast</p><h2 id="featured-cast-title">Ariel, OSO, and KD</h2></div><span>Provider-verified identities</span></div>
+        <div id="featured-cast-list" class="featured-cast-list" aria-live="polite"></div>
+      </section>
+
       <section class="creator creator-compressed" aria-label="Create video wizard">
         <aside class="steps" aria-label="Workflow steps">
           <button class="active" type="button" data-step-jump="0"><span>1</span> Brief<small>Goal + script</small></button>
@@ -126,6 +131,10 @@
                   <label><input type="radio" name="avatarType" value="Stock Presenter"><span>Stock Presenter</span><small>Polished library talent</small></label>
                   <label><input type="radio" name="avatarType" value="Personal Avatar"><span>Personal Avatar</span><small>Requires consent</small></label>
                 </div>
+                <section class="my-cast" aria-labelledby="my-cast-title">
+                  <div class="my-cast-head"><div><p class="eyebrow">Private</p><h4 id="my-cast-title">My Cast</h4></div><a href="/identity">Identity Studio</a></div>
+                  <div id="my-cast-list" class="my-cast-list" aria-live="polite"><p class="my-cast-empty">Sign in to use your private video identities.</p></div>
+                </section>
                 <div class="library-tools"><label>Search avatars<input id="avatar-search" type="search" placeholder="Search 1,284 avatars"></label><span id="avatar-count" class="library-count">Loading avatars...</span></div>
                 <div id="avatar-list" class="card-list" aria-live="polite"></div>
                 <button class="ghost library-more" type="button" id="avatar-more">Show more avatars</button>
@@ -192,7 +201,7 @@
           </div>
         </form>
       </section>
-      <section id="preview" class="preview-zone" aria-labelledby="preview-title">
+      <section id="preview" class="preview-zone" data-preview-state="empty" aria-labelledby="preview-title">
         <div class="panel-head"><p class="eyebrow">Preview</p><h2 id="preview-title">Final cut preview</h2><p id="preview-empty">Watch the cast, script, captions, colors, kit, and export state come together before download.</p></div>
         <div id="preview-card" class="preview-card empty">
           <div class="video-stage" aria-label="Video preview"><div class="presenter">AI</div><div class="caption">Your script preview will appear here.</div></div>
@@ -234,7 +243,7 @@
         <div class="pricing-grid">
           <article><small>Provider render</small><strong id="pricing-render-cost">45-120 credits</strong><span id="provider-pricing">Exact provider cost appears before submission.</span></article>
           <article><small>Photo avatar</small><strong>150 credits</strong><span>Build a reusable image-based presenter after upload and consent.</span></article>
-          <article><small>Digital twin</small><strong>300 credits</strong><span>Train a higher-fidelity clone from a consented video clip.</span></article>
+          <article><small>Digital Twin</small><strong>Coming later</strong><span>Unavailable in this phase. Identity Studio will expose it only after the provider lifecycle is complete.</span></article>
           <article><small>Best next buy</small><strong id="pricing-recommendation">500 credits</strong><span id="pricing-recommendation-copy">Covers several finished provider videos.</span></article>
         </div>
         <div id="provider-cost-list" class="provider-cost-list" aria-live="polite"></div>
@@ -263,13 +272,10 @@
             <label class="checkbox-line"><input type="checkbox" id="photo-avatar-consent"> I have permission to create this avatar.</label>
             <button class="secondary" type="button" id="create-photo-avatar">Build photo avatar</button>
           </div>
-          <div class="account-card">
-            <h3>Create digital twin</h3>
-            <p>Upload a consented training clip first. Public HTTPS is required before provider training starts.</p>
-            <label>Name<input id="digital-twin-name" placeholder="Client digital twin"></label>
-            <label class="upload-drop">Upload training video<input id="digital-twin-file" type="file" accept="video/mp4,video/quicktime"><span>MP4 or MOV under 20 MB</span></label><label>Provider-ready URL<input id="digital-twin-url" inputmode="url" placeholder="Upload first or paste a public HTTPS video URL"></label><p id="digital-upload-status" class="upload-status" aria-live="polite"></p>
-            <label class="checkbox-line"><input type="checkbox" id="digital-twin-consent"> I have permission to create this digital twin.</label>
-            <button class="secondary" type="button" id="create-digital-twin">Build digital twin</button>
+          <div class="account-card" aria-labelledby="digital-twin-unavailable-title">
+            <p class="eyebrow">Coming later</p>
+            <h3 id="digital-twin-unavailable-title">Digital Twin</h3>
+            <p>Unavailable in this phase. Use Identity Studio for private photo avatars and cloned voices while the complete consented video lifecycle remains disabled.</p>
           </div>
         </div>
         <div class="asset-library">
@@ -316,7 +322,7 @@
       </section>
     </div>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-    <script src="lite.js" defer></script>
+    <script src="lite.js" type="module"></script>
   </body>
 </html>
 

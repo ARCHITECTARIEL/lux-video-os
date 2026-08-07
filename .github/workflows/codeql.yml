@@ -6,14 +6,31 @@ on:
   schedule:
     - cron: '23 4 * * 1'
 permissions:
+  actions: read
   contents: read
-  security-events: write
 jobs:
   analyze:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript,python
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
+        with:
+          upload: never
+          output: codeql-results
+      - name: Retain CodeQL SARIF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-sarif-${{ github.sha }}
+          path: codeql-results/*.sarif
+          if-no-files-found: error
+          retention-days: 30
+      - name: Download retained CodeQL SARIF artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: codeql-sarif-${{ github.sha }}
+          path: codeql-enforced-results
+      - name: Enforce retained CodeQL SARIF artifact
+        run: node tools/enforce-codeql-sarif.mjs codeql-enforced-results

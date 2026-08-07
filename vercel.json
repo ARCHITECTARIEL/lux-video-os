@@ -6,7 +6,11 @@
                    },
                    {
                        "src":  "/api/video-os-lite/providers",
-                       "dest":  "/api/video-os-lite/providers.js"
+                       "dest":  "/api/video-os-lite/workspace.js"
+                   },
+                   {
+                       "src":  "/api/video-os-lite/identities",
+                       "dest":  "/api/video-os-lite/workspace.js"
                    },
                    {
                        "src":  "/api/video-os-lite/render",
@@ -19,6 +23,14 @@
                    {
                        "src":  "/api/video-os-lite/uploads",
                        "dest":  "/api/video-os-lite/uploads.js"
+                   },
+                   {
+                       "src":  "/api/video-os-lite/asset",
+                       "dest":  "/api/video-os-lite/workspace.js"
+                   },
+                   {
+                       "src":  "/api/video-os-lite/projects",
+                       "dest":  "/api/video-os-lite/workspace.js"
                    },
                    {
                        "src":  "/api/video-os-lite/checkout",
@@ -54,7 +66,7 @@
                    },
                    {
                        "src":  "/api/video-os-lite/results",
-                       "dest":  "/api/video-os-lite/results-v2.js"
+                       "dest":  "/api/video-os-lite/workspace.js"
                    },
                    {
                        "src":  "/api/video-os-lite/download",
@@ -62,11 +74,18 @@
                    },
                    {
                        "src":  "/api/video-os-lite/admin",
-                       "dest":  "/api/video-os-lite/admin.js"
+                       "dest":  "/api/video-os-lite/workspace.js"
                    },
                    {
                        "src":  "/dashboard",
                        "dest":  "/public/dashboard.html",
+                       "headers":  {
+                                       "Cache-Control":  "no-store"
+                                   }
+                   },
+                   {
+                       "src":  "/identity",
+                       "dest":  "/public/identity.html",
                        "headers":  {
                                        "Cache-Control":  "no-store"
                                    }

@@ -1,4 +1,7 @@
-import { accountPayload, handleOptions, loadAccount, providerList, send, sessionFromRequest } from '../../lib/video-os-account.js';
+// Routed through the consolidated workspace function to stay within the Vercel function limit.
+import { accountDto } from '../../db/dto.js';
+import { getAccountContext } from '../../db/repositories.js';
+import { handleOptions, providerList, send, sessionFromRequest } from '../../lib/video-os-account.js';
 
 export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
@@ -6,12 +9,13 @@ export default async function handler(req, res) {
   try {
     try {
       const session = sessionFromRequest(req);
-      const account = await loadAccount(session.accountId);
+      const account = await getAccountContext(session.accountId);
+      if (!account) throw Object.assign(new Error('Account not found.'), { statusCode: 401 });
       return send(res, 200, {
         ok: true,
         signedIn: true,
         email: session.email,
-        ...accountPayload(account),
+        ...accountDto(account),
         providers: providerList(),
         assetLibraries: [],
       });
@@ -23,7 +27,7 @@ export default async function handler(req, res) {
         account: { accountId: 'signed-out', name: 'Sign in to render', subscription: { plan: 'Video OS Lite', status: 'preview', renewal: 'Sign in to unlock live rendering' } },
         credits: { accountId: 'signed-out', balance: 0, currency: 'credits' },
         security: { status: 'locked', message: 'Sign in with email to use credits and live rendering.' },
-        providers: providerList(),
+        providers: providerList().map(({ id, name, label, cost }) => ({ id, name, label, cost })),
         assetLibraries: [],
       });
     }
