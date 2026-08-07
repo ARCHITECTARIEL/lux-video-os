@@ -38,7 +38,7 @@
         "@playwright/test": "^1.61.1",
         "drizzle-kit": "^0.31.10",
         "hyperframes": "0.7.64",
-        "vercel": "^56.2.0",
+        "vercel": "^58.5.1",
         "vitest": "^4.1.10"
     }
 }
