@@ -1,0 +1,60 @@
+{
+  "jobId": "job-76d8d77b-07d7-4453-805d-14632580a0ab",
+  "source": {
+    "contentType": "video/mp4",
+    "bytes": 951537,
+    "sha256": "b13d1610c9ba56ffd79089c99e425c710b098f1fd9466f393f36d9ff11dc4674"
+  },
+  "engine": {
+    "name": "hyperframes",
+    "version": "0.7.64",
+    "compositionHash": "8a553207774e50df",
+    "renderedFrames": 158,
+    "workers": 1
+  },
+  "verification": {
+    "runtimeErrors": 0,
+    "layoutErrors": 0,
+    "motionErrors": 0,
+    "motionSamples": 106,
+    "contrastErrors": 0,
+    "contrastChecksPassed": 18
+  },
+  "output": {
+    "bytes": 3996519,
+    "sha256A": "89a025f38b246f94c3444d20f6342301bbed6b2f69a4563b29b293636e3d8832",
+    "sha256B": "89a025f38b246f94c3444d20f6342301bbed6b2f69a4563b29b293636e3d8832",
+    "decodedFrameManifestSha256A": "9153745f15167407b9ea308fd2b8b7c7f91b77bdaa02e6c8417f1b6607e071f0",
+    "decodedFrameManifestSha256B": "9153745f15167407b9ea308fd2b8b7c7f91b77bdaa02e6c8417f1b6607e071f0",
+    "video": "h264/yuv420p/1920x1080/30fps",
+    "audio": "aac/48000Hz/stereo",
+    "durationSeconds": 5.269333
+  },
+  "vercelSandbox": {
+    "runtime": "node22",
+    "vcpus": 4,
+    "memoryMb": 8192,
+    "persistent": false,
+    "snapshotBytes": 1502072173,
+    "snapshotExpiresAt": "2026-07-27T20:05:23.562Z",
+    "compositionSha256": "19b611790e259816532d6425f4ef4f4e47ace7c5b573f0eba45ea0535c8a0313",
+    "softwareRenderA": {
+      "bytes": 3783585,
+      "sha256": "a9bb7690ab47266773de25984d8dd07e6becd7c33bd1e4b5704f2a9cdc2d0edb"
+    },
+    "softwareRenderB": {
+      "bytes": 3790578,
+      "sha256": "847232b34333a4ddb891be0629e2b93ac2eefba6dd6f8ec196fb6a16c789421c"
+    },
+    "decodedAudioIdentical": true,
+    "videoSsimBetweenRenders": 0.996207,
+    "videoSsimSourceToComposed": 0.617235,
+    "byteIdenticalAcrossInstances": false
+  },
+  "privacy": {
+    "sourceCommitted": false,
+    "outputCommitted": false,
+    "publicBlobCreated": false,
+    "newProviderRenderSubmitted": false
+  }
+}

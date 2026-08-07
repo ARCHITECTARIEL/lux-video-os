@@ -24,7 +24,7 @@ export function createPinnedLookup(pinned) {
   };
 }
 
-async function downloadPinned(sourceUrl, target) {
+export async function downloadProviderMedia(sourceUrl, target) {
   const url = assertAllowedMediaUrl(sourceUrl);
   const [pinned] = await assertPublicDns(url);
   let response;
@@ -84,7 +84,7 @@ function runFfmpeg(args) {
   });
 }
 
-async function hashFile(path) {
+export async function hashFile(path) {
   const hash = crypto.createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk);
   return hash.digest('hex');
@@ -97,7 +97,7 @@ export async function finishMedia(job, sourceUrl) {
   await mkdir(workdir, { recursive: true });
   const input = join(workdir, 'source.mp4');
   const output = join(workdir, 'final.mp4');
-  const sourceBytes = await downloadPinned(sourceUrl, input);
+  const sourceBytes = await downloadProviderMedia(sourceUrl, input);
   const startedAt = Date.now();
   const vf = [`scale=${width}:${height}:force_original_aspect_ratio=increase`, `crop=${width}:${height}`, 'setsar=1', 'eq=saturation=1.14:contrast=1.06', `drawbox=x=0:y=0:w=iw:h=${Math.max(12, Math.floor(height / 80))}:color=0x111827@0.18:t=fill`, 'format=yuv420p'].join(',');
   await runFfmpeg(['-y', '-i', input, '-f', 'lavfi', '-i', 'sine=frequency=196:sample_rate=48000', '-filter_complex', `${vf}[vout];[1:a]volume=0.025[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=1[aout]`, '-map', '[vout]', '-map', '[aout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', output]);

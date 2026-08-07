@@ -1,0 +1,11 @@
+{
+  "duration": 5.24,
+  "assertions": [
+    { "kind": "appearsBy", "selector": "#headline", "bySec": 0.8 },
+    { "kind": "appearsBy", "selector": "#engine-badge", "bySec": 1.2 },
+    { "kind": "before", "a": "#headline", "b": "#cta" },
+    { "kind": "staysInFrame", "selector": "#presenter-shell" },
+    { "kind": "staysInFrame", "selector": "#lower-third" },
+    { "kind": "keepsMoving", "withinSelector": "#lux-proof", "maxStaticSec": 2 }
+  ]
+}

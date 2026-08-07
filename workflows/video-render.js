@@ -6,6 +6,15 @@ import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
 import { pollHeygen, submitHeygen } from '../services/heygen.js';
 import { finishMedia } from '../services/media-finisher.js';
+import { finishMediaWithHyperframes } from '../services/hyperframes-finisher.js';
+
+export function finishingEngine(env = process.env) {
+  const requested = String(env.VIDEO_OS_COMPOSITION_ENGINE || 'ffmpeg').trim().toLowerCase();
+  if (requested === 'ffmpeg' || requested === '') return 'ffmpeg';
+  if (requested !== 'hyperframes') throw Object.assign(new Error(`Unsupported composition engine: ${requested}`), { failureCategory: 'CONFIG_MISSING' });
+  if (String(env.VIDEO_OS_HYPERFRAMES_ENABLED || '').toLowerCase() !== 'true') throw Object.assign(new Error('HyperFrames was requested but disabled.'), { failureCategory: 'CONFIG_MISSING' });
+  return 'hyperframes';
+}
 
 async function submitProvider(jobId) {
   'use step';
@@ -59,7 +68,9 @@ async function finishProviderMedia(jobId, sourceUrl) {
   if (job.status === 'ready') return job.output;
   if (job.status === 'provider_ready') await transitionJob({ jobId, stageTo: 'finishing', eventType: 'finish.started' });
   else if (job.status !== 'finishing') throw Object.assign(new FatalError(`Finishing cannot resume from ${job.status}.`), { failureCategory: 'RECONCILIATION' });
-  const artifact = await finishMedia(job, sourceUrl);
+  const artifact = finishingEngine() === 'hyperframes'
+    ? await finishMediaWithHyperframes(job, sourceUrl)
+    : await finishMedia(job, sourceUrl);
   await finalizeReadyJob(jobId, artifact);
   return artifact;
 }
