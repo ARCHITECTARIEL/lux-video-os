@@ -1,13 +1,22 @@
 import crypto from 'node:crypto';
 import { start } from 'workflow/api';
 import { accountDto, jobDto } from '../../db/dto.js';
-import { claimWorkflowStart, ensureAccount, getJob, getOwnedProject, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
+import { claimWorkflowStart, ensureAccount, getJob, getOwnedProject, getRenderAuthorizedIdentity, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
 import { assertTalentSelectionsAvailable, loadTalentInventory } from '../video-os/talent.js';
 import { captureJobError } from '../../lib/video-os-observability.js';
 import { featureEnabled, requestId, requireRenderAccountAuthorization } from '../../lib/video-os-security.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { IDENTITY_CONSENT_POLICY_VERSION } from '../../lib/video-os-identity-policy.js';
 import { parseOrThrow, renderRequestSchema } from '../../lib/video-os-validation.js';
 import { videoRenderWorkflowMetadata } from '../../workflows/video-render-metadata.js';
+
+export function authorizedIdentityInput(project, payload, identity) {
+  const ready = [identity?.overallStatus, identity?.avatarStatus, identity?.voiceStatus].every((status) => String(status || '').toUpperCase() === 'READY');
+  if (!ready || identity?.archivedAt || !identity?.providerRenderableAvatarId || !identity?.providerVoiceId) throw Object.assign(new Error('Video identity is not ready to render.'), { statusCode: 409, failureCategory: 'VALIDATION' });
+  if (project?.identityId !== payload.identityId) throw Object.assign(new Error('Render identity does not match the saved project.'), { statusCode: 409, failureCategory: 'VALIDATION' });
+  if (payload.voice && project?.voice?.id !== payload.voice.voiceId) throw Object.assign(new Error('Render voice does not match the saved project.'), { statusCode: 409, failureCategory: 'VALIDATION' });
+  return { ...payload, identityId: identity.id, avatar: { avatarId: identity.providerRenderableAvatarId }, voice: payload.voice || { voiceId: identity.providerVoiceId } };
+}
 
 export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
@@ -22,12 +31,21 @@ export default async function handler(req, res) {
     const payload = parseOrThrow(renderRequestSchema, await readJson(req), 'Render request validation failed.');
     const project = await getOwnedProject(session.accountId, payload.projectId);
     if (!project) throw Object.assign(new Error('Project not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
-    if (project.avatar?.id !== payload.avatar.avatarId || project.voice?.id !== payload.voice.voiceId) throw Object.assign(new Error('Render inputs do not match the saved project.'), { statusCode: 409, failureCategory: 'VALIDATION' });
-    const inventory = await loadTalentInventory();
-    assertTalentSelectionsAvailable(inventory.talent, payload);
+    let authorizedInput = payload;
+    if (payload.identityId) {
+      const identity = await getRenderAuthorizedIdentity(session.accountId, payload.identityId, IDENTITY_CONSENT_POLICY_VERSION);
+      if (!identity) throw Object.assign(new Error('Video identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+      authorizedInput = authorizedIdentityInput(project, payload, identity);
+    } else {
+      if (project.avatar?.id !== payload.avatar?.avatarId || project.voice?.id !== payload.voice?.voiceId) {
+        throw Object.assign(new Error('Render inputs do not match the saved project.'), { statusCode: 409, failureCategory: 'VALIDATION' });
+      }
+      const inventory = await loadTalentInventory();
+      assertTalentSelectionsAvailable(inventory.talent, payload);
+    }
     const account = await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 0) });
     const correlationId = requestId(req);
-    const reserved = await reserveRender({ jobId: `job-${crypto.randomUUID()}`, accountId: session.accountId, idempotencyKey: payload.idempotencyKey, correlationId, provider: payload.provider, title: payload.title, format: payload.format, costCredits: 90, input: payload });
+    const reserved = await reserveRender({ jobId: `job-${crypto.randomUUID()}`, accountId: session.accountId, idempotencyKey: payload.idempotencyKey, correlationId, provider: payload.provider, title: payload.title, format: payload.format, costCredits: 90, input: authorizedInput });
     reservedJob = reserved.job;
     const claimed = await claimWorkflowStart(reserved.job.id);
     if (claimed) {

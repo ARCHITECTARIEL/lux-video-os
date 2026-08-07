@@ -114,10 +114,15 @@ test('sign-in loads authorized talent and sign-out clears it without a provider 
   await expect(page.locator('[data-avatar-id="featured:ariel"]')).toHaveCount(1);
   expect(talentRequests).toBe(1);
 
+  await page.locator('#download-link').evaluate((link) => { link.href = '/api/video-os-lite/download?jobId=private-job'; link.hidden = false; });
+  await page.locator('.video-stage').evaluate((stage) => { const video = document.createElement('video'); video.className = 'final-preview-media'; video.src = '/api/video-os-lite/download?jobId=private-job&disposition=inline'; stage.prepend(video); });
   await page.locator('#open-login').click();
   await page.locator('#sign-out').click();
   await expect(page.locator('#avatar-list [data-avatar-id]')).toHaveCount(0);
   await expect(page.locator('#connection-pill')).toHaveText('Sign in to view provider talent');
+  await expect(page.locator('#download-link')).toBeHidden();
+  await expect(page.locator('#download-link')).not.toHaveAttribute('href');
+  await expect(page.locator('.final-preview-media')).toHaveCount(0);
   expect(talentRequests).toBe(1);
   expect(renderRequests).toBe(0);
 });

@@ -1,6 +1,7 @@
 import { FEATURED_CAST } from '../lib/video-os-featured-cast.js';
 
 const featuredByKey = new Map(FEATURED_CAST.map((item) => [item.key, item]));
+const sharedTalentPattern = /^shared:(avatar|voice):([A-Za-z0-9_-]{32})$/;
 const ownedAssetPattern = /^owned-asset:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 const presentationMetadataKeys = new Set(['music', 'background', 'lut', 'cta', 'overlay']);
 
@@ -47,6 +48,17 @@ export function sanitizePersistedIdentity(value, kind, options = {}) {
     };
   }
 
+  const sharedMatch = reference.match(sharedTalentPattern);
+  if (sharedMatch?.[1] === kind) {
+    const name = safePresentationLabel(value?.name) || (kind === 'avatar' ? 'Shared presenter' : 'Shared voice');
+    return {
+      id: reference,
+      [kind === 'avatar' ? 'avatarId' : 'voiceId']: reference,
+      name,
+      source: 'heygen',
+    };
+  }
+
   const ownedMatch = reference.match(ownedAssetPattern);
   const approvedOwnedIds = verifiedOwnedAssetIds(options.ownedApplicationAssetIds);
   if (!ownedMatch || !approvedOwnedIds.has(ownedMatch[1].toLowerCase())) return null;
@@ -81,9 +93,18 @@ function sanitizedFilename(value) {
 }
 
 export function accountDto(record) {
+  const role = record.user.role || 'customer';
+  const subscriptions = {
+    owner: { plan: 'Video OS Owner Access', status: 'active', renewal: 'Owner-managed workspace' },
+    ceo: { plan: 'Video OS Lite CEO Preview', status: 'active', renewal: 'Full-access executive preview' },
+    demo: { plan: 'Video OS Lite Demo Access', status: 'active', renewal: 'Password access enabled' },
+    customer: { plan: 'Video OS', status: 'contained' },
+  };
   return {
-    account: { accountId: record.user.id, name: record.user.name, subscription: { plan: 'Video OS', status: 'contained' } },
+    accountId: record.user.id,
+    account: { accountId: record.user.id, name: record.user.name, role, subscription: subscriptions[role] || subscriptions.customer },
     credits: { accountId: record.user.id, balance: record.credits.balance, reserved: record.credits.reserved, currency: 'credits' },
+    entitlements: record.entitlements || {},
   };
 }
 
@@ -92,6 +113,7 @@ export function projectDto(project, options = {}) {
     id: project.id,
     title: project.title,
     script: project.script,
+    identityId: project.identityId || null,
     avatar: sanitizePersistedIdentity(project.avatar, 'avatar', options),
     voice: sanitizePersistedIdentity(project.voice, 'voice', options),
     settings: {},
@@ -113,6 +135,7 @@ export function jobDto(job, options = {}) {
     title: job.title,
     format: job.format,
     projectId: job.projectId,
+    identityId: job.input?.identityId || null,
     avatar: outputAvatar || inputAvatar,
     voice: outputVoice || inputVoice,
     productionKit: sanitizePresentationMetadata(job.input?.productionKit),

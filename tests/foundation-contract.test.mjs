@@ -52,6 +52,7 @@ test('Preview deployment stays within the Hobby serverless function budget', () 
   assert.deepEqual(workspaceRoutes, [
     '/api/video-os-lite/admin',
     '/api/video-os-lite/asset',
+    '/api/video-os-lite/identities',
     '/api/video-os-lite/projects',
     '/api/video-os-lite/providers',
     '/api/video-os-lite/results',

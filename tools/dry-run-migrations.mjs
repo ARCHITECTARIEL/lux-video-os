@@ -10,11 +10,13 @@ const expectedTables = [
   'credit_accounts',
   'credit_transactions',
   'entitlements',
+  'identity_consents',
   'job_events',
   'media_assets',
   'projects',
   'rate_limits',
   'stripe_events',
+  'user_identities',
   'users',
   'video_jobs',
 ];
@@ -72,6 +74,28 @@ try {
   `);
   if (!projectRelationship.rows[0]?.project_id_column || !projectRelationship.rows[0]?.project_foreign_key) {
     throw new Error('Migration dry run did not establish video_jobs.project_id -> projects.');
+  }
+  const identityRelationship = await client.query(`
+    select
+      exists (select 1 from information_schema.columns where table_schema = current_schema() and table_name = 'media_assets' and column_name = 'provider_asset_id') as provider_asset_column,
+      exists (
+        select 1 from information_schema.table_constraints
+        where constraint_schema = current_schema() and table_name = 'user_identities'
+          and constraint_name = 'user_identities_overall_status_ck' and constraint_type = 'CHECK'
+      ) as lifecycle_check,
+      exists (
+        select 1 from pg_indexes
+        where schemaname = current_schema() and tablename = 'identity_consents'
+          and indexname = 'identity_consents_active_policy_uq'
+      ) as active_consent_index,
+      exists (
+        select 1 from information_schema.table_constraints
+        where constraint_schema = current_schema() and table_name = 'projects'
+          and constraint_name = 'projects_identity_id_user_identities_id_fk' and constraint_type = 'FOREIGN KEY'
+      ) as project_identity_fk
+  `);
+  if (!identityRelationship.rows[0]?.provider_asset_column || !identityRelationship.rows[0]?.lifecycle_check || !identityRelationship.rows[0]?.active_consent_index || !identityRelationship.rows[0]?.project_identity_fk) {
+    throw new Error('Migration dry run did not establish the Identity Studio schema contract.');
   }
   await client.query('rollback');
 

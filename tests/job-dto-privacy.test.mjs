@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { jobDto, projectDto } from '../db/dto.js';
 import { FEATURED_CAST } from '../lib/video-os-featured-cast.js';
+import { projectRequestSchema } from '../lib/video-os-validation.js';
 
 const OWNED_AVATAR_ID = '11111111-2222-4333-8444-555555555555';
 const OWNED_VOICE_ID = '66666666-7777-4888-8999-aaaaaaaaaaaa';
@@ -120,6 +121,18 @@ test('safe featured references survive while invalid namespaces and malformed va
     assert.equal(dto.avatar, null);
     assert.equal(dto.voice, null);
   }
+});
+
+test('opaque shared references survive DTO boundaries without provider identifiers', () => {
+  const dto = jobDto(baseJob({ input: {
+    avatar: { avatarId: 'shared:avatar:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', name: 'Shared presenter' },
+    voice: { voiceId: 'shared:voice:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB', name: 'Shared voice' },
+  } }));
+  assert.equal(dto.avatar.avatarId, 'shared:avatar:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+  assert.equal(dto.voice.voiceId, 'shared:voice:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB');
+  assert.equal(dto.avatar.source, 'heygen');
+  assert.equal(dto.voice.source, 'heygen');
+  assert.equal(jobDto(baseJob({ input: { avatar: 'raw-provider-avatar', voice: 'raw-provider-voice' } })).avatar, null);
 });
 
 test('owned application assets require an explicit verified ownership context', () => {
@@ -282,4 +295,27 @@ test('all externally reachable persisted identity responses use the common DTO b
   assert.equal(routes.includes('/api/video-os-lite/render'), true);
   assert.equal(routes.includes('/api/video-os-lite/download'), true);
   assert.equal(routes.includes('/api/video-os-lite/projects'), true);
+});
+
+
+test('project writes reject provider preview URLs and keep typed identity authority canonical', async () => {
+  const parsed = projectRequestSchema.safeParse({
+    title: 'Canonical project',
+    script: 'A sufficiently explicit script.',
+    identityId: '11111111-2222-4333-8444-555555555555',
+    avatar: { id: 'featured:ariel', name: 'Ariel', source: 'featured', previewUrl: PRIVATE_PREVIEW_URL },
+    voice: { id: 'featured:ariel:voice', name: 'Ariel voice', source: 'featured' },
+    settings: { identityId: '66666666-7777-4888-8999-aaaaaaaaaaaa' },
+  });
+  assert.equal(parsed.success, false);
+
+  const repositorySource = await readFile(new URL('../db/repositories.js', import.meta.url), 'utf8');
+  const renderSource = await readFile(new URL('../api/video-os-lite/render-v2.js', import.meta.url), 'utf8');
+  const clientSource = await readFile(new URL('../public/lite.js', import.meta.url), 'utf8');
+  assert.equal(repositorySource.includes('avatar: projectSelectionForStorage(avatar)'), true);
+  assert.equal(repositorySource.includes('voice: projectSelectionForStorage(voice)'), true);
+  assert.equal(repositorySource.includes('settings: {}'), true);
+  assert.equal(renderSource.includes('project?.settings?.identityId'), false);
+  assert.equal(clientSource.includes('project.settings?.identityId'), false);
+  assert.equal(clientSource.includes('previewUrl: appState.avatar'), false);
 });

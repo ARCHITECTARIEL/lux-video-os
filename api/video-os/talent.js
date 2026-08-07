@@ -1,69 +1,43 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 
 import { sessionFromRequest } from '../../lib/video-os-account.js';
 import { requireRenderAccountAuthorization } from '../../lib/video-os-security.js';
 import { FEATURED_CAST } from '../../lib/video-os-featured-cast.js';
+import { fetchHeygenCollection, fetchHeygenPaginatedCollection } from '../../services/heygen.js';
 
 const itemSchema = z.record(z.string(), z.unknown());
 const compact = (value, max = 160) => String(value || '').trim().slice(0, max);
+const PROVIDER_TALENT_ID = Symbol('providerTalentId');
+
+function sharedTalentReference(providerId, kind) {
+  const normalized = compact(providerId);
+  if (!normalized || !['avatar', 'voice'].includes(kind)) throw new TypeError('Provider talent reference is invalid.');
+  const digest = crypto.createHash('sha256').update(kind + ':' + normalized).digest('base64url').slice(0, 32);
+  return 'shared:' + kind + ':' + digest;
+}
+
+function withProviderIdentity(item, reference, providerId) {
+  const result = { ...item, id: reference };
+  Object.defineProperty(result, PROVIDER_TALENT_ID, { value: compact(providerId), enumerable: false });
+  return result;
+}
+
+export function providerTalentId(item) {
+  return compact(item?.[PROVIDER_TALENT_ID]);
+}
 
 function send(res, status, payload) { res.statusCode = status; res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(payload)); }
-
-function collection(payload) {
-  const data = payload?.data ?? payload;
-  if (Array.isArray(data)) return data;
-  for (const key of ['avatars', 'voices', 'items', 'list']) if (Array.isArray(data?.[key])) return data[key];
-  return [];
-}
-
-async function fetchCollection(url, key, options = {}) {
-  const fetchImpl = options.fetchImpl || fetch;
-  const response = await fetchImpl(url, { signal: AbortSignal.timeout(8_000), headers: { Accept: 'application/json', 'X-Api-Key': key } });
-  if (!response.ok) throw new Error(`HeyGen inventory HTTP ${response.status}`);
-  return collection(await response.json()).map((item) => itemSchema.parse(item));
-}
-
-function pagination(payload) {
-  const data = payload?.data;
-  return { hasMore: Boolean(payload?.has_more ?? data?.has_more), nextToken: compact(payload?.next_token ?? data?.next_token, 512) };
-}
-
-export async function fetchPaginatedCollection(url, key, options = {}) {
-  const fetchImpl = options.fetchImpl || fetch;
-  const maxPages = Number.isInteger(options.maxPages) ? options.maxPages : 10;
-  const maxItems = Number.isInteger(options.maxItems) && options.maxItems > 0 ? options.maxItems : Number.POSITIVE_INFINITY;
-  const items = [];
-  const itemIds = new Set();
-  const tokens = new Set();
-  const pageUrl = new URL(url);
-  for (let page = 1; page <= maxPages; page += 1) {
-    const response = await fetchImpl(pageUrl.href, { signal: AbortSignal.timeout(8_000), headers: { Accept: 'application/json', 'X-Api-Key': key } });
-    if (!response.ok) throw new Error(`HeyGen inventory HTTP ${response.status}`);
-    const payload = await response.json();
-    for (const raw of collection(payload)) {
-      const item = itemSchema.parse(raw);
-      const id = compact(item.id || item.avatar_id || item.avatarId);
-      if (id && itemIds.has(id)) continue;
-      if (id) itemIds.add(id);
-      items.push(item);
-    }
-    const { hasMore, nextToken } = pagination(payload);
-    if (items.length >= maxItems) return { items: items.slice(0, maxItems), pages: page, complete: !hasMore, truncated: hasMore || items.length > maxItems };
-    if (!hasMore) return { items, pages: page, complete: true, truncated: false };
-    if (!nextToken) throw new Error('HeyGen inventory pagination did not return a next token.');
-    if (tokens.has(nextToken)) throw new Error('HeyGen inventory returned a repeated pagination token.');
-    tokens.add(nextToken);
-    pageUrl.searchParams.set('token', nextToken);
-  }
-  throw new Error(`HeyGen inventory exceeded the ${maxPages}-page safety limit.`);
-}
 
 function safeHttpsUrl(...values) {
   for (const value of values) {
     if (!value) continue;
     try {
       const url = new URL(String(value));
-      if (url.protocol === 'https:') return url.href.slice(0, 2048);
+      if (url.protocol !== 'https:' || url.username || url.password || url.port) continue;
+      url.search = '';
+      url.hash = '';
+      return url.href.slice(0, 2048);
     } catch {}
   }
   return '';
@@ -81,7 +55,8 @@ function activeProviderRecord(item) {
 
 export function normalizeTalentItem(item, prefix, options = {}) {
   const id = compact(item.id || item.avatar_id || item.voice_id || item.avatarId || item.voiceId);
-  const previewUrl = prefix === 'avatar' ? safeHttpsUrl(item.preview_image_url, item.previewImageUrl, item.thumbnail_url, item.thumbnailUrl, item.image_url, item.imageUrl) : '';
+  const candidatePreviewUrl = prefix === 'avatar' ? safeHttpsUrl(item.preview_image_url, item.previewImageUrl, item.thumbnail_url, item.thumbnailUrl, item.image_url, item.imageUrl) : '';
+  const previewUrl = candidatePreviewUrl && id.length >= 24 && candidatePreviewUrl.toLowerCase().includes(id.toLowerCase()) ? '' : candidatePreviewUrl;
   return {
     id,
     name: compact(item.name || item.avatar_name || item.voice_name || item.display_name || item.displayName || id, 180),
@@ -108,7 +83,7 @@ export function buildFeaturedAvatars(accountAvatars = []) {
     if (!raw) return { id, name: featured.label, source: 'heygen', shared: false, featured: true, featuredKey: featured.key, matchedVoiceId, active: false, providerReady: false, archived: false, blocked: false, providerOrder, unavailableReason: 'This configured LUX presenter is not currently available from HeyGen.' };
     const item = normalizeTalentItem(raw, 'avatar', { featured: true, providerOrder });
     const ready = Boolean(item.previewUrl && item.active && !item.archived && !item.blocked);
-    return { ...item, id, name: featured.label, featuredKey: featured.key, matchedVoiceId, providerReady: ready, ...(ready ? {} : { unavailableReason: 'HeyGen returned this presenter without a usable active preview.' }) };
+    return withProviderIdentity({ ...item, name: featured.label, featuredKey: featured.key, matchedVoiceId, providerReady: ready, ...(ready ? {} : { unavailableReason: 'HeyGen returned this presenter without a usable active preview.' }) }, id, raw.id || raw.avatar_id || raw.avatarId);
   });
 }
 
@@ -118,8 +93,10 @@ export function buildSharedAvatars(publicLooks = []) {
     const engines = Array.isArray(raw.supported_api_engines) ? raw.supported_api_engines : [];
     const item = normalizeTalentItem(raw, 'avatar', { shared: true, providerReady: engines.includes('avatar_iv'), providerOrder: providerOrder + FEATURED_CAST.length });
     if (!item.id || seen.has(item.id) || !item.previewUrl || !item.active || !item.providerReady || item.archived || item.blocked) return [];
-    seen.add(item.id);
-    return [item];
+    const providerId = item.id;
+    seen.add(providerId);
+    const publicItem = item.name === providerId ? { ...item, name: 'Shared presenter ' + (providerOrder + 1) } : item;
+    return [withProviderIdentity(publicItem, sharedTalentReference(providerId, 'avatar'), providerId)];
   });
 }
 
@@ -130,8 +107,11 @@ export function buildVoices(voices = []) {
     const item = normalizeTalentItem(raw, 'voice', { providerReady: true, providerOrder });
     if (!item.id || seen.has(item.id) || !item.active || item.archived || item.blocked) return [];
     seen.add(item.id);
-    const featured = featuredByVoiceId.get(item.id);
-    return [{ ...item, ...(featured ? { id: `featured:${featured.key}:voice`, featuredKey: featured.key } : {}) }];
+    const providerId = item.id;
+    const featured = featuredByVoiceId.get(providerId);
+    const reference = featured ? 'featured:' + featured.key + ':voice' : sharedTalentReference(providerId, 'voice');
+    const publicItem = !featured && item.name === providerId ? { ...item, name: 'Shared voice ' + (providerOrder + 1) } : item;
+    return [withProviderIdentity({ ...publicItem, ...(featured ? { featuredKey: featured.key } : {}) }, reference, providerId)];
   });
 }
 
@@ -155,9 +135,9 @@ export async function loadTalentInventory(options = {}) {
   const publicLooksUrl = env.HEYGEN_AVATARS_URL || 'https://api.heygen.com/v3/avatars/looks?ownership=public&limit=50';
   const voicesUrl = env.HEYGEN_VOICES_URL || 'https://api.heygen.com/v2/voices';
   const settled = await Promise.allSettled([
-    fetchPaginatedCollection(accountAvatarsUrl, key, { fetchImpl }),
-    fetchPaginatedCollection(publicLooksUrl, key, { fetchImpl, maxItems: 50 }),
-    fetchCollection(voicesUrl, key, { fetchImpl }),
+    fetchHeygenPaginatedCollection(accountAvatarsUrl, { fetchImpl }),
+    fetchHeygenPaginatedCollection(publicLooksUrl, { fetchImpl, maxPages: 1, maxItems: 50, allowTruncatedPageLimit: true }),
+    fetchHeygenCollection(voicesUrl, { fetchImpl }),
   ]);
   const accountAvatars = settled[0].status === 'fulfilled' ? settled[0].value.items : [];
   const publicLooks = settled[1].status === 'fulfilled' ? settled[1].value.items : [];
@@ -182,7 +162,10 @@ export function assertTalentSelectionsAvailable(talent, payload) {
   if (avatar.featuredKey && (voice.featuredKey !== avatar.featuredKey || avatar.matchedVoiceId !== voice.id)) {
     throw Object.assign(new Error('The exact matched voice for this featured presenter is unavailable.'), { statusCode: 409, failureCategory: 'VALIDATION' });
   }
-  return { avatar, voice };
+  const avatarProviderId = providerTalentId(avatar);
+  const voiceProviderId = providerTalentId(voice);
+  if (!avatarProviderId || !voiceProviderId) throw Object.assign(new Error('Selected provider talent cannot be resolved.'), { statusCode: 409, failureCategory: 'VALIDATION' });
+  return { avatar, voice, providerSelections: { avatarId: avatarProviderId, voiceId: voiceProviderId } };
 }
 
 export default async function handler(req, res) {

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { assertDatabaseConfigured } from '../../db/client.js';
 import { addUploadMediaAsset, getOwnedMediaAsset } from '../../db/repositories.js';
 import { sessionFromRequest } from '../../lib/video-os-account.js';
+import { validateIdentityUpload } from '../../lib/identity-upload.js';
 import { deletePrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../../lib/video-os-private-blob.js';
 import { accountHash, requestId } from '../../lib/video-os-security.js';
 
@@ -68,11 +69,13 @@ function uploadSuccess(asset, expected, payload, correlationId, status, state) {
       accountId: expected.accountId,
       kind: payload.kind || 'avatar',
       size: expected.bytes,
-      requiresPublicUrl: true,
+      requiresPublicUrl: !['identity_photo', 'identity_voice'].includes(payload.kind),
       correlationId,
       idempotent: state === 'idempotent',
       recovered: state === 'recovered',
-      message: 'Upload stored privately. Provider submission remains disabled until short-lived private delivery is verified.',
+      message: ['identity_photo', 'identity_voice'].includes(payload.kind)
+        ? 'Identity source stored privately.'
+        : 'Upload stored privately. Provider submission remains disabled until short-lived private delivery is verified.',
     },
   };
 }
@@ -111,16 +114,33 @@ export function createUploadHandler(overrides = {}) {
       const session = dependencies.sessionFromRequest(req);
       const payload = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
       const dataUrl = String(payload.dataUrl || '');
-      if (!dataUrl.startsWith('data:') || !dataUrl.includes(',')) throw routeError('Choose an image or video file to upload first.', 400, 'VALIDATION', 'invalid_upload');
-      const [header, encoded] = dataUrl.split(',', 2);
-      const mime = header.slice(5).split(';', 1)[0].toLowerCase();
-      const ext = ALLOWED[mime];
-      if (!ext) throw routeError('Unsupported upload format. Use JPG, PNG, WebP, MP4, or MOV.', 400, 'VALIDATION', 'invalid_upload');
-      const buffer = Buffer.from(encoded, 'base64');
-      if (!buffer.length || buffer.length > MAX_UPLOAD_BYTES) throw routeError('Uploads must be under 20 MB.', 400, 'VALIDATION', 'invalid_upload');
-      const detectedMime = detectedUploadMime(buffer);
-      if (!detectedMime || (mime === 'video/quicktime' ? detectedMime !== 'video/mp4' : detectedMime !== mime)) {
-        throw routeError('Upload contents do not match the declared file type.', 400, 'VALIDATION', 'invalid_upload');
+      const identityKind = payload.kind === 'identity_photo' ? 'photo' : payload.kind === 'identity_voice' ? 'voice' : null;
+      let buffer;
+      let mime;
+      let ext;
+      let identityMetadata = {};
+      if (identityKind) {
+        const validated = validateIdentityUpload({ dataUrl, kind: identityKind });
+        buffer = validated.buffer;
+        mime = validated.contentType;
+        ext = validated.extension;
+        identityMetadata = {
+          widthPx: validated.width || null,
+          heightPx: validated.height || null,
+          durationMs: validated.durationSeconds ? Math.round(validated.durationSeconds * 1000) : null,
+        };
+      } else {
+        if (!dataUrl.startsWith('data:') || !dataUrl.includes(',')) throw routeError('Choose an image or video file to upload first.', 400, 'VALIDATION', 'invalid_upload');
+        const [header, encoded] = dataUrl.split(',', 2);
+        mime = header.slice(5).split(';', 1)[0].toLowerCase();
+        ext = ALLOWED[mime];
+        if (!ext) throw routeError('Unsupported upload format. Use JPG, PNG, WebP, MP4, or MOV.', 400, 'VALIDATION', 'invalid_upload');
+        buffer = Buffer.from(encoded, 'base64');
+        if (!buffer.length || buffer.length > MAX_UPLOAD_BYTES) throw routeError('Uploads must be under 20 MB.', 400, 'VALIDATION', 'invalid_upload');
+        const detectedMime = detectedUploadMime(buffer);
+        if (!detectedMime || (mime === 'video/quicktime' ? detectedMime !== 'video/mp4' : detectedMime !== mime)) {
+          throw routeError('Upload contents do not match the declared file type.', 400, 'VALIDATION', 'invalid_upload');
+        }
       }
 
       try {
@@ -136,11 +156,18 @@ export function createUploadHandler(overrides = {}) {
       const expected = {
         id: mediaAssetId,
         accountId: session.accountId,
-        kind: payload.kind === 'digital_twin' ? 'avatar-video-source' : 'avatar-photo-source',
+        kind: identityKind === 'photo'
+          ? 'identity-photo-source'
+          : identityKind === 'voice'
+            ? 'identity-voice-source'
+            : payload.kind === 'digital_twin'
+              ? 'avatar-video-source'
+              : 'avatar-photo-source',
         privatePathname: pathname,
         contentType: mime,
         bytes: buffer.length,
         sha256: crypto.createHash('sha256').update(buffer).digest('hex'),
+        ...identityMetadata,
       };
 
       let priorAsset;

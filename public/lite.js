@@ -1,18 +1,7 @@
 import { FEATURED_CAST, curateDefaultCast, matchedVoiceId, prioritizeVoices } from './video-os-cast.js';
 
-const appState = { step: 0, avatar: null, voice: null, voiceSelectionExplicit: false, project: null, uploadedAsset: null, uploadOperations: {}, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultsState: 'signed-out', activeResult: null, resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 20, voice: 20 } };
-const browserAccountId = (() => {
-  try {
-    const key = 'luxVideoOsAccountId';
-    const existing = localStorage.getItem(key);
-    if (existing) return existing;
-    const created = `acct-${crypto.randomUUID()}`;
-    localStorage.setItem(key, created);
-    return created;
-  } catch {
-    return `acct-${Date.now().toString(36)}`;
-  }
-})();
+const appState = { step: 0, avatar: null, voice: null, identityId: null, identities: [], voiceSelectionExplicit: false, project: null, uploadedAsset: null, uploadOperations: {}, generated: null, productionKit: null, kitSignature: null, assetCatalog: {}, providerRender: null, renderIdempotencyKey: null, finalizeTimer: null, finalizeAttempts: 0, finalizing: false, renderLocked: false, results: [], resultsState: 'signed-out', activeResult: null, resultLimit: 6, localEngine: false, providers: [], credits: null, account: null, signedIn: false, userEmail: null, assetLibraries: [], libraries: { avatar: [], voice: [] }, visible: { avatar: 20, voice: 20 } };
+
 const fallbackTalent = {
   avatars: [
     { id: 'ai-presenter', name: 'AI Presenter', style: 'balanced', source: 'lite' },
@@ -62,16 +51,13 @@ function showToast(message) {
   showToast.timer = setTimeout(() => { toast.hidden = true; }, 3600);
 }
 
-function currentAccountId() {
-  return appState.signedIn ? (appState.account?.account?.accountId || appState.account?.accountId || appState.credits?.accountId || browserAccountId) : 'signed-out';
-}
+
 
 function formData() {
   const data = Object.fromEntries(new FormData(form).entries());
   data.captions = Boolean(data.captions);
   data.music = Boolean(data.music);
   data.voiceConsent = Boolean(data.voiceConsent);
-  data.accountId = currentAccountId();
   return data;
 }
 
@@ -149,22 +135,106 @@ function availableAvatarItems() {
 function availableVoiceItems() {
   const items = appState.libraries.voice || [];
   const prioritized = prioritizeVoices(items, appState.avatar);
-  return prioritized.length || !canUseLocalApi() ? prioritized : items;
+  const privateVoice = appState.voice?.source === 'identity' && appState.voice.identityId === appState.identityId ? [appState.voice] : [];
+  const available = prioritized.length || !canUseLocalApi() ? prioritized : items;
+  return [...privateVoice, ...available.filter((item) => item.id !== privateVoice[0]?.id)];
+}
+
+function identityAvatar(identity) {
+  return { id: `identity-avatar:${identity.id}`, identityId: identity.id, name: identity.displayName || identity.name || 'My identity', source: 'identity', providerReady: true, previewUrl: identity.portraitUrl || '' };
+}
+
+function identityVoice(identity) {
+  return { id: `identity-voice:${identity.id}`, identityId: identity.id, name: `${identity.displayName || identity.name || 'My identity'} cloned voice`, source: 'identity', providerReady: true };
+}
+
+function chooseIdentity(identity, { forcePairedVoice = false } = {}) {
+  if (!identity?.id) return;
+  appState.identityId = identity.id;
+  appState.avatar = identityAvatar(identity);
+  if (forcePairedVoice || !appState.voiceSelectionExplicit || appState.voice?.source === 'identity') {
+    appState.voice = identityVoice(identity);
+    appState.voiceSelectionExplicit = false;
+  }
+  renderMyCast();
+  renderFeaturedCast();
+  renderOptions('avatar');
+  renderOptions('voice');
+}
+
+function renderMyCast() {
+  const target = document.querySelector('#my-cast-list');
+  if (!target) return;
+  if (!appState.signedIn) {
+    target.innerHTML = '<p class="my-cast-empty">Sign in to use your private video identities.</p>';
+    return;
+  }
+  if (!appState.identities.length) {
+    target.innerHTML = '<p class="my-cast-empty">No ready identities yet. Create one in Identity Studio.</p>';
+    return;
+  }
+  target.replaceChildren(...appState.identities.map((identity) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `my-cast-card${appState.identityId === identity.id ? ' selected' : ''}`;
+    button.dataset.identityId = identity.id;
+    button.setAttribute('aria-pressed', String(appState.identityId === identity.id));
+    const avatar = identityAvatar(identity);
+    if (avatar.previewUrl) {
+      const image = document.createElement('img');
+      image.src = avatar.previewUrl;
+      image.alt = `${avatar.name} private identity preview`;
+      button.append(image);
+    } else {
+      const fallback = document.createElement('span');
+      fallback.className = 'my-cast-avatar';
+      fallback.textContent = avatar.name.slice(0, 2).toUpperCase();
+      button.append(fallback);
+    }
+    const copy = document.createElement('span');
+    copy.className = 'my-cast-copy';
+    const name = document.createElement('strong');
+    name.textContent = avatar.name;
+    const status = document.createElement('small');
+    status.textContent = 'Photo avatar + cloned voice ready';
+    copy.append(name, status);
+    button.append(copy);
+    button.addEventListener('click', () => chooseIdentity(identity));
+    return button;
+  }));
+}
+
+async function loadMyCast() {
+  if (!appState.signedIn || !canUseHostedApi()) {
+    appState.identities = [];
+    renderMyCast();
+    return;
+  }
+  try {
+    const data = await getJson('/api/video-os-lite/identities');
+    appState.identities = (data.identities || []).filter((identity) => !identity.archivedAt && [identity.overallStatus, identity.avatarStatus, identity.voiceStatus].every((status) => String(status || '').toUpperCase() === 'READY'));
+  } catch {
+    appState.identities = [];
+  }
+  renderMyCast();
 }
 
 function renderFeaturedCast() {
   const target = document.querySelector('#featured-cast-list');
   if (!target) return;
-  const avatars = new Map((appState.libraries.avatar || []).filter((item) => item.featuredKey).map((item) => [item.featuredKey, item]));
-  const voices = new Map((appState.libraries.voice || []).filter((item) => item.featuredKey).map((item) => [item.featuredKey, item]));
+  const avatars = new Map((appState.libraries.avatar || []).map((item) => [item.id, item]));
+  const voices = new Map((appState.libraries.voice || []).map((item) => [item.id, item]));
   target.replaceChildren(...FEATURED_CAST.map((featured) => {
-    const item = avatars.get(featured.key) || { id: `featured:${featured.key}`, name: featured.label, source: 'heygen', featuredKey: featured.key, matchedVoiceId: `featured:${featured.key}:voice`, providerReady: false, unavailableReason: 'Provider availability has not been confirmed.' };
-    const matchedVoice = voices.get(featured.key);
+    const avatarId = `featured:${featured.key}`;
+    const voiceId = `featured:${featured.key}:voice`;
+    const item = avatars.get(avatarId) || { id: avatarId, name: featured.label, featuredKey: featured.key, matchedVoiceId: voiceId, source: 'heygen', providerReady: false, unavailableReason: 'Provider availability has not been confirmed.' };
+    const matchedVoice = voices.get(voiceId);
     const pairReady = item.providerReady === true && matchedVoice?.providerReady !== false && Boolean(matchedVoice);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `featured-cast-card${appState.avatar?.id === item.id ? ' selected' : ''}${pairReady ? '' : ' unavailable'}`;
     button.dataset.featuredKey = featured.key;
+    button.dataset.featuredAvatarId = avatarId;
     button.setAttribute('aria-pressed', String(appState.avatar?.id === item.id));
     button.disabled = !pairReady;
     if (item.previewUrl) {
@@ -203,6 +273,7 @@ function chooseCard(type, item, options = {}) {
   }
   const explicit = options.explicit !== false;
   if (type === 'voice' && explicit) appState.voiceSelectionExplicit = true;
+  if (type === 'avatar' && item.source !== 'identity') appState.identityId = null;
   appState[type] = item;
   if (type === 'avatar') {
     if (!appState.voiceSelectionExplicit && recommended) appState.voice = recommended;
@@ -246,7 +317,7 @@ function renderOptions(type) {
     const meta = document.createElement('small');
     meta.textContent = `${item.style || item.role || 'Ready to use'} | ${item.source || 'local'}`;
     button.append(name, meta);
-    if (recommendation && item.id === recommendation) {
+    if ((recommendation && item.id === recommendation) || (item.source === 'identity' && item.identityId === appState.identityId)) {
       const badge = document.createElement('span');
       badge.className = 'recommended-badge';
       badge.textContent = 'Recommended';
@@ -263,6 +334,7 @@ function renderOptions(type) {
     more.textContent = `Show ${Math.min(20, filtered.length - visible.length)} more voices`;
   }
   if (!appState[type] || !filtered.some((item) => item.id === appState[type].id)) {
+    if (type === 'avatar' && appState.identityId) return;
     const first = visible.find((item) => item.providerReady !== false);
     if (first) chooseCard(type, first, { explicit: false });
   }
@@ -489,9 +561,10 @@ async function saveLocalProject(payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       id: appState.project?.id,
+      identityId: appState.identityId || undefined,
       title: payload.title,
       script: payload.script,
-      avatar: { id: appState.avatar?.id, name: appState.avatar?.name, source: appState.avatar?.source, ...(appState.avatar?.previewUrl ? { previewUrl: appState.avatar.previewUrl } : {}) },
+      avatar: { id: appState.avatar?.id, name: appState.avatar?.name, source: appState.avatar?.source },
       voice: { id: appState.voice?.id, name: appState.voice?.name, source: appState.voice?.source },
       settings: {
         audience: payload.audience,
@@ -517,9 +590,15 @@ async function restoreLatestProject() {
   const project = data.projects?.[0];
   if (!project) return;
   appState.project = project;
-  appState.avatar = project.avatar;
-  appState.voice = project.voice;
-  appState.voiceSelectionExplicit = Boolean(project.voice?.id);
+  const requestedIdentityId = project.identityId || null;
+  const restoredIdentity = requestedIdentityId ? appState.identities.find((identity) => identity.id === requestedIdentityId) : null;
+  appState.identityId = restoredIdentity ? requestedIdentityId : null;
+  appState.avatar = restoredIdentity ? identityAvatar(restoredIdentity) : (project.avatar?.source === 'identity' ? null : project.avatar);
+  appState.voice = restoredIdentity && project.voice?.source === 'identity'
+    ? identityVoice(restoredIdentity)
+    : (project.voice?.source === 'identity' ? null : project.voice);
+  appState.voiceSelectionExplicit = Boolean(appState.voice?.id);
+  renderMyCast();
   const title = form.elements.namedItem('title');
   const script = form.elements.namedItem('script');
   if (title) title.value = project.title || '';
@@ -527,6 +606,23 @@ async function restoreLatestProject() {
   renderFeaturedCast();
   rerenderLibrary('avatar');
   rerenderLibrary('voice');
+}
+
+function consumeIdentitySelection() {
+  if (!appState.signedIn) return;
+  const url = new URL(window.location.href);
+  const identityId = url.searchParams.get('identityId');
+  if (!identityId) return;
+  url.searchParams.delete('identityId');
+  window.history.replaceState({}, '', url);
+  const identity = appState.identities.find((item) => item.id === identityId);
+  if (!identity) {
+    showToast('That private identity is unavailable for this account.');
+    return;
+  }
+  chooseIdentity(identity, { forcePairedVoice: true });
+  setStep(1);
+  showToast((identity.displayName || 'Private identity') + ' is ready in Cast.');
 }
 
 function firstCaption(script) {
@@ -537,7 +633,8 @@ function firstCaption(script) {
 async function generateVideo() {
   if (!requireCurrentStep()) return;
   if (!appState.signedIn) { showToast('Sign in before live rendering.'); openAuthModal(); return; }
-  if (!appState.avatar || !appState.voice || appState.avatar.source !== 'heygen' || appState.voice.source !== 'heygen') { showToast('Choose a connected HeyGen avatar and voice before rendering.'); return; }
+  const privateIdentityReady = Boolean(appState.identityId && appState.avatar?.source === 'identity' && appState.voice);
+  if (!appState.avatar || !appState.voice || (!privateIdentityReady && (appState.avatar.source !== 'heygen' || appState.voice.source !== 'heygen'))) { showToast('Choose a connected HeyGen avatar and voice before rendering.'); return; }
   const progress = document.querySelector('#progress');
   const bar = progress.querySelector('span');
   const payload = formData();
@@ -947,7 +1044,7 @@ async function addCredits(quantity = 1) {
     const data = await getJson('/api/video-os-lite/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId: currentAccountId(), origin: location.origin, quantity: packageQuantity }),
+      body: JSON.stringify({ origin: location.origin, quantity: packageQuantity }),
     });
     if (!data.url) throw new Error('Stripe did not return a checkout URL.');
     location.href = data.url;
@@ -988,10 +1085,9 @@ function readFileAsDataUrl(file) {
 
 async function uploadAvatarSource(type) {
   if (!appState.signedIn) { showToast('Sign in before uploading avatar assets.'); openAuthModal(); return; }
-  const isTwin = type === 'digital_twin';
-  const fileInput = document.querySelector(isTwin ? '#digital-twin-file' : '#photo-avatar-file');
-  const urlInput = document.querySelector(isTwin ? '#digital-twin-url' : '#photo-avatar-url');
-  const status = document.querySelector(isTwin ? '#digital-upload-status' : '#photo-upload-status');
+  const fileInput = document.querySelector('#photo-avatar-file');
+  const urlInput = document.querySelector('#photo-avatar-url');
+  const status = document.querySelector('#photo-upload-status');
   const file = fileInput?.files?.[0];
   if (!file) return;
   status.textContent = `Uploading ${file.name}...`;
@@ -1033,7 +1129,11 @@ function resetFinalRenderStep() {
   stopAutoFinalize();
   setRecoveryAction('#render-provider', false, true);
   setRecoveryAction('#finalize-render', false, true);
-  document.querySelector('#download-link').hidden = true;
+  const downloadLink = document.querySelector('#download-link');
+  downloadLink.hidden = true;
+  downloadLink.removeAttribute('href');
+  downloadLink.removeAttribute('download');
+  downloadLink.textContent = 'Download final video';
   document.querySelector('#export-status').textContent = '';
   document.querySelectorAll('[data-render-step]').forEach((item) => item.classList.remove('active', 'done', 'error'));
 }
@@ -1149,10 +1249,19 @@ async function renderWithProvider(options = {}) {
   setFinalRenderStep('submitted', `Submitting to ${providerBuyerLabel(provider)}...`);
   try {
     if (!canUseHostedApi()) throw new Error('Live render needs the Video OS engine.');
+    const requestPayload = { idempotencyKey: appState.renderIdempotencyKey || crypto.randomUUID(), projectId: payload.projectId, provider: provider.id, title: payload.title || 'Video OS', format: document.querySelector('#export-format').value, script: payload.script || payload.scriptInput, productionKit: appState.productionKit || {} };
+    if (appState.identityId) {
+      requestPayload.identityId = appState.identityId;
+      if (appState.voiceSelectionExplicit && payload.voice?.source === 'heygen') requestPayload.voice = { voiceId: payload.voice.voiceId || payload.voice.id, locale: payload.voice.locale };
+    }
+    else {
+      requestPayload.avatar = { avatarId: payload.avatar?.avatarId || payload.avatar?.id };
+      requestPayload.voice = { voiceId: payload.voice?.voiceId || payload.voice?.id, locale: payload.voice?.locale };
+    }
     const data = await getJson('/api/video-os-lite/render', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idempotencyKey: appState.renderIdempotencyKey || crypto.randomUUID(), projectId: payload.projectId, provider: provider.id, title: payload.title || 'Video OS', format: document.querySelector('#export-format').value, script: payload.script || payload.scriptInput, avatar: { avatarId: payload.avatar?.avatarId || payload.avatar?.id }, voice: { voiceId: payload.voice?.voiceId || payload.voice?.id, locale: payload.voice?.locale }, productionKit: appState.productionKit || {} }),
+      body: JSON.stringify(requestPayload),
     });
     appState.credits = data.credits;
     appState.providerRender = data;
@@ -1322,6 +1431,7 @@ async function loadAccount() {
     renderProviderStatus();
     renderPricing();
     renderAccount();
+    await loadMyCast();
     await loadResults();
   } catch {
     if (!appState.account) appState.account = publicDemoAccount;
@@ -1424,8 +1534,11 @@ async function passwordLogin() {
     document.querySelector('#auth-retry').hidden = true;
     setAuthStatus(data.message || 'Signed in. Live rendering is ready.', 'success');
     await loadProviders();
-    await loadTalent();
-    await loadResults();
+    await loadTalent().catch(() => {});
+    await loadMyCast().catch(() => {});
+    await restoreLatestProject().catch(() => {});
+    consumeIdentitySelection();
+    await loadResults().catch(() => {});
     renderAccount();
     closeAuthModal();
     showToast('Signed in. You can render videos now.');
@@ -1466,7 +1579,21 @@ async function signOut() {
     appState.signedIn = false;
     appState.userEmail = null;
     appState.results = [];
+    appState.identities = [];
+    appState.identityId = null;
+    appState.project = null;
+    appState.avatar = null;
+    appState.voice = null;
+    appState.voiceSelectionExplicit = false;
+    appState.generated = null;
+    appState.activeResult = null;
+    resetFinalRenderStep();
+    setFinalCutState('empty', 'Sign in to recover completed videos.');
     authLastAction = null;
+    renderMyCast();
+    renderFeaturedCast();
+    renderOptions('avatar');
+    renderOptions('voice');
     await loadProviders();
     await loadAccount();
     clearTalent();
@@ -1497,22 +1624,21 @@ function consumeAuthReturn() {
   openAuthModal();
   setAuthStatus('The sign-in link could not be confirmed. Request a new link and try again.', 'error');
 }
-async function createAvatarBuild(type) {
+async function createAvatarBuild() {
   if (!appState.signedIn) { showToast('Sign in before creating avatars.'); openAuthModal(); return; }
-  const isTwin = type === 'digital_twin';
-  const name = document.querySelector(isTwin ? '#digital-twin-name' : '#photo-avatar-name').value.trim();
-  const fileUrl = document.querySelector(isTwin ? '#digital-twin-url' : '#photo-avatar-url').value.trim();
-  const consent = document.querySelector(isTwin ? '#digital-twin-consent' : '#photo-avatar-consent').checked;
+  const name = document.querySelector('#photo-avatar-name').value.trim();
+  const fileUrl = document.querySelector('#photo-avatar-url').value.trim();
+  const consent = document.querySelector('#photo-avatar-consent').checked;
   try {
     if (!canUseLocalApi()) throw new Error('Avatar builds need the local Video OS engine.');
     const data = await getJson('/api/video-os-lite/avatar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId: currentAccountId(), type, name, fileUrl, consent }),
+      body: JSON.stringify({ type: 'photo', name, fileUrl, consent }),
     });
     appState.credits = data.credits;
-    showToast(data.message || `${isTwin ? 'Digital twin' : 'Photo avatar'} submitted.`);
-    document.querySelector(isTwin ? '#digital-upload-status' : '#photo-upload-status').textContent = data.message || 'Avatar build submitted.';
+    showToast(data.message || 'Photo avatar submitted.');
+    document.querySelector('#photo-upload-status').textContent = data.message || 'Avatar build submitted.';
     await loadAccount();
   } catch (error) {
     showToast(error.message);
@@ -1577,9 +1703,7 @@ document.querySelector('#result-gallery-toggle').addEventListener('click', () =>
 });
 document.querySelectorAll('[data-credit-quantity]').forEach((button) => button.addEventListener('click', () => addCredits(button.dataset.creditQuantity)));
 document.querySelector('#photo-avatar-file').addEventListener('change', () => uploadAvatarSource('photo'));
-document.querySelector('#digital-twin-file').addEventListener('change', () => uploadAvatarSource('digital_twin'));
-document.querySelector('#create-photo-avatar').addEventListener('click', () => createAvatarBuild('photo'));
-document.querySelector('#create-digital-twin').addEventListener('click', () => createAvatarBuild('digital_twin'));
+document.querySelector('#create-photo-avatar').addEventListener('click', createAvatarBuild);
 document.querySelector('#render-provider').addEventListener('click', renderWithProvider);
 document.querySelector('#finalize-render').addEventListener('click', finalizeProviderRender);
 document.querySelector('#export-mp4').addEventListener('click', exportMp4);
@@ -1596,6 +1720,7 @@ Promise.all([loadProviders(), loadAssetCatalog(), loadAccount()]).then(async () 
   else clearTalent();
   consumeAuthReturn();
   await restoreLatestProject().catch(() => {});
+  consumeIdentitySelection();
   await loadResults();
 });
 

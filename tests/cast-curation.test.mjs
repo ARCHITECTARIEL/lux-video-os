@@ -79,12 +79,12 @@ test('successful owned render usage ranks shared avatars after featured cast', (
   const shared = buildSharedAvatars([1, 2, 3].map((index) => sharedRecord(index)));
   const input = [...featured, ...shared];
   const results = [
-    { status: 'ready', avatar: { avatarId: 'shared-02' }, updatedAt: '2026-07-17T12:00:00Z' },
-    { status: 'ready', avatar: { avatarId: 'shared-02' }, updatedAt: '2026-07-17T12:01:00Z' },
-    { status: 'ready', avatar: { avatarId: 'shared-03' }, updatedAt: '2026-07-17T12:02:00Z' },
-    { status: 'failed', avatar: { avatarId: 'shared-01' }, updatedAt: '2026-07-17T12:03:00Z' },
+    { status: 'ready', avatar: { avatarId: shared[1].id }, updatedAt: '2026-07-17T12:00:00Z' },
+    { status: 'ready', avatar: { avatarId: shared[1].id }, updatedAt: '2026-07-17T12:01:00Z' },
+    { status: 'ready', avatar: { avatarId: shared[2].id }, updatedAt: '2026-07-17T12:02:00Z' },
+    { status: 'failed', avatar: { avatarId: shared[0].id }, updatedAt: '2026-07-17T12:03:00Z' },
   ];
-  assert.deepEqual(curateDefaultCast(input, results).slice(3).map((item) => item.id), ['shared-02', 'shared-03', 'shared-01']);
+  assert.deepEqual(curateDefaultCast(input, results).slice(3).map((item) => item.id), [shared[1].id, shared[2].id, shared[0].id]);
 });
 
 test('KD matched voice is prioritized without replacing an explicit user choice', () => {
@@ -117,7 +117,9 @@ test('shared inventory rejects blocked, archived, incompatible, previewless, and
     sharedRecord(4, { supported_api_engines: [] }),
     sharedRecord(5, { preview_image_url: '' }),
   ]);
-  assert.deepEqual(items.map((item) => item.id), [valid.id]);
+  assert.equal(items.length, 1);
+  assert.match(items[0].id, /^shared:avatar:[A-Za-z0-9_-]{32}$/);
+  assert.notEqual(items[0].id, valid.id);
 });
 
 test('owner playback is inline while download remains an attachment by default', () => {

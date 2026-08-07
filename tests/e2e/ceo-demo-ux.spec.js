@@ -25,7 +25,7 @@ function voice(item, overrides = {}) {
   return { id: item.voiceId, name: `${item.label} voice`, source: 'heygen', providerReady: true, ...(item.key ? { featuredKey: item.key } : {}), archived: false, blocked: false, ...overrides };
 }
 
-async function installAppRoutes(page, { results = [], project = null, omitVoiceId = null } = {}) {
+async function installAppRoutes(page, { results = [], project = null, identities = [], omitVoiceId = null } = {}) {
   const shared = Array.from({ length: 24 }, (_, index) => ({
     id: `shared-${String(index).padStart(2, '0')}`,
     name: `Shared ${String(index).padStart(2, '0')}`,
@@ -47,10 +47,38 @@ async function installAppRoutes(page, { results = [], project = null, omitVoiceI
   await page.route('**/api/video-os-lite/session', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, signedIn: true, email: 'proof@example.test', account: { accountId: 'acct-proof', name: 'CEO Proof' }, credits: { accountId: 'acct-proof', balance: 180, reserved: 0 } }) }));
   await page.route('**/api/video-os-lite/providers', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, providers: [{ id: 'heygen', name: 'HeyGen', configured: true, cost: 90 }], credits: { accountId: 'acct-proof', balance: 180, reserved: 0 } }) }));
   await page.route('**/api/video-os-lite/results*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, results }) }));
+  await page.route('**/api/video-os-lite/identities*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, identities }) }));
   await page.route('**/api/video-os-lite/projects', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, projects: project ? [project] : [] }) }));
   await page.route('**/api/video-os-lite/render', (route) => { renderRequests += 1; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'Render forbidden in CEO UX test' }) }); });
   return { renderRequests: () => renderRequests };
 }
+
+test('ready private identity appears before shared Cast and restores its recommended cloned voice', async ({ page }) => {
+  const identity = { id: '4c2f26b6-cdd4-4d53-8e37-17e7858c679c', displayName: 'CEO Identity', overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY', portraitUrl: '/api/video-os-lite/asset?assetId=portrait-proof', ready: true };
+  const project = {
+    id: 'project-identity',
+    identityId: identity.id,
+    title: 'Private identity proof',
+    script: 'Use only the internal identity reference.',
+    avatar: { id: `identity-avatar:${identity.id}`, identityId: identity.id, name: identity.displayName, source: 'identity' },
+    voice: { id: `identity-voice:${identity.id}`, identityId: identity.id, name: `${identity.displayName} cloned voice`, source: 'identity' },
+  };
+  const guard = await installAppRoutes(page, { identities: [identity], project });
+  await page.route('**/api/video-os-lite/asset*', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }));
+  await page.goto('/');
+
+  const privateCard = page.locator(`#my-cast-list [data-identity-id="${identity.id}"]`);
+  await expect(privateCard).toHaveCount(1);
+  await expect(privateCard).toHaveClass(/selected/);
+  await expect(page.locator('#voice-list [data-voice-id]').first()).toHaveAttribute('data-voice-id', `identity-voice:${identity.id}`);
+  await expect(page.locator(`[data-voice-id="identity-voice:${identity.id}"] .recommended-badge`)).toHaveText('Recommended');
+  expect(await page.evaluate(() => Boolean(document.querySelector('#my-cast-list')?.compareDocumentPosition(document.querySelector('#avatar-list')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+
+  await page.reload();
+  await expect(page.locator(`#my-cast-list [data-identity-id="${identity.id}"]`)).toHaveClass(/selected/);
+  await expect(page.locator('#voice-list [data-voice-id]').first()).toHaveAttribute('data-voice-id', `identity-voice:${identity.id}`);
+  expect(guard.renderRequests()).toBe(0);
+});
 
 test('featured cast, curated list, voice priority, persistence, and completed Final Cut are connected', async ({ page }) => {
   const ready = {
@@ -180,4 +208,50 @@ test('anonymous and cross-account media responses remain denied', async ({ page 
     return [anonymous.status, crossAccount.status];
   });
   expect(statuses).toEqual([401, 404]);
+});
+
+test('Identity Studio handoff overrides a restored public voice with the ready paired voice', async ({ page }) => {
+  const identity = { id: '6e5c233e-f798-4b74-8605-9e45e06fe831', displayName: 'Private Pair', overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY', portraitUrl: '/api/video-os-lite/asset?assetId=portrait-pair' };
+  const project = { id: 'project-public-voice', title: 'Existing project', script: 'Use the requested private pair.', avatar: avatar(KD), voice: { id: 'other-voice', name: 'Other voice', source: 'heygen' } };
+  const guard = await installAppRoutes(page, { identities: [identity], project });
+  await page.route('**/api/video-os-lite/asset*', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }));
+
+  await page.goto('/?identityId=' + identity.id);
+
+  await expect(page).toHaveURL('/');
+  await expect(page.locator('#my-cast-list [data-identity-id="' + identity.id + '"]')).toHaveClass(/selected/);
+  await expect(page.locator('[data-voice-id="identity-voice:' + identity.id + '"]')).toHaveClass(/selected/);
+  expect(guard.renderRequests()).toBe(0);
+});
+
+test('unavailable Identity Studio handoff is consumed without selecting private media', async ({ page }) => {
+  const guard = await installAppRoutes(page);
+  await page.goto('/?identityId=6e5c233e-f798-4b74-8605-9e45e06fe899');
+
+  await expect(page).toHaveURL('/');
+  await expect(page.locator('#toast')).toContainText('unavailable for this account');
+  await expect(page.locator('#my-cast-list .selected')).toHaveCount(0);
+  await expect(page.locator('#voice-list [data-voice-id^="identity-voice:"]')).toHaveCount(0);
+  expect(guard.renderRequests()).toBe(0);
+});
+
+test('a stale saved private identity fails closed to the authorized shared Cast', async ({ page }) => {
+  const staleId = '6e5c233e-f798-4b74-8605-9e45e06fe877';
+  const project = {
+    id: 'project-stale-identity',
+    identityId: staleId,
+    title: 'Stale identity project',
+    script: 'The archived identity must not restore.',
+    avatar: { id: 'identity-avatar:' + staleId, identityId: staleId, name: 'Archived identity', source: 'identity' },
+    voice: { id: 'identity-voice:' + staleId, identityId: staleId, name: 'Archived identity voice', source: 'identity' },
+  };
+  const guard = await installAppRoutes(page, { project, identities: [] });
+
+  await page.goto('/');
+
+  await expect(page.locator('#my-cast-list .selected')).toHaveCount(0);
+  await expect(page.locator('#avatar-list [data-avatar-id^="identity-avatar:"]')).toHaveCount(0);
+  await expect(page.locator('#voice-list [data-voice-id^="identity-voice:"]')).toHaveCount(0);
+  await expect(page.locator('[data-featured-avatar-id="' + ARIEL.avatarId + '"]')).toHaveClass(/selected/);
+  expect(guard.renderRequests()).toBe(0);
 });

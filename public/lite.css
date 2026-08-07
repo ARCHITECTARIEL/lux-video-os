@@ -271,6 +271,18 @@ input:focus, textarea:focus, select:focus, button:focus-visible { outline: 3px s
 .option-card { min-height: 124px; display: grid; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: left; }
 .option-card.selected { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47,109,246,.12); }
 .option-card small { color: var(--muted); font-weight: 700; }
+.my-cast { display: grid; gap: 10px; margin: 16px 0; padding: 14px; border: 1px solid rgba(47,109,246,.22); border-radius: 10px; background: rgba(47,109,246,.045); }
+.my-cast-head { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
+.my-cast-head .eyebrow { margin: 0 0 2px; }
+.my-cast-head h4 { margin: 0; font-size: 18px; }
+.my-cast-head a { color: var(--accent); font-size: 12px; font-weight: 850; }
+.my-cast-list { display: grid; gap: 8px; }
+.my-cast-card { min-width: 0; display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 10px; padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: inherit; text-align: left; }
+.my-cast-card.selected { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47,109,246,.12); }
+.my-cast-card img, .my-cast-avatar { width: 52px; aspect-ratio: 4 / 5; object-fit: cover; display: grid; place-items: center; border-radius: 7px; background: var(--ink); color: #fff; font-weight: 900; }
+.my-cast-copy { min-width: 0; display: grid; gap: 3px; }
+.my-cast-copy small, .my-cast-empty { color: var(--muted); font-size: 12px; font-weight: 700; }
+.my-cast-empty { margin: 0; }
 .summary-box { display: grid; gap: 10px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: #f8fafc; margin-bottom: 18px; }
 .summary-box div { display: flex; justify-content: space-between; gap: 16px; border-bottom: 1px solid #e7ecf3; padding-bottom: 8px; }
 .summary-box div:last-child { border-bottom: 0; padding-bottom: 0; }
@@ -395,6 +407,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .render-steps span.error { color: #9f1239; }
 .render-steps span.error::before { border-color: #fb7185; background: #fb7185; }
 .recovery-action[hidden] { display: none; }
+.download-link[hidden] { display: none; }
 .effect-list { display: grid; gap: 8px; }
 .effect-list:empty { display: none; }
 .effect-list div {

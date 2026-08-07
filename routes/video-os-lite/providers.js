@@ -1,5 +1,7 @@
 // Routed through the consolidated workspace function to stay within the Vercel function limit.
-import { accountPayload, handleOptions, loadAccount, providerList, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { accountDto } from '../../db/dto.js';
+import { getAccountContext } from '../../db/repositories.js';
+import { handleOptions, providerList, send, sessionFromRequest } from '../../lib/video-os-account.js';
 
 export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
@@ -7,12 +9,13 @@ export default async function handler(req, res) {
   try {
     try {
       const session = sessionFromRequest(req);
-      const account = await loadAccount(session.accountId);
+      const account = await getAccountContext(session.accountId);
+      if (!account) throw Object.assign(new Error('Account not found.'), { statusCode: 401 });
       return send(res, 200, {
         ok: true,
         signedIn: true,
         email: session.email,
-        ...accountPayload(account),
+        ...accountDto(account),
         providers: providerList(),
         assetLibraries: [],
       });
