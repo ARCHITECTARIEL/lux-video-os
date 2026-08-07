@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import json
 import os
 import urllib.error
@@ -627,8 +627,10 @@ def recommend_production_kit(payload):
         "cta": {"name": cta, "libraryId": "cta-motion"},
         "overlay": {"name": overlay, "libraryId": "gif-reactions"},
     }
-def account_status():
+def account_status(account_id=None):
     account = _read_account()
+    account_id = account_id or account.get("accountId") or default_account_id()
+    requests = [item for item in _read_avatar_requests() if not item.get("accountId") or item.get("accountId") == account_id]
     return {
         "account": account,
         **provider_status(account.get("accountId")),
@@ -644,7 +646,7 @@ def account_status():
                 "requires": ["Upload MP4/MOV or paste public HTTPS training video URL", "Consent to create a digital twin"],
                 "cost": 300,
             },
-            "requests": _read_avatar_requests()[-8:],
+            "requests": requests[-8:],
         },
     }
 
@@ -662,6 +664,7 @@ def create_avatar_asset(payload):
         requests = _read_avatar_requests()
         item = {
             "id": f"avatar-build-{uuid4().hex[:10]}",
+            "accountId": account_id_from_payload(payload),
             "type": avatar_type,
             "name": name,
             "fileUrl": file_url,
@@ -693,7 +696,8 @@ def create_avatar_asset(payload):
     requests = _read_avatar_requests()
     item = {
         "id": f"avatar-build-{uuid4().hex[:10]}",
-        "type": avatar_type,
+        "accountId": account_id_from_payload(payload),
+            "type": avatar_type,
         "name": name,
         "fileUrl": file_url,
         "status": "submitted",
