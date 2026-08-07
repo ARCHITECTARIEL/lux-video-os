@@ -550,7 +550,11 @@ function renderProductionKit(kit) {
   ];
   document.querySelector('#summary').replaceChildren(...rows.map(([label, value]) => {
     const row = document.createElement('div');
-    row.innerHTML = `<span>${label}</span><strong>${value}</strong>`;
+    const labelElement = document.createElement('span');
+    labelElement.textContent = label;
+    const valueElement = document.createElement('strong');
+    valueElement.textContent = value;
+    row.append(labelElement, valueElement);
     return row;
   }));
 }
@@ -1069,7 +1073,11 @@ function renderExportEffects(effects) {
   ];
   target.replaceChildren(...rows.map(([label, value]) => {
     const row = document.createElement('div');
-    row.innerHTML = `<span>${label}</span><strong>${value || 'Auto'}</strong>`;
+    const labelElement = document.createElement('span');
+    labelElement.textContent = label;
+    const valueElement = document.createElement('strong');
+    valueElement.textContent = value || 'Auto';
+    row.append(labelElement, valueElement);
     return row;
   }));
 }
@@ -1702,6 +1710,8 @@ document.querySelector('#result-gallery-toggle').addEventListener('click', () =>
   renderResultGallery();
 });
 document.querySelectorAll('[data-credit-quantity]').forEach((button) => button.addEventListener('click', () => addCredits(button.dataset.creditQuantity)));
+const localPhotoAvatarCard = document.querySelector('#local-photo-avatar-card');
+if (localPhotoAvatarCard) localPhotoAvatarCard.hidden = !canUseLocalApi();
 document.querySelector('#photo-avatar-file').addEventListener('change', () => uploadAvatarSource('photo'));
 document.querySelector('#create-photo-avatar').addEventListener('click', createAvatarBuild);
 document.querySelector('#render-provider').addEventListener('click', renderWithProvider);

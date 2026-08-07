@@ -68,3 +68,12 @@ test('composer handoff selects only an authenticated ready private identity', as
   assert.doesNotMatch(handoff, /getJson|fetch\(/);
   assert.equal((client.match(/consumeIdentitySelection\(\);/g) || []).length, 2);
 });
+test('hosted composer keeps local avatar compatibility separate from Identity Studio', async () => {
+  const [html, client] = await Promise.all([read('public/index.html'), read('public/lite.js')]);
+  assert.match(html, /id="local-photo-avatar-card"[^>]*hidden/);
+  assert.match(html, /href="\/identity"[^>]*>Open Identity Studio/);
+  assert.match(client, /localPhotoAvatarCard\.hidden = !canUseLocalApi\(\)/);
+  assert.doesNotMatch(client, /row\.innerHTML = `\<span>\$\{label\}/);
+  assert.match(client, /labelElement\.textContent = label/);
+  assert.match(client, /valueElement\.textContent = value/);
+});

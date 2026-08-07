@@ -264,13 +264,18 @@
               <button class="ghost" type="button" data-open-login aria-controls="auth-modal" aria-expanded="false" data-signed-in-label="Manage session">Sign in</button>
             </div>
           </div>
-          <div class="account-card">
+          <div class="account-card" id="local-photo-avatar-card" hidden>
             <h3>Create avatar</h3>
-            <p>Upload first. If the app has a public URL, we send it straight to the provider; otherwise it stays staged safely.</p>
+            <p>Local compatibility tool only. Hosted identity creation belongs in Identity Studio.</p>
             <label>Name<input id="photo-avatar-name" placeholder="Client photo avatar"></label>
             <label class="upload-drop">Upload photo<input id="photo-avatar-file" type="file" accept="image/jpeg,image/png,image/webp"><span>JPG, PNG, or WebP under 20 MB</span></label><label>Provider-ready URL<input id="photo-avatar-url" inputmode="url" placeholder="Upload first or paste a public HTTPS photo URL"></label><p id="photo-upload-status" class="upload-status" aria-live="polite"></p>
             <label class="checkbox-line"><input type="checkbox" id="photo-avatar-consent"> I have permission to create this avatar.</label>
             <button class="secondary" type="button" id="create-photo-avatar">Build photo avatar</button>
+          </div>
+          <div class="account-card">
+            <h3>Create your avatar</h3>
+            <p>Upload your photo and voice, confirm consent, and follow the provider processing status in one private workspace.</p>
+            <a class="secondary" href="/identity">Open Identity Studio</a>
           </div>
           <div class="account-card" aria-labelledby="digital-twin-unavailable-title">
             <p class="eyebrow">Coming later</p>

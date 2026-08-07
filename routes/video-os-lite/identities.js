@@ -16,6 +16,7 @@ import {
 } from '../../db/repositories.js';
 import { handleOptions, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../../lib/video-os-identity-policy.js';
+import { assertPublicDns } from '../../lib/video-os-security.js';
 import {
   assertHeygenConfigured,
   assertIdentityProviderAccountAuthorized,
@@ -185,9 +186,15 @@ async function proxyVoicePreview(res, accountId, identityId) {
   if (!identity || identity.archivedAt || identity.voiceStatus !== 'READY' || !identity.providerVoiceId) return send(res, 404, { ok: false, error: 'Voice preview not found.' });
   const voice = await getHeygenVoiceStatus(identity.providerVoiceId);
   if (!voice.ready || !voice.previewAudioUrl) return send(res, 409, { ok: false, error: 'Voice preview is not ready.' });
-  const hostname = providerMediaHostname(voice.previewAudioUrl);
+  const previewUrl = new URL(voice.previewAudioUrl);
+  const hostname = providerMediaHostname(previewUrl);
   if (!SAFE_PROVIDER_HOSTS.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))) return send(res, 502, { ok: false, error: 'Voice preview host was rejected.' });
-  const response = await fetch(voice.previewAudioUrl, { signal: AbortSignal.timeout(20_000), redirect: 'error' });
+  try {
+    await assertPublicDns(previewUrl);
+  } catch {
+    return send(res, 502, { ok: false, error: 'Voice preview host was rejected.' });
+  }
+  const response = await fetch(previewUrl, { signal: AbortSignal.timeout(20_000), redirect: 'error' });
   if (!response.ok || !response.body) return send(res, 502, { ok: false, error: 'Voice preview is unavailable.' });
   res.statusCode = 200;
   res.setHeader('Content-Type', String(response.headers.get('content-type') || 'audio/mpeg').split(';')[0]);
