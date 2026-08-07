@@ -342,8 +342,8 @@ function renderOptions(type) {
 
 function selectDefaultDemoPresenter() {
   if (appState.avatar || appState.identityId || appState.project) return;
-  const kristian = (appState.libraries.avatar || []).find((item) => item.featuredKey === 'kd' && item.providerReady === true);
-  if (kristian) chooseCard('avatar', kristian, { explicit: false });
+  const ariel = (appState.libraries.avatar || []).find((item) => item.featuredKey === 'ariel' && item.providerReady === true);
+  if (ariel) chooseCard('avatar', ariel, { explicit: false });
 }
 function rerenderLibrary(type) {
   renderOptions(type);
