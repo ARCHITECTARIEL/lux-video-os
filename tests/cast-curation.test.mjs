@@ -32,7 +32,7 @@ test('public featured presentation metadata is keys-only and ordered Ariel, OSO,
   assert.deepEqual(PUBLIC_FEATURED_CAST, [
     { key: 'ariel', label: 'Ariel' },
     { key: 'oso', label: 'OSO' },
-    { key: 'kd', label: 'KD' },
+    { key: 'kd', label: 'Kristian' },
   ]);
   for (const item of PUBLIC_FEATURED_CAST) assert.deepEqual(Object.keys(item).sort(), ['key', 'label']);
 });

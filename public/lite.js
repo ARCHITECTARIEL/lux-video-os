@@ -340,6 +340,11 @@ function renderOptions(type) {
   }
 }
 
+function selectDefaultDemoPresenter() {
+  if (appState.avatar || appState.identityId || appState.project) return;
+  const kristian = (appState.libraries.avatar || []).find((item) => item.featuredKey === 'kd' && item.providerReady === true);
+  if (kristian) chooseCard('avatar', kristian, { explicit: false });
+}
 function rerenderLibrary(type) {
   renderOptions(type);
 }
@@ -370,6 +375,7 @@ async function loadTalent() {
     renderOptions('avatar');
     renderOptions('voice');
     document.querySelector('#connection-pill').textContent = data.connection?.connected ? 'HeyGen talent connected' : 'HeyGen talent partially available';
+    selectDefaultDemoPresenter();
     appState.localEngine = true;
   } catch {
     appState.libraries.avatar = canUseLocalApi() ? fallbackTalent.avatars : [];

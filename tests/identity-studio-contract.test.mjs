@@ -77,3 +77,10 @@ test('hosted composer keeps local avatar compatibility separate from Identity St
   assert.match(client, /labelElement\.textContent = label/);
   assert.match(client, /valueElement\.textContent = value/);
 });
+
+test('Kristian is the named KD default presenter mapping', async () => {
+  const [server, client, composer] = await Promise.all([read('lib/video-os-featured-cast.js'), read('public/video-os-cast.js'), read('public/lite.js')]);
+  assert.match(server, /key: 'kd', label: 'Kristian'/);
+  assert.match(client, /key: 'kd', label: 'Kristian'/);
+  assert.match(composer, /selectDefaultDemoPresenter/);
+});

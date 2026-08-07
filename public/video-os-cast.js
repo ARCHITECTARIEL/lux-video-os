@@ -1,7 +1,7 @@
 export const FEATURED_CAST = Object.freeze([
   Object.freeze({ key: 'ariel', label: 'Ariel' }),
   Object.freeze({ key: 'oso', label: 'OSO' }),
-  Object.freeze({ key: 'kd', label: 'KD' }),
+  Object.freeze({ key: 'kd', label: 'Kristian' }),
 ]);
 
 const featuredKeys = new Set(FEATURED_CAST.map((item) => item.key));

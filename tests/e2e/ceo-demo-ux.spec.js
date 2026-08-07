@@ -155,7 +155,7 @@ test('a featured presenter fails visibly when its exact matched voice is unavail
   await page.goto('/');
   const kd = page.locator(`[data-featured-key="${KD.key}"]`);
   await expect(kd).toBeDisabled();
-  await expect(kd).toContainText("KD's matched voice is unavailable");
+  await expect(kd).toContainText("Kristian's matched voice is unavailable");
   await expect(kd).toHaveAttribute('aria-pressed', 'false');
 });
 
