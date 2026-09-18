@@ -242,6 +242,13 @@
       <button type="button" data-auth-mode="signup" aria-pressed="false">Sign Up</button>
     </div>
     <div class="auth-box">
+      <button class="auth-alternative" id="auth-workspace-toggle" type="button" data-auth-signed-out aria-pressed="false">Use workspace credentials</button>
+      <form class="auth-method" id="password-login-form" data-auth-signed-out>
+        <fieldset class="access-choice"><legend>Workspace access</legend><label><input type="radio" name="access-type" value="demo" checked><span><b>Demo</b></span></label><label><input type="radio" name="access-type" value="owner"><span><b>Owner</b></span></label></fieldset>
+        <label for="password-username">Username</label><input id="password-username" name="username" type="text" autocomplete="username" required>
+        <label for="password-password">Password</label><div class="auth-password"><input id="password-password" name="password" type="password" autocomplete="current-password" required><button type="button" id="toggle-auth-password" aria-label="Show password" aria-pressed="false">Show</button></div>
+        <button class="button primary" id="password-login" type="submit">Sign in to workspace</button>
+      </form>
       <form class="auth-method" id="magic-link-form" data-auth-signed-out>
         <label for="auth-email">Email address</label>
         <input id="auth-email" type="email" autocomplete="email" inputmode="email" placeholder="you@company.com" aria-describedby="magic-link-hint" required>
@@ -249,13 +256,6 @@
         <button class="button primary" type="submit" id="send-magic-link">Email me a sign-in link</button>
         <p class="auth-footnote">Your link is valid for 15 minutes.</p>
       </form>
-      <form class="auth-method" id="password-login-form" data-auth-signed-out hidden>
-        <fieldset class="access-choice"><legend>Workspace access</legend><label><input type="radio" name="access-type" value="demo" checked><span><b>Demo</b></span></label><label><input type="radio" name="access-type" value="owner"><span><b>Owner</b></span></label></fieldset>
-        <label for="password-username">Username</label><input id="password-username" name="username" type="text" autocomplete="username" required>
-        <label for="password-password">Password</label><div class="auth-password"><input id="password-password" name="password" type="password" autocomplete="current-password" required><button type="button" id="toggle-auth-password" aria-label="Show password" aria-pressed="false">Show</button></div>
-        <button class="button primary" id="password-login" type="submit">Sign in to workspace</button>
-      </form>
-      <button class="auth-alternative" id="auth-workspace-toggle" type="button" data-auth-signed-out>Use workspace credentials</button>
       <div class="auth-session-summary" id="auth-session-summary" hidden><span>Signed in as</span><strong id="auth-session-email">Your LUX account</strong><small>Account-owned identities and results are available.</small></div>
       <button class="button quiet" type="button" id="sign-out" hidden>Sign out</button><button class="button quiet" type="button" id="auth-retry" hidden>Try again</button><p id="auth-status" role="status" aria-live="polite"></p>
     </div>

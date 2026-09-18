@@ -1862,6 +1862,18 @@ function setAuthStatus(message = '', tone = 'info') {
   target.setAttribute('role', tone === 'error' ? 'alert' : 'status');
 }
 
+const AUTH_MODE_COPY = {
+  signin: { title: 'Welcome back', intro: 'Sign in to your creative workspace.' },
+  signup: { title: 'Create your workspace', intro: 'Set up access with an email link or workspace credentials.' },
+};
+
+function setAuthMode(mode) {
+  const resolved = AUTH_MODE_COPY[mode] ? mode : 'signin';
+  $$('[data-auth-mode]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.authMode === resolved)));
+  $('#auth-modal-title').textContent = AUTH_MODE_COPY[resolved].title;
+  $('#auth-intro').textContent = AUTH_MODE_COPY[resolved].intro;
+}
+
 function syncAuthModal() {
   $$('[data-auth-signed-out]').forEach((element) => { element.hidden = state.signedIn; });
   $('#auth-session-summary').hidden = !state.signedIn;
@@ -1874,6 +1886,7 @@ function syncAuthModal() {
 }
 
 function openAuthModal() {
+  setAuthMode('signin');
   syncAuthModal();
   setAuthStatus(fixtureMode ? 'Account changes are disabled in the local lifecycle fixture.' : (state.signedIn ? 'Your workspace session is active.' : ''));
   openDialog($('#auth-modal'), fixtureMode ? $('#close-login') : (state.signedIn ? $('#sign-out') : $('#password-username')));
@@ -2079,6 +2092,22 @@ $('#magic-link-form').addEventListener('submit', requestMagicLink);
 $('#sign-out').addEventListener('click', signOut);
 $('#auth-retry').addEventListener('click', () => state.authRetry?.());
 $('#workspace-retry').addEventListener('click', refreshWorkspace);
+
+$$('[data-auth-mode]').forEach((button) => button.addEventListener('click', () => setAuthMode(button.dataset.authMode)));
+$('#auth-workspace-toggle').addEventListener('click', () => {
+  const nextType = $('input[name="access-type"]:checked')?.value === 'owner' ? 'demo' : 'owner';
+  $(`input[name="access-type"][value="${nextType}"]`).checked = true;
+  $('#auth-workspace-toggle').setAttribute('aria-pressed', String(nextType === 'owner'));
+  $('#password-username').focus();
+});
+$('#toggle-auth-password').addEventListener('click', () => {
+  const input = $('#password-password');
+  const showing = input.type === 'text';
+  input.type = showing ? 'password' : 'text';
+  $('#toggle-auth-password').textContent = showing ? 'Show' : 'Hide';
+  $('#toggle-auth-password').setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+  $('#toggle-auth-password').setAttribute('aria-pressed', String(!showing));
+});
 
 $('#script-input').addEventListener('input', () => {
   $('#script-count').textContent = $('#script-input').value.length + ' / 4000';
