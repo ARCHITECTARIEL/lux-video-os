@@ -2,8 +2,9 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('../public/', import.meta.url).pathname.replace(/^\/(.:)/, '$1');
+const root = fileURLToPath(new URL('../public/', import.meta.url));
 const portFlag = process.argv.indexOf('--port');
 const port = portFlag >= 0 ? Number(process.argv[portFlag + 1]) : 4173;
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid preview server port.');
