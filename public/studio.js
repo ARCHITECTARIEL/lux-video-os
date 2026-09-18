@@ -234,10 +234,11 @@ function closeDialog(dialog, { restore = true } = {}) {
   dialog.close();
 }
 
-for (const dialog of [$('#mobile-menu'), $('#review-dialog'), $('#premium-handoff-dialog'), $('#auth-modal')]) {
+for (const dialog of [$('#mobile-menu'), $('#review-dialog'), $('#premium-handoff-dialog'), $('#auth-modal'), $('#standard-quote-dialog')]) {
   dialog.addEventListener('close', () => {
     if (dialog === $('#mobile-menu')) $('#open-menu').setAttribute('aria-expanded', 'false');
     if (dialog === $('#auth-modal')) $$('[aria-controls="auth-modal"]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+    if (dialog === $('#standard-quote-dialog')) standardContractController?.cancelQuote();
     if (dialog.dataset.restoreFocus !== 'false') dialogOpeners.get(dialog)?.focus?.();
     delete dialog.dataset.restoreFocus;
   });
@@ -931,6 +932,96 @@ function standardFailureMessage(error) {
   return error?.message || 'Standard submission could not be completed.';
 }
 
+function finishStandardOutcome(job) {
+  standardContractJob = job;
+  mergeStandardResult(job);
+  const status = presentedJobStatus(job);
+  $('#standard-status').dataset.state = status;
+  $('#standard-status').textContent = 'Standard: ' + statusCopy(status, job) + '.';
+  setStandardInputsLocked(true);
+  if (resultAccepted(job)) {
+    $('#standard-submit').dataset.action = 'view';
+    $('#standard-submit').textContent = 'View accepted video in My Videos';
+    $('#standard-submit').disabled = false;
+  }
+}
+
+function failStandardOutcome(error) {
+  const uncertain = error?.code === 'submission_uncertain' && standardContractController?.pending;
+  $('#standard-status').dataset.state = uncertain ? 'SUBMITTING' : 'DRAFT';
+  $('#standard-status').textContent = standardFailureMessage(error);
+  if (uncertain) setStandardInputsLocked(true);
+  else {
+    state.standard.reviewed = false;
+    setStandardInputsLocked(false);
+  }
+}
+
+function formatQuoteExpiry(expiresAt) {
+  const ms = new Date(expiresAt).getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return 'less than a minute';
+  const minutes = Math.round(ms / 60000);
+  return minutes <= 1 ? 'about a minute' : `about ${minutes} minutes`;
+}
+
+function renderStandardQuote(quote) {
+  $('#standard-quote-credits').textContent = Number(quote.credits).toLocaleString() + ' credits';
+  $('#standard-quote-expiry').textContent = formatQuoteExpiry(quote.expiresAt);
+  $('#standard-cost').textContent = Number(quote.credits).toLocaleString() + ' credits';
+  $('#standard-quote-expired-notice').hidden = true;
+  $('#standard-quote-requote').hidden = true;
+  $('#standard-quote-confirm').hidden = false;
+  $('#standard-quote-confirm').disabled = false;
+  $('#standard-quote-confirm').textContent = 'Confirm and start render';
+}
+
+function openStandardQuoteDialog(quote) {
+  renderStandardQuote(quote);
+  openDialog($('#standard-quote-dialog'), $('#standard-quote-confirm'));
+}
+
+async function confirmStandardQuote() {
+  if (state.standard.running) return;
+  state.standard.running = true;
+  $('#standard-quote-confirm').disabled = true;
+  $('#standard-quote-confirm').textContent = 'Starting render…';
+  try {
+    const job = await standardContractController.confirmQuote();
+    closeDialog($('#standard-quote-dialog'));
+    finishStandardOutcome(job);
+  } catch (error) {
+    if (error?.code === 'quote_expired') {
+      $('#standard-quote-expired-notice').hidden = false;
+      $('#standard-quote-confirm').hidden = true;
+      $('#standard-quote-requote').hidden = false;
+    } else {
+      closeDialog($('#standard-quote-dialog'));
+      failStandardOutcome(error);
+    }
+  } finally {
+    state.standard.running = false;
+    configureStandardSubmit();
+    $('#standard-quote-confirm').textContent = 'Confirm and start render';
+  }
+}
+
+async function requoteStandard() {
+  if (state.standard.running) return;
+  state.standard.running = true;
+  $('#standard-quote-requote').disabled = true;
+  try {
+    const quote = await standardContractController.requote();
+    renderStandardQuote(quote);
+  } catch (error) {
+    closeDialog($('#standard-quote-dialog'));
+    failStandardOutcome(error);
+  } finally {
+    state.standard.running = false;
+    $('#standard-quote-requote').disabled = false;
+    configureStandardSubmit();
+  }
+}
+
 async function runStandardContract() {
   if (standardFixtureMode || state.standard.running) return;
   const recovering = Boolean(standardContractController?.pending);
@@ -943,39 +1034,24 @@ async function runStandardContract() {
       standardContractController = createStandardController({ request: standardRequest, onStage: showStandardControllerStage });
     }
     if (recovering) {
-      standardContractJob = await standardContractController.recoverSubmission();
+      finishStandardOutcome(await standardContractController.recoverSubmission());
     } else if (checking) {
       const results = await standardContractController.results();
-      standardContractJob = results.find((item) => item.id === standardContractJob.id) || standardContractJob;
+      finishStandardOutcome(results.find((item) => item.id === standardContractJob.id) || standardContractJob);
     } else {
       const audio = state.standard.audio;
-      standardContractJob = await standardContractController.submit({
+      const result = await standardContractController.submit({
         title: $('#video-title').value.trim(),
         identityId: state.standard.portrait.identityId,
         audio: { name: audio.name, dataUrl: await fileDataUrl(audio.file) },
         permission: $('#standard-permission').checked,
         format: 'vertical',
       });
-    }
-    mergeStandardResult(standardContractJob);
-    const status = presentedJobStatus(standardContractJob);
-    $('#standard-status').dataset.state = status;
-    $('#standard-status').textContent = 'Standard: ' + statusCopy(status, standardContractJob) + '.';
-    setStandardInputsLocked(true);
-    if (resultAccepted(standardContractJob)) {
-      $('#standard-submit').dataset.action = 'view';
-      $('#standard-submit').textContent = 'View accepted video in My Videos';
-      $('#standard-submit').disabled = false;
+      if (result?.awaitingConfirmation) openStandardQuoteDialog(result.quote);
+      else finishStandardOutcome(result);
     }
   } catch (error) {
-    const uncertain = error?.code === 'submission_uncertain' && standardContractController?.pending;
-    $('#standard-status').dataset.state = uncertain ? 'SUBMITTING' : 'DRAFT';
-    $('#standard-status').textContent = standardFailureMessage(error);
-    if (uncertain) setStandardInputsLocked(true);
-    else {
-      state.standard.reviewed = false;
-      setStandardInputsLocked(false);
-    }
+    failStandardOutcome(error);
   } finally {
     state.standard.running = false;
     configureStandardSubmit();
@@ -2083,6 +2159,8 @@ $('#standard-submit').addEventListener('click', () => {
 });
 $('#use-fixture-portrait').addEventListener('click', useFixturePortrait);
 $('#use-fixture-audio').addEventListener('click', useFixtureAudio);
+$('#standard-quote-confirm').addEventListener('click', confirmStandardQuote);
+$('#standard-quote-requote').addEventListener('click', requoteStandard);
 
 $$('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => closeDialog(button.closest('dialog'))));
 $('#close-login').addEventListener('click', () => closeDialog($('#auth-modal')));

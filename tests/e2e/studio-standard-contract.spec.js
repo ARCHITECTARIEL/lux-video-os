@@ -59,13 +59,26 @@ test('contract uncertainty recovers, queues, retrieves accepted library, plays a
   expect(writes).toEqual([]);
 });
 
-test('signed-in Studio uses the actual Standard API contract and recovers the identical render request', async ({ page }) => {
-  const identityId = '11111111-1111-4111-8111-111111111111';
-  const audioAssetId = '22222222-2222-4222-8222-222222222222';
-  const projectId = '33333333-3333-4333-8333-333333333333';
-  const consentId = '44444444-4444-4444-8444-444444444444';
-  const quoteId = '55555555-5555-4555-8555-555555555555';
-  const captured = { upload: null, project: null, consent: null, quote: null, renders: [] };
+const OWNER_IDS = {
+  identityId: '11111111-1111-4111-8111-111111111111',
+  audioAssetId: '22222222-2222-4222-8222-222222222222',
+  projectId: '33333333-3333-4333-8333-333333333333',
+  consentId: '44444444-4444-4444-8444-444444444444',
+  quoteId: '55555555-5555-4555-8555-555555555555',
+};
+
+function ownerWav() {
+  const wav = Buffer.alloc(44 + 16000 * 2 * 5);
+  wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(16000, 24); wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+  wav.write('data', 36); wav.writeUInt32LE(wav.length - 44, 40);
+  return wav;
+}
+
+async function mockOwnerStandardApi(page, { credits = 90, quoteExpiresInMs = 300_000 } = {}) {
+  const { identityId, audioAssetId, projectId, consentId, quoteId } = OWNER_IDS;
+  const captured = { upload: null, project: null, consent: null, quote: null, quoteRequests: 0, renders: [] };
   let readinessChecks = 0;
   let jobSubmitted = false;
   const reply = (body, status = 200) => ({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -100,7 +113,9 @@ test('signed-in Studio uses the actual Standard API contract and recovers the id
       return route.fulfill(reply({ ok: true, consent: { id: consentId, projectId, identityId, audioAssetId, policyVersion: 'standard-narration-consent-v1-proposed', revokedAt: null } }, 201));
     }
     captured.quote = body;
-    return route.fulfill(reply({ ok: true, quote: { id: quoteId, contractVersion: 'standard-narration-v1', projectId, identityId, audioAssetId, narrationConsentId: consentId, format: 'vertical', credits: 90 } }, 201));
+    captured.quoteRequests += 1;
+    const expiresInMs = captured.quoteRequests === 1 ? quoteExpiresInMs : 300_000;
+    return route.fulfill(reply({ ok: true, quote: { id: quoteId, contractVersion: 'standard-narration-v1', projectId, identityId, audioAssetId, narrationConsentId: consentId, format: 'vertical', credits, expiresAt: new Date(Date.now() + expiresInMs).toISOString() } }, 201));
   });
   await page.route('**/api/video-os-lite/render', route => {
     captured.renders.push(route.request().postDataJSON());
@@ -113,21 +128,29 @@ test('signed-in Studio uses the actual Standard API contract and recovers the id
     { id: 'unaccepted-owner-job', title: 'Not accepted', tier: 'standard', status: 'SUCCEEDED', outputAccepted: false, url: '/unsafe.mp4' },
   ] : [] })));
 
-  const wav = Buffer.alloc(44 + 16000 * 2 * 5);
-  wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
-  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
-  wav.writeUInt32LE(16000, 24); wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
-  wav.write('data', 36); wav.writeUInt32LE(wav.length - 44, 40);
+  return captured;
+}
 
+async function fillOwnerStandardForm(page) {
   await page.goto('/#create');
   await expect(page.locator('#connection-pill')).toHaveAttribute('data-state', 'signed-in');
-  await page.locator(`[data-standard-identity-id="${identityId}"]`).click();
-  await page.locator('#standard-audio-file').setInputFiles({ name: 'owner.wav', mimeType: 'audio/wav', buffer: wav });
+  await page.locator(`[data-standard-identity-id="${OWNER_IDS.identityId}"]`).click();
+  await page.locator('#standard-audio-file').setInputFiles({ name: 'owner.wav', mimeType: 'audio/wav', buffer: ownerWav() });
   await page.locator('#video-title').fill('Owner contract proof');
   await page.locator('#standard-permission').check();
   await page.locator('#review-inputs').click();
   await page.locator('#review-complete').click();
+}
+
+test('signed-in Studio uses the actual Standard API contract and recovers the identical render request', async ({ page }) => {
+  const { identityId, audioAssetId, projectId, consentId } = OWNER_IDS;
+  const captured = await mockOwnerStandardApi(page);
+  await fillOwnerStandardForm(page);
+
   await page.locator('#standard-submit').click();
+  await expect(page.locator('#standard-quote-dialog')).toBeVisible();
+  await expect(page.locator('#standard-quote-credits')).toHaveText('90 credits');
+  await page.locator('#standard-quote-confirm').click();
   await expect(page.locator('#standard-submit')).toHaveText('Recover uncertain Standard submission');
   await page.locator('#standard-submit').click();
   await expect(page.locator('#standard-status')).toHaveAttribute('data-state', 'QUEUED');
@@ -146,6 +169,44 @@ test('signed-in Studio uses the actual Standard API contract and recovers the id
   await page.locator('[data-nav="videos"]:visible').first().click();
   await expect(page.locator('.result-preview-action')).toHaveCount(1);
   await expect(page.locator('video[src*="unsafe"], a[href*="unsafe"]')).toHaveCount(0);
+});
+
+test('cancelling the quote confirmation submits no render and leaves inputs editable', async ({ page }) => {
+  const captured = await mockOwnerStandardApi(page);
+  await fillOwnerStandardForm(page);
+
+  await page.locator('#standard-submit').click();
+  await expect(page.locator('#standard-quote-dialog')).toBeVisible();
+  await page.locator('#standard-quote-dialog [data-dialog-close]').first().click();
+  await expect(page.locator('#standard-quote-dialog')).toBeHidden();
+  expect(captured.renders).toHaveLength(0);
+  await expect(page.locator('#standard-submit')).toBeEnabled();
+  await expect(page.locator('#standard-submit')).toHaveText('Submit Standard video');
+  expect(captured.quote).not.toBeNull();
+  expect(captured.quoteRequests).toBe(1);
+});
+
+test('an expired quote blocks confirmation until a fresh quote is requested', async ({ page }) => {
+  const captured = await mockOwnerStandardApi(page, { quoteExpiresInMs: 50 });
+  await fillOwnerStandardForm(page);
+
+  await page.locator('#standard-submit').click();
+  await expect(page.locator('#standard-quote-dialog')).toBeVisible();
+  await page.waitForTimeout(100);
+  await page.locator('#standard-quote-confirm').click();
+  await expect(page.locator('#standard-quote-expired-notice')).toBeVisible();
+  await expect(page.locator('#standard-quote-requote')).toBeVisible();
+  expect(captured.renders).toHaveLength(0);
+  expect(captured.quoteRequests).toBe(1);
+
+  await page.locator('#standard-quote-requote').click();
+  await expect(page.locator('#standard-quote-expired-notice')).toBeHidden();
+  await expect(page.locator('#standard-quote-confirm')).toBeVisible();
+  expect(captured.quoteRequests).toBe(2);
+
+  await page.locator('#standard-quote-confirm').click();
+  await expect(page.locator('#standard-submit')).toHaveText('Recover uncertain Standard submission');
+  expect(captured.renders).toHaveLength(1);
 });
 
 for (const [outcome, message] of [['consent', /consent does not authorize/], ['unavailable', /rendering is disabled/]]) {

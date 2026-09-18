@@ -30,7 +30,27 @@ export function createStandardController({ request, uuid = () => crypto.randomUU
   let pending = null;
   let lastJob = null;
   let busy = false;
+  let quoteContext = null;
   const stage = (name, details = {}) => onStage(name, details);
+
+  async function requestQuote({ binding, narrationConsentId, format }) {
+    stage('QUOTING');
+    const quoteResponse = await request('/api/video-os-lite/standard', {
+      method: 'POST',
+      body: { operation: 'quote', contractVersion: STANDARD_CONTRACT_VERSION, ...binding, narrationConsentId, format },
+    });
+    const quote = quoteResponse?.quote;
+    const quoteId = requireUuid(quote?.id, 'Quote');
+    exactBinding(quote, binding, 'Quote');
+    if (quote.contractVersion !== STANDARD_CONTRACT_VERSION || quote.narrationConsentId !== narrationConsentId
+      || quote.format !== format || !Number.isFinite(Number(quote.credits)) || Number(quote.credits) < 0) {
+      throw contractError('Quote response does not match the reviewed request.', 'invalid_quote');
+    }
+    if (!quote.expiresAt || Number.isNaN(new Date(quote.expiresAt).getTime())) {
+      throw contractError('Quote response is missing a valid expiry.', 'invalid_quote');
+    }
+    return { quote, quoteId };
+  }
 
   async function sendPending() {
     if (!pending) throw contractError('No pending submission to recover.', 'no_pending_submission');
@@ -152,40 +172,61 @@ export function createStandardController({ request, uuid = () => crypto.randomUU
           });
         }
 
-        stage('QUOTING');
-        const quoteResponse = await request('/api/video-os-lite/standard', {
-          method: 'POST',
-          body: {
-            operation: 'quote',
-            contractVersion: STANDARD_CONTRACT_VERSION,
-            ...binding,
-            narrationConsentId,
-            format,
-          },
-        });
-        const quote = quoteResponse?.quote;
-        const quoteId = requireUuid(quote?.id, 'Quote');
-        exactBinding(quote, binding, 'Quote');
-        if (quote.contractVersion !== STANDARD_CONTRACT_VERSION || quote.narrationConsentId !== narrationConsentId
-          || quote.format !== format || !Number.isFinite(Number(quote.credits)) || Number(quote.credits) < 0) {
-          throw contractError('Quote response does not match the reviewed request.', 'invalid_quote');
-        }
+        const { quote, quoteId } = await requestQuote({ binding, narrationConsentId, format });
+        quoteContext = { binding, narrationConsentId, projectId, uploadedAudioId, title: title.trim(), format, quote, quoteId };
+        stage('QUOTE_READY', { quote });
+        return { awaitingConfirmation: true, quote };
+      } finally {
+        busy = false;
+      }
+    },
 
+    get quote() { return quoteContext?.quote || null; },
+
+    cancelQuote() {
+      quoteContext = null;
+    },
+
+    async requote() {
+      if (busy) throw contractError('A submission is already being checked.', 'submission_busy');
+      if (!quoteContext) throw contractError('No quote is ready to refresh.', 'no_quote_ready');
+      busy = true;
+      try {
+        const { binding, narrationConsentId, format } = quoteContext;
+        const { quote, quoteId } = await requestQuote({ binding, narrationConsentId, format });
+        quoteContext = { ...quoteContext, quote, quoteId };
+        stage('QUOTE_READY', { quote });
+        return quote;
+      } finally {
+        busy = false;
+      }
+    },
+
+    async confirmQuote() {
+      if (busy) throw contractError('A submission is already being checked.', 'submission_busy');
+      if (!quoteContext) throw contractError('No quote is ready to confirm.', 'no_quote_ready');
+      const { quote, quoteId, binding, narrationConsentId, projectId, uploadedAudioId, title, format } = quoteContext;
+      if (Date.now() >= new Date(quote.expiresAt).getTime()) {
+        throw contractError('This quote has expired. Request a new quote before submitting.', 'quote_expired');
+      }
+      busy = true;
+      try {
         pending = {
           attempted: false,
           body: {
             tier: 'STANDARD',
             contractVersion: STANDARD_CONTRACT_VERSION,
             projectId,
-            identityId,
+            identityId: binding.identityId,
             audioReference: { assetId: uploadedAudioId },
             narrationConsentId,
             quoteId,
             idempotencyKey: uuid(),
-            title: title.trim(),
+            title,
             format,
           },
         };
+        quoteContext = null;
         stage('QUOTED', { quote });
         return await sendPending();
       } finally {
