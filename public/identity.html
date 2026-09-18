@@ -98,6 +98,11 @@
 
       <section id="identity-list" class="identity-grid" aria-live="polite" aria-label="Your identities"></section>
 
+      <div id="polling-exhausted" class="uncertain-recovery" hidden>
+        <p class="field-error" role="alert">Automatic status checks stopped after six minutes. Your identity may still be under way.</p>
+        <div class="uncertain-actions"><button id="resume-polling" class="button secondary" type="button">Check again</button></div>
+      </div>
+
       <section id="empty-state" class="empty-state" hidden>
         <div class="empty-portrait" aria-hidden="true"><span></span></div>
         <div><p class="eyebrow">NO IDENTITIES YET</p><h2>Create your first Video Identity</h2><p>Use one clear portrait, 5-120 seconds of clean speech, and your explicit permission.</p></div>
@@ -169,6 +174,13 @@
         </div>
         <p id="consent-error" class="field-error" role="alert" hidden></p>
         <p id="consent-help" class="fine-print">Your account, identity, policy version, acceptance time, and source fingerprints are recorded. The authorization text is versioned rather than copied into every record.</p>
+        <div id="commit-uncertain" class="uncertain-recovery" hidden>
+          <p class="field-error" role="alert">We could not confirm whether this identity was saved before the connection was lost. Do not try again yet.</p>
+          <div class="uncertain-actions">
+            <button id="check-my-identities" class="button secondary" type="button">Check My Identities</button>
+            <button id="commit-retry-anyway" class="button ghost" type="button">Try again (may create a duplicate)</button>
+          </div>
+        </div>
       </fieldset>
 
       <fieldset data-panel="4" tabindex="-1" hidden>

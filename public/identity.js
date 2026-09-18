@@ -13,6 +13,7 @@ const state = {
   wizardOpener: null,
   menuOpener: null,
   submitting: false,
+  uncertainCommit: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -223,7 +224,7 @@ function setStep(step) {
     else item.removeAttribute('aria-current');
   });
   $('#back-button').disabled = state.submitting || step === 1 || step >= 4;
-  $('#next-button').disabled = state.submitting;
+  $('#next-button').disabled = state.submitting || Boolean(state.uncertainCommit);
   $('#next-button').hidden = step >= 4;
   $('#wizard-actions').hidden = step === 5;
   wizardStatus();
@@ -263,6 +264,8 @@ function resetWizard() {
   state.activeIdentityId = null;
   state.photoFile = null;
   state.voiceFile = null;
+  state.uncertainCommit = null;
+  $('#commit-uncertain').hidden = true;
   $('#identity-form').reset();
   $('#photo-preview').hidden = true;
   $('#photo-preview').removeAttribute('src');
@@ -368,17 +371,29 @@ function setWizardBusy(busy, message = '') {
   state.submitting = busy;
   $('#wizard').setAttribute('aria-busy', String(busy));
   $('#close-wizard').disabled = busy;
-  $('#next-button').disabled = busy;
+  $('#next-button').disabled = busy || Boolean(state.uncertainCommit);
   $('#back-button').disabled = busy || state.step === 1 || state.step >= 4;
   if (message) wizardStatus(message);
 }
 
+function isUncertainError(error) {
+  return !Number.isInteger(error?.status);
+}
+
+function showCommitUncertain(show) {
+  $('#commit-uncertain').hidden = !show;
+  $('#next-button').disabled = state.submitting || show;
+  if (show) $('#check-my-identities').focus();
+}
+
 async function commitIdentity() {
+  const displayName = $('#identity-name').value.trim();
+  const beforeIds = new Set(state.identities.map((identity) => identity.id));
   setWizardBusy(true, 'Validating and storing your private source files...');
   notice('Validating and storing your private source files...');
   try {
     const [photo, voice] = await Promise.all([upload(state.photoFile, 'identity_photo'), upload(state.voiceFile, 'identity_voice')]);
-    const created = await api('/api/video-os-lite/identities', { method: 'POST', body: JSON.stringify({ action: 'create', displayName: $('#identity-name').value.trim(), photoAssetId: photo.assetId, voiceAssetId: voice.assetId }) });
+    const created = await api('/api/video-os-lite/identities', { method: 'POST', body: JSON.stringify({ action: 'create', displayName, photoAssetId: photo.assetId, voiceAssetId: voice.assetId }) });
     state.activeIdentityId = created.identity.id;
     await api('/api/video-os-lite/identities', { method: 'POST', body: JSON.stringify({
       action: 'consent', identityId: state.activeIdentityId,
@@ -395,11 +410,50 @@ async function commitIdentity() {
     setStep(4);
     await submitIdentity(state.activeIdentityId, false);
   } catch (error) {
-    notice(error.message, 'error');
-    wizardStatus(error.message, 'error');
+    if (isUncertainError(error)) {
+      state.uncertainCommit = { displayName, beforeIds };
+      showCommitUncertain(true);
+      wizardStatus('The connection was lost before we could confirm this identity was saved.', 'error');
+      notice('Identity creation outcome is unknown. Check My Identities before trying again.', 'error', 'wizard');
+    } else {
+      notice(error.message, 'error');
+      wizardStatus(error.message, 'error');
+    }
   } finally {
     setWizardBusy(false);
   }
+}
+
+async function checkMyIdentities() {
+  const uncertain = state.uncertainCommit;
+  if (!uncertain) return;
+  wizardStatus('Checking My Identities...');
+  try {
+    await loadIdentities();
+    const found = state.identities.find((identity) => !uncertain.beforeIds.has(identity.id) && identity.displayName === uncertain.displayName);
+    if (found) {
+      state.activeIdentityId = found.id;
+      state.uncertainCommit = null;
+      showCommitUncertain(false);
+      notice(`Found "${found.displayName}" — it was saved. Continuing from here.`, 'success', 'wizard');
+      if (state.providerSubmissionEnabled && found.avatarStatus === 'DRAFT' && found.voiceStatus === 'DRAFT') {
+        setStep(4);
+        await submitIdentity(found.id, false);
+      } else {
+        closeWizard(true);
+      }
+    } else {
+      wizardStatus('Not found yet. It may still be a moment behind, or the attempt did not go through.', 'error');
+    }
+  } catch (error) {
+    wizardStatus(error.message, 'error');
+  }
+}
+
+function retryCommitAnyway() {
+  state.uncertainCommit = null;
+  showCommitUncertain(false);
+  wizardStatus('');
 }
 
 async function next() {
@@ -451,15 +505,27 @@ function updateProgress() {
   if (identity?.ready) setStep(5);
 }
 
+function showPollingExhausted(show) {
+  const el = $('#polling-exhausted');
+  if (el) el.hidden = !show;
+}
+
 function stopPolling() {
   clearTimeout(state.pollTimer);
   state.pollTimer = null;
   state.pollCount = 0;
+  showPollingExhausted(false);
 }
 
 function schedulePolling() {
   if (state.pollTimer || state.pollCount >= 45) return;
   state.pollTimer = setTimeout(poll, 8_000);
+}
+
+function resumePolling() {
+  state.pollCount = 0;
+  showPollingExhausted(false);
+  schedulePolling();
 }
 
 async function poll() {
@@ -473,7 +539,10 @@ async function poll() {
   } catch (error) {
     notice('Status check paused. Your durable processing state is safe; refresh to resume.', 'error');
   }
-  if (state.pollCount < 45 && state.identities.some((identity) => ['CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING'].includes(identity.overallStatus))) schedulePolling();
+  const stillProcessing = state.identities.some((identity) => ['CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING'].includes(identity.overallStatus));
+  if (!stillProcessing) return;
+  if (state.pollCount < 45) schedulePolling();
+  else showPollingExhausted(true);
 }
 
 async function retry(identityId, component) {
@@ -646,6 +715,9 @@ $('#empty-create-button').addEventListener('click', openWizard);
 $('#close-wizard').addEventListener('click', () => closeWizard());
 $('#next-button').addEventListener('click', next);
 $('#back-button').addEventListener('click', () => setStep(Math.max(1, state.step - 1)));
+$('#check-my-identities').addEventListener('click', checkMyIdentities);
+$('#commit-retry-anyway').addEventListener('click', retryCommitAnyway);
+$('#resume-polling').addEventListener('click', resumePolling);
 $('#photo-input').addEventListener('change', (event) => handlePhotoFile(event.target.files[0] || null));
 $('#voice-input').addEventListener('change', (event) => handleVoiceFile(event.target.files[0] || null));
 $('#identity-name').addEventListener('input', () => {

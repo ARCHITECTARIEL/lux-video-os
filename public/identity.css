@@ -544,6 +544,8 @@ legend { margin: 0 0 22px; padding: 0; font-size: 23px; font-weight: 650; letter
 .consent-list label:hover { background: var(--surface-muted); }
 .consent-list input { width: 19px; height: 19px; margin: 1px 0 0; accent-color: var(--primary); }
 .field-error { margin-top: 10px; padding: 9px 11px; border-left: 3px solid var(--danger); background: var(--danger-soft); color: var(--danger); font-size: 12px; }
+.uncertain-recovery { margin-top: 18px; }
+.uncertain-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 [aria-invalid="true"] { border-color: var(--danger) !important; }
 .processing-orbit { width: 92px; height: 92px; position: relative; margin: 8px auto 20px; border: 1px solid var(--border); border-radius: 50%; animation: spin 2.6s linear infinite; }
 .processing-orbit span { width: 14px; height: 14px; position: absolute; top: -7px; left: 38px; border-radius: 50%; background: var(--primary); }

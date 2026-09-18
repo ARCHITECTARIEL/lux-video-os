@@ -194,6 +194,73 @@ test('a stalled identity session read reaches the bounded timeout and actionable
   await expect(page.locator('#retry-load')).toBeVisible();
 });
 
+test('an uncertain identity create locks the wizard until My Identities is checked', async ({ page }) => {
+  let createAttempts = 0;
+  let created = null;
+  await page.route('**/api/video-os-lite/session', (route) => route.fulfill({ json: account }));
+  await page.route('**/api/video-os-lite/uploads', async (route) => {
+    const body = route.request().postDataJSON();
+    await route.fulfill({ status: 201, json: { ok: true, assetId: body.kind === 'identity_photo' ? '9ba00bd4-81b7-40ad-a28b-b625c33242e3' : 'aefca12d-a7eb-4833-bb66-e48b53e4fc42' } });
+  });
+  await page.route('**/api/video-os-lite/identities*', async (route) => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: { ok: true, identities: created ? [created] : [], providerSubmissionEnabled: false } });
+    const body = route.request().postDataJSON();
+    if (body.action === 'create') {
+      createAttempts += 1;
+      created = { ...draft, id: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1', displayName: body.displayName };
+      return route.abort('connectionfailed');
+    }
+    return route.fulfill({ json: { ok: true, identity: created } });
+  });
+
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  await page.locator('#photo-input').setInputFiles({ name: 'portrait.png', mimeType: 'image/png', buffer: Buffer.from([137, 80, 78, 71, 1]) });
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.locator('#voice-input').setInputFiles({ name: 'voice.wav', mimeType: 'audio/wav', buffer: Buffer.from('RIFF0000WAVE') });
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.locator('#identity-name').fill('Recovered Identity');
+  for (const selector of ['#consent-face', '#consent-voice', '#consent-process', '#consent-archive']) await page.locator(selector).check();
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await expect(page.locator('#commit-uncertain')).toBeVisible();
+  await expect(page.locator('#next-button')).toBeDisabled();
+  expect(createAttempts).toBe(1);
+
+  await page.getByRole('button', { name: 'Check My Identities' }).click();
+  await expect(page.locator('#commit-uncertain')).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'Recovered Identity' })).toBeVisible();
+  expect(createAttempts).toBe(1);
+});
+
+test('polling stops after 45 rounds and offers a manual resume', async ({ page }) => {
+  await page.clock.install();
+  let refreshCount = 0;
+  const processing = { ...draft, overallStatus: 'PROCESSING', avatarStatus: 'PROCESSING', voiceStatus: 'PROCESSING' };
+  await page.route('**/api/video-os-lite/session', (route) => route.fulfill({ json: account }));
+  await page.route('**/api/video-os-lite/identities*', async (route) => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: { ok: true, identities: [processing], providerSubmissionEnabled: true } });
+    const body = route.request().postDataJSON();
+    if (body.action === 'refresh') refreshCount += 1;
+    return route.fulfill({ json: { ok: true, identity: processing } });
+  });
+  await page.goto('/identity.html');
+  await expect(page.getByText('Processing').first()).toBeVisible();
+  await expect(page.locator('#polling-exhausted')).toBeHidden();
+
+  for (let round = 0; round < 45; round++) {
+    await page.clock.fastForward(8_000);
+    await page.waitForTimeout(20);
+  }
+  await expect(page.locator('#polling-exhausted')).toBeVisible({ timeout: 2000 });
+  await expect.poll(() => refreshCount).toBe(45);
+
+  await page.getByRole('button', { name: 'Check again' }).click();
+  await expect(page.locator('#polling-exhausted')).toBeHidden();
+  await page.clock.fastForward(8_500);
+  await expect.poll(() => refreshCount).toBe(46);
+});
+
 for (const viewport of [
   { name: 'tablet', width: 768, height: 1024 },
   { name: 'phone', width: 390, height: 844 },
