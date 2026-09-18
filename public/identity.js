@@ -9,21 +9,79 @@ const state = {
   pollTimer: null,
   pollCount: 0,
   recorder: null,
+  photoUrl: null,
+  wizardOpener: null,
+  menuOpener: null,
+  submitting: false,
 };
 
 const $ = (selector) => document.querySelector(selector);
+const REQUEST_TIMEOUT_MS = 30_000;
 const api = async (url, options = {}) => {
-  const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
-  const data = await response.json().catch(() => ({ ok: false, error: 'The server returned an unreadable response.' }));
-  if (!response.ok || data.ok === false) throw Object.assign(new Error(data.error || 'Request failed.'), { status: response.status, code: data.code });
-  return data;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const method = String(options.method || 'GET').toUpperCase();
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    });
+    const data = await response.json().catch(() => ({ ok: false, error: 'The server returned an unreadable response.' }));
+    if (!response.ok || data.ok === false) throw Object.assign(new Error(data.error || 'Request failed.'), { status: response.status, code: data.code });
+    return data;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const message = ['GET', 'HEAD'].includes(method)
+        ? 'The request took too long. Check your connection and try again.'
+        : 'The request took too long, so its final status is unknown. Reload this page to check before trying again.';
+      throw Object.assign(new Error(message), { code: 'REQUEST_TIMEOUT' });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
-function notice(message, tone = 'info') {
+function notice(message, tone = 'info', origin = 'page') {
   const element = $('#notice');
   element.textContent = message;
   element.className = `notice ${tone}`;
+  element.dataset.origin = origin;
+  element.setAttribute('role', tone === 'error' ? 'alert' : 'status');
+  element.setAttribute('aria-live', tone === 'error' ? 'assertive' : 'polite');
   element.hidden = !message;
+}
+
+function wizardStatus(message = '', tone = 'info') {
+  const element = $('#wizard-status');
+  element.textContent = message;
+  element.className = `wizard-status ${tone}`;
+}
+
+function updateSessionLabels(label) {
+  $('#session-label').textContent = label;
+  $('#mobile-session-label').textContent = label;
+}
+
+function focusableElements(container) {
+  return [...container.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), audio[controls], [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hidden && element.getClientRects().length > 0);
+}
+
+function trapFocus(event, container) {
+  if (event.key !== 'Tab') return;
+  const controls = focusableElements(container);
+  const first = controls[0];
+  const last = controls.at(-1);
+  if (!first || !last) return;
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function statusLabel(value) {
@@ -53,10 +111,26 @@ function componentRow(label, status) {
 function renderIdentity(identity) {
   const card = document.createElement('article');
   card.className = 'identity-card';
-  const portrait = document.createElement('img');
-  portrait.className = 'identity-portrait';
-  portrait.src = identity.portraitUrl;
-  portrait.alt = `${identity.displayName} portrait`;
+  const media = document.createElement('div');
+  media.className = 'identity-media';
+  if (identity.portraitUrl) {
+    const portrait = document.createElement('img');
+    portrait.className = 'identity-portrait';
+    portrait.src = identity.portraitUrl;
+    portrait.alt = `${identity.displayName} portrait`;
+    portrait.addEventListener('error', () => {
+      const fallback = document.createElement('div');
+      fallback.className = 'identity-media-fallback';
+      fallback.textContent = 'Portrait unavailable';
+      portrait.replaceWith(fallback);
+    }, { once: true });
+    media.append(portrait);
+  } else {
+    const fallback = document.createElement('div');
+    fallback.className = 'identity-media-fallback';
+    fallback.textContent = 'Portrait unavailable';
+    media.append(fallback);
+  }
   const body = document.createElement('div');
   body.className = 'identity-body';
   const title = document.createElement('div');
@@ -65,6 +139,7 @@ function renderIdentity(identity) {
   heading.textContent = identity.displayName;
   const pill = document.createElement('span');
   pill.className = `status-pill ${identity.ready ? 'ready' : ''}`;
+  pill.dataset.status = identity.overallStatus || 'DRAFT';
   pill.textContent = statusLabel(identity.overallStatus);
   title.append(heading, pill);
   const created = document.createElement('p');
@@ -80,15 +155,23 @@ function renderIdentity(identity) {
     actions.append(use);
   }
   if (identity.voicePreviewUrl) {
-    actions.append(button('Preview voice', 'secondary', () => {
+    const previewButton = button('Preview voice', 'secondary', () => {
       const existing = card.querySelector('audio');
-      if (existing) { existing.remove(); return; }
+      if (existing) {
+        existing.remove();
+        previewButton.setAttribute('aria-expanded', 'false');
+        return;
+      }
       const audio = document.createElement('audio');
       audio.controls = true;
-      audio.autoplay = true;
+      audio.setAttribute('aria-label', `${identity.displayName} saved voice preview`);
       audio.src = identity.voicePreviewUrl;
       body.insertBefore(audio, actions);
-    }));
+      previewButton.setAttribute('aria-expanded', 'true');
+      audio.focus();
+    });
+    previewButton.setAttribute('aria-expanded', 'false');
+    actions.append(previewButton);
   }
   if (identity.avatarStatus === 'FAILED') actions.append(button('Retry avatar', 'secondary', () => retry(identity.id, 'avatar')));
   if (identity.voiceStatus === 'FAILED') actions.append(button('Retry voice', 'secondary', () => retry(identity.id, 'voice')));
@@ -100,10 +183,16 @@ function renderIdentity(identity) {
   }
   actions.append(button('Archive', 'ghost', () => archiveIdentity(identity.id, identity.displayName)));
   body.append(title, created, componentRow('Photo avatar', identity.avatarStatus), componentRow('Cloned voice', identity.voiceStatus));
-  if (identity.avatarFailure?.message) { const error = document.createElement('p'); error.className = 'fine-print'; error.textContent = `Avatar: ${identity.avatarFailure.message}`; body.append(error); }
-  if (identity.voiceFailure?.message) { const error = document.createElement('p'); error.className = 'fine-print'; error.textContent = `Voice: ${identity.voiceFailure.message}`; body.append(error); }
+  if (identity.avatarFailure?.message) { const error = document.createElement('p'); error.className = 'component-error'; error.textContent = `Avatar: ${identity.avatarFailure.message}`; body.append(error); }
+  if (identity.voiceFailure?.message) { const error = document.createElement('p'); error.className = 'component-error'; error.textContent = `Voice: ${identity.voiceFailure.message}`; body.append(error); }
   body.append(actions);
-  card.append(portrait, body);
+  if (identity.avatarStatus === 'DRAFT' && identity.voiceStatus === 'DRAFT' && !state.providerSubmissionEnabled) {
+    const held = document.createElement('p');
+    held.className = 'provider-hold';
+    held.textContent = 'Creation is held until privacy, entitlement, and cost checks pass.';
+    body.append(held);
+  }
+  card.append(media, body);
   return card;
 }
 
@@ -130,49 +219,136 @@ function setStep(step) {
     const number = Number(item.dataset.step);
     item.classList.toggle('current', number === step);
     item.classList.toggle('complete', number < step);
+    if (number === step) item.setAttribute('aria-current', 'step');
+    else item.removeAttribute('aria-current');
   });
-  $('#back-button').disabled = step === 1 || step >= 4;
+  $('#back-button').disabled = state.submitting || step === 1 || step >= 4;
+  $('#next-button').disabled = state.submitting;
   $('#next-button').hidden = step >= 4;
   $('#wizard-actions').hidden = step === 5;
-  if (step === 4) updateProgress();
-  $('#wizard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  wizardStatus();
+  if (step === 4) {
+    updateProgress();
+    if (state.step !== step) return;
+  }
+  const focusTarget = {
+    1: '#photo-input',
+    2: '#record-button',
+    3: '#identity-name',
+    4: '#close-wizard',
+    5: '#ready-use-link',
+  }[step];
+  if ($('#wizard').open) $(focusTarget)?.focus();
 }
 
 function openWizard() {
-  $('#wizard').hidden = false;
+  const wizard = $('#wizard');
+  if (wizard.open) return;
+  state.wizardOpener = document.activeElement;
+  wizard.showModal();
   setStep(1);
 }
 
-function closeWizard() {
-  $('#wizard').hidden = true;
-  resetWizard();
+function closeWizard(force = false) {
+  if (state.submitting && !force) {
+    wizardStatus('Your identity is being saved. Keep this window open until that step finishes.', 'error');
+    return;
+  }
+  const wizard = $('#wizard');
+  if (wizard.open) wizard.close();
 }
 
 function resetWizard() {
+  if (state.recorder) void discardRecording();
   state.activeIdentityId = null;
   state.photoFile = null;
   state.voiceFile = null;
   $('#identity-form').reset();
   $('#photo-preview').hidden = true;
+  $('#photo-preview').removeAttribute('src');
   $('#photo-prompt').hidden = false;
+  if (state.photoUrl) URL.revokeObjectURL(state.photoUrl);
+  state.photoUrl = null;
   if (state.voiceUrl) URL.revokeObjectURL(state.voiceUrl);
   state.voiceUrl = null;
+  $('#voice-preview').removeAttribute('src');
   $('#voice-preview').hidden = true;
+  clearValidation();
+  wizardStatus();
+  if ($('#notice').dataset.origin === 'wizard') notice('');
 }
 
 function validFile(file, types, max, label) {
   if (!file) throw new Error(`Choose your ${label} first.`);
   if (!types.includes(file.type)) throw new Error(`Choose a supported ${label} file.`);
-  if (!file.size || file.size > max) throw new Error(`The ${label} file is empty or too large.`);
+  if (!file.size) throw new Error(`The ${label} file is empty.`);
+  if (file.size > max) throw new Error(`The ${label} must be 3 MB or smaller.`);
+}
+
+function clearFieldError(control, errorElement) {
+  control?.removeAttribute('aria-invalid');
+  if (errorElement) {
+    errorElement.textContent = '';
+    errorElement.hidden = true;
+  }
+}
+
+function showFieldError(control, errorElement, message) {
+  control?.setAttribute('aria-invalid', 'true');
+  errorElement.textContent = message;
+  errorElement.hidden = false;
+  wizardStatus(message, 'error');
+  notice(message, 'error', 'wizard');
+  control?.focus();
+  return false;
+}
+
+function clearConsentError() {
+  document.querySelectorAll('.consent-list input').forEach((input) => input.removeAttribute('aria-invalid'));
+  const error = $('#consent-error');
+  error.textContent = '';
+  error.hidden = true;
+}
+
+function clearValidation() {
+  clearFieldError($('#photo-input'), $('#photo-error'));
+  clearFieldError($('#voice-input'), $('#voice-error'));
+  $('#record-button').removeAttribute('aria-invalid');
+  clearFieldError($('#identity-name'), $('#identity-name-error'));
+  clearConsentError();
 }
 
 function validateStep() {
-  if (state.step === 1) validFile(state.photoFile, ['image/jpeg', 'image/png'], 3_000_000, 'photo');
-  if (state.step === 2) validFile(state.voiceFile, ['audio/wav', 'audio/x-wav', 'audio/mpeg'], 3_000_000, 'voice recording');
-  if (state.step === 3) {
-    if (!$('#identity-name').value.trim()) throw new Error('Name this identity.');
-    if (![...document.querySelectorAll('.consent-list input')].every((input) => input.checked)) throw new Error('All four authorizations are required.');
+  wizardStatus();
+  if (state.step === 1) {
+    try { validFile(state.photoFile, ['image/jpeg', 'image/png'], 3_000_000, 'photo'); }
+    catch (error) { return showFieldError($('#photo-input'), $('#photo-error'), error.message); }
+    clearFieldError($('#photo-input'), $('#photo-error'));
   }
+  if (state.step === 2) {
+    try { validFile(state.voiceFile, ['audio/wav', 'audio/x-wav', 'audio/mpeg'], 3_000_000, 'voice recording'); }
+    catch (error) { return showFieldError($('#voice-input'), $('#voice-error'), error.message); }
+    clearFieldError($('#voice-input'), $('#voice-error'));
+  }
+  if (state.step === 3) {
+    if (!$('#identity-name').value.trim()) return showFieldError($('#identity-name'), $('#identity-name-error'), 'Name this identity.');
+    clearFieldError($('#identity-name'), $('#identity-name-error'));
+    const consentInputs = [...document.querySelectorAll('.consent-list input')];
+    const missing = consentInputs.filter((input) => !input.checked);
+    if (missing.length) {
+      missing.forEach((input) => input.setAttribute('aria-invalid', 'true'));
+      const error = $('#consent-error');
+      error.textContent = 'All four authorizations are required.';
+      error.hidden = false;
+      wizardStatus(error.textContent, 'error');
+      notice(error.textContent, 'error', 'wizard');
+      missing[0].focus();
+      return false;
+    }
+    clearConsentError();
+  }
+  notice('');
+  return true;
 }
 
 function fileDataUrl(file) {
@@ -188,9 +364,18 @@ async function upload(file, kind) {
   return api('/api/video-os-lite/uploads', { method: 'POST', body: JSON.stringify({ kind, name: file.name, dataUrl: await fileDataUrl(file) }) });
 }
 
+function setWizardBusy(busy, message = '') {
+  state.submitting = busy;
+  $('#wizard').setAttribute('aria-busy', String(busy));
+  $('#close-wizard').disabled = busy;
+  $('#next-button').disabled = busy;
+  $('#back-button').disabled = busy || state.step === 1 || state.step >= 4;
+  if (message) wizardStatus(message);
+}
+
 async function commitIdentity() {
-  $('#next-button').disabled = true;
-  notice('Validating and storing your private source files…');
+  setWizardBusy(true, 'Validating and storing your private source files...');
+  notice('Validating and storing your private source files...');
   try {
     const [photo, voice] = await Promise.all([upload(state.photoFile, 'identity_photo'), upload(state.voiceFile, 'identity_voice')]);
     const created = await api('/api/video-os-lite/identities', { method: 'POST', body: JSON.stringify({ action: 'create', displayName: $('#identity-name').value.trim(), photoAssetId: photo.assetId, voiceAssetId: voice.assetId }) });
@@ -203,28 +388,35 @@ async function commitIdentity() {
     await loadIdentities();
     if (!state.providerSubmissionEnabled) {
       notice('Identity draft and consent saved. Provider creation remains held until preview privacy, entitlement, and cost checks pass.', 'success');
-      closeWizard();
+      setWizardBusy(false);
+      closeWizard(true);
       return;
     }
     setStep(4);
     await submitIdentity(state.activeIdentityId, false);
   } catch (error) {
     notice(error.message, 'error');
+    wizardStatus(error.message, 'error');
   } finally {
-    $('#next-button').disabled = false;
+    setWizardBusy(false);
   }
 }
 
 async function next() {
-  try { validateStep(); } catch (error) { return notice(error.message, 'error'); }
-  notice('');
+  if (!validateStep()) return;
   if (state.step < 3) return setStep(state.step + 1);
   return commitIdentity();
 }
 
 async function submitIdentity(identityId, openProgress = true) {
   if (!state.providerSubmissionEnabled) return notice('Provider creation is held until preview privacy, entitlement, and cost checks pass.', 'error');
-  if (openProgress) { state.activeIdentityId = identityId; $('#wizard').hidden = false; setStep(4); }
+  if (openProgress) {
+    state.activeIdentityId = identityId;
+    state.wizardOpener = document.activeElement;
+    if (!$('#wizard').open) $('#wizard').showModal();
+    setStep(4);
+  }
+  setWizardBusy(true, 'Starting identity creation...');
   try {
     await api('/api/video-os-lite/identities', { method: 'POST', body: JSON.stringify({ action: 'submit', identityId }) });
     await loadIdentities();
@@ -232,8 +424,11 @@ async function submitIdentity(identityId, openProgress = true) {
     schedulePolling();
   } catch (error) {
     notice(error.message, 'error');
+    wizardStatus(error.message, 'error');
     await loadIdentities().catch(() => {});
     updateProgress();
+  } finally {
+    setWizardBusy(false);
   }
 }
 
@@ -312,7 +507,11 @@ function encodeWav(chunks, sampleRate) {
 }
 
 async function startRecording() {
-  if (!navigator.mediaDevices?.getUserMedia) return notice('Microphone recording is not supported in this browser. Upload a WAV or MP3 instead.', 'error');
+  clearFieldError($('#voice-input'), $('#voice-error'));
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showFieldError($('#record-button'), $('#voice-error'), 'Microphone recording is not supported in this browser. Upload a WAV or MP3 instead.');
+    return;
+  }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
     const context = new AudioContext();
@@ -329,17 +528,41 @@ async function startRecording() {
     }, 250);
     state.recorder = { stream, context, processor, source, chunks, timer };
     $('#recording-state').hidden = false; $('#record-button').disabled = true;
-  } catch { notice('Microphone permission was not granted. Upload a WAV or MP3 instead.', 'error'); }
+  } catch {
+    showFieldError($('#record-button'), $('#voice-error'), 'Microphone permission was not granted. Upload a WAV or MP3 instead.');
+  }
+}
+
+async function discardRecording() {
+  const recorder = state.recorder;
+  if (!recorder) return;
+  clearInterval(recorder.timer);
+  try { recorder.processor.disconnect(); } catch {}
+  try { recorder.source.disconnect(); } catch {}
+  recorder.stream.getTracks().forEach((track) => track.stop());
+  await recorder.context.close().catch(() => {});
+  state.recorder = null;
+  $('#recording-state').hidden = true;
+  $('#record-button').disabled = false;
 }
 
 async function stopRecording() {
   const recorder = state.recorder;
   if (!recorder) return;
-  clearInterval(recorder.timer); recorder.processor.disconnect(); recorder.source.disconnect(); recorder.stream.getTracks().forEach((track) => track.stop());
-  await recorder.context.close(); state.recorder = null; $('#recording-state').hidden = true; $('#record-button').disabled = false;
-  const blob = encodeWav(recorder.chunks, recorder.context.sampleRate);
-  state.voiceFile = new File([blob], 'identity-voice.wav', { type: 'audio/wav' });
-  setVoicePreview(state.voiceFile);
+  const chunks = recorder.chunks;
+  const sampleRate = recorder.context.sampleRate;
+  await discardRecording();
+  const file = new File([encodeWav(chunks, sampleRate)], 'identity-voice.wav', { type: 'audio/wav' });
+  try {
+    validFile(file, ['audio/wav', 'audio/x-wav', 'audio/mpeg'], 3_000_000, 'voice recording');
+    state.voiceFile = file;
+    clearFieldError($('#voice-input'), $('#voice-error'));
+    setVoicePreview(file);
+    wizardStatus('Recording ready to review.');
+  } catch (error) {
+    state.voiceFile = null;
+    showFieldError($('#record-button'), $('#voice-error'), error.message);
+  }
 }
 
 function setVoicePreview(file) {
@@ -348,31 +571,128 @@ function setVoicePreview(file) {
   $('#voice-preview').src = state.voiceUrl; $('#voice-preview').hidden = false;
 }
 
+function handlePhotoFile(file) {
+  clearFieldError($('#photo-input'), $('#photo-error'));
+  if (!file) {
+    state.photoFile = null;
+    return;
+  }
+  try {
+    validFile(file, ['image/jpeg', 'image/png'], 3_000_000, 'photo');
+  } catch (error) {
+    state.photoFile = null;
+    $('#photo-input').value = '';
+    showFieldError($('#photo-input'), $('#photo-error'), error.message);
+    return;
+  }
+  state.photoFile = file;
+  if (state.photoUrl) URL.revokeObjectURL(state.photoUrl);
+  state.photoUrl = URL.createObjectURL(file);
+  $('#photo-preview').src = state.photoUrl;
+  $('#photo-preview').hidden = false;
+  $('#photo-prompt').hidden = true;
+  notice('');
+  wizardStatus(`${file.name} selected.`);
+}
+
+function handleVoiceFile(file) {
+  clearFieldError($('#voice-input'), $('#voice-error'));
+  $('#record-button').removeAttribute('aria-invalid');
+  if (!file) {
+    state.voiceFile = null;
+    return;
+  }
+  try {
+    validFile(file, ['audio/wav', 'audio/x-wav', 'audio/mpeg'], 3_000_000, 'voice recording');
+  } catch (error) {
+    state.voiceFile = null;
+    $('#voice-input').value = '';
+    showFieldError($('#voice-input'), $('#voice-error'), error.message);
+    return;
+  }
+  state.voiceFile = file;
+  setVoicePreview(file);
+  notice('');
+  wizardStatus(`${file.name} selected. Listen back before continuing.`);
+}
+
 async function init() {
+  $('#loading-state').hidden = false;
+  $('#signed-out').hidden = true;
+  $('#load-error').hidden = true;
+  $('#studio').hidden = true;
+  updateSessionLabels('Checking session...');
   try {
     const session = await api('/api/video-os-lite/session');
-    $('#session-label').textContent = session.email || session.account?.name || 'Private account';
-    $('#studio').hidden = false;
+    updateSessionLabels(session.email || session.account?.name || 'Private account');
     await loadIdentities();
+    $('#studio').hidden = false;
   } catch (error) {
-    $('#session-label').textContent = 'Signed out'; $('#signed-out').hidden = false;
-    if (error.status !== 401) notice(error.message, 'error');
+    if (error.status === 401) {
+      updateSessionLabels('Signed out');
+      $('#signed-out').hidden = false;
+    } else {
+      updateSessionLabels('Unavailable');
+      $('#load-error').hidden = false;
+      notice(error.message, 'error');
+    }
+  } finally {
+    $('#loading-state').hidden = true;
   }
 }
 
 $('#create-button').addEventListener('click', openWizard);
-$('#empty-state').addEventListener('click', openWizard);
-$('#close-wizard').addEventListener('click', closeWizard);
+$('#empty-create-button').addEventListener('click', openWizard);
+$('#close-wizard').addEventListener('click', () => closeWizard());
 $('#next-button').addEventListener('click', next);
 $('#back-button').addEventListener('click', () => setStep(Math.max(1, state.step - 1)));
-$('#photo-input').addEventListener('change', (event) => {
-  state.photoFile = event.target.files[0] || null;
-  if (!state.photoFile) return;
-  $('#photo-preview').src = URL.createObjectURL(state.photoFile); $('#photo-preview').hidden = false; $('#photo-prompt').hidden = true;
+$('#photo-input').addEventListener('change', (event) => handlePhotoFile(event.target.files[0] || null));
+$('#voice-input').addEventListener('change', (event) => handleVoiceFile(event.target.files[0] || null));
+$('#identity-name').addEventListener('input', () => {
+  if ($('#identity-name').value.trim()) clearFieldError($('#identity-name'), $('#identity-name-error'));
 });
-$('#voice-input').addEventListener('change', (event) => { state.voiceFile = event.target.files[0] || null; if (state.voiceFile) setVoicePreview(state.voiceFile); });
+document.querySelectorAll('.consent-list input').forEach((input) => input.addEventListener('change', () => {
+  input.removeAttribute('aria-invalid');
+  if ([...document.querySelectorAll('.consent-list input')].every((item) => item.checked)) clearConsentError();
+}));
 $('#record-button').addEventListener('click', startRecording);
 $('#stop-recording').addEventListener('click', stopRecording);
+$('#retry-load').addEventListener('click', () => { notice(''); void init(); });
+
+const wizard = $('#wizard');
+wizard.addEventListener('keydown', (event) => trapFocus(event, wizard));
+wizard.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  closeWizard();
+});
+wizard.addEventListener('close', () => {
+  resetWizard();
+  const opener = state.wizardOpener;
+  state.wizardOpener = null;
+  if (opener?.isConnected) opener.focus();
+});
+
+const menu = $('#mobile-menu');
+$('#open-menu').addEventListener('click', () => {
+  state.menuOpener = document.activeElement;
+  $('#open-menu').setAttribute('aria-expanded', 'true');
+  menu.showModal();
+  requestAnimationFrame(() => menu.querySelector('a')?.focus());
+});
+$('#close-menu').addEventListener('click', () => menu.close());
+menu.addEventListener('keydown', (event) => trapFocus(event, menu));
+menu.addEventListener('cancel', (event) => { event.preventDefault(); menu.close(); });
+menu.addEventListener('close', () => {
+  $('#open-menu').setAttribute('aria-expanded', 'false');
+  const opener = state.menuOpener;
+  state.menuOpener = null;
+  if (opener?.isConnected) opener.focus();
+});
+menu.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => menu.close()));
+
+$('#ready-use-link').addEventListener('click', (event) => {
+  if ($('#ready-use-link').getAttribute('aria-disabled') === 'true') event.preventDefault();
+});
 window.addEventListener('beforeunload', () => { stopPolling(); if (state.recorder) state.recorder.stream.getTracks().forEach((track) => track.stop()); });
 
-init();
+void init();

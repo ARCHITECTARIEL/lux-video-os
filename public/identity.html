@@ -4,123 +4,208 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
-  <title>Identity Studio · Video OS</title>
+  <meta name="description" content="Manage private, authorized Video OS identities.">
+  <title>My identities | LUX Video OS</title>
+  <link rel="icon" href="/favicon.svg">
   <link rel="stylesheet" href="/identity.css">
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="/" aria-label="Video OS home"><span class="brand-mark">V</span><span>VIDEO OS</span></a>
-    <nav aria-label="Workspace"><a href="/">Composer</a><a class="active" href="/identity" aria-current="page">Identity Studio</a></nav>
-    <div id="session-label" class="session-label">Checking session…</div>
+  <a class="skip-link" href="#main">Skip to identities</a>
+
+  <header class="mobile-header">
+    <a class="wordmark" href="/#create" aria-label="LUX Video OS, Create video">LUX <span>VIDEO OS</span></a>
+    <button id="open-menu" class="menu-button" type="button" aria-controls="mobile-menu" aria-expanded="false">
+      Menu
+      <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14"/></svg>
+    </button>
   </header>
 
-  <main>
-    <section class="hero">
+  <aside class="sidebar" aria-label="LUX Video OS">
+    <a class="wordmark" href="/#create" aria-label="LUX Video OS, Create video">LUX <span>VIDEO OS</span></a>
+    <p class="nav-caption">YOUR STUDIO</p>
+    <nav aria-label="Main navigation">
+      <a href="/#create">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 7v10M7 12h10"/></svg>
+        Create video
+      </a>
+      <a href="/#copywriter">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4M12 20h8"/></svg>
+        AI Copywriter
+      </a>
+      <a href="/identity" aria-current="page">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg>
+        My identities
+      </a>
+      <a href="/#videos">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4z"/></svg>
+        My Videos
+      </a>
+    </nav>
+    <div class="sidebar-note">
+      <span class="mini-mark" aria-hidden="true">L</span>
+      <strong>Your image.<br>Your voice.</strong>
+      <p>Private media and explicit permission stay attached to each identity.</p>
+    </div>
+    <a class="account-link" href="/#account">
+      <span class="account-avatar" aria-hidden="true">A</span>
+      <span><strong id="session-label">Checking session...</strong><small>Account</small></span>
+    </a>
+  </aside>
+
+  <main id="main" tabindex="-1">
+    <section class="page-heading" aria-labelledby="page-title">
       <div>
-        <p class="eyebrow">PRIVATE IDENTITY WORKSPACE</p>
-        <h1>Your face. Your voice.<br><span>Your Video OS.</span></h1>
-        <p class="lede">Create a private photo avatar and cloned voice, then use them together in the composer.</p>
+        <p class="eyebrow">YOUR STUDIO</p>
+        <h1 id="page-title">My identities</h1>
+        <p>Manage the private presenters you have permission to create and use.</p>
       </div>
-      <div class="privacy-note"><strong>Private by design</strong><span>Source media stays account-owned. Identity access is checked on the server for every action.</span></div>
     </section>
 
-    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <div class="workflow-note" role="note">
+      <strong>Premium identity workflow</strong>
+      <span>Create a presenter and cloned voice for Premium videos. Standard uses a portrait and an uploaded recording.</span>
+    </div>
 
-    <section id="signed-out" class="gate panel" hidden>
-      <p class="eyebrow">AUTHENTICATION REQUIRED</p>
-      <h2>Sign in to open your Identity Studio.</h2>
-      <p>Identity media and consent records are tied to your private Video OS account.</p>
-      <a class="button primary" href="/?signin=1">Go to secure sign in</a>
+    <div id="notice" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
+    <section id="loading-state" class="state-panel" aria-live="polite">
+      <span class="loading-dot" aria-hidden="true"></span>
+      <div><h2>Opening your private studio</h2><p>Checking your session and account-owned identities.</p></div>
+    </section>
+
+    <section id="signed-out" class="state-panel signed-out" hidden>
+      <div class="state-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      </div>
+      <div>
+        <p class="eyebrow">AUTHENTICATION REQUIRED</p>
+        <h2>Sign in to open your Identity Studio.</h2>
+        <p>Identity media and consent records are tied to your private Video OS account.</p>
+        <a class="button primary" href="/?signin=1">Go to secure sign in</a>
+      </div>
+    </section>
+
+    <section id="load-error" class="state-panel error-panel" hidden>
+      <div class="state-icon" aria-hidden="true">!</div>
+      <div><h2>Identity Studio is unavailable</h2><p>We could not load this private workspace. Your existing identities were not changed.</p><button id="retry-load" class="button secondary" type="button">Try again</button></div>
     </section>
 
     <div id="studio" hidden>
-      <section class="section-heading">
-        <div><p class="eyebrow">MY IDENTITIES</p><h2>Your private cast</h2></div>
+      <section class="library-heading">
+        <div><p class="eyebrow">PRIVATE CAST</p><h2>Your authorized identities</h2><p>Review readiness, preview the saved voice, or continue with an identity that is ready.</p></div>
         <button id="create-button" class="button primary" type="button">Create Identity</button>
       </section>
-      <section id="identity-list" class="identity-grid" aria-live="polite"></section>
-      <section id="empty-state" class="empty panel" hidden>
-        <div class="empty-orbit" aria-hidden="true">+</div>
-        <h3>Create your first Video Identity</h3>
-        <p>One clear portrait, 5–120 seconds of clean speech, and your explicit permission.</p>
+
+      <section id="identity-list" class="identity-grid" aria-live="polite" aria-label="Your identities"></section>
+
+      <section id="empty-state" class="empty-state" hidden>
+        <div class="empty-portrait" aria-hidden="true"><span></span></div>
+        <div><p class="eyebrow">NO IDENTITIES YET</p><h2>Create your first Video Identity</h2><p>Use one clear portrait, 5-120 seconds of clean speech, and your explicit permission.</p></div>
+        <button id="empty-create-button" class="button primary" type="button">Create your first identity</button>
       </section>
 
-      <section id="wizard" class="wizard panel" hidden aria-labelledby="wizard-title">
-        <div class="wizard-header">
-          <div><p class="eyebrow">CREATE IDENTITY</p><h2 id="wizard-title">Build your private presenter</h2></div>
-          <button id="close-wizard" class="icon-button" type="button" aria-label="Close identity creation">×</button>
-        </div>
-        <ol class="steps" aria-label="Identity creation progress">
-          <li data-step="1" class="current"><span>1</span>Your Photo</li>
-          <li data-step="2"><span>2</span>Your Voice</li>
-          <li data-step="3"><span>3</span>Consent</li>
-          <li data-step="4"><span>4</span>Creating</li>
-          <li data-step="5"><span>5</span>Ready</li>
-        </ol>
-
-        <form id="identity-form" novalidate>
-          <fieldset data-panel="1">
-            <legend>Your Photo</legend>
-            <div class="split">
-              <label class="dropzone" id="photo-drop">
-                <input id="photo-input" type="file" accept="image/jpeg,image/png" required>
-                <img id="photo-preview" alt="Selected portrait preview" hidden>
-                <span id="photo-prompt"><strong>Choose a portrait</strong><small>JPEG or PNG · 512–8192 px · up to 12 MB</small></span>
-              </label>
-              <div class="guidance"><h3>A strong photo has</h3><ul><li>One front-facing person</li><li>Even light and a neutral expression</li><li>Head and shoulders fully visible</li><li>No sunglasses, filters, or heavy blur</li></ul></div>
-            </div>
-          </fieldset>
-
-          <fieldset data-panel="2" hidden>
-            <legend>Your Voice</legend>
-            <div class="voice-actions">
-              <button id="record-button" class="button secondary" type="button">Record with microphone</button>
-              <span>or</span>
-              <label class="button secondary file-button">Upload MP3 or WAV<input id="voice-input" type="file" accept="audio/mpeg,audio/wav,audio/x-wav"></label>
-            </div>
-            <div id="recording-state" class="recording-state" hidden><span class="record-dot"></span><strong id="recording-time">Recording 0:00</strong><button id="stop-recording" class="button danger" type="button">Stop</button></div>
-            <audio id="voice-preview" controls hidden></audio>
-            <div class="script-card"><p class="eyebrow">READ NATURALLY</p><p>“Welcome to my Video OS. I’m recording this sample in my natural speaking voice, with clear pacing and steady volume. This recording will be used only to create the identity I authorize.”</p><small>Record 5–120 seconds in a quiet room. Listen back before continuing.</small></div>
-          </fieldset>
-
-          <fieldset data-panel="3" hidden>
-            <legend>Consent</legend>
-            <label class="field"><span>Identity name</span><input id="identity-name" maxlength="80" autocomplete="off" placeholder="e.g. Kristian — Studio" required></label>
-            <div class="consent-list">
-              <label><input type="checkbox" id="consent-face" required><span>This photo is of me, or I have documented authorization from this person.</span></label>
-              <label><input type="checkbox" id="consent-voice" required><span>This is my voice, or I have documented authorization to clone it.</span></label>
-              <label><input type="checkbox" id="consent-process" required><span>I authorize Video OS and HeyGen to process these files to create this identity.</span></label>
-              <label><input type="checkbox" id="consent-archive" required><span>I understand I can request that this identity be archived or deleted.</span></label>
-            </div>
-            <p class="fine-print">Your account, identity, policy version, acceptance time, and source fingerprints are recorded. The authorization text is versioned rather than copied into every record.</p>
-          </fieldset>
-
-          <fieldset data-panel="4" hidden>
-            <legend>Creating</legend>
-            <div class="processing-orbit" aria-hidden="true"><span></span></div>
-            <h3 class="center">Creating your Video Identity</h3>
-            <div id="component-progress" class="component-progress"></div>
-            <p class="fine-print center">You can leave this page. Processing state is durable and resumes when you return.</p>
-          </fieldset>
-
-          <fieldset data-panel="5" hidden>
-            <legend>Ready</legend>
-            <div class="ready-mark" aria-hidden="true">✓</div>
-            <h3 class="center">Your Video Identity is ready.</h3>
-            <p class="center">It is now available at the top of My Cast in the composer.</p>
-            <div class="center"><a id="ready-use-link" class="button primary" href="/" aria-disabled="true">Use in Video OS</a></div>
-          </fieldset>
-
-          <div id="wizard-actions" class="wizard-actions"><button id="back-button" class="button ghost" type="button" disabled>Back</button><button id="next-button" class="button primary" type="button">Continue</button></div>
-        </form>
-      </section>
-
-      <section class="coming panel" aria-disabled="true">
-        <div><p class="eyebrow">COMING NEXT</p><h2>Digital Twin</h2><p>Video-trained movement and delivery will build on the same consent and private identity foundation.</p></div>
+      <section class="future-note" aria-labelledby="future-title">
+        <div><p class="eyebrow">COMING NEXT</p><h2 id="future-title">Digital Twin</h2><p>Video-trained movement and delivery remain outside this phase.</p></div>
         <button class="button secondary" type="button" disabled>Not available in this phase</button>
       </section>
     </div>
   </main>
+
+  <dialog id="wizard" class="wizard" aria-labelledby="wizard-title" aria-describedby="wizard-description">
+    <div class="wizard-header">
+      <div><p class="eyebrow">CREATE IDENTITY</p><h2 id="wizard-title">Build your private presenter</h2><p id="wizard-description">Add source media, then review every authorization before anything is saved.</p></div>
+      <button id="close-wizard" class="icon-button" type="button" aria-label="Close identity creation">&times;</button>
+    </div>
+
+    <ol class="steps" aria-label="Identity creation progress">
+      <li data-step="1" class="current" aria-current="step"><span>1</span>Your Photo</li>
+      <li data-step="2"><span>2</span>Your Voice</li>
+      <li data-step="3"><span>3</span>Consent</li>
+      <li data-step="4"><span>4</span>Creating</li>
+      <li data-step="5"><span>5</span>Ready</li>
+    </ol>
+
+    <form id="identity-form" novalidate>
+      <fieldset data-panel="1" tabindex="-1">
+        <legend>Your Photo</legend>
+        <div class="split">
+          <label class="dropzone" id="photo-drop">
+            <input id="photo-input" type="file" accept="image/jpeg,image/png" required aria-describedby="photo-requirements photo-error">
+            <img id="photo-preview" alt="Selected portrait preview" hidden>
+            <span id="photo-prompt"><strong>Choose a portrait</strong><small id="photo-requirements">JPEG or PNG &middot; 512-8192 px &middot; up to 3 MB</small></span>
+          </label>
+          <div class="guidance"><h3>A strong photo has</h3><ul><li>One front-facing adult</li><li>Even light and a neutral expression</li><li>Head and shoulders fully visible</li><li>No sunglasses, filters, or heavy blur</li></ul></div>
+        </div>
+        <p id="photo-error" class="field-error" role="alert" hidden></p>
+      </fieldset>
+
+      <fieldset data-panel="2" tabindex="-1" hidden>
+        <legend>Your Voice</legend>
+        <p id="voice-requirements" class="field-intro">Use your voice or a recording you have documented permission to clone. MP3 or PCM WAV &middot; 5-120 seconds &middot; up to 3 MB.</p>
+        <div class="voice-actions">
+          <button id="record-button" class="button secondary" type="button" aria-describedby="voice-requirements voice-error">Record with microphone</button>
+          <span aria-hidden="true">or</span>
+          <label class="button secondary file-button">Upload MP3 or WAV<input id="voice-input" type="file" accept="audio/mpeg,audio/wav,audio/x-wav" aria-label="Upload an MP3 or WAV voice recording" aria-describedby="voice-requirements voice-error"></label>
+        </div>
+        <div id="recording-state" class="recording-state" role="status" aria-live="polite" hidden><span class="record-dot" aria-hidden="true"></span><strong id="recording-time">Recording 0:00</strong><button id="stop-recording" class="button danger" type="button">Stop</button></div>
+        <audio id="voice-preview" controls aria-label="Selected voice recording preview" hidden></audio>
+        <p id="voice-error" class="field-error" role="alert" hidden></p>
+        <div class="read-card"><p class="eyebrow">READ NATURALLY</p><p>"Welcome to my Video OS. I'm recording this sample in my natural speaking voice, with clear pacing and steady volume. This recording will be used only to create the identity I authorize."</p><small>Use a quiet room and listen back before continuing.</small></div>
+      </fieldset>
+
+      <fieldset data-panel="3" tabindex="-1" hidden>
+        <legend>Consent</legend>
+        <label class="field" for="identity-name"><span>Identity name</span><input id="identity-name" maxlength="80" autocomplete="off" placeholder="e.g. Kristian - Studio" required aria-describedby="identity-name-help identity-name-error"></label>
+        <p id="identity-name-help" class="field-help">Use a name you will recognize in your private cast.</p>
+        <p id="identity-name-error" class="field-error" role="alert" hidden></p>
+        <div class="consent-group" role="group" aria-labelledby="consent-heading" aria-describedby="consent-help consent-error">
+          <h3 id="consent-heading">Confirm all four authorizations</h3>
+          <div class="consent-list">
+            <label><input type="checkbox" id="consent-face" required><span>This photo is of me, or I have documented authorization from this person.</span></label>
+            <label><input type="checkbox" id="consent-voice" required><span>This is my voice, or I have documented authorization to clone it.</span></label>
+            <label><input type="checkbox" id="consent-process" required><span>I authorize Video OS and HeyGen to process these files to create this identity.</span></label>
+            <label><input type="checkbox" id="consent-archive" required><span>I understand I can request that this identity be archived or deleted.</span></label>
+          </div>
+        </div>
+        <p id="consent-error" class="field-error" role="alert" hidden></p>
+        <p id="consent-help" class="fine-print">Your account, identity, policy version, acceptance time, and source fingerprints are recorded. The authorization text is versioned rather than copied into every record.</p>
+      </fieldset>
+
+      <fieldset data-panel="4" tabindex="-1" hidden>
+        <legend>Creating</legend>
+        <div class="processing-orbit" aria-hidden="true"><span></span></div>
+        <h3 class="center">Creating your Video Identity</h3>
+        <div id="component-progress" class="component-progress" aria-live="polite"></div>
+        <p class="fine-print center">You can close this window. Processing state is durable and resumes when you return.</p>
+      </fieldset>
+
+      <fieldset data-panel="5" tabindex="-1" hidden>
+        <legend>Ready</legend>
+        <div class="ready-mark" aria-hidden="true">&#10003;</div>
+        <h3 class="center">Your Video Identity is ready.</h3>
+        <p class="center ready-copy">It is available to the existing Premium composer. Standard compatibility is not implied.</p>
+        <div class="center"><a id="ready-use-link" class="button primary" href="/" aria-disabled="true">Use in Video OS</a></div>
+      </fieldset>
+
+      <div id="wizard-actions" class="wizard-actions">
+        <button id="back-button" class="button ghost" type="button" disabled>Back</button>
+        <p id="wizard-status" class="wizard-status" role="status" aria-live="polite"></p>
+        <button id="next-button" class="button primary" type="button">Continue</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="mobile-menu" class="mobile-menu" aria-labelledby="menu-title">
+    <div class="menu-heading"><h2 id="menu-title">Your studio</h2><button id="close-menu" class="icon-button" type="button" aria-label="Close navigation">&times;</button></div>
+    <nav aria-label="Mobile navigation">
+      <a href="/#create">Create video</a>
+      <a href="/#copywriter">AI Copywriter</a>
+      <a href="/identity" aria-current="page">My identities</a>
+      <a href="/#videos">My Videos</a>
+      <a href="/#account"><span id="mobile-session-label">Account</span></a>
+    </nav>
+  </dialog>
+
   <script type="module" src="/identity.js"></script>
 </body>
 </html>

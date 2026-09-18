@@ -81,3 +81,151 @@ test('partial failure retries only the failed component and archive removes it f
   await page.getByRole('button', { name: 'Archive' }).click();
   await expect(page.getByRole('heading', { name: 'Owner Studio' })).toHaveCount(0);
 });
+
+test('invalid photo and voice files expose focused field errors without an upload request', async ({ page }) => {
+  const mock = await identityApi(page, { enabled: false });
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+
+  const photo = page.locator('#photo-input');
+  await photo.setInputFiles({ name: 'portrait.txt', mimeType: 'text/plain', buffer: Buffer.from('not an image') });
+  await expect(photo).toHaveAttribute('aria-invalid', 'true');
+  await expect(photo).toBeFocused();
+  await expect(page.locator('#photo-error')).toHaveAttribute('role', 'alert');
+  await expect(page.locator('#photo-error')).not.toBeEmpty();
+
+  await photo.setInputFiles({ name: 'portrait.png', mimeType: 'image/png', buffer: Buffer.from([137, 80, 78, 71, 1]) });
+  await page.locator('#next-button').click();
+  const voice = page.locator('#voice-input');
+  await voice.setInputFiles({ name: 'voice.txt', mimeType: 'text/plain', buffer: Buffer.from('not audio') });
+  await expect(voice).toHaveAttribute('aria-invalid', 'true');
+  await expect(voice).toBeFocused();
+  await expect(page.locator('#voice-error')).toHaveAttribute('role', 'alert');
+  await expect(page.locator('#voice-error')).not.toBeEmpty();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#wizard')).toBeHidden();
+  await expect(page.locator('#notice')).toBeHidden();
+  expect(mock.calls).toEqual([]);
+});
+
+test('identity wizard traps keyboard focus, closes with Escape, and returns to its opener', async ({ page }) => {
+  await identityApi(page, { enabled: false });
+  await page.goto('/identity.html');
+  const opener = page.locator('#empty-create-button');
+  await opener.click();
+  const wizard = page.locator('#wizard');
+  await expect(wizard).toBeVisible();
+  await expect(page.locator('#photo-input')).toBeFocused();
+
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('#close-wizard')).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('#next-button')).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(wizard).toBeHidden();
+  await expect(opener).toBeFocused();
+});
+
+test('mobile identity navigation is named, modal, and restores focus when dismissed', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await identityApi(page, { enabled: false });
+  await page.goto('/identity.html');
+  const opener = page.locator('#open-menu');
+  await expect(opener).toBeVisible();
+  await expect(opener).toHaveAccessibleName(/menu/i);
+  await opener.click();
+
+  const menu = page.locator('#mobile-menu');
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('link', { name: 'My identities' })).toHaveAttribute('aria-current', 'page');
+  await expect(menu.getByRole('link', { name: 'Create video' })).toHaveAttribute('href', '/#create');
+  await expect(menu.getByRole('link', { name: 'AI Copywriter' })).toHaveAttribute('href', '/#copywriter');
+  await expect(menu.getByRole('link', { name: 'My Videos' })).toHaveAttribute('href', '/#videos');
+  await expect(menu.getByRole('link', { name: 'Create video' })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('#close-menu')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(opener).toBeFocused();
+});
+
+test('identity loading failure offers a retry and never substitutes an empty private workspace', async ({ page }) => {
+  let identityReads = 0;
+  await page.route('**/api/video-os-lite/session', (route) => route.fulfill({ json: account }));
+  await page.route('**/api/video-os-lite/identities*', (route) => {
+    identityReads += 1;
+    if (identityReads === 1) return route.abort('connectionfailed');
+    return route.fulfill({ json: { ok: true, identities: [], providerSubmissionEnabled: false } });
+  });
+  await page.goto('/identity.html');
+
+  await expect(page.locator('#load-error')).toBeVisible();
+  await expect(page.locator('#studio')).toBeHidden();
+  await expect(page.locator('#notice')).toHaveAttribute('role', 'alert');
+  await page.locator('#retry-load').click();
+  await expect(page.locator('#studio')).toBeVisible();
+  await expect(page.locator('#empty-state')).toBeVisible();
+  expect(identityReads).toBe(2);
+});
+
+test('a stalled identity session read reaches the bounded timeout and actionable error state', async ({ page }) => {
+  await page.clock.install();
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (input, options = {}) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+      if (url.pathname === '/api/video-os-lite/session') {
+        return new Promise((resolve, reject) => {
+          options.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        });
+      }
+      return originalFetch(input, options);
+    };
+  });
+  await page.goto('/identity.html');
+  await expect(page.locator('#loading-state')).toBeVisible();
+
+  await page.clock.fastForward(30_010);
+  await expect(page.locator('#loading-state')).toBeHidden();
+  await expect(page.locator('#load-error')).toBeVisible();
+  await expect(page.locator('#notice')).toHaveAttribute('role', 'alert');
+  await expect(page.locator('#notice')).toContainText('request took too long');
+  await expect(page.locator('#retry-load')).toBeVisible();
+});
+
+for (const viewport of [
+  { name: 'tablet', width: 768, height: 1024 },
+  { name: 'phone', width: 390, height: 844 },
+  { name: 'narrow phone', width: 320, height: 720 },
+]) {
+  test(`identity wizard does not clip its ${viewport.name} step tracker`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await identityApi(page, { enabled: false });
+    await page.goto('/identity.html');
+    await page.locator('#empty-create-button').click();
+
+    const layout = await page.evaluate(() => {
+      const dialog = document.querySelector('#wizard');
+      const steps = document.querySelector('#wizard .steps');
+      const dialogRect = dialog.getBoundingClientRect();
+      const stepsRect = steps.getBoundingClientRect();
+      return {
+        viewport: window.innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        dialogLeft: dialogRect.left,
+        dialogRight: dialogRect.right,
+        dialogClientWidth: dialog.clientWidth,
+        dialogScrollWidth: dialog.scrollWidth,
+        stepsLeft: stepsRect.left,
+        stepsRight: stepsRect.right,
+      };
+    });
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewport + 1);
+    expect(layout.dialogLeft).toBeGreaterThanOrEqual(-1);
+    expect(layout.dialogRight).toBeLessThanOrEqual(layout.viewport + 1);
+    expect(layout.dialogScrollWidth).toBeLessThanOrEqual(layout.dialogClientWidth + 1);
+    expect(layout.stepsLeft).toBeGreaterThanOrEqual(layout.dialogLeft - 1);
+    expect(layout.stepsRight).toBeLessThanOrEqual(layout.dialogRight + 1);
+  });
+}

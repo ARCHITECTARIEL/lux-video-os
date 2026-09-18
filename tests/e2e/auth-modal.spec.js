@@ -1,33 +1,64 @@
 import { expect, test } from '@playwright/test';
 
-async function stubShell(page, session = { ok: true, signedIn: false }) {
+const signedOut = { ok: true, signedIn: false };
+
+const signedInSession = (overrides = {}) => ({
+  ok: true,
+  signedIn: true,
+  email: 'proof@example.test',
+  account: {
+    accountId: 'proof',
+    name: 'Proof workspace',
+    subscription: { plan: 'Contained test', status: 'active' },
+  },
+  credits: { accountId: 'proof', balance: 0, reserved: 0 },
+  entitlements: { fullAccess: true },
+  ...overrides,
+});
+
+async function stubShell(page, initialSession = signedOut) {
+  let session = initialSession;
   await page.route('**/api/video-os-lite/session', async (route) => {
     if (route.request().method() === 'POST') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, signedIn: false }) });
-      return;
+      session = signedOut;
+      return route.fulfill({ json: signedOut });
     }
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(session) });
+    return route.fulfill({ json: session });
   });
-  await page.route('**/api/video-os-lite/providers', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ ok: true, providers: [], credits: { balance: 0 } }),
-  }));
-  await page.route('**/api/video-os-lite/results*', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ ok: true, results: [] }),
-  }));
+  await page.route('**/api/video-os-lite/providers', (route) => route.fulfill({ json: {
+    ok: true,
+    signedIn: session.signedIn,
+    providers: [],
+    credits: session.credits || { balance: 0, reserved: 0 },
+    entitlements: session.entitlements || {},
+  } }));
+  await page.route('**/api/video-os-lite/results*', (route) => route.fulfill({ json: { ok: true, results: [] } }));
+  await page.route('**/api/video-os-lite/identities*', (route) => route.fulfill({ json: { ok: true, identities: [], providerSubmissionEnabled: false } }));
+  await page.route('**/api/video-os-lite/projects', (route) => route.fulfill({ json: { ok: true, projects: [] } }));
+  await page.route('**/api/video-os/talent', (route) => route.fulfill({ json: { ok: true, talent: { avatars: [], voices: [] }, connection: { connected: false } } }));
+  return { setSession(value) { session = value; } };
 }
 
-test('auth modal openers, close controls, and focus restoration work', async ({ page }) => {
+async function openAccountDialog(page) {
+  await page.locator('[data-nav="account"]:visible').first().click();
+  const opener = page.locator('#open-login');
+  await expect(opener).toBeVisible();
+  await opener.click();
+  return opener;
+}
+
+test('auth dialog openers, close controls, and focus restoration work', async ({ page }) => {
   await stubShell(page);
   await page.goto('/');
-  const opener = page.locator('#open-login');
-  await opener.click();
+  const opener = await openAccountDialog(page);
   await expect(page.locator('#auth-modal')).toBeVisible();
   await expect(page.locator('#password-username')).toBeFocused();
   await expect(page.locator('#sign-out')).toBeHidden();
+  await page.locator('#close-login').focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('#send-magic-link')).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#close-login')).toBeFocused();
   await page.locator('#close-login').click();
   await expect(page.locator('#auth-modal')).toBeHidden();
   await expect(opener).toBeFocused();
@@ -37,92 +68,102 @@ test('auth modal openers, close controls, and focus restoration work', async ({ 
   await expect(opener).toBeFocused();
 });
 
-test('password errors are actionable and retry succeeds', async ({ page }) => {
-  await stubShell(page);
+test('password errors are actionable and retry succeeds without losing access type or credentials', async ({ page }) => {
+  const shell = await stubShell(page);
   let attempts = 0;
   await page.route('**/api/video-os-lite/password-login', async (route) => {
     attempts += 1;
-    if (attempts === 1) { await route.abort('connectionfailed'); return; }
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ ok: true, signedIn: true, email: 'demo@luxvideoos.local', message: 'Demo workspace unlocked.', account: { accountId: 'demo', name: 'LUX Demo', subscription: { plan: 'Demo', status: 'active' } }, credits: { accountId: 'demo', balance: 5000 } }),
+    if (attempts === 1) return route.abort('connectionfailed');
+    const active = signedInSession({
+      email: 'demo@luxvideoos.local',
+      account: { accountId: 'demo', name: 'LUX Demo', subscription: { plan: 'Demo', status: 'active' } },
+      credits: { accountId: 'demo', balance: 5000, reserved: 0 },
+      entitlements: { liveRendering: true },
     });
+    shell.setSession(active);
+    return route.fulfill({ json: { ...active, message: 'Demo workspace unlocked.' } });
   });
   await page.goto('/');
-  await page.locator('#open-login').click();
+  await openAccountDialog(page);
+  await page.locator('input[name="access-type"][value="owner"]').check();
   await page.locator('#password-username').fill('luxdemo');
-  await page.locator('#password-password').fill('luxdemo');
+  await page.locator('#password-password').fill('local-only');
   await page.locator('#password-login').click();
-  await expect(page.locator('#auth-status')).toContainText('We couldn’t reach Video OS');
+  await expect(page.locator('#auth-status')).toContainText(/could not reach/i);
   await expect(page.locator('#auth-retry')).toBeVisible();
+  await expect(page.locator('input[name="access-type"][value="owner"]')).toBeChecked();
+  await expect(page.locator('#password-username')).toHaveValue('luxdemo');
   await page.locator('#auth-retry').click();
   await expect(page.locator('#auth-modal')).toBeHidden();
-  await expect(page.locator('#open-login')).toContainText('Account');
+  await expect(page.locator('#account-nav-label')).toContainText('LUX Demo');
+  expect(attempts).toBe(2);
 });
 
-test('email form submits with Enter and exposes provider failure', async ({ page }) => {
+test('email form submits with Enter and exposes delivery failure without closing the dialog', async ({ page }) => {
   await stubShell(page);
   await page.route('**/api/video-os-lite/auth-request', (route) => route.fulfill({
     status: 502,
-    contentType: 'application/json',
-    body: JSON.stringify({ ok: false, code: 'email_delivery_failed', error: 'We could not send the sign-in email. Check the address and try again.' }),
+    json: { ok: false, code: 'email_delivery_failed', error: 'We could not send the sign-in email. Check the address and try again.' },
   }));
   await page.goto('/');
-  await page.locator('#open-login').click();
-  await page.locator('#auth-email').fill('ariel@luxmarketingcompany.com');
+  await openAccountDialog(page);
+  await page.locator('#auth-email').fill('ariel@example.test');
   await page.locator('#auth-email').press('Enter');
   await expect(page.locator('#auth-status')).toContainText('could not send');
   await expect(page.locator('#auth-retry')).toBeVisible();
   await expect(page.locator('#send-magic-link')).toBeEnabled();
+  await expect(page.locator('#auth-modal')).toBeVisible();
 });
 
-
 test('sign-in loads authorized talent and sign-out clears it without a provider submission', async ({ page }) => {
-  await stubShell(page);
+  const shell = await stubShell(page);
   let talentRequests = 0;
   let renderRequests = 0;
   await page.route('**/api/video-os/talent', (route) => {
     talentRequests += 1;
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        ok: true,
-        talent: {
-          avatars: [{ id: 'featured:ariel', name: 'Ariel', source: 'heygen', featuredKey: 'ariel', matchedVoiceId: 'featured:ariel:voice', active: true, providerReady: true, previewUrl: 'https://images.example/ariel.jpg' }],
-          voices: [{ id: 'featured:ariel:voice', name: 'Ariel voice', source: 'heygen', featuredKey: 'ariel', active: true, providerReady: true }],
-        },
-        connection: { connected: true, status: 'connected' },
-      }),
-    });
+    return route.fulfill({ json: {
+      ok: true,
+      talent: {
+        avatars: [{ id: 'featured:ariel', name: 'Ariel', source: 'heygen', featuredKey: 'ariel', matchedVoiceId: 'featured:ariel:voice', active: true, providerReady: true, previewUrl: 'https://images.example/ariel.svg' }],
+        voices: [{ id: 'featured:ariel:voice', name: 'Ariel voice', source: 'heygen', featuredKey: 'ariel', active: true, providerReady: true }],
+      },
+      connection: { connected: true, status: 'connected' },
+    } });
   });
-  await page.route('https://images.example/ariel.jpg', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }));
-  await page.route('**/api/video-os-lite/render', (route) => { renderRequests += 1; return route.abort(); });
-  await page.route('**/api/video-os-lite/password-login', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ ok: true, signedIn: true, email: 'proof@example.test', message: 'Signed in.', account: { accountId: 'proof', name: 'Proof' }, credits: { accountId: 'proof', balance: 0 } }),
+  await page.route('https://images.example/ariel.svg', (route) => route.fulfill({
+    contentType: 'image/svg+xml',
+    body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"></svg>',
   }));
+  await page.route('**/api/video-os-lite/render', (route) => {
+    renderRequests += 1;
+    return route.abort('blockedbyclient');
+  });
+  await page.route('**/api/video-os-lite/password-login', (route) => {
+    const active = signedInSession();
+    shell.setSession(active);
+    return route.fulfill({ json: { ...active, message: 'Signed in.' } });
+  });
 
   await page.goto('/');
   expect(talentRequests).toBe(0);
-  await page.locator('#open-login').click();
+  await openAccountDialog(page);
   await page.locator('#password-username').fill('proof');
   await page.locator('#password-password').fill('local-only');
   await page.locator('#password-login').click();
+  await page.locator('[data-nav="create"]:visible').first().click();
+  await page.locator('#premium-tab').click();
   await expect(page.locator('[data-avatar-id="featured:ariel"]')).toHaveCount(1);
   expect(talentRequests).toBe(1);
 
-  await page.locator('#download-link').evaluate((link) => { link.href = '/api/video-os-lite/download?jobId=private-job'; link.hidden = false; });
-  await page.locator('.video-stage').evaluate((stage) => { const video = document.createElement('video'); video.className = 'final-preview-media'; video.src = '/api/video-os-lite/download?jobId=private-job&disposition=inline'; stage.prepend(video); });
+  await page.locator('[data-nav="account"]:visible').first().click();
+  await expect(page.locator('#open-login')).toHaveText('Manage session');
   await page.locator('#open-login').click();
   await page.locator('#sign-out').click();
-  await expect(page.locator('#avatar-list [data-avatar-id]')).toHaveCount(0);
-  await expect(page.locator('#connection-pill')).toHaveText('Sign in to view provider talent');
+  await expect(page.locator('#featured-cast-list [data-avatar-id]')).toHaveCount(0);
+  await expect(page.locator('#connection-pill')).toHaveAttribute('data-state', 'signed-out');
   await expect(page.locator('#download-link')).toBeHidden();
   await expect(page.locator('#download-link')).not.toHaveAttribute('href');
-  await expect(page.locator('.final-preview-media')).toHaveCount(0);
+  await expect(page.locator('#accepted-video')).toBeHidden();
   expect(talentRequests).toBe(1);
   expect(renderRequests).toBe(0);
 });
