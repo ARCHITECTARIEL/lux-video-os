@@ -625,4 +625,32 @@ test.describe('navigation, keyboard, and responsive layout', () => {
       }
     });
   }
+
+  const REQUIRED_BREAKPOINTS = [
+    { name: '1440', width: 1440, height: 900 },
+    { name: '1024', width: 1024, height: 900 },
+    { name: '768', width: 768, height: 1024 },
+    { name: '390', width: 390, height: 844 },
+    { name: '320', width: 320, height: 720 },
+  ];
+  const OWNER_DESTINATIONS = ['create', 'copywriter', 'identities', 'videos', 'account'];
+
+  for (const breakpoint of REQUIRED_BREAKPOINTS) {
+    test(`all five owner destinations fit without horizontal overflow at ${breakpoint.name}px`, async ({ page }) => {
+      await page.setViewportSize({ width: breakpoint.width, height: breakpoint.height });
+      await installWorkspaceRoutes(page, {
+        session: SIGNED_IN_SESSION,
+        results: [{ id: 'fit-check-job', title: 'Fit check', tier: 'standard', status: 'SUCCEEDED', outputAccepted: true, url: '/api/video-os-lite/download?jobId=fit-check-job', filename: 'fit-check.mp4' }],
+      });
+      await page.goto('/#create');
+      const narrow = breakpoint.width <= 1023;
+      for (const destination of OWNER_DESTINATIONS) {
+        if (narrow) await page.locator('#open-menu').click();
+        await page.locator(`[data-nav="${destination}"]:visible`).first().click();
+        await expect(page.locator(`#${destination}-view`)).toBeVisible();
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(overflow, destination).toBeLessThanOrEqual(1);
+      }
+    });
+  }
 });
