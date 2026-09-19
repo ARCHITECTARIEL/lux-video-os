@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { database } from './client.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
 import { creditAccounts, creditTransactions, entitlements, identityConsents, jobEvents, mediaAssets, projects, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
@@ -544,6 +544,31 @@ export async function saveProject({ id, accountId, identityId, title, script, av
   });
 }
 
+export async function saveStandardProject({ accountId, title, identityId, narrationAudioAssetId }) {
+  return database().transaction(async (tx) => {
+    const ownedIdentity = (await tx.select({ id: userIdentities.id }).from(userIdentities).where(and(
+      eq(userIdentities.accountId, accountId),
+      eq(userIdentities.id, identityId),
+      isNull(userIdentities.archivedAt),
+    )).limit(1))[0];
+    if (!ownedIdentity) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    const ownedAudio = (await tx.select({ id: mediaAssets.id }).from(mediaAssets).where(and(
+      eq(mediaAssets.accountId, accountId),
+      eq(mediaAssets.id, narrationAudioAssetId),
+    )).limit(1))[0];
+    if (!ownedAudio) throw Object.assign(new Error('Narration audio not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    return (await tx.insert(projects).values({
+      accountId,
+      identityId,
+      title,
+      script: null,
+      avatar: {},
+      voice: {},
+      settings: { tier: 'STANDARD', contractVersion: 'standard-narration-v1', narrationAudioAssetId },
+    }).returning())[0];
+  });
+}
+
 export async function listProjects(accountId) {
   return database().select().from(projects).where(eq(projects.accountId, accountId)).orderBy(desc(projects.updatedAt)).limit(30);
 }
@@ -572,6 +597,17 @@ export async function finalizeReadyJob(jobId, artifact) {
     await tx.insert(jobEvents).values({ jobId, correlationId: job.correlationId, eventType: 'finish.completed', stageFrom: job.status, stageTo: 'ready', details: { bytes: artifact.bytes, sha256: artifact.sha256, ffmpegMs: artifact.ffmpegMs } });
     return ready;
   });
+}
+
+const IN_FLIGHT_JOB_STATUSES = Object.freeze(['workflow_started', 'provider_submitting', 'provider_submitted', 'provider_rendering', 'provider_ready', 'finish_contained', 'finishing']);
+
+// Used by worker/render-worker.mjs (the VPS-hosted replacement for Vercel
+// Workflow's dispatch) to find jobs that need their next step driven.
+// 'provider_submit_unknown' is deliberately excluded -- those jobs are held
+// pending manual reconciliation, not something a poll loop should keep
+// hammering.
+export async function listInFlightJobs(limit = 50) {
+  return database().select().from(videoJobs).where(inArray(videoJobs.status, IN_FLIGHT_JOB_STATUSES)).orderBy(videoJobs.updatedAt).limit(Math.min(200, limit));
 }
 
 export async function listRecentJobs(limit = 100) {

@@ -24,7 +24,7 @@ jobs:
       - run: python -m pip install pytest
       - run: python -m pytest -q
       - run: npm run db:check
-      - run: npm audit --omit=dev --audit-level=high
+      - run: node tools/enforce-npm-audit.mjs
       - run: npm run workflow:validate
       - name: Prepare offline Vercel build metadata
         run: |

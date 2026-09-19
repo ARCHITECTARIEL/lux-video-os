@@ -1630,13 +1630,13 @@ function consumeAuthReturn() {
   url.searchParams.delete('ceo_access');
   history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   if (appState.signedIn) {
-    setAuthStatus('Email sign-in complete. Your workspace is ready.', 'success');
-    showToast('Email sign-in complete. Your workspace is ready.');
+    setAuthStatus('Sign-in complete. Your workspace is ready.', 'success');
+    showToast('Sign-in complete. Your workspace is ready.');
     syncAuthUi();
     return;
   }
   openAuthModal();
-  setAuthStatus('The sign-in link could not be confirmed. Request a new link and try again.', 'error');
+  setAuthStatus('Sign-in could not be confirmed. Please try again.', 'error');
 }
 async function createAvatarBuild() {
   if (!appState.signedIn) { showToast('Sign in before creating avatars.'); openAuthModal(); return; }

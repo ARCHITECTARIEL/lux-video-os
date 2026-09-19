@@ -1,0 +1,29 @@
+[Unit]
+Description=LUX Video OS - render worker daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=video-os
+Group=video-os
+WorkingDirectory=/opt/video-os
+EnvironmentFile=/etc/video-os/video-os.env
+ExecStart=/usr/bin/env node worker/render-worker.mjs
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=video-os-worker
+
+# Sandboxing. ReadWritePaths only needs to cover the fs-blob-driver's data
+# directory when STORAGE_DRIVER=fs is in use; harmless to leave writable
+# otherwise since nothing else in the app writes to disk.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/video-os
+
+[Install]
+WantedBy=multi-user.target

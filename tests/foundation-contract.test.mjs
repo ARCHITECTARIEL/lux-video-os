@@ -56,13 +56,21 @@ test('Preview deployment stays within the Hobby serverless function budget', () 
     '/api/video-os-lite/projects',
     '/api/video-os-lite/providers',
     '/api/video-os-lite/results',
+    '/api/video-os-lite/standard',
   ]);
 });
 
 test('project creation establishes its signed Postgres owner before persistence', () => {
   const source = readFileSync('routes/video-os-lite/projects.js', 'utf8');
-  const ensureIndex = source.indexOf('await ensureAccount({');
-  const saveIndex = source.indexOf('await saveProject({');
+  // Standard project creation is unconditional (no update path), so its
+  // ensureAccount/saveStandardProject pair is the first occurrence in the
+  // file; the legacy Premium pair (guarded by `!payload.id` since it also
+  // handles updates) is the last.
+  const standardEnsureIndex = source.indexOf('await ensureAccount({');
+  const standardSaveIndex = source.indexOf('await saveStandardProject({');
+  assert.ok(standardEnsureIndex >= 0 && standardSaveIndex > standardEnsureIndex, 'Standard project creation must synchronize the signed account before persistence');
+  const ensureIndex = source.lastIndexOf('await ensureAccount({');
+  const saveIndex = source.lastIndexOf('await saveProject({');
   assert.ok(ensureIndex >= 0, 'project route must synchronize the signed account');
   assert.ok(saveIndex > ensureIndex, 'account synchronization must precede project insertion');
   assert.match(source.slice(0, ensureIndex), /if \(!payload\.id\) \{/);
@@ -88,8 +96,15 @@ test('workflow acceptance preserves its reservation when run tracking persistenc
   assert.equal(shouldReleaseWorkflowReservation({ job: { ...prepared, workflowRunId: 'wrun-proof' }, workflowDispatchAttempted: false }), false);
 
   const routeSource = readFileSync('api/video-os-lite/render-v2.js', 'utf8');
-  assert.match(routeSource, /workflowDispatchAttempted = true;\s+const run = await start/);
+  // On Vercel (the default / WORKFLOW_DISPATCH_MODE=vercel), a claimed job
+  // must still actually be dispatched via start() -- not silently left as
+  // "attempted" with nothing behind it.
+  assert.match(routeSource, /workflowDispatchAttempted = true;\s+if \(dispatchesViaVercelWorkflow\(\)\) \{\s+const run = await start/);
   assert.match(routeSource, /code: workflowAccepted \? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain'/);
+  // On a VPS (WORKFLOW_DISPATCH_MODE != vercel), dispatch is intentionally a
+  // no-op: worker/render-worker.mjs's poll loop drives the job forward from
+  // 'workflow_started' instead of Vercel Workflow's runtime.
+  assert.match(routeSource, /\} else \{\s+workflowAccepted = true;\s+\}/);
   const repositorySource = readFileSync('db/repositories.js', 'utf8');
   assert.match(repositorySource, /status:\s*'workflow_started'.+eq\(videoJobs\.status, 'reserved'\)/s);
   assert.doesNotMatch(repositorySource, /set\(\{ workflowRunId, status: 'workflow_started'/);

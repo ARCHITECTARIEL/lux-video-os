@@ -1,4 +1,4 @@
-import { get } from '@vercel/blob';
+import { getPrivateBlob } from '../../lib/video-os-private-blob.js';
 import { getOwnedJob } from '../../db/repositories.js';
 import { sessionFromRequest } from '../../lib/video-os-account.js';
 
@@ -17,7 +17,7 @@ export default async function handler(req, res) {
     const job = await getOwnedJob(session.accountId, jobId);
     if (!job) return failure(res, 404, 'Final video not found.');
     if (job.status !== 'ready') return failure(res, 409, 'Final video is not ready.');
-    const result = await get(job.output?.privatePathname, { access: 'private' });
+    const result = await getPrivateBlob(job.output?.privatePathname);
     if (!result?.stream) return failure(res, 410, 'Final video is unavailable.');
     const filename = String(job.output?.filename || 'video-os-final.mp4').replace(/[^a-zA-Z0-9._-]/g, '-');
     res.statusCode = 200;

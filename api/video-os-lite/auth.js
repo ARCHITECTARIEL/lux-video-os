@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
 import { accountDto } from '../../db/dto.js';
 import { getAccountContext, updateAuthenticatedAccount } from '../../db/repositories.js';
-import { accountIdForEmail, clearAdminCookie, clearSessionCookie, consumeMagicToken, handleOptions, makeSession, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
+import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, handleOptions, makeSession, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
+import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
 import { publicOrigin } from '../../lib/video-os-security.js';
 
 function route(req) {
@@ -179,6 +180,42 @@ export default async function handler(req, res) {
       await consumeMagicToken(token);
       const session = makeSession(accountId, email);
       res.setHeader('Set-Cookie', sessionCookie(session));
+      res.statusCode = 302;
+      res.setHeader('Location', '/?signed_in=1');
+      return res.end('Signed in');
+    }
+    if (action === 'google-login') {
+      if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'Use GET to sign in with Google.' });
+      if (!googleOAuthConfigured()) throw Object.assign(new Error('Google sign-in is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.'), { statusCode: 501 });
+      const state = crypto.randomBytes(24).toString('base64url');
+      const redirectUri = `${publicOrigin(req)}/api/video-os-lite/google-callback`;
+      res.setHeader('Set-Cookie', oauthStateCookie(state));
+      res.statusCode = 302;
+      res.setHeader('Location', googleAuthorizationUrl({ redirectUri, state }));
+      return res.end('Redirecting to Google');
+    }
+    if (action === 'google-callback') {
+      if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'Invalid Google callback method.' });
+      const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
+      if (url.searchParams.get('error')) throw Object.assign(new Error('Google sign-in was cancelled.'), { statusCode: 401 });
+      const returnedState = url.searchParams.get('state');
+      const expectedState = parseCookies(req).vos_oauth_state;
+      if (!returnedState || !expectedState || !timingSafeMatch(returnedState, expectedState)) {
+        throw Object.assign(new Error('Google sign-in could not be verified. Please try again.'), { statusCode: 401 });
+      }
+      const code = url.searchParams.get('code');
+      if (!code) throw Object.assign(new Error('Google sign-in did not return an authorization code.'), { statusCode: 400 });
+      const redirectUri = `${publicOrigin(req)}/api/video-os-lite/google-callback`;
+      const tokens = await exchangeGoogleCode({ code, redirectUri });
+      const profile = await fetchGoogleProfile(tokens.access_token);
+      const accountId = accountIdForEmail(profile.email);
+      await updateAuthenticatedAccount({
+        accountId, email: profile.email, name: profile.name, role: 'customer',
+        initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 0),
+        entitlementKeys: ['googleAccess'], sourceId: 'google_oauth',
+      });
+      const session = makeSession(accountId, profile.email);
+      res.setHeader('Set-Cookie', [sessionCookie(session), clearOauthStateCookie()]);
       res.statusCode = 302;
       res.setHeader('Location', '/?signed_in=1');
       return res.end('Signed in');

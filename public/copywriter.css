@@ -1,0 +1,232 @@
+.copywriter-layout {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.copywriter-brief,
+.copywriter-workbench,
+.copywriter-candidate {
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.copywriter-selects {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.copywriter-selects label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.copywriter-brief > .button,
+.custom-revision > .button {
+  margin-top: 17px;
+}
+
+.copywriter-refine-actions,
+.copywriter-output-actions,
+.candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.copywriter-refine-actions {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.custom-revision {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fbfcfe;
+}
+
+.custom-revision .field-label {
+  margin-top: 0;
+}
+
+.copywriter-output-actions {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.copywriter-status {
+  min-height: 22px;
+  margin: 15px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.copywriter-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 15px;
+}
+
+.copywriter-status-row .copywriter-status {
+  margin: 0;
+}
+
+.copywriter-status[data-state="ready"],
+.copywriter-status[data-state="copied"],
+.copywriter-status[data-state="accepted"] {
+  color: var(--success);
+}
+
+.copywriter-status[data-state="pending"] {
+  color: var(--primary-strong);
+}
+
+.copywriter-status[data-state="stale"] {
+  color: var(--warning);
+}
+
+.copywriter-status[data-state="error"],
+.copywriter-status[data-state="timeout"],
+.copywriter-status[data-state="rate-limited"],
+.copywriter-status[data-state="refusal"] {
+  color: var(--danger);
+}
+
+.copywriter-candidate {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 1.35fr);
+  gap: 18px 24px;
+  border-color: #bdcae0;
+}
+
+.candidate-heading {
+  align-self: start;
+}
+
+.candidate-heading h2 {
+  margin-bottom: 0;
+}
+
+.candidate-heading > span {
+  display: inline-flex;
+  margin-top: 14px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.candidate-heading > span[data-state="stale"] {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+#copywriter-candidate {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  min-height: 270px;
+  resize: vertical;
+  background: #fbfcfe;
+}
+
+#copywriter-candidate-note {
+  margin: 0;
+  font-size: 12px;
+}
+
+.candidate-actions {
+  align-self: end;
+}
+
+.copywriter-fixture-banner {
+  justify-content: flex-start;
+}
+
+#copywriter-availability[data-state="ready"] {
+  border-color: #a9d9c8;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+#copywriter-availability[data-state="fixture"] {
+  border-color: #e7c373;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+#copywriter-availability[data-state="rate-limited"] {
+  border-color: #e7c373;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+#copywriter-availability[data-state="signed-out"],
+#copywriter-availability[data-state="disabled"],
+#copywriter-availability[data-state="missing-setup"],
+#copywriter-availability[data-state="not-authorized"],
+#copywriter-availability[data-state="unavailable"],
+#copywriter-availability[data-state="error"] {
+  border-color: #efb5ae;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+@media (max-width: 1000px) {
+  .copywriter-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .copywriter-candidate {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 719px) {
+  .copywriter-brief,
+  .copywriter-workbench,
+  .copywriter-candidate {
+    padding: 18px;
+  }
+
+  .copywriter-selects,
+  .copywriter-candidate {
+    grid-template-columns: 1fr;
+  }
+
+  #copywriter-candidate {
+    grid-column: auto;
+    grid-row: auto;
+    min-height: 240px;
+  }
+
+  .copywriter-refine-actions .button,
+  .copywriter-output-actions .button,
+  .candidate-actions .button {
+    flex: 1 1 100%;
+  }
+
+  .copywriter-status-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

@@ -58,7 +58,7 @@ export const projects = pgTable('projects', {
   accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   identityId: uuid('identity_id').references(() => userIdentities.id, { onDelete: 'set null' }),
   title: text('title').notNull(),
-  script: text('script').notNull(),
+  script: text('script'),
   avatar: jsonb('avatar').notNull().default({}),
   voice: jsonb('voice').notNull().default({}),
   settings: jsonb('settings').notNull().default({}),
