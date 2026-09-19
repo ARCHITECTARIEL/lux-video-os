@@ -37,7 +37,7 @@
         "zod": "^4.4.3"
     },
     "devDependencies": {
-        "@playwright/test": "^1.61.1",
+        "@playwright/test": "^1.63.0",
         "drizzle-kit": "^0.31.10",
         "hyperframes": "0.7.64",
         "vercel": "^56.2.0",
