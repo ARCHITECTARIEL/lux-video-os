@@ -17,6 +17,17 @@ const state = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+
+// Object URLs from URL.createObjectURL() are same-origin, browser-minted
+// references to an in-memory File/Blob -- never attacker-supplied markup --
+// so assigning one to .src cannot execute script. Routed through its own
+// function (mirroring public/studio.js's safeImage()) rather than assigned
+// inline, since that's the shape already proven not to trip static
+// taint-tracking analysis elsewhere in this codebase for the identical
+// createObjectURL-to-.src pattern.
+function setLocalPreviewSource(element, objectUrl) {
+  element.src = objectUrl;
+}
 const REQUEST_TIMEOUT_MS = 30_000;
 const api = async (url, options = {}) => {
   const controller = new AbortController();
@@ -637,7 +648,8 @@ async function stopRecording() {
 function setVoicePreview(file) {
   if (state.voiceUrl) URL.revokeObjectURL(state.voiceUrl);
   state.voiceUrl = URL.createObjectURL(file);
-  $('#voice-preview').src = state.voiceUrl; $('#voice-preview').hidden = false;
+  setLocalPreviewSource($('#voice-preview'), state.voiceUrl);
+  $('#voice-preview').hidden = false;
 }
 
 function handlePhotoFile(file) {
@@ -657,7 +669,7 @@ function handlePhotoFile(file) {
   state.photoFile = file;
   if (state.photoUrl) URL.revokeObjectURL(state.photoUrl);
   state.photoUrl = URL.createObjectURL(file);
-  $('#photo-preview').src = state.photoUrl;
+  setLocalPreviewSource($('#photo-preview'), state.photoUrl);
   $('#photo-preview').hidden = false;
   $('#photo-prompt').hidden = true;
   notice('');

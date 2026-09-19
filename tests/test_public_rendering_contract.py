@@ -84,13 +84,19 @@ def test_auth_modal_has_recovery_and_session_aware_controls():
 
 
 def test_latest_thirty_gallery_has_progressive_disclosure():
+    # public/index.html loads public/studio.js (see its closing <script> tag),
+    # not public/lite.js -- lite.js/lite.css are an earlier, now-unloaded
+    # frontend kept in the tree but not referenced by any HTML page. This
+    # test was written against that earlier frontend, before it was replaced;
+    # updated here to check the page that's actually served, where the same
+    # progressive-disclosure behavior now lives under the "My Videos" heading.
     html = (ROOT / "public" / "index.html").read_text(encoding="utf-8")
-    javascript = (ROOT / "public" / "lite.js").read_text(encoding="utf-8")
+    javascript = (ROOT / "public" / "studio.js").read_text(encoding="utf-8")
 
-    assert "Latest 30 final cuts" in html
+    assert 'id="results-title">My Videos<' in html
     assert 'id="result-gallery-toggle"' in html
-    assert "const items = (appState.results || []).slice(0, 30);" in javascript
-    assert "appState.resultLimit = appState.resultLimit > 6 ? 6 : 30;" in javascript
+    assert ".slice(0, 30);" in javascript
+    assert "state.resultLimit = state.resultLimit > 6 ? 6 : 30;" in javascript
 
 
 def test_hosted_talent_inventory_returns_partial_data_when_one_provider_call_times_out(monkeypatch):
