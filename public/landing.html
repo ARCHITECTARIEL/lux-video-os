@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LUX Video OS — AI video studio for your own likeness or a licensed presenter</title>
+<meta name="description" content="Create talking-head videos two ways: your own photo and voice, or a licensed AI presenter. Built for agencies who need real ownership, private storage, and operational control — not just another avatar demo.">
+<meta name="theme-color" content="#0b1220">
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/studio.css">
+<link rel="stylesheet" href="/landing.css">
+</head>
+<body class="landing-body">
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="lp-nav">
+  <a class="wordmark" href="/welcome" aria-label="LUX Video OS, home">
+    <span class="wordmark-lux">LUX</span><span class="wordmark-product">VIDEO OS</span>
+  </a>
+  <nav class="lp-nav-links" aria-label="Primary">
+    <a href="#how-it-works">How it works</a>
+    <a href="#compare">Why LUX</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#faq">FAQ</a>
+  </nav>
+  <div class="lp-nav-actions">
+    <a class="button quiet compact" href="/?signin=1">Log in</a>
+    <a class="button primary compact" href="/?signin=1">Get started free</a>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+
+  <section class="lp-hero">
+    <canvas id="lp-silk-canvas" aria-hidden="true"></canvas>
+    <div class="lp-hero-inner">
+      <p class="lp-eyebrow">AI VIDEO STUDIO</p>
+      <h1>Your face. Your voice. Or a licensed presenter. One studio, real ownership.</h1>
+      <p class="lp-hero-sub">
+        LUX Video OS renders talking-head videos two ways — <strong>Standard</strong>, from a photo and your own
+        recorded narration, or <strong>Premium</strong>, with a licensed AI presenter, cloned voice, and a script.
+        Every render is private to your account, downloadable, and yours.
+      </p>
+      <div class="lp-hero-actions">
+        <a class="button primary" href="/?signin=1">Get started free</a>
+        <a class="button secondary" href="#how-it-works">See how it works</a>
+      </div>
+      <p class="lp-hero-note">No credit card required to start. Free trial credits included on sign-up.</p>
+    </div>
+  </section>
+
+  <section class="lp-video-section" aria-labelledby="lp-video-heading">
+    <div class="lp-section-inner lp-video-inner">
+      <div class="lp-video-copy">
+        <p class="lp-eyebrow">FROM OUR FOUNDER</p>
+        <h2 id="lp-video-heading">A two-minute walkthrough, from the person who built this for you</h2>
+        <p>Why we built two rendering tiers instead of one, who this is actually for, and what "you own the output" means in practice.</p>
+      </div>
+      <div class="lp-video-frame">
+        <!-- Replace poster + <source> below with the real CEO welcome video before launch. -->
+        <video id="lp-ceo-video" controls preload="none" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='960' height='540'%3E%3Crect width='960' height='540' fill='%230b1220'/%3E%3C/svg%3E">
+          <source src="" type="video/mp4">
+        </video>
+        <button class="lp-video-play" type="button" aria-label="Play welcome video from the CEO">
+          <svg viewBox="0 0 24 24" width="28" height="28"><polygon points="6,4 20,12 6,20" fill="currentColor" stroke="none"></polygon></svg>
+        </button>
+        <p class="lp-video-placeholder-note">Video coming soon — this slot is wired and ready.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="how-it-works" class="lp-section" aria-labelledby="lp-how-heading">
+    <div class="lp-section-inner">
+      <p class="lp-eyebrow">HOW IT WORKS</p>
+      <h2 id="lp-how-heading">Four steps, either tier</h2>
+      <ol class="lp-steps">
+        <li><span class="lp-step-num">1</span><h3>Choose your tier</h3><p>Standard for your own likeness and voice, Premium for a licensed AI presenter with a script.</p></li>
+        <li><span class="lp-step-num">2</span><h3>Provide your inputs</h3><p>Upload a portrait and narration, or write a script and pick a presenter and voice.</p></li>
+        <li><span class="lp-step-num">3</span><h3>Confirm your quote</h3><p>See the exact credit cost before anything renders — nothing submits without your confirmation.</p></li>
+        <li><span class="lp-step-num">4</span><h3>Download your video</h3><p>Your finished MP4 is private to your account from the moment it's ready.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="lp-section lp-tiers" aria-labelledby="lp-tiers-heading">
+    <div class="lp-section-inner">
+      <p class="lp-eyebrow">TWO TIERS</p>
+      <h2 id="lp-tiers-heading">Not every video needs a licensed avatar</h2>
+      <div class="lp-tier-cards">
+        <article class="lp-tier-card">
+          <h3>Standard</h3>
+          <p class="lp-tier-tagline">Your own photo. Your own voice.</p>
+          <p>Upload a portrait and a recorded narration — LUX renders a talking-head video from your own likeness, with your own consent on file for every render.</p>
+          <ul>
+            <li>Your own identity, not a stock avatar</li>
+            <li>Consent tracked per render</li>
+            <li>Fastest path from idea to video</li>
+          </ul>
+        </article>
+        <article class="lp-tier-card lp-tier-card-premium">
+          <h3>Premium</h3>
+          <p class="lp-tier-tagline">A licensed AI presenter, your script.</p>
+          <p>Write or generate a script, pick a presenter and voice, and get a fully produced Premium render — cinematic color grading included.</p>
+          <ul>
+            <li>Licensed presenter and voice library</li>
+            <li>AI copywriter to draft your script</li>
+            <li>Film grain and color-grade finishing</li>
+          </ul>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="compare" class="lp-section lp-compare" aria-labelledby="lp-compare-heading">
+    <div class="lp-section-inner">
+      <p class="lp-eyebrow">WHY LUX</p>
+      <h2 id="lp-compare-heading">Built for teams who've outgrown a single-avatar demo tool</h2>
+      <p class="lp-compare-sub">Most AI presenter platforms — HeyGen, avatar-clone tools, and the rest — give you one rendering model and a per-seat login. LUX is built around actually operating a video business on top of that layer.</p>
+      <div class="lp-table-wrap">
+        <table class="lp-compare-table">
+          <thead><tr><th scope="col">Capability</th><th scope="col">Typical avatar platform</th><th scope="col">LUX Video OS</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Your own likeness, not just a stock avatar</th><td>Rarely first-class</td><td>Standard tier, built in</td></tr>
+            <tr><th scope="row">Licensed presenter + script generation</th><td>Yes, one model</td><td>Yes, plus AI copywriter</td></tr>
+            <tr><th scope="row">Private, downloadable output you own</th><td>Varies by plan</td><td>Always private to your account</td></tr>
+            <tr><th scope="row">Operations console (accounts, jobs, credits, retries)</th><td>Not typically exposed</td><td>Full admin console included</td></tr>
+            <tr><th scope="row">Usage-based credits, no forced subscription</th><td>Usually subscription-only</td><td>Credit packs, use at your pace</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing" class="lp-section lp-pricing" aria-labelledby="lp-pricing-heading">
+    <div class="lp-section-inner">
+      <p class="lp-eyebrow">PRICING</p>
+      <h2 id="lp-pricing-heading">Pay for what you render</h2>
+      <p class="lp-compare-sub">Every render costs credits, not a seat. A Standard or Premium video is 90 credits. Buy a pack, use it whenever.</p>
+      <div class="lp-price-cards">
+        <article class="lp-price-card">
+          <h3>Starter</h3>
+          <p class="lp-price-amount">500 <span>credits</span></p>
+          <p class="lp-price-detail">≈ 5 videos</p>
+          <p class="lp-price-tag">Pricing shown in-app</p>
+          <a class="button secondary compact" href="/?signin=1">Choose Starter</a>
+        </article>
+        <article class="lp-price-card lp-price-card-featured">
+          <p class="lp-price-badge">Most popular</p>
+          <h3>Growth</h3>
+          <p class="lp-price-amount">1,000 <span>credits</span></p>
+          <p class="lp-price-detail">≈ 11 videos</p>
+          <p class="lp-price-tag">Pricing shown in-app</p>
+          <a class="button primary compact" href="/?signin=1">Choose Growth</a>
+        </article>
+        <article class="lp-price-card">
+          <h3>Studio</h3>
+          <p class="lp-price-amount">2,000 <span>credits</span></p>
+          <p class="lp-price-detail">≈ 22 videos</p>
+          <p class="lp-price-tag">Pricing shown in-app</p>
+          <a class="button secondary compact" href="/?signin=1">Choose Studio</a>
+        </article>
+      </div>
+      <p class="lp-price-footnote">Free trial credits are included automatically when you sign up — enough for your first video, no card required.</p>
+    </div>
+  </section>
+
+  <section id="faq" class="lp-section lp-faq" aria-labelledby="lp-faq-heading">
+    <div class="lp-section-inner">
+      <p class="lp-eyebrow">FAQ</p>
+      <h2 id="lp-faq-heading">Questions people actually ask</h2>
+      <div class="lp-accordion">
+        <details class="lp-faq-item">
+          <summary>What's the real difference between Standard and Premium?</summary>
+          <p>Standard uses your own uploaded photo and your own recorded audio — it's you, narrating in your own voice. Premium uses a licensed AI presenter with a chosen voice and a script you write or generate, for a fully produced, presenter-led video.</p>
+        </details>
+        <details class="lp-faq-item">
+          <summary>Do I own the videos I create?</summary>
+          <p>Yes. Every finished render is stored privately to your account and is yours to download. Nothing is shared, sold, or used to train other models.</p>
+        </details>
+        <details class="lp-faq-item">
+          <summary>Is my photo or voice used for anything besides my own video?</summary>
+          <p>No. Standard-tier renders record your explicit consent for that specific portrait and narration, tied to that render only.</p>
+        </details>
+        <details class="lp-faq-item">
+          <summary>How long does a render take?</summary>
+          <p>Rendering is asynchronous — you'll see live status while it processes, and can come back to download it once it's ready.</p>
+        </details>
+        <details class="lp-faq-item">
+          <summary>What happens to unused credits?</summary>
+          <p>They stay on your account and roll forward — credits are only spent when you actually submit a render.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section class="lp-cta-band" aria-labelledby="lp-cta-heading">
+    <div class="lp-section-inner">
+      <h2 id="lp-cta-heading">Start with free credits. No card required.</h2>
+      <a class="button primary" href="/?signin=1">Get started free</a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="lp-footer">
+  <div class="lp-section-inner lp-footer-inner">
+    <a class="wordmark" href="/welcome" aria-label="LUX Video OS, home">
+      <span class="wordmark-lux">LUX</span><span class="wordmark-product">VIDEO OS</span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="/?signin=1">Log in</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <p class="lp-footer-copy">&copy; 2026 LUX Video OS. All rights reserved.</p>
+  </div>
+</footer>
+
+<script src="/landing.js" type="module"></script>
+</body>
+</html>

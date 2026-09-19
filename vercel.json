@@ -110,6 +110,13 @@
                                    }
                    },
                    {
+                       "src":  "/welcome",
+                       "dest":  "/public/landing.html",
+                       "headers":  {
+                                       "Cache-Control":  "no-store"
+                                   }
+                   },
+                   {
                        "src":  "/exports/(.*)",
                        "dest":  "/public/exports/$1",
                        "headers":  {

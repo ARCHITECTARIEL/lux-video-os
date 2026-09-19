@@ -65,6 +65,47 @@ None of this was asked for in your original scope. It's here because Ariel asked
 
   All 4 phases have real DB/Blob integration tests (not mocks), Playwright coverage, and were manually verified live in-browser against the real dev database, including one real Vercel Workflow dispatch.
 
+## How far along is this, really
+
+Two different numbers, kept separate on purpose:
+
+**~65-70% built. 0% launched.** Nothing has been deployed anywhere, and nothing has passed the P0 production-receipt proof (see "What's left, #4") — that's true regardless of how much code exists.
+
+| Area | % done | Why |
+|---|---|---|
+| Frontend | ~95% | Fully built, 101/102 Playwright tests pass. Only gap: never proven against a *live* backend. |
+| Premium/HeyGen backend | ~85% | Real lifecycle, has produced one real live render. Missing: the formal P0 receipt, operational watchdog. |
+| Standard/SadTalker backend | ~50-55% | Narration/consent/quote pipeline is real and tested — but **even once a RunPod pod + Docker image + inference model are stood up, the application-side client code that talks to them doesn't exist yet.** Zero hits for "RUNPOD" anywhere in application code (confirmed by direct grep) — only doc mentions. Standing up infrastructure is not the same as writing `services/sadtalker.js` (the `services/heygen.js`-shaped submit/poll/error-handling/cost-accounting client) and wiring it into `workflows/standard-render.js` in place of the ffmpeg simulator. That client is comparable in size to the HeyGen integration — budget real engineering time for it, not a config change. |
+| Admin console / ops tooling | ~90% | All 4 phases done and tested. Missing: an automated watchdog — right now a stalled job only surfaces via a human checking the admin console's "Needs attention" tab. |
+| Infra/deployment code | Code ~80%, proven live: **0%** | `deploy/` scripts and the Vercel path both exist and pass tests, neither has run against a real box or a real production deploy. |
+| Production launch readiness | ~10% | `docs/P0-RELEASE-GATE.md`'s 9-observation receipt has never been captured, for either tier, on any environment. |
+| Premium VFX/cinematic differentiation | ~15% | ffmpeg grain/LUT shipped and real. The bigger "premium package" (original overlay/title kit, licensed-clean asset library) is researched only. |
+| Non-HeyGen providers | 0% | UI stubs only. |
+
+## Wish list — what would make this a better product, not just a finished one
+
+None of this is scoped or built. In priority order:
+
+1. **A real marketing/paywall front door.** Landing page skeleton now exists — see "New: a landing page" below.
+2. **"Your video is ready" notifications.** Renders are async and there is currently no email/webhook when a job finishes — a customer has to remember to come back and check the gallery. Resend is already wired in for magic-link auth; reuse it for job-completion email.
+3. **The operational watchdog** (also listed under "What's left" — it's both a reliability fix and a trust feature: silent failure is the worst failure mode for a paying customer).
+4. **Onboarding / first-run guidance** — the wizard is fine once you know what "Standard" vs "Premium" means, but there's no explainer or example gallery for a brand-new signup.
+5. **Subscription tiers, not just one-time credit packs** — better LTV lever than pay-as-you-go, if the business model calls for it.
+6. **White-label / per-client branding** — relevant if this gets resold to agency clients rather than used directly; right now everything is single-brand.
+
+Items 5-6 are business-model decisions, not engineering ones — surface them to whoever owns pricing/positioning before building either.
+
+## New: a landing page (`/welcome`, `public/landing.html`)
+
+Built this session, addressing wish-list item #1 above — a real public marketing page in front of the app (the app itself, at `/`, is unchanged and still works exactly as before). Includes:
+
+- A hero with a from-scratch procedural "silk" WebGL background (domain-warped fBm + ridged-multifractal creases + finite-difference normals for the sheen — the same well-known technique behind most procedural-cloth shader demos, implemented fresh here, zero AI/GPU cost, respects `prefers-reduced-motion`, degrades to a plain dark background with no JS/WebGL at all).
+- A CEO welcome-video slot, wired and ready — **drop a real `.mp4` into the empty `<source>` in `public/landing.html`'s `#lp-ceo-video`** and it works; currently shows a "coming soon" placeholder instead of erroring.
+- A two-tier explainer (Standard vs Premium), a feature-comparison table positioned against generic "typical avatar platforms" (deliberately not making unverifiable specific claims about any named competitor's current pricing), a pricing section using real credit-pack sizes (500/1000/2000 — matching `checkout-v2.js`'s actual `PACKAGES`) with **dollar amounts intentionally left as "pricing shown in-app"** rather than invented, and an FAQ.
+- Every "Get started" / "Log in" CTA links to `/?signin=1`, which already auto-opens the real, existing, tested auth modal (magic link + Google) — no new auth code, no duplicate sign-up form. Verified live in-browser.
+- Real Playwright coverage: `tests/e2e/landing.spec.js` (hero renders, every CTA points at the real sign-in flow, tier/pricing/compare counts, FAQ accordion, nav scroll).
+- **Not done**: this page is additive only — it doesn't gate `/`, so an anonymous visitor can still reach the signed-out app shell directly. Wiring it as an enforced front door (redirect anonymous root traffic to `/welcome`) is a deliberate next decision, not an oversight — it changes the entry funnel and is worth a product call, not a drive-by change on a handoff.
+
 ## Cleanup items found while preparing this handoff
 
 - **`video_os_backend.py`** (repo root) is a **legacy, dead Python HeyGen client** — duplicate `heygen_submit`/`heygen_poll`/`fetch_heygen_collection` logic, completely disconnected from real routing (nothing in `vercel.json`/`server/index.js` calls it). `services/heygen.js` is the one real HeyGen client. Left in place for this handoff since removing it also touches the legacy `tests/test_public_rendering_contract.py` pytest suite (which already tests dead frontend code — see Known Gotchas) — worth a dedicated cleanup pass, not a drive-by deletion.

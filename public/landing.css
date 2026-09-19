@@ -1,0 +1,126 @@
+/* Landing/marketing page only. Reuses studio.css's tokens, fonts, and
+   .button/.wordmark components -- this file adds the landing-specific
+   layout shapes (hero, silk canvas, tier/price cards, compare table,
+   accordion) that the app shell has no equivalent for. */
+
+.landing-body { background: var(--surface); }
+
+.lp-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 32px;
+  background: rgba(255, 255, 255, .88);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.lp-nav-links { display: flex; gap: 24px; }
+.lp-nav-links a { color: var(--muted); font-weight: 620; font-size: 13px; text-decoration: none; }
+.lp-nav-links a:hover { color: var(--ink); }
+.lp-nav-actions { display: flex; align-items: center; gap: 10px; }
+
+.lp-section-inner { width: min(1080px, calc(100% - 48px)); margin: 0 auto; }
+.lp-section { padding: 72px 0; }
+.lp-eyebrow { margin: 0 0 10px; color: var(--primary-strong); font-size: 11px; font-weight: 700; letter-spacing: .14em; }
+
+/* Hero + silk shader */
+.lp-hero {
+  position: relative;
+  overflow: hidden;
+  min-height: 640px;
+  display: flex;
+  align-items: center;
+  background: #0b1220;
+  color: #f4f6fb;
+}
+#lp-silk-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.lp-hero-inner {
+  position: relative;
+  z-index: 1;
+  width: min(760px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 96px 0;
+  text-align: center;
+}
+.lp-hero .lp-eyebrow { color: #9fb4ff; }
+.lp-hero h1 { color: #fff; font-size: clamp(32px, 5vw, 52px); }
+.lp-hero-sub { margin: 18px auto 0; max-width: 620px; color: #c4cbdc; font-size: 16px; line-height: 1.6; }
+.lp-hero-sub strong { color: #fff; }
+.lp-hero-actions { display: flex; justify-content: center; gap: 12px; margin-top: 32px; flex-wrap: wrap; }
+.lp-hero-note { margin-top: 16px; color: #8b93a8; font-size: 12px; }
+.lp-hero .button.secondary { border-color: rgba(255, 255, 255, .35); background: transparent; color: #fff; }
+.lp-hero .button.secondary:hover { background: rgba(255, 255, 255, .1); }
+
+/* CEO video */
+.lp-video-inner { display: grid; grid-template-columns: 1fr 1.15fr; gap: 48px; align-items: center; }
+.lp-video-frame { position: relative; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow); background: #0b1220; }
+.lp-video-frame video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #0b1220; }
+.lp-video-play {
+  position: absolute; inset: 0; margin: auto; width: 64px; height: 64px; border-radius: 50%;
+  border: none; background: rgba(255, 255, 255, .92); color: var(--primary-strong);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.lp-video-play svg { margin-left: 3px; }
+.lp-video-placeholder-note { position: absolute; left: 0; right: 0; bottom: 12px; margin: 0; text-align: center; color: #c4cbdc; font-size: 11px; }
+
+/* Steps */
+.lp-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 24px; margin: 32px 0 0; padding: 0; list-style: none; }
+.lp-steps li { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.lp-step-num { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin-bottom: 12px; border-radius: 50%; background: var(--primary-soft); color: var(--primary-strong); font-weight: 700; font-size: 13px; }
+
+/* Tier cards */
+.lp-tier-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 32px; }
+.lp-tier-card { padding: 28px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); }
+.lp-tier-card-premium { border-color: var(--primary); background: var(--primary-soft); }
+.lp-tier-tagline { color: var(--ink); font-weight: 620; margin: 4px 0 12px; }
+.lp-tier-card ul { margin: 14px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+.lp-tier-card li { margin-bottom: 6px; }
+
+/* Compare table */
+.lp-compare-sub { max-width: 640px; color: var(--muted); }
+.lp-table-wrap { margin-top: 24px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.lp-compare-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lp-compare-table th, .lp-compare-table td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--line); }
+.lp-compare-table thead th { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
+.lp-compare-table tbody th { font-weight: 620; color: var(--ink); }
+.lp-compare-table tbody tr:last-child td, .lp-compare-table tbody tr:last-child th { border-bottom: 0; }
+.lp-compare-table td:last-child { color: var(--primary-strong); font-weight: 620; }
+
+/* Pricing */
+.lp-price-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 24px; margin-top: 32px; }
+.lp-price-card { position: relative; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); text-align: center; box-shadow: var(--shadow); }
+.lp-price-card-featured { border-color: var(--primary); box-shadow: 0 4px 24px rgba(36, 88, 211, .18); }
+.lp-price-badge { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); padding: 4px 12px; border-radius: 999px; background: var(--primary); color: #fff; font-size: 11px; font-weight: 650; }
+.lp-price-amount { margin: 14px 0 0; font-size: 30px; font-weight: 720; letter-spacing: -.02em; }
+.lp-price-amount span { font-size: 13px; font-weight: 500; color: var(--muted); }
+.lp-price-detail { color: var(--muted); font-size: 13px; margin: 4px 0 12px; }
+.lp-price-tag { color: var(--muted); font-size: 11px; margin: 0 0 18px; }
+.lp-price-footnote { margin-top: 24px; color: var(--muted); font-size: 13px; text-align: center; }
+
+/* FAQ */
+.lp-accordion { display: grid; gap: 10px; margin-top: 28px; }
+.lp-faq-item { padding: 16px 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.lp-faq-item summary { cursor: pointer; font-weight: 640; list-style: none; }
+.lp-faq-item summary::-webkit-details-marker { display: none; }
+.lp-faq-item summary::after { content: '+'; float: right; color: var(--primary); font-weight: 700; }
+.lp-faq-item[open] summary::after { content: '\2212'; }
+.lp-faq-item p { margin-top: 10px; }
+
+/* CTA band + footer */
+.lp-cta-band { padding: 64px 0; background: var(--primary-soft); text-align: center; }
+.lp-cta-band .button { margin-top: 18px; }
+.lp-footer { padding: 40px 0; border-top: 1px solid var(--line); }
+.lp-footer-inner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
+.lp-footer-inner nav { display: flex; gap: 18px; }
+.lp-footer-inner nav a { color: var(--muted); font-size: 13px; text-decoration: none; }
+.lp-footer-copy { width: 100%; margin: 0; color: var(--muted); font-size: 12px; }
+
+@media (max-width: 760px) {
+  .lp-nav-links { display: none; }
+  .lp-video-inner { grid-template-columns: 1fr; }
+  .lp-hero { min-height: 560px; }
+}
