@@ -29,8 +29,7 @@ function setLocalPreviewSource(element, objectUrl) {
   // regardless of what the selected file contains. Confirmed via the
   // SARIF code flow (source: event.target.files -> URL.createObjectURL
   // -> here) that this is the exact, full path CodeQL traces.
-  // codeql[js/xss-through-dom]: false positive -- blob: URL from
-  // URL.createObjectURL(), not attacker-controllable markup.
+  // codeql[js/xss-through-dom]: false positive, blob: URL from URL.createObjectURL(), not attacker-controllable markup.
   element.src = objectUrl;
 }
 const REQUEST_TIMEOUT_MS = 30_000;
