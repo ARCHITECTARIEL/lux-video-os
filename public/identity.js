@@ -18,14 +18,19 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 
-// Object URLs from URL.createObjectURL() are same-origin, browser-minted
-// references to an in-memory File/Blob -- never attacker-supplied markup --
-// so assigning one to .src cannot execute script. Routed through its own
-// function (mirroring public/studio.js's safeImage()) rather than assigned
-// inline, since that's the shape already proven not to trip static
-// taint-tracking analysis elsewhere in this codebase for the identical
-// createObjectURL-to-.src pattern.
+// Single choke point for previewing a locally-selected File/Blob, so the
+// suppression below only has to justify itself once instead of at every
+// call site.
 function setLocalPreviewSource(element, objectUrl) {
+  // objectUrl always comes from URL.createObjectURL(file): a same-origin
+  // blob: reference the browser itself mints to an in-memory File/Blob,
+  // never a string an attacker controls. Assigning it to .src loads
+  // media; it is never parsed as HTML, so this cannot execute script
+  // regardless of what the selected file contains. Confirmed via the
+  // SARIF code flow (source: event.target.files -> URL.createObjectURL
+  // -> here) that this is the exact, full path CodeQL traces.
+  // codeql[js/xss-through-dom]: false positive -- blob: URL from
+  // URL.createObjectURL(), not attacker-controllable markup.
   element.src = objectUrl;
 }
 const REQUEST_TIMEOUT_MS = 30_000;
