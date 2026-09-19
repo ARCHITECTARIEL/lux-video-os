@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { accountDto } from '../../db/dto.js';
-import { getAccountContext, updateAuthenticatedAccount } from '../../db/repositories.js';
+import { getAccountContext, recordSignIn, updateAuthenticatedAccount } from '../../db/repositories.js';
 import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, handleOptions, makeSession, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
@@ -130,6 +130,7 @@ export default async function handler(req, res) {
       assertCeoToken(url.searchParams.get('token'));
       const account = await loadCeoAccount();
       const session = makeSession(account.user.id, account.user.email, 60 * 60 * 24 * 30);
+      await recordSignIn(account.user.id, 60 * 60 * 24 * 30);
       res.setHeader('Set-Cookie', sessionCookie(session));
       res.statusCode = 302;
       res.setHeader('Location', '/?ceo_access=1');
@@ -141,6 +142,7 @@ export default async function handler(req, res) {
       const accessType = resolvePasswordAccess(payload.accessType || 'demo', payload.username, payload.password);
       const account = accessType === 'owner' ? await loadOwnerAccount(payload.username) : await loadDemoWorkspaceAccount();
       const session = issueAccountSession(account, 60 * 60 * 24 * 30);
+      await recordSignIn(account.user.id, 60 * 60 * 24 * 30);
       const cookies = [sessionCookie(session)];
       if (accessType === 'owner') cookies.push(adminCookie(makeSession('admin', account.user.email, 60 * 60 * 12)));
       res.setHeader('Set-Cookie', cookies);
@@ -179,6 +181,7 @@ export default async function handler(req, res) {
       await updateAuthenticatedAccount({ accountId, email, name: email, role: 'customer', initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 180), entitlementKeys: ['magicLinkAccess'], sourceId: 'magic_link' });
       await consumeMagicToken(token);
       const session = makeSession(accountId, email);
+      await recordSignIn(accountId);
       res.setHeader('Set-Cookie', sessionCookie(session));
       res.statusCode = 302;
       res.setHeader('Location', '/?signed_in=1');
@@ -215,6 +218,7 @@ export default async function handler(req, res) {
         entitlementKeys: ['googleAccess'], sourceId: 'google_oauth',
       });
       const session = makeSession(accountId, profile.email);
+      await recordSignIn(accountId);
       res.setHeader('Set-Cookie', [sessionCookie(session), clearOauthStateCookie()]);
       res.statusCode = 302;
       res.setHeader('Location', '/?signed_in=1');

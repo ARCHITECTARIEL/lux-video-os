@@ -1,7 +1,8 @@
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import crypto from 'node:crypto';
+import { and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import { database } from './client.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
-import { creditAccounts, creditTransactions, entitlements, identityConsents, jobEvents, mediaAssets, projects, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
+import { authSessions, creditAccounts, creditTransactions, entitlements, identityConsents, jobEvents, mediaAssets, projects, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
 
 export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING', 'PROCESSING', 'READY', 'FAILED']);
 export const IDENTITY_OVERALL_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING', 'READY', 'PARTIAL_FAILURE', 'FAILED', 'ARCHIVED']);
@@ -54,6 +55,27 @@ export async function updateAuthenticatedAccount({ accountId, email, name, role 
       .onConflictDoUpdate({ target: [entitlements.accountId, entitlements.entitlementKey], set: { enabled: true, sourceType: AUTH_ENTITLEMENT_SOURCE, sourceId, updatedAt: now } });
     return getAccountContext(accountId, tx);
   });
+}
+
+// The actual session mechanism (lib/video-os-account.js's makeSession) is a
+// stateless signed cookie -- no DB row per login, by design, so it scales
+// without session-table writes on every authenticated request. That means
+// there is nowhere sign-in *frequency* is recorded. This writes one durable
+// row per completed sign-in (not per request) purely for admin-visible
+// analytics ("how many times has this account signed in, and when") --
+// auth_sessions already existed in the schema for exactly this, just never
+// written to. sessionHash has no relationship to the actual cookie token
+// (nothing looks it up to validate a session); it only exists to satisfy
+// the column's not-null/unique constraint.
+export async function recordSignIn(accountId, maxAgeSeconds = 60 * 60 * 24 * 30) {
+  const now = new Date();
+  await database().insert(authSessions).values({
+    accountId,
+    sessionHash: crypto.randomBytes(24).toString('hex'),
+    issuedAt: now,
+    expiresAt: new Date(now.getTime() + maxAgeSeconds * 1000),
+    lastSeenAt: now,
+  }).catch(() => {}); // best-effort analytics; a failure here must never block sign-in itself
 }
 
 export async function getAccount(accountId, executor = database()) {
@@ -645,4 +667,68 @@ export async function reconciliationSummary() {
     db.execute(sql`select count(*)::int as count from video_jobs j left join media_assets a on a.job_id = j.id and a.kind = 'final' where j.status = 'ready' and a.id is null`),
   ]);
   return { stuckJobs: Number(stuck.rows?.[0]?.count || 0), readyWithoutAsset: Number(readyWithoutAsset.rows?.[0]?.count || 0) };
+}
+
+// Jobs an operator actually needs to look at: never-completed terminal
+// states plus the held-for-manual-reconciliation state (see
+// worker/render-worker.mjs's comment on why provider_submit_unknown is
+// deliberately excluded from the poll loop -- these are exactly the ones
+// nothing will resolve automatically).
+const ATTENTION_JOB_STATUSES = Object.freeze(['failed', 'cancelled', 'provider_submit_unknown']);
+
+export async function listFailedOrStuckJobs(limit = 50) {
+  return database().select().from(videoJobs).where(inArray(videoJobs.status, ATTENTION_JOB_STATUSES)).orderBy(desc(videoJobs.updatedAt)).limit(Math.min(200, limit));
+}
+
+export async function getJobEventTimeline(jobId) {
+  return database().select().from(jobEvents).where(eq(jobEvents.jobId, jobId)).orderBy(jobEvents.createdAt);
+}
+
+export async function listRecentAccounts(limit = 50) {
+  const bounded = Math.min(200, limit);
+  return database()
+    .select({
+      accountId: users.id, email: users.email, name: users.name, role: users.role,
+      createdAt: users.createdAt, updatedAt: users.updatedAt,
+      balance: creditAccounts.balance, reserved: creditAccounts.reserved, purchased: creditAccounts.purchased, spent: creditAccounts.spent,
+    })
+    .from(users)
+    .leftJoin(creditAccounts, eq(creditAccounts.accountId, users.id))
+    .orderBy(desc(users.createdAt))
+    .limit(bounded);
+}
+
+export async function getAdminOverview() {
+  const db = database();
+  const now = Date.now();
+  const since7d = new Date(now - 7 * 24 * 60 * 60 * 1000);
+  const since30d = new Date(now - 30 * 24 * 60 * 60 * 1000);
+  const countOf = (table, condition) => db.select({ count: sql`count(*)::int` }).from(table).where(condition).then((rows) => rows[0].count);
+
+  const [totalUsers, newUsers7d, newUsers30d, signIns7d, signIns30d, jobStatusRows, creditTotalsRows, reconciliation] = await Promise.all([
+    db.select({ count: sql`count(*)::int` }).from(users).then((rows) => rows[0].count),
+    countOf(users, gte(users.createdAt, since7d)),
+    countOf(users, gte(users.createdAt, since30d)),
+    countOf(authSessions, gte(authSessions.issuedAt, since7d)),
+    countOf(authSessions, gte(authSessions.issuedAt, since30d)),
+    db.select({ status: videoJobs.status, count: sql`count(*)::int` }).from(videoJobs).groupBy(videoJobs.status),
+    db.select({
+      balance: sql`coalesce(sum(${creditAccounts.balance}), 0)::int`,
+      reserved: sql`coalesce(sum(${creditAccounts.reserved}), 0)::int`,
+      purchased: sql`coalesce(sum(${creditAccounts.purchased}), 0)::int`,
+      spent: sql`coalesce(sum(${creditAccounts.spent}), 0)::int`,
+    }).from(creditAccounts),
+    reconciliationSummary(),
+  ]);
+
+  return {
+    users: { total: totalUsers, new7d: newUsers7d, new30d: newUsers30d },
+    // Only counts sign-ins recorded since recordSignIn() started being
+    // called -- there is no historical backfill, since no prior sign-in
+    // ever wrote a row (see recordSignIn()'s own comment).
+    signIns: { last7d: signIns7d, last30d: signIns30d },
+    jobsByStatus: Object.fromEntries(jobStatusRows.map((row) => [row.status, row.count])),
+    credits: creditTotalsRows[0],
+    reconciliation,
+  };
 }
