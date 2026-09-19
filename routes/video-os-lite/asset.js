@@ -1,5 +1,5 @@
 // Routed through the consolidated workspace function to stay within the Vercel function limit.
-import { get } from '@vercel/blob';
+import { getPrivateBlob } from '../../lib/video-os-private-blob.js';
 import { getOwnedMediaAsset } from '../../db/repositories.js';
 import { sessionFromRequest } from '../../lib/video-os-account.js';
 
@@ -17,7 +17,7 @@ export default async function handler(req, res) {
     const assetId = new URL(req.url, 'https://video-os.invalid').searchParams.get('assetId');
     const asset = await getOwnedMediaAsset(session.accountId, assetId);
     if (!asset) return fail(res, 404, 'Asset not found.');
-    const result = await get(asset.privatePathname, { access: 'private', token: process.env.BLOB_READ_WRITE_TOKEN, useCache: false });
+    const result = await getPrivateBlob(asset.privatePathname);
     if (!result?.stream) return fail(res, 410, 'Asset is unavailable.');
     res.statusCode = 200;
     res.setHeader('Content-Type', asset.contentType);

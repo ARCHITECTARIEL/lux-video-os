@@ -12,8 +12,7 @@ import crypto from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { get } from '@vercel/blob';
-import { PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../lib/video-os-private-blob.js';
+import { getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../lib/video-os-private-blob.js';
 
 const safeName = (value) => String(value || 'video-os').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'video-os';
 
@@ -40,7 +39,7 @@ async function hashFile(path) {
 }
 
 async function fetchOwnedAssetBytes(pathname) {
-  const result = await get(pathname, { access: 'private', token: process.env.BLOB_READ_WRITE_TOKEN, useCache: false });
+  const result = await getPrivateBlob(pathname);
   if (!result?.stream) throw Object.assign(new Error('Standard render source asset is unavailable.'), { statusCode: 410, failureCategory: 'PERSISTENCE' });
   return Buffer.from(await new Response(result.stream).arrayBuffer());
 }

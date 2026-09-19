@@ -69,7 +69,12 @@ test('deployable source has one Blob write gateway and no public access selectio
     const source = await readFile(path, 'utf8');
     const projectPath = relative(root, path).replaceAll('\\', '/');
     if (/access\s*:\s*['"]public['"]/.test(source)) publicSelectors.push(projectPath);
-    if (projectPath !== 'lib/video-os-private-blob.js' && /import\s*\{[^}]*\bput\b[^}]*\}\s*from\s*['"]@vercel\/blob['"]/.test(source)) {
+    // lib/video-os-private-blob.js is the gateway every other module must call
+    // through; lib/storage-drivers/*-driver.js are its own private, swappable
+    // backends (Vercel Blob vs. local filesystem for VPS hosting) and only
+    // exist to be imported from that gateway, never from application code.
+    const isGatewayOrDriver = projectPath === 'lib/video-os-private-blob.js' || projectPath.startsWith('lib/storage-drivers/');
+    if (!isGatewayOrDriver && /import\s*\{[^}]*\bput\b[^}]*\}\s*from\s*['"]@vercel\/blob['"]/.test(source)) {
       directPutImports.push(projectPath);
     }
   }

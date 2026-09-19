@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { get } from '@vercel/blob';
+import { getPrivateBlob } from '../../lib/video-os-private-blob.js';
 import {
   archiveOwnedIdentity,
   attachProviderMediaAsset,
@@ -72,7 +72,7 @@ function operationKey() {
 async function ownedAssetBytes(accountId, assetId) {
   const asset = await getOwnedMediaAsset(accountId, assetId);
   if (!asset) throw Object.assign(new Error('Identity source asset not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
-  const result = await get(asset.privatePathname, { access: 'private', token: process.env.BLOB_READ_WRITE_TOKEN, useCache: false });
+  const result = await getPrivateBlob(asset.privatePathname);
   if (!result?.stream) throw Object.assign(new Error('Identity source asset is unavailable.'), { statusCode: 410, failureCategory: 'PERSISTENCE' });
   const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
   return { asset, buffer };
