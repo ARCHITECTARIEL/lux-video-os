@@ -544,6 +544,31 @@ export async function saveProject({ id, accountId, identityId, title, script, av
   });
 }
 
+export async function saveStandardProject({ accountId, title, identityId, narrationAudioAssetId }) {
+  return database().transaction(async (tx) => {
+    const ownedIdentity = (await tx.select({ id: userIdentities.id }).from(userIdentities).where(and(
+      eq(userIdentities.accountId, accountId),
+      eq(userIdentities.id, identityId),
+      isNull(userIdentities.archivedAt),
+    )).limit(1))[0];
+    if (!ownedIdentity) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    const ownedAudio = (await tx.select({ id: mediaAssets.id }).from(mediaAssets).where(and(
+      eq(mediaAssets.accountId, accountId),
+      eq(mediaAssets.id, narrationAudioAssetId),
+    )).limit(1))[0];
+    if (!ownedAudio) throw Object.assign(new Error('Narration audio not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    return (await tx.insert(projects).values({
+      accountId,
+      identityId,
+      title,
+      script: null,
+      avatar: {},
+      voice: {},
+      settings: { tier: 'STANDARD', contractVersion: 'standard-narration-v1', narrationAudioAssetId },
+    }).returning())[0];
+  });
+}
+
 export async function listProjects(accountId) {
   return database().select().from(projects).where(eq(projects.accountId, accountId)).orderBy(desc(projects.updatedAt)).limit(30);
 }

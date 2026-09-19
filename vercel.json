@@ -33,6 +33,10 @@
                        "dest":  "/api/video-os-lite/workspace.js"
                    },
                    {
+                       "src":  "/api/video-os-lite/standard",
+                       "dest":  "/api/video-os-lite/workspace.js"
+                   },
+                   {
                        "src":  "/api/video-os-lite/checkout",
                        "dest":  "/api/video-os-lite/checkout-v2.js"
                    },

@@ -285,7 +285,9 @@ test('all externally reachable persisted identity responses use the common DTO b
 
   assert.match(results, /\.map\(jobDto\)/);
   assert.match(finalize, /const dto = jobDto\(job\)/);
-  assert.equal((render.match(/job: jobDto\(reservedJob\)/g) || []).length, 2);
+  // 4, not 2: Standard and Premium each have their own success + uncertain-
+  // dispatch response, both going through the same jobDto boundary.
+  assert.equal((render.match(/job: jobDto\(reservedJob\)/g) || []).length, 4);
   assert.doesNotMatch(download, /avatar|voice|jobDto/);
   assert.match(projects, /\.map\(projectDto\)/);
   assert.match(projects, /project: projectDto\(project\)/);
