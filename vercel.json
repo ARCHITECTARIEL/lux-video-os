@@ -61,6 +61,14 @@
                        "dest":  "/api/video-os-lite/auth.js"
                    },
                    {
+                       "src":  "/api/video-os-lite/google-login",
+                       "dest":  "/api/video-os-lite/auth.js"
+                   },
+                   {
+                       "src":  "/api/video-os-lite/google-callback",
+                       "dest":  "/api/video-os-lite/auth.js"
+                   },
+                   {
                        "src":  "/api/video-os-lite/ceo-access",
                        "dest":  "/api/video-os-lite/auth.js"
                    },
