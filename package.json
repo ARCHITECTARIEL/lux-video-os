@@ -3,6 +3,8 @@
     "private": true,
     "type": "module",
     "scripts": {
+        "start": "node server/index.js",
+        "worker": "node worker/render-worker.mjs",
         "check:imports": "node tools/check-imports.mjs",
         "build:production": "node tools/build-production.mjs",
         "build:preview": "node tools/build-production.mjs --preview",

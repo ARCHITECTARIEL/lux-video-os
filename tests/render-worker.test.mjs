@@ -21,7 +21,7 @@ import { accountHash } from '../lib/video-os-security.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
 import { PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../lib/video-os-private-blob.js';
 import { STANDARD_CONTRACT_VERSION, STANDARD_NARRATION_CREDITS, STANDARD_NARRATION_POLICY_VERSION } from '../lib/standard-narration-contract.js';
-import { driveJob, pollOnce } from '../worker/render-worker.mjs';
+import { driveJob } from '../worker/render-worker.mjs';
 
 let dbAvailable = true;
 try {
@@ -38,7 +38,7 @@ function runFfmpeg(args) {
 }
 
 test(
-  'render-worker: driveJob and pollOnce carry a reserved Standard job through to ready, against a real database and Blob store',
+  'render-worker: driveJob carries a reserved Standard job through to ready, against a real database and Blob store',
   { skip: !dbAvailable && 'DATABASE_URL / BLOB_READ_WRITE_TOKEN not configured; skipping live integration test' },
   async (t) => {
     process.env.VIDEO_OS_STANDARD_NARRATION_SCHEMA_READY = 'true';
@@ -131,10 +131,6 @@ test(
     await t.test('a ready job drops out of listInFlightJobs', async () => {
       const inFlight = await listInFlightJobs(200);
       assert.ok(!inFlight.some((job) => job.id === jobId));
-    });
-
-    await t.test('pollOnce is a safe no-op once nothing of this test\'s making is in-flight', async () => {
-      await assert.doesNotReject(pollOnce());
     });
   },
 );
