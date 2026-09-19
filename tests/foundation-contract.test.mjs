@@ -96,8 +96,15 @@ test('workflow acceptance preserves its reservation when run tracking persistenc
   assert.equal(shouldReleaseWorkflowReservation({ job: { ...prepared, workflowRunId: 'wrun-proof' }, workflowDispatchAttempted: false }), false);
 
   const routeSource = readFileSync('api/video-os-lite/render-v2.js', 'utf8');
-  assert.match(routeSource, /workflowDispatchAttempted = true;\s+const run = await start/);
+  // On Vercel (the default / WORKFLOW_DISPATCH_MODE=vercel), a claimed job
+  // must still actually be dispatched via start() -- not silently left as
+  // "attempted" with nothing behind it.
+  assert.match(routeSource, /workflowDispatchAttempted = true;\s+if \(dispatchesViaVercelWorkflow\(\)\) \{\s+const run = await start/);
   assert.match(routeSource, /code: workflowAccepted \? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain'/);
+  // On a VPS (WORKFLOW_DISPATCH_MODE != vercel), dispatch is intentionally a
+  // no-op: worker/render-worker.mjs's poll loop drives the job forward from
+  // 'workflow_started' instead of Vercel Workflow's runtime.
+  assert.match(routeSource, /\} else \{\s+workflowAccepted = true;\s+\}/);
   const repositorySource = readFileSync('db/repositories.js', 'utf8');
   assert.match(repositorySource, /status:\s*'workflow_started'.+eq\(videoJobs\.status, 'reserved'\)/s);
   assert.doesNotMatch(repositorySource, /set\(\{ workflowRunId, status: 'workflow_started'/);

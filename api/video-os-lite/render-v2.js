@@ -15,6 +15,20 @@ import { sanitizeStandardNarrationReason, STANDARD_CONTRACT_VERSION, standardNar
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+// On Vercel, claimWorkflowStart() must be immediately followed by start()
+// to hand the job to Vercel Workflow's durable orchestrator. On a VPS,
+// there is no Vercel Workflow runtime to hand it to: without an explicit
+// deployment target, the `workflow` package would silently fall back to
+// @workflow/world-local (an in-memory, single-process queue documented as
+// "for local development and testing" only), which would then race
+// worker/render-worker.mjs's own poll loop driving the same job forward.
+// worker/render-worker.mjs already watches for jobs sitting at
+// 'workflow_started' (what claimWorkflowStart() just set), so on a VPS
+// dispatch is a no-op here -- the poll loop picks it up on its own.
+function dispatchesViaVercelWorkflow() {
+  return String(process.env.WORKFLOW_DISPATCH_MODE || 'vercel').trim().toLowerCase() === 'vercel';
+}
+
 export function authorizedIdentityInput(project, payload, identity) {
   const ready = [identity?.overallStatus, identity?.avatarStatus, identity?.voiceStatus].every((status) => String(status || '').toUpperCase() === 'READY');
   if (!ready || identity?.archivedAt || !identity?.providerRenderableAvatarId || !identity?.providerVoiceId) throw Object.assign(new Error('Video identity is not ready to render.'), { statusCode: 409, failureCategory: 'VALIDATION' });
@@ -93,11 +107,15 @@ async function handleStandardRender(req, res, session, body, correlationId) {
     if (claimed) {
       reservedJob = claimed;
       workflowDispatchAttempted = true;
-      const run = await start(standardRenderWorkflowMetadata, [reserved.job.id]);
-      workflowAccepted = true;
-      const trackedJob = await setWorkflowRun(reserved.job.id, run.runId);
-      if (!trackedJob) throw Object.assign(new Error('Accepted workflow run could not be attached to its job.'), { statusCode: 202, failureCategory: 'RECONCILIATION' });
-      reservedJob = trackedJob;
+      if (dispatchesViaVercelWorkflow()) {
+        const run = await start(standardRenderWorkflowMetadata, [reserved.job.id]);
+        workflowAccepted = true;
+        const trackedJob = await setWorkflowRun(reserved.job.id, run.runId);
+        if (!trackedJob) throw Object.assign(new Error('Accepted workflow run could not be attached to its job.'), { statusCode: 202, failureCategory: 'RECONCILIATION' });
+        reservedJob = trackedJob;
+      } else {
+        workflowAccepted = true;
+      }
     } else {
       reservedJob = await getJob(reserved.job.id);
     }
@@ -168,11 +186,15 @@ async function handlePremiumRender(req, res, session, body, correlationId) {
     if (claimed) {
       reservedJob = claimed;
       workflowDispatchAttempted = true;
-      const run = await start(videoRenderWorkflowMetadata, [reserved.job.id]);
-      workflowAccepted = true;
-      const trackedJob = await setWorkflowRun(reserved.job.id, run.runId);
-      if (!trackedJob) throw Object.assign(new Error('Accepted workflow run could not be attached to its job.'), { statusCode: 202, failureCategory: 'RECONCILIATION' });
-      reservedJob = trackedJob;
+      if (dispatchesViaVercelWorkflow()) {
+        const run = await start(videoRenderWorkflowMetadata, [reserved.job.id]);
+        workflowAccepted = true;
+        const trackedJob = await setWorkflowRun(reserved.job.id, run.runId);
+        if (!trackedJob) throw Object.assign(new Error('Accepted workflow run could not be attached to its job.'), { statusCode: 202, failureCategory: 'RECONCILIATION' });
+        reservedJob = trackedJob;
+      } else {
+        workflowAccepted = true;
+      }
     } else {
       reservedJob = await getJob(reserved.job.id);
     }
