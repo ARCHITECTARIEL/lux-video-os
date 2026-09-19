@@ -70,7 +70,11 @@ test('composer handoff selects only an authenticated ready private identity', as
 });
 test('hosted composer keeps local avatar compatibility separate from Identity Studio', async () => {
   const [html, client] = await Promise.all([read('public/index.html'), read('public/lite.js')]);
-  assert.match(html, /id="local-photo-avatar-card"[^>]*hidden/);
+  // index.html is the Studio-only root entrypoint; it no longer embeds lite.js's
+  // inline local-photo-avatar composer markup (`#local-photo-avatar-card`), which
+  // existed only in the pre-Studio-rewrite dashboard layout. lite.js itself is
+  // preserved unchanged as a historical surface (see CONTRACTS-AND-FILE-MAP.md)
+  // and still defensively no-ops when that element is absent.
   assert.match(html, /href="\/identity"[^>]*>Open Identity Studio/);
   assert.match(client, /localPhotoAvatarCard\.hidden = !canUseLocalApi\(\)/);
   assert.doesNotMatch(client, /row\.innerHTML = `\<span>\$\{label\}/);
