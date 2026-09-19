@@ -28,7 +28,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Download retained CodeQL SARIF artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: codeql-sarif-${{ github.sha }}
           path: codeql-enforced-results
