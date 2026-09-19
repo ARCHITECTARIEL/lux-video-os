@@ -1,42 +1,89 @@
-# LUX Video OS — Developer Handoff (2026-09-19)
+# LUX Video OS — Developer Handoff (2026-09-19, rev. 2)
 
-Read this first. It's the current, accurate picture of the project — the root `README.md` is stale (describes an old Python-based version of this app) and should not be trusted for architecture or setup.
+Read this first. The root `README.md` is stale (describes an old Python-based version of this app) and should not be trusted for architecture or setup. **If you're the developer who sent the original frontend and backend handoff zips on 2026-09-18: this doc is written for you specifically** — it explains what happened to your two packages, what changed, and what's genuinely new since you last touched this.
+
+## Why this doesn't look like a direct continuation of your branches
+
+Your backend package was built on top of a base commit (`bfb0f8c...`) that turned out not to exist anywhere in `ARCHITECTARIEL/lux-video-os` on GitHub — verified with `git bundle verify` against a fresh clone and a direct GitHub API lookup, both came back negative. Recovery was attempted (asked for a push from the machine that might still have it) but never landed. Ariel's call: stop waiting, rebuild what's missing from your spec/architecture docs instead. So:
+
+- **Your frontend package's actual file contents were applied as real commits** on top of the true (and, it turned out, ~6-weeks-stale) `main` — your `studio.js`, `copywriter.js`, `standard-contract.js` etc. didn't exist in git at all before that.
+- **Your backend package's code could not be reused** (the git history gap meant almost none of it survived intact) — the Standard tier was rebuilt from scratch, using your `ARCHITECTURE.md`/`DELIVERY_PLAN.md`/`AUDIT.md` as the spec, not your code as the base. Details below.
+
+Net effect: the finished product matches what you were both asked to build, but very little of the backend is literally your original code, and the frontend integration points (esp. Standard tier submission) had to be re-verified against the rebuilt backend rather than your original one.
 
 ## What this is
 
 LUX Video OS is an owner-facing AI video studio: sign in, pick or create an authorized on-camera identity, submit a **Standard** (portrait photo + uploaded narration WAV) or **Premium** (HeyGen presenter + voice + script) video request, get a credit quote, render asynchronously, and download only accepted output.
 
-- GitHub repo (private): `ARCHITECTARIEL/lux-video-os`, branch `main`. Ask Ariel to add you as a collaborator if you don't have access yet.
-- This zip is a convenience snapshot of `main` as of commit `dcb4e4d` (after PR #22 and the full Dependabot cleanup). Once you have GitHub access, `git clone` the real repo instead of continuing to edit inside this zip — the zip has no `.git` history, and `main` will keep moving.
+- GitHub repo (private): `ARCHITECTARIEL/lux-video-os`, branch `main`, currently at `095ac48`. Ask Ariel to add you as a collaborator if you don't have access yet — clone the real repo rather than working from a zip; a zip has no `.git` history and `main` keeps moving.
 
-## Current state — what's actually done and tested
+## Part 1 — what closed out of your frontend package
 
-Everything below is built, has real automated test coverage (not just claimed), and was verified against a live (non-production) Neon Postgres + Vercel Blob store, not mocks, unless noted otherwise.
+Every item below maps to a specific finding in your own `FRONTEND-AUDIT.md`:
 
-- **Frontend** (`public/studio.js` + `public/index.html`, NOT `public/lite.js` — see Known Gotchas): create-video wizard (Standard + Premium tiers), identity studio, AI copywriter, results gallery with progressive disclosure, responsive across breakpoints. ~100 Playwright tests.
-- **Auth**: magic-link email sign-in, Google OAuth sign-in (`lib/google-oauth.js`), demo/owner password access, admin login, one-time CEO access link. All issue the same session cookie and share one account-identity scheme (`accountIdForEmail`), so a user signing in via Google and via magic-link with the same address lands on the same account.
-- **Premium (HeyGen) backend**: full submit → poll → finish lifecycle (`services/heygen.js`, `workflows/video-render.js`), credit reservation/settlement, Stripe checkout + webhook with idempotent grants. This path has previously produced one real live HeyGen render end-to-end.
-- **Standard backend**: narration upload → identity → consent → quote → reserve → render → settlement (`db/standard-narration-repository.js`, `workflows/standard-render.js`). **The actual render step is simulated** (`services/sadtalker-simulator.js` composites the real uploaded portrait + audio into a real MP4 via ffmpeg) — this is not real GPU talking-head inference. See "What's left, #1" below.
-- **VPS hosting layer** (built this session, so the app is no longer Vercel-locked):
-  - `lib/storage-drivers/`: swappable private storage, Vercel Blob (default) or local filesystem (`STORAGE_DRIVER=fs`).
-  - `worker/render-worker.mjs`: a polling daemon that drives render jobs through the same step functions Vercel Workflow uses, for hosting without Vercel's durable-execution runtime.
-  - `server/index.js`: a plain Node HTTP server that replays `vercel.json`'s own route table, so it can never drift from what Vercel serves.
-  - `deploy/`: systemd units, nginx reverse-proxy config, `deploy/video-os.env.example` (the full env var reference), and `deploy/deploy.sh`.
-  - `WORKFLOW_DISPATCH_MODE=poll` env var is what actually switches render dispatch from "hand off to Vercel Workflow" to "let the worker daemon's poll loop drive it" — required for renders to complete off Vercel.
-- **CI / security gates**: CodeQL (with a small, explicit, justified allowlist in `tools/enforce-codeql-sarif.mjs` for one confirmed false positive — see the file's comments), a documented-exception `npm audit` gate (`tools/enforce-npm-audit.mjs` — see "Known Gotchas"), Playwright, pytest, `check:imports`, `scan:client-privacy`.
+- **Auth modal dead controls** (your finding: Sign In/Sign Up toggle, credential-type toggle, and Show-password had no handlers, plus a broken focus trap) — **fixed**, with the focus-restoration behavior your audit specifically called out.
+- **Standard price auto-submit** (your finding: a quote was fetched then submitted immediately with no owner confirmation step) — **fixed**: there's now an explicit confirmation dialog between quote and submit.
+- **Identity uncertain-write recovery** and **identity polling exhaustion** (your findings: chained writes with no reconciliation path; a 45-round poll cutoff with no resume) — **both fixed**, and the same uncertain-write containment pattern was extended to Standard's upload/consent stages, which your audit noted only the final render retry had.
+- **Release tooling** (your finding: a spawn-EPERM blocker on `check:imports`/`scan:client-privacy`/`workflow:validate`) — doesn't reproduce on the current machine/CI; all three run clean.
+
+All of the above have real Playwright coverage, not just claimed fixes — suite grew from your documented 82/83 baseline through 89/89 and now sits at **101/102** (1 pre-existing unrelated skip) after this session's admin console work, verified stable across repeated full-suite reruns.
+
+**Still open from your audit**, genuinely, not by oversight:
+- **Integrated-preview boundary** — your audit flagged that signed-in persistence, real quotes, and private delivery need a *live, deployed* backend to prove, not local testing. A real backend now exists (Part 2), but nothing has been deployed yet, so this proof still hasn't run.
+- **Documentation drift** — `DESIGN.md` in your package is stale relative to the shipped UI; not touched this round.
+
+## Part 2 — what got rebuilt of your backend package
+
+Your `DELIVERY_PLAN.md` (D1–D8) assumed a partially-built GPU worker stack already existed in WIP form: SSH/SFTP transport to a RunPod-hosted SadTalker queue, a Python queue controller, a watchdog, pinned CUDA/Python Docker images. **None of that survived the git-history gap.** Here's what actually happened instead, mapped to your plan:
+
+- **D1 (restore + isolate)** — moot; there was nothing recoverable to restore. Rebuilt clean.
+- **D2 (one real job to accepted output)** — satisfied differently than planned: real Neon Postgres + real Vercel Blob integration test proves the full reserve → consent → quote → render → settlement sequence end to end, plus a real HTTP-layer test for the readiness/consent/quote/revoke surface. **Not yet proven**: the literal render-POST HTTP handler's dispatch to a running workflow runtime (it calls the real `workflow` package's `start()`, which needs a live workflow runtime this rebuild never had running) — the repository-level correctness is proven, the HTTP-to-workflow wire hasn't been.
+- **D3 (failure/authorization cases)** — quote expiry, quote mismatch, replay, and consent revocation are covered by tests. Standard-specific cross-account/lost-acknowledgement cases weren't separately enumerated the way D3 asked.
+- **D4 (operational recovery/supervision — your watchdog)** — **not done.** No supervisor/watchdog process exists for the Standard render path.
+- **D5 (production prerequisites — DB/storage/access)** — satisfied for non-production: a real dev Neon project and a real dev Vercel Blob store were provisioned and used throughout (see credentials table below).
+- **D6 (commit + CI)** — satisfied: merged to `main`, full CI green, plus two new CI gates that didn't exist before (Part 3).
+- **D7 (real hosted GPU acceptance)** — **explicitly not done.** `services/sadtalker-simulator.js` composites the real uploaded portrait + audio into a real MP4 via plain ffmpeg — no lip-sync inference, no GPU. Every place it's referenced says so in comments. This is the single largest carryover from your original AUDIT.md's own top blocker (your B07/B08): **there is still no real Standard-tier GPU inference anywhere in this codebase.**
+- **D8 (full release gate / tenancy)** — not attempted; out of scope for this rebuild, unchanged from before.
+
+**The key discovery that changed the plan:** `main` already had a complete, working Premium/HeyGen job and credit lifecycle (`reserveRender`/`claimWorkflowStart`/`transitionJob`/`finalizeReadyJob`/`markJobFailedAndRelease` in `db/repositories.js`) that's fully provider-agnostic — reusable for Standard unchanged just by passing `provider: 'sadtalker'`. So the actual gap was much narrower than your `DELIVERY_PLAN.md` implied: only the Standard-specific narration/consent/quote pieces (`db/standard-narration-schema.js`, `db/standard-narration-repository.js`, `routes/video-os-lite/standard.js`) needed building, not a parallel dispatcher — the real dispatcher (`api/video-os-lite/render-v2.js`) was extended with a Standard branch alongside the existing Premium one, not rebuilt from zero.
+
+## Part 3 — what got built that was never in either of your packages
+
+None of this was asked for in your original scope. It's here because Ariel asked for it directly during this engagement:
+
+- **A VPS hosting layer**, so the app is no longer Vercel-locked: a swappable private-storage driver (`lib/storage-drivers/` — Vercel Blob or local filesystem via `STORAGE_DRIVER=fs`), a polling worker daemon (`worker/render-worker.mjs`) that drives jobs through the same step functions Vercel Workflow uses, a plain Node HTTP server (`server/index.js`) that derives its entire route table directly from `vercel.json` at startup (so it can't drift), and deployment scaffolding (`deploy/` — systemd units, nginx config, env reference, deploy script). Gated behind `WORKFLOW_DISPATCH_MODE`.
+- **Google OAuth sign-in**, alongside the pre-existing magic-link auth — same session/account scheme either way.
+- **Two new CI gates**: a CodeQL SARIF allowlist (`tools/enforce-codeql-sarif.mjs`) for one confirmed false positive, since GitHub's own inline suppression comments don't work in this repo's CI (`upload: never` means no Code Scanning backend to process them); and a documented-exception `npm audit` gate (`tools/enforce-npm-audit.mjs`) after discovering the "obvious" fix (bumping `vercel`/`workflow`) actually made the vulnerability count *worse* (19 → 57), not better.
+- **Dependency hygiene**: 8 Dependabot PRs merged (Sentry, Playwright, Stripe, 5 GitHub Action bumps); 2 others (`vercel`, `workflow`) tested and deliberately closed for the reason above.
+- **Real cinematic finishing for Premium**: film grain via ffmpeg's native `noise` filter (zero licensing exposure — procedurally generated) and optional LUT color grading (`services/media-finisher.js`'s `cinematicFinishingFilterGraph`), replacing the previous bare color-correction-only grade.
+- **VFX/asset licensing research** (not yet code, informs a future premium package): confirmed the mainstream "free for commercial use" stock/template sites (MotionElements, ProductionCrate/Footage Crate) explicitly prohibit baking their assets into automated multi-customer SaaS output — Enterprise licensing required. Clean paths identified: CC0 LUTs/music, and commissioning an *original* overlay/title kit in Jitter.video rendered through the existing HyperFrames/Remotion pipeline, since original work carries no redistribution risk. Nothing built yet.
+- **A full admin console** (`/admin-console`, gated by the existing `VIDEO_OS_ADMIN_TOKEN`/admin cookie), built in 4 phases, none of it in either original package:
+  1. **Overview & diagnostics** — real sign-in tracking (the `auth_sessions` table existed but was never written to before this), account/job stats, a reconciliation banner (stuck jobs, ready-jobs-missing-their-asset — both driven by a pre-existing `reconciliationSummary()` function that was built but never called before this).
+  2. **Manual resolution & quarantine** — force a stuck job to `failed` with credit release and an audited note; quarantine a media asset (the `quarantinedAt` column existed but was never settable before this).
+  3. **Billing visibility** — credit ledger and Stripe event viewers.
+  4. **Video operations** — stream any customer's video for admin preview, approve (a tracking flag only, zero pipeline effect), delete a video (removes the private Blob file, keeps the job row and full event history for audit), and retry a render (re-reserves the job's own already-authorized input under a new job, charges credits normally — restricted to HeyGen jobs only, because a Standard/sadtalker job's reservation consumes a one-time narration-consent quote that a generic retry can't safely replay without creating a render with no matching consent record).
+
+  All 4 phases have real DB/Blob integration tests (not mocks), Playwright coverage, and were manually verified live in-browser against the real dev database, including one real Vercel Workflow dispatch.
+
+## Cleanup items found while preparing this handoff
+
+- **`video_os_backend.py`** (repo root) is a **legacy, dead Python HeyGen client** — duplicate `heygen_submit`/`heygen_poll`/`fetch_heygen_collection` logic, completely disconnected from real routing (nothing in `vercel.json`/`server/index.js` calls it). `services/heygen.js` is the one real HeyGen client. Left in place for this handoff since removing it also touches the legacy `tests/test_public_rendering_contract.py` pytest suite (which already tests dead frontend code — see Known Gotchas) — worth a dedicated cleanup pass, not a drive-by deletion.
+- **Stray zips in `Downloads/`**: `lux-video-os-handoff-2026-09-19.zip` is a stale snapshot from earlier the same day (predates the current HEAD by ~2 hours) and bundles `.env.local` — don't reuse it. The original `LUX-frontend-developer-handoff-2026-09-18.zip` / `wetransfer_video_os_backend_handoff...zip` (plus a duplicate) are the source packages, already fully absorbed into the repo. All four are safe to archive or delete once you've confirmed nothing else is needed from them — nothing on this machine's drive outside the repo is newer or unique.
+- Confirmed via direct filesystem audit: **RunPod has zero real integration** anywhere in the code — it's mentioned only in comments/docs as a future option. **Vercel routing is clean and test-enforced** (`tests/foundation-contract.test.mjs` pins the exact serverless function count against the Hobby-plan budget). **HyperFrames has exactly one composition**, invoked through a sandboxed subprocess, opt-in and disabled by default.
 
 ## What's left, in priority order
 
-1. **Real GPU inference for the Standard tier.** Researched this session — recommendation is **fal.ai's hosted SadTalker endpoint** (`fal-ai/sadtalker`): off-the-shelf, maintained, pay-per-request (no idle cost), and its submit/poll queue API maps directly onto the exact pattern already built for HeyGen (`submitHeygen`/`pollHeygen` in `services/heygen.js`) — this means writing one new `services/sadtalker.js` following that same shape, not a restructure. Fallback if fal proves limiting: RunPod serverless (same async submit/poll shape, but you'd containerize the model yourself). Note: SadTalker itself is a 2023 model; Hallo3 (2025) is a credible quality upgrade with the same audio-driven input shape, but has no ready-made hosted endpoint yet, so it means real deployment work rather than an API call — worth revisiting once fal/RunPod is live and quality becomes the differentiator worth chasing.
-2. **One real production proof run.** `docs/P0-RELEASE-GATE.md` is a hard, already-written gate: billing, hosted finishing, pilot enrollment, and launch stay blocked until one genuine paid HeyGen render produces a full signed receipt (real session, real provider charge, private final file, verified download, cross-account-denial checks, exactly-one-debit reconciliation — 9 required observations, read the doc for the exact list). This spends real money and needs the owner's (Ariel's) explicit go-ahead, and requires an actual live deployment target to run against (see #3 — nothing is live yet post-merge).
-3. **Deploy somewhere real.** Both paths are ready: Vercel (the historical path — `npm run build:production` builds it) or the VPS layer above. Vercel project access + a provisioned VPS (Hetzner/Hostinger, still pending Ariel's decision) are both needed depending on which path is chosen; either works via the `WORKFLOW_DISPATCH_MODE`/`STORAGE_DRIVER` flags.
-4. **Non-HeyGen providers are stubs.** Argil, Tavus, D-ID appear in the UI picker but have no real API integration (`lib/video-os-account.js`'s `PROVIDERS` list marks them `configured: false`). Only HeyGen actually works today.
-5. **Dependency hygiene — done.** All 8 safe Dependabot PRs (`@sentry/node`, `@playwright/test`, `stripe`, and 5 GitHub Action version bumps) were rebased, verified green, and merged into `main`. Two others (`vercel`, `workflow` version bumps) were tested and closed instead, because they made `npm audit`'s vulnerability count *worse* (19 → 57), not better — see `tools/enforce-npm-audit.mjs`'s `ACCEPTED_ADVISORIES` for why the current pins on those two are intentional, not neglect. If Dependabot opens new PRs for `vercel`/`workflow` later, re-test the same way before merging — don't assume a newer version is automatically safer.
-6. **Customer self-service signup** is actually done now (Google + magic-link both create accounts on the spot) — cross this off if you see it listed as outstanding anywhere older.
+1. **Real GPU inference for the Standard tier** — still the single biggest gap, unchanged in substance from your original AUDIT.md's top blocker. Recommendation from this session's research: **fal.ai's hosted SadTalker endpoint** (`fal-ai/sadtalker`) — off-the-shelf, maintained, pay-per-request, and its submit/poll queue API maps directly onto the exact pattern already built for HeyGen (`services/heygen.js`), meaning one new `services/sadtalker.js` in the same shape, not a restructure. Fallback: RunPod serverless (same async shape, but you containerize the model yourself — closer to your original architecture). We also evaluated HeyGem.ai, Tencent HunyuanVideo-Avatar, and LivePortrait as alternatives — verdict was no on all three (licensing MAU caps, GPU cost/scale mismatch, or wrong problem shape respectively) — details available if useful, not repeated here.
+2. **Prove `render-v2.js`'s actual render-POST dispatch at the HTTP layer** against a running workflow runtime — currently only proven at the repository level.
+3. **Operational recovery/supervision** for the render pipeline (your D4/watchdog) — doesn't exist yet for either tier.
+4. **One real production proof run** — `docs/P0-RELEASE-GATE.md` is a hard, already-written gate: billing, hosted finishing, pilot enrollment, and launch stay blocked until one genuine paid HeyGen render produces a full signed receipt (9 required observations — read the doc). Needs a live deployment target and Ariel's explicit go-ahead; spends real money.
+5. **Deploy somewhere real** — both paths are ready (Vercel via `npm run build:production`, or the VPS layer via `deploy/`), neither has been exercised against a live box yet.
+6. **Non-HeyGen providers are stubs** — Argil, Tavus, D-ID appear in the UI picker with no real API integration (`configured: false` in `lib/video-os-account.js`'s `PROVIDERS`).
+7. **Frontend structural items still open**: the integrated-preview boundary proof (needs the live deployment from #5) and stale `DESIGN.md`.
 
 ## Credentials / accounts you'll need to obtain
 
-None of these are in this handoff. Get them yourself or ask Ariel for the ones marked "(ask Ariel)":
+None of these are in this handoff except where marked. Get the rest yourself or ask Ariel for the ones marked "(ask Ariel)":
 
 | Service | Env var(s) | For |
 |---|---|---|
@@ -44,14 +91,14 @@ None of these are in this handoff. Get them yourself or ask Ariel for the ones m
 | HeyGen | `HEYGEN_API_KEY` (ask Ariel for prod; dev doesn't need it for simulated/mocked test paths) | Premium tier |
 | Stripe | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_EXPECT_LIVEMODE`, `STRIPE_PRICE_ID_500/1000/2000` | Billing |
 | Resend | `RESEND_API_KEY`, `AUTH_FROM_EMAIL` | Magic-link email delivery |
-| Google Cloud OAuth client | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in (ask Ariel — he said Google Cloud is already set up) |
-| Neon Postgres | `DATABASE_URL`, `DATABASE_URL_UNPOOLED` | Primary datastore — **dev credentials for this are already in `.env.local` in this zip**, pointing at a non-production Neon project (`lux-video-os-dev`) |
+| Google Cloud OAuth client | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in (ask Ariel — already set up) |
+| Neon Postgres | `DATABASE_URL`, `DATABASE_URL_UNPOOLED` | Primary datastore — **dev credentials already in `.env.local` in this package**, pointing at a non-production Neon project (`lux-video-os-dev`) |
 | Vercel Blob | `BLOB_READ_WRITE_TOKEN` | Private object storage — **dev token already in `.env.local`**, non-production store |
 | Hetzner or Hostinger | n/a (used manually to provision) | VPS hosting, if that path is chosen (ask Ariel) |
 
 `deploy/video-os.env.example` has the complete list of every env var the app reads, with comments on what each gates.
 
-**`.env.local` in this zip contains live (but non-production) credentials — treat this zip itself as sensitive from the moment you receive it, and don't commit `.env.local` to git (it's already gitignored).** The `VERCEL_OIDC_TOKEN` in there is short-lived and is almost certainly expired by the time you read this; ignore it unless you know you need it (run `vercel link` / `vercel env pull` to get a fresh one if so).
+**`.env.local` contains live (but non-production) credentials — treat this package as sensitive from the moment you receive it, and don't commit `.env.local` to git (already gitignored).** Any `VERCEL_OIDC_TOKEN` included is short-lived and almost certainly expired by the time you read this — run `vercel link` / `vercel env pull` for a fresh one if needed.
 
 ## Getting started
 
@@ -67,7 +114,7 @@ Run locally against the included dev database/storage:
 node -r dotenv/config server/index.js dotenv_config_path=.env.local
 ```
 
-Open `http://127.0.0.1:8080`. `/dashboard` needs an admin access code (ask Ariel); `/identity` and rendering need sign-in (magic-link or Google, whichever you configure).
+Open `http://127.0.0.1:8080`. `/admin-console` needs an admin access code (ask Ariel); `/identity` and rendering need sign-in (magic-link or Google, whichever you configure).
 
 Run the render worker daemon (needed for a render to actually complete once submitted, since this local run isn't on Vercel):
 
@@ -78,7 +125,7 @@ node -r dotenv/config worker/render-worker.mjs dotenv_config_path=.env.local
 ## Testing
 
 ```bash
-node --test tests/*.test.mjs      # 200+ tests, most run live against the dev Neon DB/Blob store in .env.local
+node --test tests/*.test.mjs      # 245+ tests, most run live against the dev Neon DB/Blob store in .env.local
 npx vitest run
 npx playwright test               # frontend e2e, runs offline against a local static server
 python -m pytest -q               # legacy Python contract checks (see Known Gotchas)
@@ -98,16 +145,17 @@ node -r dotenv/config --test tests/*.test.mjs dotenv_config_path=.env.local
 
 **Vercel** (historical path): `npm run build:production`, deploy via `vercel deploy`. Requires `WORKFLOW_DISPATCH_MODE` unset or `vercel` (the default).
 
-**VPS** (new this session, untested on a real box yet): follow `deploy/deploy.sh` and the systemd/nginx configs in `deploy/`. Set `WORKFLOW_DISPATCH_MODE=poll` — without this, render dispatch silently falls back to an in-memory local queue not meant for production and will race the worker daemon.
+**VPS** (untested on a real box yet): follow `deploy/deploy.sh` and the systemd/nginx configs in `deploy/`. Set `WORKFLOW_DISPATCH_MODE=poll` — without this, render dispatch silently falls back to an in-memory local queue not meant for production and will race the worker daemon.
 
 ## Governance — read before touching billing, real spend, or production
 
-- `docs/P0-RELEASE-GATE.md` — the production launch gate (see "What's left, #2").
+- `docs/P0-RELEASE-GATE.md` — the production launch gate (see "What's left, #4").
 - This project uses an execution-mode ladder: **SIMULATION** (no real cost, current default for Standard-tier rendering) → **CANARY** (real, requires explicit owner authorization) → **PRODUCTION**. Never flip a real-money or real-provider-call code path live without Ariel's explicit go-ahead — he is "the owner" throughout this project's docs; product/security/spend decisions are owner-controlled, everything else is routine engineering.
 
 ## Known gotchas
 
-- **`public/lite.js` and `public/lite.css` are dead code.** No HTML page loads them (`public/index.html` loads `public/studio.js`) — they're an earlier frontend generation left in the tree. Several Python tests in `tests/test_public_rendering_contract.py` still check `lite.js`/`lite.css` content, which means they're not actually protecting the live frontend. Not urgent, but worth a cleanup pass so those tests test something real.
+- **`video_os_backend.py`** (repo root) is dead legacy Python code — see Cleanup items above. Don't build on it.
+- **`public/lite.js` and `public/lite.css` are dead code.** No HTML page loads them (`public/index.html` loads `public/studio.js`) — an earlier frontend generation left in the tree. Several Python tests in `tests/test_public_rendering_contract.py` still check `lite.js`/`lite.css` content, which means they're not actually protecting the live frontend.
 - **`npm install`/`npm ci` may block postinstall scripts** on some machines' npm config (`ffmpeg-static`'s binary download, in particular). If a test fails with an `ENOENT` for an ffmpeg path, run `node node_modules/ffmpeg-static/install.js` directly.
 - **CodeQL and `npm audit` both have small, explicit, commented exception lists** (`tools/enforce-codeql-sarif.mjs`'s `ALLOWED_FINDINGS`, `tools/enforce-npm-audit.mjs`'s `ACCEPTED_ADVISORIES`). Read the comments before assuming either gate is naive — both document exactly why each exception is safe, and both still fail hard on anything not explicitly listed.
-- GitHub's inline `codeql[rule-id]` suppression comments **do not work in this repo's CI** (`.github/workflows/codeql.yml` sets `upload: never`, so there's no Code Scanning backend to process them) — don't waste time on that approach if a new CodeQL finding needs an exception; extend the allowlist in `tools/enforce-codeql-sarif.mjs` instead.
+- GitHub's inline `codeql[rule-id]` suppression comments **do not work in this repo's CI** (`.github/workflows/codeql.yml` sets `upload: never`) — extend the allowlist in `tools/enforce-codeql-sarif.mjs` instead.
