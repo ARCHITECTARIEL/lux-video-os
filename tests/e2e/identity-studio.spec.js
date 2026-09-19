@@ -262,6 +262,8 @@ test('polling stops after 45 rounds and offers a manual resume', async ({ page }
 });
 
 for (const viewport of [
+  { name: 'desktop', width: 1440, height: 900 },
+  { name: 'desktop-boundary', width: 1024, height: 900 },
   { name: 'tablet', width: 768, height: 1024 },
   { name: 'phone', width: 390, height: 844 },
   { name: 'narrow phone', width: 320, height: 720 },
