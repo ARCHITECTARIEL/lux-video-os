@@ -25,7 +25,7 @@
     },
     "dependencies": {
         "@neondatabase/serverless": "^1.1.0",
-        "@sentry/node": "^10.65.0",
+        "@sentry/node": "^10.74.0",
         "@vercel/blob": "latest",
         "@vercel/sandbox": "2.8.0",
         "bufferutil": "^4.1.0",
