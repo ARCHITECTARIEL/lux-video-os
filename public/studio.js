@@ -682,6 +682,12 @@ function configureStandardSubmit() {
   $('#fixture-submit-note').hidden = !standardFixtureMode;
   if (!standardFixtureMode) {
     if (button.dataset.action === 'view') return;
+    if (standardContractController?.earlyStageUncertain) {
+      button.dataset.action = 'blocked';
+      button.textContent = 'Resolve the uncertain submission above';
+      button.disabled = true;
+      return;
+    }
     if (standardContractController?.pending) {
       button.dataset.action = 'recover';
       button.textContent = 'Recover uncertain Standard submission';
@@ -946,7 +952,47 @@ function finishStandardOutcome(job) {
   }
 }
 
+function showStandardEarlyUncertain(show) {
+  $('#standard-early-uncertain').hidden = !show;
+  setStandardInputsLocked(show || state.standard.running);
+  configureStandardSubmit();
+}
+
+async function checkStandardExisting() {
+  $('#standard-check-existing').disabled = true;
+  try {
+    const found = await standardContractController.checkExistingProject();
+    if (found) {
+      $('#standard-status').dataset.state = 'DRAFT';
+      $('#standard-status').textContent = `Found "${found.title}" already saved — this submission went through. Check My Videos instead of trying again.`;
+      standardContractController.dismissEarlyStageUncertain();
+      showStandardEarlyUncertain(false);
+    } else {
+      $('#standard-status').dataset.state = 'DRAFT';
+      $('#standard-status').textContent = 'Not found. The earlier attempt likely did not go through, so it is safe to try again.';
+    }
+  } catch (error) {
+    $('#standard-status').textContent = error.message;
+  } finally {
+    $('#standard-check-existing').disabled = false;
+  }
+}
+
+function retryStandardAnyway() {
+  standardContractController.dismissEarlyStageUncertain();
+  showStandardEarlyUncertain(false);
+  state.standard.reviewed = true;
+  $('#standard-status').dataset.state = 'DRAFT';
+  $('#standard-status').textContent = 'You can try again. This may create a duplicate project if the earlier attempt succeeded.';
+}
+
 function failStandardOutcome(error) {
+  if (error?.code === 'early_stage_uncertain') {
+    $('#standard-status').dataset.state = 'DRAFT';
+    $('#standard-status').textContent = 'The connection was lost before we could confirm this submission was saved.';
+    showStandardEarlyUncertain(true);
+    return;
+  }
   const uncertain = error?.code === 'submission_uncertain' && standardContractController?.pending;
   $('#standard-status').dataset.state = uncertain ? 'SUBMITTING' : 'DRAFT';
   $('#standard-status').textContent = standardFailureMessage(error);
@@ -2161,6 +2207,8 @@ $('#use-fixture-portrait').addEventListener('click', useFixturePortrait);
 $('#use-fixture-audio').addEventListener('click', useFixtureAudio);
 $('#standard-quote-confirm').addEventListener('click', confirmStandardQuote);
 $('#standard-quote-requote').addEventListener('click', requoteStandard);
+$('#standard-check-existing').addEventListener('click', checkStandardExisting);
+$('#standard-retry-anyway').addEventListener('click', retryStandardAnyway);
 
 $$('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => closeDialog(button.closest('dialog'))));
 $('#close-login').addEventListener('click', () => closeDialog($('#auth-modal')));

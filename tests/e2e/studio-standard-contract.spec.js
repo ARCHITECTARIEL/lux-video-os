@@ -209,6 +209,59 @@ test('an expired quote blocks confirmation until a fresh quote is requested', as
   expect(captured.renders).toHaveLength(1);
 });
 
+test('an uncertain project write locks submission until an existing project is checked', async ({ page }) => {
+  let projectAttempts = 0;
+  let createdProject = null;
+  await mockOwnerStandardApi(page);
+  await page.route('**/api/video-os-lite/projects', (route) => {
+    if (route.request().method() === 'GET') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, projects: createdProject ? [createdProject] : [] }) });
+    }
+    const body = route.request().postDataJSON();
+    projectAttempts += 1;
+    createdProject = { id: OWNER_IDS.projectId, identityId: body.identityId, title: body.title, narrationAudioAssetId: body.narrationAudioAssetId };
+    return route.abort('connectionfailed');
+  });
+  await fillOwnerStandardForm(page);
+
+  await page.locator('#standard-submit').click();
+  await expect(page.locator('#standard-early-uncertain')).toBeVisible();
+  await expect(page.locator('#standard-submit')).toBeDisabled();
+  expect(projectAttempts).toBe(1);
+
+  await page.locator('#standard-check-existing').click();
+  await expect(page.locator('#standard-early-uncertain')).toBeHidden();
+  await expect(page.locator('#standard-status')).toContainText('already saved');
+  await expect(page.locator('#standard-submit')).toBeEnabled();
+  expect(projectAttempts).toBe(1);
+});
+
+test('an uncertain project write allows a safe retry once no existing project is found', async ({ page }) => {
+  let projectAttempts = 0;
+  await mockOwnerStandardApi(page);
+  await page.route('**/api/video-os-lite/projects', (route) => {
+    if (route.request().method() === 'GET') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, projects: [] }) });
+    projectAttempts += 1;
+    if (projectAttempts === 1) return route.abort('connectionfailed');
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ ok: true, project: { id: OWNER_IDS.projectId } }) });
+  });
+  await fillOwnerStandardForm(page);
+
+  await page.locator('#standard-submit').click();
+  await expect(page.locator('#standard-early-uncertain')).toBeVisible();
+
+  await page.locator('#standard-check-existing').click();
+  await expect(page.locator('#standard-status')).toContainText('safe to try again');
+  await expect(page.locator('#standard-early-uncertain')).toBeVisible();
+
+  await page.locator('#standard-retry-anyway').click();
+  await expect(page.locator('#standard-early-uncertain')).toBeHidden();
+  await expect(page.locator('#standard-submit')).toBeEnabled();
+  await page.locator('#standard-submit').click();
+  await expect(page.locator('#standard-quote-dialog')).toBeVisible();
+  expect(projectAttempts).toBe(2);
+});
+
 for (const [outcome, message] of [['consent', /consent does not authorize/], ['unavailable', /rendering is disabled/]]) {
   test(`${outcome} fails closed without network mutation or output`, async ({ page }) => {
     const writes = await setup(page, outcome);

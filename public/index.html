@@ -90,6 +90,13 @@
               <p class="cost-note">A verified quote is required before live submission can be enabled.</p>
               <button id="review-inputs" class="button primary wide" type="button">Review inputs <span aria-hidden="true">→</span></button><p class="safe-note">Review does not upload, save, charge, or submit.</p>
               <div class="submission-boundary"><p id="standard-status" data-state="DRAFT" role="status" aria-live="polite">Inputs have not been reviewed.</p><button id="standard-submit" class="button primary wide" type="button" disabled>Live Standard submit unavailable</button><small id="fixture-submit-note" hidden>The fixture uses only the supplied synthetic portrait, tone, and video.</small></div>
+              <div id="standard-early-uncertain" class="uncertain-recovery" hidden>
+                <p class="field-error" role="alert">We could not confirm whether this submission was saved before the connection was lost. Do not try again yet.</p>
+                <div class="uncertain-actions">
+                  <button id="standard-check-existing" class="button secondary" type="button">Check for an existing project</button>
+                  <button id="standard-retry-anyway" class="button ghost" type="button">Try again (may create a duplicate)</button>
+                </div>
+              </div>
             </div>
           </aside>
         </div>

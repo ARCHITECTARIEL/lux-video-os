@@ -26,11 +26,16 @@ function readinessUrl(binding, narrationConsentId) {
   return `/api/video-os-lite/standard?${query}`;
 }
 
+function isUncertain(error) {
+  return !Number.isInteger(error?.status);
+}
+
 export function createStandardController({ request, uuid = () => crypto.randomUUID(), onStage = () => {} }) {
   let pending = null;
   let lastJob = null;
   let busy = false;
   let quoteContext = null;
+  let earlyStageUncertain = null;
   const stage = (name, details = {}) => onStage(name, details);
 
   async function requestQuote({ binding, narrationConsentId, format }) {
@@ -103,6 +108,7 @@ export function createStandardController({ request, uuid = () => crypto.randomUU
       if (busy) throw contractError('A submission is already being checked.', 'submission_busy');
       if (!permission) throw contractError('Confirm authorization before submission.', 'consent_required');
       if (pending) throw contractError('Recover the pending submission before starting another.', 'recovery_required');
+      if (earlyStageUncertain) throw contractError('Resolve the previous uncertain submission before starting another.', 'early_stage_uncertain_pending');
       if (!String(title || '').trim()) throw contractError('Enter a video title.', 'invalid_title');
       requireUuid(identityId, 'Identity');
       if (!['vertical', 'landscape', 'square'].includes(format)) throw contractError('Choose a supported video format.', 'invalid_format');
@@ -114,68 +120,85 @@ export function createStandardController({ request, uuid = () => crypto.randomUU
         if (!audio?.name || !String(audio.dataUrl || '').startsWith('data:audio/')) {
           throw contractError('Choose a valid WAV recording.', 'invalid_audio');
         }
+        const trimmedTitle = title.trim();
 
-        stage('UPLOADING');
-        const uploaded = await request('/api/video-os-lite/uploads', {
-          method: 'POST',
-          headers: { 'x-request-id': uuid() },
-          body: { kind: 'identity_voice', name: audio.name, dataUrl: audio.dataUrl },
-          timeoutMs: 60000,
-        });
-        const uploadedAudioId = requireUuid(uploaded?.assetId, 'Audio upload');
+        // Snapshot before any write, so an uncertain outcome below can be checked
+        // against what existed beforehand without guessing at server state.
+        const before = await request('/api/video-os-lite/projects');
+        const beforeProjectIds = new Set((before?.projects || []).map((item) => item.id));
 
-        stage('DRAFT');
-        const { project } = await request('/api/video-os-lite/projects', {
-          method: 'POST',
-          body: {
-            tier: 'STANDARD',
-            contractVersion: STANDARD_CONTRACT_VERSION,
-            title: title.trim(),
-            identityId,
-            narrationAudioAssetId: uploadedAudioId,
-          },
-        });
-        const projectId = requireUuid(project?.id, 'Project');
-        const binding = { projectId, identityId, audioAssetId: uploadedAudioId };
-
-        stage('VALIDATING');
-        const beforeConsent = await request(readinessUrl(binding));
-        if (beforeConsent?.readiness?.ready !== false || beforeConsent.readiness.reasonCode !== CONSENT_REQUIRED) {
-          throw contractError('Standard readiness did not request a valid narration consent.', beforeConsent?.readiness?.reasonCode || 'unknown_readiness', {
-            readiness: beforeConsent?.readiness,
+        let stageName = 'upload';
+        try {
+          stage('UPLOADING');
+          const uploaded = await request('/api/video-os-lite/uploads', {
+            method: 'POST',
+            headers: { 'x-request-id': uuid() },
+            body: { kind: 'identity_voice', name: audio.name, dataUrl: audio.dataUrl },
+            timeoutMs: 60000,
           });
-        }
+          const uploadedAudioId = requireUuid(uploaded?.assetId, 'Audio upload');
 
-        stage('CONSENTING');
-        const consentResponse = await request('/api/video-os-lite/standard', {
-          method: 'POST',
-          body: {
-            operation: 'consent',
-            contractVersion: STANDARD_CONTRACT_VERSION,
-            ...binding,
-            idempotencyKey: uuid(),
-            policyVersion: STANDARD_NARRATION_POLICY_VERSION,
-            consent: true,
-          },
-        });
-        const consent = consentResponse?.consent;
-        const narrationConsentId = requireUuid(consent?.id, 'Consent');
-        exactBinding(consent, binding, 'Consent');
-        if (consent.policyVersion !== STANDARD_NARRATION_POLICY_VERSION || consent.revokedAt) {
-          throw contractError('Narration consent is invalid or no longer active.', 'invalid_consent');
-        }
-
-        const afterConsent = await request(readinessUrl(binding, narrationConsentId));
-        if (afterConsent?.readiness?.ready !== true) {
-          throw contractError('Standard is not ready for these reviewed inputs.', afterConsent?.readiness?.reasonCode || 'unknown_readiness', {
-            readiness: afterConsent?.readiness,
+          stageName = 'project';
+          stage('DRAFT');
+          const { project } = await request('/api/video-os-lite/projects', {
+            method: 'POST',
+            body: {
+              tier: 'STANDARD',
+              contractVersion: STANDARD_CONTRACT_VERSION,
+              title: trimmedTitle,
+              identityId,
+              narrationAudioAssetId: uploadedAudioId,
+            },
           });
-        }
+          const projectId = requireUuid(project?.id, 'Project');
+          const binding = { projectId, identityId, audioAssetId: uploadedAudioId };
 
-        const { quote, quoteId } = await requestQuote({ binding, narrationConsentId, format });
-        quoteContext = { binding, narrationConsentId, projectId, uploadedAudioId, title: title.trim(), format, quote, quoteId };
-        stage('QUOTE_READY', { quote });
-        return { awaitingConfirmation: true, quote };
+          stage('VALIDATING');
+          const beforeConsent = await request(readinessUrl(binding));
+          if (beforeConsent?.readiness?.ready !== false || beforeConsent.readiness.reasonCode !== CONSENT_REQUIRED) {
+            throw contractError('Standard readiness did not request a valid narration consent.', beforeConsent?.readiness?.reasonCode || 'unknown_readiness', {
+              readiness: beforeConsent?.readiness,
+            });
+          }
+
+          stageName = 'consent';
+          stage('CONSENTING');
+          const consentResponse = await request('/api/video-os-lite/standard', {
+            method: 'POST',
+            body: {
+              operation: 'consent',
+              contractVersion: STANDARD_CONTRACT_VERSION,
+              ...binding,
+              idempotencyKey: uuid(),
+              policyVersion: STANDARD_NARRATION_POLICY_VERSION,
+              consent: true,
+            },
+          });
+          const consent = consentResponse?.consent;
+          const narrationConsentId = requireUuid(consent?.id, 'Consent');
+          exactBinding(consent, binding, 'Consent');
+          if (consent.policyVersion !== STANDARD_NARRATION_POLICY_VERSION || consent.revokedAt) {
+            throw contractError('Narration consent is invalid or no longer active.', 'invalid_consent');
+          }
+
+          const afterConsent = await request(readinessUrl(binding, narrationConsentId));
+          if (afterConsent?.readiness?.ready !== true) {
+            throw contractError('Standard is not ready for these reviewed inputs.', afterConsent?.readiness?.reasonCode || 'unknown_readiness', {
+              readiness: afterConsent?.readiness,
+            });
+          }
+
+          const { quote, quoteId } = await requestQuote({ binding, narrationConsentId, format });
+          quoteContext = { binding, narrationConsentId, projectId, uploadedAudioId, title: trimmedTitle, format, quote, quoteId };
+          stage('QUOTE_READY', { quote });
+          return { awaitingConfirmation: true, quote };
+        } catch (error) {
+          if (isUncertain(error)) {
+            earlyStageUncertain = { stage: stageName, title: trimmedTitle, identityId, beforeProjectIds };
+            throw contractError('Submission outcome is unknown before a render request existed. Check before trying again.', 'early_stage_uncertain', { cause: error, stage: stageName });
+          }
+          throw error;
+        }
       } finally {
         busy = false;
       }
@@ -185,6 +208,20 @@ export function createStandardController({ request, uuid = () => crypto.randomUU
 
     cancelQuote() {
       quoteContext = null;
+    },
+
+    get earlyStageUncertain() { return earlyStageUncertain ? { stage: earlyStageUncertain.stage, title: earlyStageUncertain.title } : null; },
+
+    async checkExistingProject() {
+      if (!earlyStageUncertain) throw contractError('No uncertain submission to check.', 'no_early_stage_uncertain');
+      const { title, identityId, beforeProjectIds } = earlyStageUncertain;
+      const response = await request('/api/video-os-lite/projects');
+      const projects = response?.projects || [];
+      return projects.find((item) => !beforeProjectIds.has(item.id) && item.identityId === identityId && item.title === title) || null;
+    },
+
+    dismissEarlyStageUncertain() {
+      earlyStageUncertain = null;
     },
 
     async requote() {
