@@ -96,6 +96,13 @@
                                    }
                    },
                    {
+                       "src":  "/admin-console",
+                       "dest":  "/public/admin-console.html",
+                       "headers":  {
+                                       "Cache-Control":  "no-store"
+                                   }
+                   },
+                   {
                        "src":  "/identity",
                        "dest":  "/identity.html",
                        "headers":  {

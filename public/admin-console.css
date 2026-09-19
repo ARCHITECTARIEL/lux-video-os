@@ -1,0 +1,84 @@
+/* Admin-console-only components. Colors, radius, shadow, and font all come
+   from studio.css's :root variables and body font -- this file only adds
+   the layout shapes studio.css has no existing equivalent for (stat cards,
+   data tables, tabs, timeline). */
+
+.admin-body { background: var(--bg); }
+
+.admin-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.admin-main {
+  width: min(1180px, calc(100% - 56px));
+  margin: 0 auto;
+  padding: 32px 0 64px;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+}
+.admin-tabs button {
+  padding: 10px 16px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 640;
+  font-size: 13px;
+  cursor: pointer;
+}
+.admin-tabs button[aria-selected="true"] { border-bottom-color: var(--primary); color: var(--primary-strong); }
+.admin-tabs button:hover { color: var(--ink); }
+
+.admin-subheading { margin: 28px 0 12px; font-size: 15px; }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.stat-grid-compact { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+
+.stat-card {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.stat-card .stat-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+.stat-card .stat-value { display: block; font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
+.stat-card .stat-detail { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+.stat-card[data-tone="warning"] { border-color: #e7c373; background: var(--warning-soft); }
+.stat-card[data-tone="warning"] .stat-value { color: var(--warning); }
+.stat-card[data-tone="danger"] { border-color: #efb5ae; background: var(--danger-soft); }
+.stat-card[data-tone="danger"] .stat-value { color: var(--danger); }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th, .data-table td { padding: 10px 14px; text-align: left; white-space: nowrap; }
+.data-table th { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; border-bottom: 1px solid var(--line); }
+.data-table tbody tr { border-bottom: 1px solid var(--line); }
+.data-table tbody tr:last-child { border-bottom: 0; }
+.data-table tbody tr:hover { background: var(--surface-muted); }
+.data-table td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+.timeline-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.timeline-list li { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-muted); }
+.timeline-list .timeline-stage { font-weight: 650; }
+.timeline-list .timeline-meta { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+
+@media (max-width: 640px) {
+  .admin-main { width: calc(100% - 32px); }
+  .admin-topbar { padding: 14px 16px; }
+}

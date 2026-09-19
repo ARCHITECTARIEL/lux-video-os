@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en" data-lux-theme="lux-command">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="LUX Video OS admin console: accounts, sign-ins, and render job health.">
+  <meta name="theme-color" content="#f5f7fb">
+  <meta name="robots" content="noindex, nofollow">
+  <title>LUX Video OS Admin</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/studio.css">
+  <link rel="stylesheet" href="/admin-console.css">
+</head>
+<body class="admin-body">
+  <a class="skip-link" href="#main">Skip to admin console</a>
+
+  <header class="admin-topbar">
+    <a class="wordmark" href="/" aria-label="LUX Video OS, back to workspace"><span class="wordmark-lux">LUX</span><span class="wordmark-product">ADMIN</span></a>
+    <span id="admin-auth-state" class="status-chip" data-state="loading">Checking access</span>
+  </header>
+
+  <main id="main" tabindex="-1" class="admin-main">
+    <div id="admin-denied" class="notice" role="alert" hidden>
+      <span>Owner sign-in required. <a class="text-link" href="/">Sign in as Owner from the main workspace</a>, then reload this page.</span>
+    </div>
+
+    <div id="admin-content" hidden>
+      <div class="page-heading">
+        <div>
+          <p class="eyebrow">OPERATIONS</p>
+          <h1>Admin console</h1>
+          <p>Accounts, sign-ins, credits, and render job health across the platform.</p>
+        </div>
+        <button id="admin-refresh" class="button secondary compact" type="button">Refresh</button>
+      </div>
+
+      <nav class="admin-tabs" role="tablist" aria-label="Admin sections">
+        <button type="button" role="tab" aria-selected="true" data-admin-tab="overview">Overview</button>
+        <button type="button" role="tab" aria-selected="false" data-admin-tab="attention">Needs attention</button>
+        <button type="button" role="tab" aria-selected="false" data-admin-tab="accounts">Accounts</button>
+      </nav>
+
+      <section id="panel-overview" class="admin-panel" role="tabpanel">
+        <div id="reconciliation-banner" class="notice" role="status" hidden></div>
+        <div id="stat-grid" class="stat-grid" aria-live="polite"></div>
+        <h2 class="admin-subheading">Jobs by status</h2>
+        <div id="status-grid" class="stat-grid stat-grid-compact" aria-live="polite"></div>
+      </section>
+
+      <section id="panel-attention" class="admin-panel" role="tabpanel" hidden>
+        <p class="section-copy">Jobs that will not resolve on their own: failed, cancelled, or held for manual reconciliation after an uncertain provider submission.</p>
+        <div class="table-wrap"><table class="data-table" id="attention-table"><thead><tr><th>Job</th><th>Account</th><th>Provider</th><th>Status</th><th>Failure</th><th>Updated</th><th></th></tr></thead><tbody></tbody></table></div>
+        <p id="attention-empty" class="inline-empty" hidden>Nothing needs attention right now.</p>
+      </section>
+
+      <section id="panel-accounts" class="admin-panel" role="tabpanel" hidden>
+        <p class="section-copy">Most recently created accounts.</p>
+        <div class="table-wrap"><table class="data-table" id="accounts-table"><thead><tr><th>Account</th><th>Email</th><th>Role</th><th>Created</th><th>Balance</th><th>Reserved</th></tr></thead><tbody></tbody></table></div>
+      </section>
+    </div>
+
+    <p id="admin-status" class="form-status" role="status" aria-live="polite"></p>
+  </main>
+
+  <dialog id="job-timeline-dialog" aria-labelledby="job-timeline-title">
+    <div class="dialog-heading">
+      <div><h2 id="job-timeline-title">Job timeline</h2><p id="job-timeline-subtitle" class="section-copy"></p></div>
+      <button class="icon-button" id="job-timeline-close" type="button" aria-label="Close">×</button>
+    </div>
+    <ol id="job-timeline-list" class="timeline-list"></ol>
+  </dialog>
+
+  <script src="/admin-console.js" type="module"></script>
+</body>
+</html>
