@@ -227,6 +227,7 @@ test('an uncertain project write locks submission until an existing project is c
   await page.locator('#standard-submit').click();
   await expect(page.locator('#standard-early-uncertain')).toBeVisible();
   await expect(page.locator('#standard-submit')).toBeDisabled();
+  await expect(page.locator('#standard-check-existing')).toBeFocused();
   expect(projectAttempts).toBe(1);
 
   await page.locator('#standard-check-existing').click();

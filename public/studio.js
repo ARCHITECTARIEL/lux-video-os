@@ -956,6 +956,7 @@ function showStandardEarlyUncertain(show) {
   $('#standard-early-uncertain').hidden = !show;
   setStandardInputsLocked(show || state.standard.running);
   configureStandardSubmit();
+  if (show) $('#standard-check-existing').focus();
 }
 
 async function checkStandardExisting() {
