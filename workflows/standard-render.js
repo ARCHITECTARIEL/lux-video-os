@@ -6,7 +6,9 @@ import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
 import { renderStandardSimulation } from '../services/sadtalker-simulator.js';
 
-async function resolveAndRender(jobId) {
+// Exported for the same reason as workflows/video-render.js's step exports:
+// worker/render-worker.mjs (VPS hosting) calls this directly.
+export async function resolveAndRender(jobId) {
   'use step';
   const job = await getJob(jobId);
   if (!job) throw new FatalError('Video job not found.');
@@ -34,7 +36,7 @@ async function resolveAndRender(jobId) {
   }
 }
 
-async function failWorkflow(jobId, error) {
+export async function failWorkflow(jobId, error) {
   'use step';
   const category = classifyFailure(error, 'INTERNAL');
   if (category === 'PROVIDER_SUBMIT_UNKNOWN') return;

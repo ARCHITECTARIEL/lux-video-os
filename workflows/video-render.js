@@ -16,7 +16,13 @@ export function finishingEngine(env = process.env) {
   return 'hyperframes';
 }
 
-async function submitProvider(jobId) {
+// Exported (not just used internally by videoRenderWorkflow below) so a
+// non-Vercel worker daemon (worker/render-worker.mjs, for VPS hosting) can
+// call these steps directly in its own poll loop instead of going through
+// Vercel Workflow's orchestration runtime. 'use step' has no effect outside
+// that runtime's build transform -- it's inert here, same as a stray string
+// literal -- so these remain safe to call as plain functions.
+export async function submitProvider(jobId) {
   'use step';
   const job = await getJob(jobId);
   if (!job) throw new FatalError('Video job not found.');
@@ -45,7 +51,7 @@ async function submitProvider(jobId) {
   }
 }
 
-async function pollProvider(jobId, providerJobId) {
+export async function pollProvider(jobId, providerJobId) {
   'use step';
   const job = await getJob(jobId);
   if (!job) throw new FatalError('Video job not found.');
@@ -57,7 +63,7 @@ async function pollProvider(jobId, providerJobId) {
   return status;
 }
 
-async function finishProviderMedia(jobId, sourceUrl) {
+export async function finishProviderMedia(jobId, sourceUrl) {
   'use step';
   const job = await getJob(jobId);
   if (!job) throw new FatalError('Video job not found.');
@@ -75,7 +81,7 @@ async function finishProviderMedia(jobId, sourceUrl) {
   return artifact;
 }
 
-async function failWorkflow(jobId, error) {
+export async function failWorkflow(jobId, error) {
   'use step';
   const category = classifyFailure(error, 'INTERNAL');
   if (category === 'PROVIDER_SUBMIT_UNKNOWN') return;
