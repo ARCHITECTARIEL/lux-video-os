@@ -1,10 +1,14 @@
 // Routed through the consolidated workspace function to stay within the Vercel function limit.
+import crypto from 'node:crypto';
+import { dispatchClaimedJob } from '../../api/video-os-lite/render-v2.js';
 import {
-  adminResolveJob, getAdminOverview, getJobEventTimeline, listFailedOrStuckJobs, listMediaAssetsForJob,
-  listRecentAccounts, listRecentCreditTransactions, listRecentJobs, listRecentStripeEvents, quarantineMediaAsset,
+  adminResolveJob, claimWorkflowStart, getAdminOverview, getJob, getJobEventTimeline, listFailedOrStuckJobs,
+  listMediaAssetsForJob, listRecentAccounts, listRecentCreditTransactions, listRecentJobs, listRecentStripeEvents,
+  markJobReviewed, markJobVideoDeleted, quarantineMediaAsset, reserveRender,
 } from '../../db/repositories.js';
 import { handleOptions, parseCookies, readJson, send, verifySessionToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
+import { deletePrivateBlob, getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../../lib/video-os-private-blob.js';
 
 function isAdminRequest(req) {
   const token = String(process.env.VIDEO_OS_ADMIN_TOKEN || '').trim();
@@ -22,6 +26,36 @@ async function jobsSummary() {
   return { summary: { total: jobs.length, rendering, ready, failed }, jobs };
 }
 
+function jsonFailure(res, status, error) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(JSON.stringify({ ok: false, error }));
+}
+
+// Admin video preview/download is intentionally its own path, not a
+// permissive mode of api/video-os-lite/download-v2.js: that route enforces
+// the customer's own session owns the job (getOwnedJob), which an admin
+// reviewing any account's video never will. isAdminRequest() above is the
+// authorization boundary here instead.
+async function handleVideoStream(req, res, jobId) {
+  if (!jobId) return jsonFailure(res, 400, 'jobId is required.');
+  const job = await getJob(jobId);
+  if (!job) return jsonFailure(res, 404, 'Job not found.');
+  if (job.status !== 'ready') return jsonFailure(res, 409, 'Final video is not ready.');
+  if (job.videoDeletedAt) return jsonFailure(res, 410, 'This video has been deleted.');
+  const result = await getPrivateBlob(job.output?.privatePathname);
+  if (!result?.stream) return jsonFailure(res, 410, 'Final video is unavailable.');
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Disposition', 'inline');
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('ETag', result.blob.etag);
+  for await (const chunk of result.stream) res.write(chunk);
+  res.end();
+}
+
 async function handleGet(req, res, operation, url) {
   if (operation === 'jobs') return send(res, 200, { ok: true, ...(await jobsSummary()) });
   if (operation === 'overview') return send(res, 200, { ok: true, overview: await getAdminOverview() });
@@ -29,6 +63,7 @@ async function handleGet(req, res, operation, url) {
   if (operation === 'accounts') return send(res, 200, { ok: true, accounts: await listRecentAccounts(200) });
   if (operation === 'credit-ledger') return send(res, 200, { ok: true, transactions: await listRecentCreditTransactions(200) });
   if (operation === 'stripe-events') return send(res, 200, { ok: true, events: await listRecentStripeEvents(200) });
+  if (operation === 'video') return handleVideoStream(req, res, String(url.searchParams.get('jobId') || '').trim());
   if (operation === 'job-events') {
     const jobId = String(url.searchParams.get('jobId') || '').trim();
     if (!jobId) return send(res, 400, { ok: false, error: 'jobId is required.' });
@@ -42,12 +77,83 @@ async function handleGet(req, res, operation, url) {
   return send(res, 400, { ok: false, error: `Unknown admin operation: ${operation}` });
 }
 
+async function handleDeleteVideo(jobId) {
+  const job = await getJob(jobId);
+  if (!job) return null;
+  const pathname = job.output?.privatePathname;
+  if (pathname) {
+    const existing = await getPrivateBlob(pathname);
+    if (existing?.blob?.etag) {
+      // Best-effort: if the Blob is already gone or the etag has moved on,
+      // the DB-side videoDeletedAt marker below is still the source of
+      // truth for "is this available," so a Blob-side failure here must
+      // not block that.
+      await deletePrivateBlob(PRIVATE_BLOB_CLASSIFICATIONS.FINISHED_CUSTOMER_VIDEO, pathname, { ifMatch: existing.blob.etag }).catch(() => {});
+    }
+  }
+  return markJobVideoDeleted(jobId);
+}
+
+// Re-renders a job from its own already-authorized input (same provider,
+// format, title, cost) under a fresh job id -- see the admin console's
+// "Retry render" action. Deliberately does not accept a new input payload:
+// that would mean re-implementing render-v2.js's full validation/
+// authorization surface for arbitrary admin-supplied project/identity
+// references, a much larger and riskier surface than "run this exact
+// already-validated request again," which is what customer support
+// actually needs this for.
+//
+// Restricted to heygen jobs. A sadtalker (Standard tier) job's `input` is a
+// canonical narration payload produced by consuming a one-time-use
+// standardNarrationQuotes row tied to an active narration consent record
+// (see db/standard-narration-repository.js) -- the generic reserveRender()
+// used below has no idea about that quote/consent system, so replaying a
+// sadtalker job through it would create a render with no matching consent
+// reservation. Standard-tier retry needs its own admin action later.
+async function handleRetryJob(jobId) {
+  const job = await getJob(jobId);
+  if (!job) return null;
+  if (job.provider !== 'heygen') {
+    throw Object.assign(new Error('Retry is only supported for HeyGen (Premium) jobs right now.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  }
+  const newJobId = `job-${crypto.randomUUID()}`;
+  const reserved = await reserveRender({
+    jobId: newJobId, accountId: job.accountId, idempotencyKey: crypto.randomUUID(),
+    correlationId: `admin-retry-${job.id}`, provider: job.provider, title: job.title,
+    format: job.format, costCredits: job.costCredits, input: job.input,
+  });
+  const claimed = await claimWorkflowStart(reserved.job.id);
+  if (claimed) await dispatchClaimedJob(reserved.job.id, job.provider);
+  return getJob(reserved.job.id);
+}
+
 async function handlePost(req, res, operation) {
   const payload = await readJson(req, 5_000);
   if (operation === 'resolve-job') {
     const jobId = String(payload.jobId || '').trim();
     if (!jobId) return send(res, 400, { ok: false, error: 'jobId is required.' });
     const job = await adminResolveJob(jobId, payload.note);
+    if (!job) return send(res, 404, { ok: false, error: 'Job not found.' });
+    return send(res, 200, { ok: true, job });
+  }
+  if (operation === 'approve-job') {
+    const jobId = String(payload.jobId || '').trim();
+    if (!jobId) return send(res, 400, { ok: false, error: 'jobId is required.' });
+    const job = await markJobReviewed(jobId);
+    if (!job) return send(res, 404, { ok: false, error: 'Job not found.' });
+    return send(res, 200, { ok: true, job });
+  }
+  if (operation === 'delete-video') {
+    const jobId = String(payload.jobId || '').trim();
+    if (!jobId) return send(res, 400, { ok: false, error: 'jobId is required.' });
+    const job = await handleDeleteVideo(jobId);
+    if (!job) return send(res, 404, { ok: false, error: 'Job not found.' });
+    return send(res, 200, { ok: true, job });
+  }
+  if (operation === 'retry-job') {
+    const jobId = String(payload.jobId || '').trim();
+    if (!jobId) return send(res, 400, { ok: false, error: 'jobId is required.' });
+    const job = await handleRetryJob(jobId);
     if (!job) return send(res, 404, { ok: false, error: 'Job not found.' });
     return send(res, 200, { ok: true, job });
   }
@@ -77,6 +183,7 @@ export default async function handler(req, res) {
     return await handleGet(req, res, operation, url);
   } catch (error) {
     captureRouteError(error, { route: 'admin', failureCategory: error?.failureCategory || 'ADMIN' });
+    if (res.headersSent) return; // a streaming response (operation=video) may have already started
     send(res, error.statusCode || 400, { ok: false, error: error.message || 'Admin status failed.' });
   }
 }

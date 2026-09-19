@@ -146,7 +146,7 @@ export function jobDto(job, options = {}) {
     effects: sanitizePresentationMetadata(output.effects),
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
-    message: job.status === 'ready' ? 'Final MP4 ready.' : job.status === 'failed' ? 'Render needs attention.' : 'Render workflow is running.',
-    url: job.status === 'ready' ? `/api/video-os-lite/download?jobId=${encodeURIComponent(job.id)}` : null,
+    message: job.videoDeletedAt ? 'This video is no longer available.' : job.status === 'ready' ? 'Final MP4 ready.' : job.status === 'failed' ? 'Render needs attention.' : 'Render workflow is running.',
+    url: job.status === 'ready' && !job.videoDeletedAt ? `/api/video-os-lite/download?jobId=${encodeURIComponent(job.id)}` : null,
   };
 }

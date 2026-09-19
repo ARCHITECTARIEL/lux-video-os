@@ -36,6 +36,7 @@
 
       <nav class="admin-tabs" role="tablist" aria-label="Admin sections">
         <button type="button" role="tab" aria-selected="true" data-admin-tab="overview">Overview</button>
+        <button type="button" role="tab" aria-selected="false" data-admin-tab="jobs">Jobs</button>
         <button type="button" role="tab" aria-selected="false" data-admin-tab="attention">Needs attention</button>
         <button type="button" role="tab" aria-selected="false" data-admin-tab="accounts">Accounts</button>
         <button type="button" role="tab" aria-selected="false" data-admin-tab="billing">Billing</button>
@@ -46,6 +47,12 @@
         <div id="stat-grid" class="stat-grid" aria-live="polite"></div>
         <h2 class="admin-subheading">Jobs by status</h2>
         <div id="status-grid" class="stat-grid stat-grid-compact" aria-live="polite"></div>
+      </section>
+
+      <section id="panel-jobs" class="admin-panel" role="tabpanel" hidden>
+        <p class="section-copy">The 100 most recently updated render jobs, across every account.</p>
+        <div class="table-wrap"><table class="data-table" id="jobs-table"><thead><tr><th>Job</th><th>Account</th><th>Provider</th><th>Status</th><th>Updated</th><th></th></tr></thead><tbody></tbody></table></div>
+        <p id="jobs-empty" class="inline-empty" hidden>No jobs recorded yet.</p>
       </section>
 
       <section id="panel-attention" class="admin-panel" role="tabpanel" hidden>
@@ -76,6 +83,17 @@
       <button class="icon-button" id="job-timeline-close" type="button" aria-label="Close">×</button>
     </div>
     <ol id="job-timeline-list" class="timeline-list"></ol>
+
+    <div id="job-video-section" class="admin-dialog-section" hidden>
+      <h3>Video</h3>
+      <video id="job-video-player" controls hidden></video>
+      <p id="job-video-empty" class="inline-empty" hidden></p>
+      <div class="dialog-actions">
+        <button id="job-approve-button" class="button secondary compact" type="button">Approve</button>
+        <button id="job-retry-button" class="button secondary compact" type="button" hidden>Retry render</button>
+        <button id="job-delete-video-button" class="button danger compact" type="button">Delete video</button>
+      </div>
+    </div>
 
     <div id="job-assets-section" class="admin-dialog-section" hidden>
       <h3>Media assets</h3>

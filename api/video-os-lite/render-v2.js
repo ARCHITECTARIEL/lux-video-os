@@ -25,8 +25,23 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 // worker/render-worker.mjs already watches for jobs sitting at
 // 'workflow_started' (what claimWorkflowStart() just set), so on a VPS
 // dispatch is a no-op here -- the poll loop picks it up on its own.
-function dispatchesViaVercelWorkflow() {
+export function dispatchesViaVercelWorkflow() {
   return String(process.env.WORKFLOW_DISPATCH_MODE || 'vercel').trim().toLowerCase() === 'vercel';
+}
+
+// Shared by the admin console's "retry this render" action
+// (routes/video-os-lite/admin.js) so an admin-triggered retry respects the
+// exact same Vercel-vs-VPS dispatch gate as a customer's own render
+// request, without duplicating the inline claim+dispatch blocks in
+// handleStandardRender/handlePremiumRender below (those have their own
+// error-recovery bookkeeping specific to the HTTP request lifecycle that
+// doesn't apply here -- an admin retry either reserves and claims
+// successfully or it doesn't, there is no partial-request state to unwind).
+export async function dispatchClaimedJob(jobId, provider) {
+  if (!dispatchesViaVercelWorkflow()) return;
+  const metadata = provider === 'sadtalker' ? standardRenderWorkflowMetadata : videoRenderWorkflowMetadata;
+  const run = await start(metadata, [jobId]);
+  await setWorkflowRun(jobId, run.runId);
 }
 
 export function authorizedIdentityInput(project, payload, identity) {

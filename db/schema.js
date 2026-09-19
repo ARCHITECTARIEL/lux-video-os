@@ -86,6 +86,15 @@ export const videoJobs = pgTable('video_jobs', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp('completed_at', { withTimezone: true }),
+  // Admin-only markers, orthogonal to `status`: reviewedAt is a plain
+  // tracking flag with no effect on customer-facing behavior (see the
+  // admin console's "Approve" action). videoDeletedAt records that the
+  // private final file was removed from storage while keeping this row
+  // (and its full jobEvents audit trail) intact -- customer-facing
+  // download/gallery code must treat a non-null videoDeletedAt as
+  // unavailable regardless of `status` still saying 'ready'.
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+  videoDeletedAt: timestamp('video_deleted_at', { withTimezone: true }),
 }, (table) => [uniqueIndex('video_jobs_account_idempotency_uq').on(table.accountId, table.idempotencyKey), index('video_jobs_account_updated_idx').on(table.accountId, table.updatedAt), index('video_jobs_status_updated_idx').on(table.status, table.updatedAt)]);
 
 export const jobEvents = pgTable('job_events', {

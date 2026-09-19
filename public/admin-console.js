@@ -8,8 +8,8 @@ const node = (tag, className, text) => {
 };
 
 const ADMIN_BASE = '/api/video-os-lite/admin';
-const panelData = { overview: null, attention: null, accounts: null, billing: null };
-let currentTimelineJobId = null;
+const panelData = { overview: null, jobs: null, attention: null, accounts: null, billing: null };
+let currentTimelineJob = null;
 
 async function getJson(url, options = {}) {
   const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -100,7 +100,30 @@ function renderAttention(jobs) {
     const actionCell = node('td');
     const button = node('button', 'button quiet compact', 'View timeline');
     button.type = 'button';
-    button.addEventListener('click', () => openJobTimeline(job.id, { allowResolve: true }));
+    button.addEventListener('click', () => openJobTimeline(job, { allowResolve: true }));
+    actionCell.append(button);
+    row.append(actionCell);
+    tbody.append(row);
+  }
+}
+
+function renderJobsTable(jobs) {
+  const tbody = $('#jobs-table tbody');
+  tbody.textContent = '';
+  $('#jobs-empty').hidden = jobs.length > 0;
+  for (const job of jobs) {
+    const row = node('tr');
+    row.append(
+      node('td', 'mono', job.id),
+      node('td', 'mono', job.accountId),
+      node('td', null, job.provider),
+      node('td', null, job.status),
+      node('td', null, formatDate(job.updatedAt)),
+    );
+    const actionCell = node('td');
+    const button = node('button', 'button quiet compact', 'View');
+    button.type = 'button';
+    button.addEventListener('click', () => openJobTimeline(job, { allowResolve: ['failed', 'provider_submit_unknown'].includes(job.status) }));
     actionCell.append(button);
     row.append(actionCell);
     tbody.append(row);
@@ -197,14 +220,46 @@ function renderAssetRow(list, asset) {
   list.append(item);
 }
 
-async function openJobTimeline(jobId, { allowResolve = false } = {}) {
-  currentTimelineJobId = jobId;
+function renderJobVideoSection(job) {
+  currentTimelineJob = job;
+  const player = $('#job-video-player');
+  const empty = $('#job-video-empty');
+  const deleteButton = $('#job-delete-video-button');
+  const retryButton = $('#job-retry-button');
+  const approveButton = $('#job-approve-button');
+  deleteButton.dataset.armed = 'false';
+  deleteButton.textContent = 'Delete video';
+
+  if (job.status === 'ready' && !job.videoDeletedAt) {
+    player.hidden = false;
+    player.src = `${ADMIN_BASE}?operation=video&jobId=${encodeURIComponent(job.id)}`;
+    empty.hidden = true;
+    deleteButton.hidden = false;
+  } else {
+    player.hidden = true;
+    player.removeAttribute('src');
+    empty.hidden = false;
+    empty.textContent = job.videoDeletedAt ? `Video deleted ${formatDate(job.videoDeletedAt)}.` : 'This job has no final video yet.';
+    deleteButton.hidden = true;
+  }
+
+  approveButton.disabled = false;
+  approveButton.textContent = job.reviewedAt ? `Reviewed ✓ ${formatDate(job.reviewedAt)}` : 'Approve';
+  retryButton.hidden = job.provider !== 'heygen';
+  retryButton.disabled = false;
+  retryButton.textContent = 'Retry render';
+}
+
+async function openJobTimeline(job, { allowResolve = false } = {}) {
+  const jobId = job.id;
   const dialog = $('#job-timeline-dialog');
   $('#job-timeline-subtitle').textContent = jobId;
   const list = $('#job-timeline-list');
   list.textContent = '';
   list.append(node('li', null, 'Loading…'));
   $('#job-assets-section').hidden = true;
+  $('#job-video-section').hidden = false;
+  renderJobVideoSection(job);
   $('#job-resolve-section').hidden = !allowResolve;
   $('#job-resolve-note').value = '';
   dialog.showModal();
@@ -226,16 +281,79 @@ async function openJobTimeline(jobId, { allowResolve = false } = {}) {
   await loadJobAssets(jobId);
 }
 
+function invalidateJobLists() {
+  panelData.jobs = null;
+  panelData.attention = null;
+  panelData.overview = null;
+}
+
+async function approveCurrentJob() {
+  if (!currentTimelineJob) return;
+  const button = $('#job-approve-button');
+  button.disabled = true;
+  button.textContent = 'Approving…';
+  try {
+    const data = await postJson(`${ADMIN_BASE}?operation=approve-job`, { jobId: currentTimelineJob.id });
+    renderJobVideoSection(data.job);
+    setStatus(`Job ${currentTimelineJob.id} marked reviewed.`);
+  } catch (error) {
+    setStatus(error.message || 'Could not approve this job.', true);
+    button.disabled = false;
+    button.textContent = 'Approve';
+  }
+}
+
+async function deleteCurrentJobVideo() {
+  if (!currentTimelineJob) return;
+  const button = $('#job-delete-video-button');
+  if (button.dataset.armed !== 'true') {
+    button.dataset.armed = 'true';
+    button.textContent = 'Confirm delete — cannot be undone';
+    return;
+  }
+  button.disabled = true;
+  button.textContent = 'Deleting…';
+  try {
+    const data = await postJson(`${ADMIN_BASE}?operation=delete-video`, { jobId: currentTimelineJob.id });
+    renderJobVideoSection(data.job);
+    invalidateJobLists();
+    setStatus(`Video deleted for job ${currentTimelineJob.id}. The job record and its event history are kept.`);
+  } catch (error) {
+    setStatus(error.message || 'Could not delete this video.', true);
+    button.disabled = false;
+    button.dataset.armed = 'false';
+    button.textContent = 'Delete video';
+  }
+}
+
+async function retryCurrentJob() {
+  if (!currentTimelineJob) return;
+  const button = $('#job-retry-button');
+  button.disabled = true;
+  button.textContent = 'Starting render…';
+  try {
+    const data = await postJson(`${ADMIN_BASE}?operation=retry-job`, { jobId: currentTimelineJob.id });
+    invalidateJobLists();
+    setStatus(`Retry started as new job ${data.job.id}.`);
+    $('#job-timeline-dialog').close();
+    await openJobTimeline(data.job, { allowResolve: false });
+  } catch (error) {
+    setStatus(error.message || 'Could not start a retry render.', true);
+    button.disabled = false;
+    button.textContent = 'Retry render';
+  }
+}
+
 async function resolveCurrentJob() {
-  if (!currentTimelineJobId) return;
+  if (!currentTimelineJob) return;
+  const jobId = currentTimelineJob.id;
   const button = $('#job-resolve-confirm');
   button.disabled = true;
   button.textContent = 'Resolving…';
   try {
-    await postJson(`${ADMIN_BASE}?operation=resolve-job`, { jobId: currentTimelineJobId, note: $('#job-resolve-note').value });
-    setStatus(`Job ${currentTimelineJobId} marked failed and any reserved credits released.`);
-    panelData.attention = null;
-    panelData.overview = null;
+    await postJson(`${ADMIN_BASE}?operation=resolve-job`, { jobId, note: $('#job-resolve-note').value });
+    setStatus(`Job ${jobId} marked failed and any reserved credits released.`);
+    invalidateJobLists();
     $('#job-timeline-dialog').close();
     await loadPanel('attention', true);
   } catch (error) {
@@ -254,6 +372,10 @@ async function loadPanel(name, force = false) {
       const data = await getJson(`${ADMIN_BASE}?operation=overview`);
       panelData.overview = data.overview;
       renderOverview(data.overview);
+    } else if (name === 'jobs') {
+      const data = await getJson(`${ADMIN_BASE}?operation=jobs`);
+      panelData.jobs = data.jobs;
+      renderJobsTable(data.jobs);
     } else if (name === 'attention') {
       const data = await getJson(`${ADMIN_BASE}?operation=attention`);
       panelData.attention = data.jobs;
@@ -306,8 +428,15 @@ async function init() {
     panelData[name] = null;
     loadPanel(name, true);
   });
-  $('#job-timeline-close').addEventListener('click', () => $('#job-timeline-dialog').close());
+  $('#job-timeline-close').addEventListener('click', () => {
+    $('#job-video-player').removeAttribute('src');
+    currentTimelineJob = null;
+    $('#job-timeline-dialog').close();
+  });
   $('#job-resolve-confirm').addEventListener('click', resolveCurrentJob);
+  $('#job-approve-button').addEventListener('click', approveCurrentJob);
+  $('#job-delete-video-button').addEventListener('click', deleteCurrentJobVideo);
+  $('#job-retry-button').addEventListener('click', retryCurrentJob);
 }
 
 init();

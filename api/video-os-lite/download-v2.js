@@ -17,6 +17,7 @@ export default async function handler(req, res) {
     const job = await getOwnedJob(session.accountId, jobId);
     if (!job) return failure(res, 404, 'Final video not found.');
     if (job.status !== 'ready') return failure(res, 409, 'Final video is not ready.');
+    if (job.videoDeletedAt) return failure(res, 410, 'Final video is unavailable.');
     const result = await getPrivateBlob(job.output?.privatePathname);
     if (!result?.stream) return failure(res, 410, 'Final video is unavailable.');
     const filename = String(job.output?.filename || 'video-os-final.mp4').replace(/[^a-zA-Z0-9._-]/g, '-');

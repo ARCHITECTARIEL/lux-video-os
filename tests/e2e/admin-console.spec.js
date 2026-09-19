@@ -12,6 +12,9 @@ const attentionJobs = [
   { id: 'job-proof-1', accountId: 'account-proof-1', provider: 'heygen', status: 'failed', failureCategory: 'PROVIDER_SUBMIT', updatedAt: '2026-09-19T20:00:00.000Z' },
 ];
 
+const readyJob = { id: 'job-proof-ready', accountId: 'account-proof-1', provider: 'heygen', status: 'ready', updatedAt: '2026-09-19T20:05:00.000Z', reviewedAt: null, videoDeletedAt: null };
+const recentJobs = [readyJob, { id: 'job-proof-1', accountId: 'account-proof-1', provider: 'heygen', status: 'failed', updatedAt: '2026-09-19T20:00:00.000Z', reviewedAt: null, videoDeletedAt: null }];
+
 const accounts = [
   { accountId: 'account-proof-1', email: 'proof@example.test', role: 'customer', createdAt: '2026-09-18T12:00:00.000Z', balance: 200, reserved: 0 },
 ];
@@ -27,10 +30,16 @@ async function stubAdminApi(page, { authorized = true } = {}) {
     if (!authorized) return route.fulfill({ status: 401, json: { ok: false, error: 'Admin login required.' } });
     const url = new URL(route.request().url());
     const operation = url.searchParams.get('operation') || 'jobs';
+    const method = route.request().method();
     if (operation === 'overview') return route.fulfill({ json: { ok: true, overview } });
+    if (operation === 'jobs') return route.fulfill({ json: { ok: true, summary: { total: recentJobs.length, rendering: 0, ready: 1, failed: 1 }, jobs: recentJobs } });
     if (operation === 'attention') return route.fulfill({ json: { ok: true, jobs: attentionJobs } });
     if (operation === 'accounts') return route.fulfill({ json: { ok: true, accounts } });
     if (operation === 'job-events') return route.fulfill({ json: { ok: true, jobId: url.searchParams.get('jobId'), events: jobEvents } });
+    if (operation === 'video') return route.fulfill({ status: 200, contentType: 'video/mp4', body: Buffer.from('fake-mp4-bytes') });
+    if (method === 'POST' && operation === 'approve-job') return route.fulfill({ json: { ok: true, job: { ...readyJob, reviewedAt: '2026-09-19T20:10:00.000Z' } } });
+    if (method === 'POST' && operation === 'delete-video') return route.fulfill({ json: { ok: true, job: { ...readyJob, videoDeletedAt: '2026-09-19T20:11:00.000Z' } } });
+    if (method === 'POST' && operation === 'retry-job') return route.fulfill({ json: { ok: true, job: { id: 'job-proof-retry', accountId: 'account-proof-1', provider: 'heygen', status: 'workflow_started', updatedAt: '2026-09-19T20:12:00.000Z', reviewedAt: null, videoDeletedAt: null } } });
     return route.fulfill({ status: 400, json: { ok: false, error: `Unknown admin operation: ${operation}` } });
   });
 }
@@ -83,5 +92,39 @@ test('viewing a job timeline shows its real, ordered stage history', async ({ pa
 
   await page.locator('#job-timeline-close').click();
   await expect(dialog).toBeHidden();
+});
+
+test('a ready job’s timeline shows a video player and approve/delete/retry controls', async ({ page }) => {
+  await stubAdminApi(page);
+  await page.goto('/admin-console.html');
+  await page.locator('[data-admin-tab="jobs"]').click();
+  await expect(page.locator('#jobs-table')).toContainText('job-proof-ready');
+
+  await page.locator('#jobs-table tr', { hasText: 'job-proof-ready' }).locator('button', { hasText: 'View' }).click();
+  const dialog = page.locator('#job-timeline-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(page.locator('#job-video-player')).toBeVisible();
+  await expect(page.locator('#job-video-empty')).toBeHidden();
+  await expect(page.locator('#job-resolve-section')).toBeHidden();
+  await expect(page.locator('#job-retry-button')).toBeVisible();
+
+  await page.locator('#job-approve-button').click();
+  await expect(page.locator('#job-approve-button')).toContainText('Reviewed');
+
+  await page.locator('#job-delete-video-button').click();
+  await expect(page.locator('#job-delete-video-button')).toContainText('Confirm delete');
+  await page.locator('#job-delete-video-button').click();
+  await expect(page.locator('#job-video-player')).toBeHidden();
+  await expect(page.locator('#job-video-empty')).toContainText('Video deleted');
+});
+
+test('retrying a job replaces the dialog with the newly created job', async ({ page }) => {
+  await stubAdminApi(page);
+  await page.goto('/admin-console.html');
+  await page.locator('[data-admin-tab="jobs"]').click();
+  await page.locator('#jobs-table tr', { hasText: 'job-proof-ready' }).locator('button', { hasText: 'View' }).click();
+
+  await page.locator('#job-retry-button').click();
+  await expect(page.locator('#job-timeline-subtitle')).toHaveText('job-proof-retry');
 });
 

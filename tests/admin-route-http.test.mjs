@@ -6,16 +6,24 @@ import crypto from 'node:crypto';
 import test from 'node:test';
 import { eq } from 'drizzle-orm';
 import { assertDatabaseConfigured, database } from '../db/client.js';
-import { addUploadMediaAsset, claimWorkflowStart, ensureAccount, getJob, markJobFailedAndRelease, reserveRender, transitionJob } from '../db/repositories.js';
+import { addUploadMediaAsset, claimWorkflowStart, ensureAccount, finalizeReadyJob, getJob, markJobFailedAndRelease, reserveRender, transitionJob } from '../db/repositories.js';
 import { users } from '../db/schema.js';
 import adminHandler from '../routes/video-os-lite/admin.js';
 import { makeSession } from '../lib/video-os-account.js';
+import { getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../lib/video-os-private-blob.js';
 
 let dbAvailable = true;
 try {
   assertDatabaseConfigured();
 } catch {
   dbAvailable = false;
+}
+
+let blobAvailable = dbAvailable;
+try {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error('no blob token');
+} catch {
+  blobAvailable = false;
 }
 
 function request({ method = 'GET', url, body, cookie, headers = {} }) {
@@ -33,7 +41,9 @@ function request({ method = 'GET', url, body, cookie, headers = {} }) {
 function response() {
   return {
     headers: {},
+    chunks: [],
     setHeader(name, value) { this.headers[name] = value; },
+    write(chunk) { this.chunks.push(Buffer.from(chunk)); },
     end(body) { this.body = body ? JSON.parse(body) : undefined; },
   };
 }
@@ -209,6 +219,102 @@ test(
     await t.test('POST operation=resolve-job 404s cleanly for a job that does not exist', async () => {
       const res = response();
       await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=resolve-job', body: { jobId: 'job-does-not-exist' }, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 404);
+    });
+  },
+);
+
+test(
+  'admin console: video preview, approve, delete-video and retry-job operate on a real ready job',
+  { skip: !blobAvailable && 'DATABASE_URL / BLOB_READ_WRITE_TOKEN not configured; skipping live integration test' },
+  async (t) => {
+    const originalSecret = process.env.VIDEO_OS_SESSION_SECRET;
+    if (!originalSecret) process.env.VIDEO_OS_SESSION_SECRET = 'admin-route-http-test-secret-with-adequate-length';
+    const adminCookie = makeSession('admin', 'owner@example.invalid', 60 * 60);
+
+    const accountId = `test-admin-video-${crypto.randomUUID()}`;
+    const pathname = `video-os/finals/${accountId}/${crypto.randomUUID()}.mp4`;
+    t.after(async () => {
+      await database().delete(users).where(eq(users.id, accountId)).catch(() => {});
+      if (originalSecret === undefined) delete process.env.VIDEO_OS_SESSION_SECRET;
+    });
+    await ensureAccount({ accountId, email: null, name: 'Admin Video Test', initialCredits: 200 });
+
+    const heygenJobId = `job-admin-video-test-${crypto.randomUUID()}`;
+    await reserveRender({ jobId: heygenJobId, accountId, idempotencyKey: crypto.randomUUID(), correlationId: 'corr-admin-video-test', provider: 'heygen', title: 'Admin Video Test', format: 'landscape', costCredits: 40, input: {} });
+    await claimWorkflowStart(heygenJobId);
+    const videoBytes = Buffer.from('fake-mp4-bytes');
+    await putPrivateBlob(PRIVATE_BLOB_CLASSIFICATIONS.FINISHED_CUSTOMER_VIDEO, pathname, videoBytes, { contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: true });
+    await finalizeReadyJob(heygenJobId, { privatePathname: pathname, filename: 'final.mp4', bytes: videoBytes.length, sha256: crypto.createHash('sha256').update(videoBytes).digest('hex') });
+
+    await t.test('operation=video streams the real blob bytes for a ready job', async () => {
+      const res = response();
+      await adminHandler(request({ url: `/api/video-os-lite/admin?operation=video&jobId=${heygenJobId}`, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.headers['Content-Type'], 'video/mp4');
+      assert.ok(Buffer.concat(res.chunks).equals(videoBytes));
+    });
+
+    await t.test('operation=video 404s cleanly for a job that does not exist', async () => {
+      const res = response();
+      await adminHandler(request({ url: '/api/video-os-lite/admin?operation=video&jobId=job-does-not-exist' , cookie: adminCookie}), res);
+      assert.equal(res.statusCode, 404);
+    });
+
+    await t.test('POST operation=approve-job sets reviewedAt without touching status', async () => {
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=approve-job', body: { jobId: heygenJobId }, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 200);
+      assert.ok(res.body.job.reviewedAt);
+      assert.equal(res.body.job.status, 'ready');
+    });
+
+    await t.test('POST operation=retry-job on a heygen job reserves a fresh job and charges credits normally', async () => {
+      const originalMode = process.env.WORKFLOW_DISPATCH_MODE;
+      process.env.WORKFLOW_DISPATCH_MODE = 'worker'; // avoid a real Vercel Workflow dispatch in this test
+      try {
+        const before = await database().query.creditAccounts.findFirst({ where: (table, { eq: equals }) => equals(table.accountId, accountId) });
+        const res = response();
+        await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=retry-job', body: { jobId: heygenJobId }, cookie: adminCookie }), res);
+        assert.equal(res.statusCode, 200);
+        assert.notEqual(res.body.job.id, heygenJobId, 'retry must create a new job, not mutate the original');
+        assert.equal(res.body.job.status, 'workflow_started');
+        assert.equal(res.body.job.provider, 'heygen');
+        t.after(async () => { await database().delete(users).where(eq(users.id, accountId)).catch(() => {}); });
+
+        const after = await database().query.creditAccounts.findFirst({ where: (table, { eq: equals }) => equals(table.accountId, accountId) });
+        assert.equal(after.reserved - before.reserved, 40, 'the retry must reserve credits normally, same as a customer-initiated render');
+      } finally {
+        if (originalMode === undefined) delete process.env.WORKFLOW_DISPATCH_MODE;
+        else process.env.WORKFLOW_DISPATCH_MODE = originalMode;
+      }
+    });
+
+    const sadtalkerJobId = `job-admin-video-sadtalker-test-${crypto.randomUUID()}`;
+    await t.test('POST operation=retry-job rejects a sadtalker job (Standard tier retry is not supported yet)', async () => {
+      await reserveRender({ jobId: sadtalkerJobId, accountId, idempotencyKey: crypto.randomUUID(), correlationId: 'corr-admin-video-sadtalker-test', provider: 'sadtalker', title: 'Sadtalker Retry Test', format: 'vertical', costCredits: 10, input: {} });
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=retry-job', body: { jobId: sadtalkerJobId }, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 409);
+    });
+
+    await t.test('POST operation=delete-video removes the blob and marks videoDeletedAt, and the video stream then 410s', async () => {
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=delete-video', body: { jobId: heygenJobId }, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 200);
+      assert.ok(res.body.job.videoDeletedAt);
+      assert.equal(res.body.job.status, 'ready', 'delete-video must not change the job status, only mark videoDeletedAt');
+
+      const streamRes = response();
+      await adminHandler(request({ url: `/api/video-os-lite/admin?operation=video&jobId=${heygenJobId}`, cookie: adminCookie }), streamRes);
+      assert.equal(streamRes.statusCode, 410);
+
+      assert.equal(await getPrivateBlob(pathname), null, 'the underlying blob must actually be gone from storage');
+    });
+
+    await t.test('POST operation=delete-video 404s cleanly for a job that does not exist', async () => {
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=delete-video', body: { jobId: 'job-does-not-exist' }, cookie: adminCookie }), res);
       assert.equal(res.statusCode, 404);
     });
   },

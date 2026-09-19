@@ -767,3 +767,22 @@ export async function listRecentCreditTransactions(limit = 50) {
 export async function listRecentStripeEvents(limit = 50) {
   return database().select().from(stripeEvents).orderBy(desc(stripeEvents.receivedAt)).limit(Math.min(200, limit));
 }
+
+// Admin-only tracking flag, deliberately with no effect on customer-facing
+// behavior or the job status state machine -- see the schema column's own
+// comment in db/schema.js.
+export async function markJobReviewed(jobId) {
+  const [updated] = await database().update(videoJobs).set({ reviewedAt: new Date() }).where(eq(videoJobs.id, jobId)).returning();
+  return updated || null;
+}
+
+// DB-only half of "delete this video": records that the private final file
+// was removed while keeping the job row and its event history. The actual
+// Blob deletion is orchestrated by the caller (routes/video-os-lite/admin.js)
+// alongside this, matching how Blob + DB writes are already coordinated at
+// the route/service layer elsewhere in this codebase rather than inside
+// repositories.js itself.
+export async function markJobVideoDeleted(jobId) {
+  const [updated] = await database().update(videoJobs).set({ videoDeletedAt: new Date() }).where(eq(videoJobs.id, jobId)).returning();
+  return updated || null;
+}
