@@ -29,7 +29,10 @@ function setLocalPreviewSource(element, objectUrl) {
   // regardless of what the selected file contains. Confirmed via the
   // SARIF code flow (source: event.target.files -> URL.createObjectURL
   // -> here) that this is the exact, full path CodeQL traces.
-  // codeql[js/xss-through-dom]: false positive, blob: URL from URL.createObjectURL(), not attacker-controllable markup.
+  // CodeQL still flags this line (js/xss-through-dom) -- this repo has no
+  // Code Scanning backend to process an inline suppression comment
+  // (codeql.yml uses upload: never), so the actual exception for this
+  // exact line lives in tools/enforce-codeql-sarif.mjs's ALLOWED_FINDINGS.
   element.src = objectUrl;
 }
 const REQUEST_TIMEOUT_MS = 30_000;

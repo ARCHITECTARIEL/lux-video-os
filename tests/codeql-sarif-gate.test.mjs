@@ -7,9 +7,11 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import {
+  ALLOWED_FINDINGS,
   collectCodeqlFindingsFromDirectory,
   collectCodeqlFindingsFromSarif,
   formatCodeqlFindings,
+  partitionAllowedFindings,
 } from '../tools/enforce-codeql-sarif.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -83,7 +85,7 @@ test('CodeQL SARIF gate preserves one high-severity result', async () => {
     makeSarif([makeResult('py/path-injection', 'server.py', 481)], [makeRule('py/path-injection', '7.5')]),
     'one-high.sarif',
   );
-  assert.deepEqual(findings, [{ ruleId: 'py/path-injection', securitySeverity: '7.5', file: 'server.py', line: 481 }]);
+  assert.deepEqual(findings, [{ ruleId: 'py/path-injection', securitySeverity: '7.5', file: 'server.py', line: 481, lineHash: null }]);
   assert.deepEqual(formatCodeqlFindings(findings), ['py/path-injection severity=7.5 server.py:481']);
 });
 
@@ -144,6 +146,58 @@ test('CodeQL SARIF gate fails closed when no SARIF artifact exists', async () =>
   await withTempDir(async (dir) => {
     await mkdir(path.join(dir, 'nested'));
     await assert.rejects(() => collectCodeqlFindingsFromDirectory(dir), /produced no SARIF output/i);
+  });
+});
+
+test('the allowlist has at least one entry, and every entry carries a non-trivial reason', () => {
+  assert.ok(ALLOWED_FINDINGS.length >= 1);
+  for (const entry of ALLOWED_FINDINGS) {
+    assert.ok(entry.ruleId);
+    assert.ok(entry.file);
+    assert.ok(entry.lineHash);
+    assert.ok(entry.reason.length > 40, `allowlist reason for ${entry.ruleId} ${entry.file} must actually explain why it's a false positive`);
+  }
+});
+
+test('partitionAllowedFindings excludes a finding that exactly matches a reviewed allowlist entry', () => {
+  const [entry] = ALLOWED_FINDINGS;
+  const finding = { ruleId: entry.ruleId, securitySeverity: '7.8', file: entry.file, line: 999, lineHash: entry.lineHash };
+  const { blocking, allowed } = partitionAllowedFindings([finding]);
+  assert.deepEqual(blocking, []);
+  assert.equal(allowed.length, 1);
+  assert.equal(allowed[0].entry, entry);
+});
+
+test('partitionAllowedFindings still blocks the same rule/file if the line content (fingerprint) differs', () => {
+  const [entry] = ALLOWED_FINDINGS;
+  // Same ruleId and file as the reviewed exception, but a different
+  // lineHash -- i.e. a *different* line's content, or the same line
+  // edited since the exception was reviewed. Proves the allowlist can't
+  // accidentally swallow a new or shifted finding just because it shares
+  // a rule and file with an already-reviewed one.
+  const finding = { ruleId: entry.ruleId, securitySeverity: '7.8', file: entry.file, line: 12345, lineHash: 'not-the-reviewed-fingerprint:0' };
+  const { blocking, allowed } = partitionAllowedFindings([finding]);
+  assert.deepEqual(allowed, []);
+  assert.deepEqual(blocking, [finding]);
+});
+
+test('partitionAllowedFindings blocks an unrelated finding untouched', () => {
+  const finding = { ruleId: 'py/path-injection', securitySeverity: '7.5', file: 'server.py', line: 481, lineHash: null };
+  const { blocking, allowed } = partitionAllowedFindings([finding]);
+  assert.deepEqual(allowed, []);
+  assert.deepEqual(blocking, [finding]);
+});
+
+test('CodeQL SARIF CLI passes when the only finding matches the reviewed allowlist entry, and says so', async () => {
+  await withTempDir(async (dir) => {
+    const [entry] = ALLOWED_FINDINGS;
+    await writeSarif(dir, 'allowed.sarif', makeSarif(
+      [makeResult(entry.ruleId, entry.file, 40, { partialFingerprints: { primaryLocationLineHash: entry.lineHash } })],
+      [makeRule(entry.ruleId, '7.8')],
+    ));
+    const cleanRun = await execFileAsync(process.execPath, [toolPath, dir]);
+    assert.match(cleanRun.stdout, /found 0 result\(s\) \(1 allowed\)/i);
+    assert.match(cleanRun.stdout, /ALLOWED \(reviewed false positive\)/);
   });
 });
 
