@@ -732,3 +732,38 @@ export async function getAdminOverview() {
     reconciliation,
   };
 }
+
+// Admin Phase 2: manual resolution for a job stuck in provider_submit_unknown
+// (or any other non-terminal state an operator has decided to close out by
+// hand). This is markJobFailedAndRelease under a distinct failure category
+// so its jobEvents entry -- and therefore the job's own timeline -- is
+// visibly distinguishable from an automatic failure, not a new code path:
+// same idempotent guard (already-terminal jobs are a safe no-op), same
+// credit-release logic.
+export async function adminResolveJob(jobId, note) {
+  return markJobFailedAndRelease(jobId, 'ADMIN_MANUAL_RESOLUTION', String(note || 'Resolved by an administrator.').slice(0, 300));
+}
+
+export async function listMediaAssetsForJob(jobId) {
+  return database().select().from(mediaAssets).where(eq(mediaAssets.jobId, jobId)).orderBy(desc(mediaAssets.createdAt));
+}
+
+// Wires up mediaAssets.quarantinedAt, which already existed in the schema
+// and is already *checked* (db/standard-narration-repository.js refuses to
+// resolve a quarantined portrait/audio source) but was never settable by
+// anything until now. There is no dedicated reason column on media_assets;
+// the reason is not persisted here, only logged by the caller (see
+// routes/video-os-lite/admin.js) -- adding a real audit column is a
+// follow-up if this sees real use, not a blocker for the mechanism itself.
+export async function quarantineMediaAsset(mediaAssetId) {
+  const [updated] = await database().update(mediaAssets).set({ quarantinedAt: new Date() }).where(eq(mediaAssets.id, mediaAssetId)).returning();
+  return updated || null;
+}
+
+export async function listRecentCreditTransactions(limit = 50) {
+  return database().select().from(creditTransactions).orderBy(desc(creditTransactions.createdAt)).limit(Math.min(200, limit));
+}
+
+export async function listRecentStripeEvents(limit = 50) {
+  return database().select().from(stripeEvents).orderBy(desc(stripeEvents.receivedAt)).limit(Math.min(200, limit));
+}

@@ -78,6 +78,16 @@
 .timeline-list .timeline-stage { font-weight: 650; }
 .timeline-list .timeline-meta { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
 
+.admin-dialog-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.admin-dialog-section h3 { margin-bottom: 8px; }
+.admin-dialog-section label { display: block; margin: 12px 0 6px; font-size: 12px; font-weight: 650; color: var(--muted); }
+
+.asset-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.asset-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-muted); font-size: 13px; }
+.asset-list .asset-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asset-list li[data-quarantined="true"] { border-color: #efb5ae; background: var(--danger-soft); }
+.asset-list .asset-quarantined-label { color: var(--danger); font-weight: 650; font-size: 12px; }
+
 @media (max-width: 640px) {
   .admin-main { width: calc(100% - 32px); }
   .admin-topbar { padding: 14px 16px; }

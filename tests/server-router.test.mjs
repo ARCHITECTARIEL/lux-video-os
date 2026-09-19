@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
-import { createServer } from '../server/index.js';
+import { createServer, logUncaughtException, logUnhandledRejection } from '../server/index.js';
 
 async function withServer(run) {
   const server = createServer();
@@ -101,4 +101,33 @@ test('server router: a matched static route whose file is missing on disk 404s c
     const res = await request(`${base}/this-file-does-not-exist.png`);
     assert.equal(res.status, 404);
   });
+});
+
+test('logUncaughtException logs a structured, diagnosable line and exits 1 rather than hanging or crashing silently', () => {
+  const logged = [];
+  const exitCodes = [];
+  logUncaughtException(new Error('simulated background-timer bug'), { error: (line) => logged.push(line) }, (code) => exitCodes.push(code));
+  assert.equal(exitCodes.length, 1);
+  assert.equal(exitCodes[0], 1);
+  const parsed = JSON.parse(logged[0]);
+  assert.equal(parsed.event, 'server.uncaught_exception');
+  assert.match(parsed.error, /simulated background-timer bug/);
+});
+
+test('logUnhandledRejection logs a structured, diagnosable line and exits 1', () => {
+  const logged = [];
+  const exitCodes = [];
+  logUnhandledRejection(new Error('simulated unawaited promise'), { error: (line) => logged.push(line) }, (code) => exitCodes.push(code));
+  assert.equal(exitCodes.length, 1);
+  assert.equal(exitCodes[0], 1);
+  const parsed = JSON.parse(logged[0]);
+  assert.equal(parsed.event, 'server.unhandled_rejection');
+  assert.match(parsed.reason, /simulated unawaited promise/);
+});
+
+test('logUnhandledRejection handles a non-Error rejection reason without throwing', () => {
+  const logged = [];
+  logUnhandledRejection('a plain string rejection reason', { error: (line) => logged.push(line) }, () => {});
+  const parsed = JSON.parse(logged[0]);
+  assert.match(parsed.reason, /a plain string rejection reason/);
 });

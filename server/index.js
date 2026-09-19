@@ -173,6 +173,29 @@ export function createServer() {
   });
 }
 
+// Per-request errors are already caught inside handleRequest() above, so
+// anything reaching a process-level 'uncaughtException'/'unhandledRejection'
+// handler is something outside a single request's control flow (a bug in a
+// background timer, an unawaited promise elsewhere) -- exactly the class of
+// failure that would otherwise crash the whole process with zero logged
+// reason. Node's own guidance is that the process is in an unknown state
+// after an uncaught exception and should still exit rather than keep
+// running; the goal here is only to make sure *why* is on record before it
+// does, so systemd's Restart=on-failure (see
+// deploy/systemd/video-os-server.service) brings it back with an actual
+// diagnosable log line instead of a silent restart loop. Exported as pure
+// functions (io/exit injected) so this is unit-testable without actually
+// crashing a process.
+export function logUncaughtException(error, io = console, exit = process.exit) {
+  io.error(JSON.stringify({ event: 'server.uncaught_exception', error: String(error?.stack || error) }));
+  exit(1);
+}
+
+export function logUnhandledRejection(reason, io = console, exit = process.exit) {
+  io.error(JSON.stringify({ event: 'server.unhandled_rejection', reason: String(reason?.stack || reason) }));
+  exit(1);
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   const server = createServer();
   server.listen(PORT, HOST, () => {
@@ -184,4 +207,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+  process.on('uncaughtException', (error) => logUncaughtException(error));
+  process.on('unhandledRejection', (reason) => logUnhandledRejection(reason));
 }

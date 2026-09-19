@@ -8,10 +8,11 @@ const node = (tag, className, text) => {
 };
 
 const ADMIN_BASE = '/api/video-os-lite/admin';
-const panelData = { overview: null, attention: null, accounts: null };
+const panelData = { overview: null, attention: null, accounts: null, billing: null };
+let currentTimelineJobId = null;
 
-async function getJson(url) {
-  const response = await fetch(url, { credentials: 'same-origin' });
+async function getJson(url, options = {}) {
+  const response = await fetch(url, { credentials: 'same-origin', ...options });
   const text = await response.text();
   let data;
   try {
@@ -21,6 +22,10 @@ async function getJson(url) {
   }
   if (!response.ok || data.ok === false) throw Object.assign(new Error(data.error || `Request failed with status ${response.status}.`), { status: response.status });
   return data;
+}
+
+function postJson(url, body) {
+  return getJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 }
 
 function setStatus(message, isError = false) {
@@ -95,7 +100,7 @@ function renderAttention(jobs) {
     const actionCell = node('td');
     const button = node('button', 'button quiet compact', 'View timeline');
     button.type = 'button';
-    button.addEventListener('click', () => openJobTimeline(job.id));
+    button.addEventListener('click', () => openJobTimeline(job.id, { allowResolve: true }));
     actionCell.append(button);
     row.append(actionCell);
     tbody.append(row);
@@ -119,17 +124,94 @@ function renderAccounts(accounts) {
   }
 }
 
-async function openJobTimeline(jobId) {
+function renderBilling({ transactions, events }) {
+  const ledgerBody = $('#ledger-table tbody');
+  ledgerBody.textContent = '';
+  for (const tx of transactions) {
+    const row = node('tr');
+    row.append(
+      node('td', 'mono', tx.accountId),
+      node('td', null, tx.sourceType),
+      node('td', null, String(tx.amount)),
+      node('td', null, String(tx.balanceAfter)),
+      node('td', null, formatDate(tx.createdAt)),
+    );
+    ledgerBody.append(row);
+  }
+
+  const stripeBody = $('#stripe-table tbody');
+  stripeBody.textContent = '';
+  for (const event of events) {
+    const row = node('tr');
+    row.append(
+      node('td', 'mono', event.stripeEventId),
+      node('td', null, event.eventType),
+      node('td', null, event.livemode ? 'yes' : 'no'),
+      node('td', null, event.status),
+      node('td', 'mono', event.accountId || '—'),
+      node('td', null, formatDate(event.receivedAt)),
+    );
+    stripeBody.append(row);
+  }
+}
+
+async function loadJobAssets(jobId) {
+  const section = $('#job-assets-section');
+  const list = $('#job-assets-list');
+  list.textContent = '';
+  try {
+    const data = await getJson(`${ADMIN_BASE}?operation=job-assets&jobId=${encodeURIComponent(jobId)}`);
+    if (!data.assets.length) { section.hidden = true; return; }
+    section.hidden = false;
+    for (const asset of data.assets) renderAssetRow(list, asset);
+  } catch {
+    section.hidden = true;
+  }
+}
+
+function renderAssetRow(list, asset) {
+  const item = node('li');
+  item.dataset.quarantined = String(Boolean(asset.quarantinedAt));
+  const meta = node('span', 'asset-meta', `${asset.kind} · ${asset.contentType} · ${asset.bytes} bytes`);
+  item.append(meta);
+  if (asset.quarantinedAt) {
+    item.append(node('span', 'asset-quarantined-label', `Quarantined ${formatDate(asset.quarantinedAt)}`));
+  } else {
+    const button = node('button', 'button quiet compact', 'Quarantine');
+    button.type = 'button';
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      button.textContent = 'Quarantining…';
+      try {
+        await postJson(`${ADMIN_BASE}?operation=quarantine-asset`, { mediaAssetId: asset.id, reason: 'Quarantined from admin console job review.' });
+        item.remove();
+        renderAssetRow(list, { ...asset, quarantinedAt: new Date().toISOString() });
+      } catch (error) {
+        setStatus(error.message || 'Could not quarantine this asset.', true);
+        button.disabled = false;
+        button.textContent = 'Quarantine';
+      }
+    });
+    item.append(button);
+  }
+  list.append(item);
+}
+
+async function openJobTimeline(jobId, { allowResolve = false } = {}) {
+  currentTimelineJobId = jobId;
   const dialog = $('#job-timeline-dialog');
   $('#job-timeline-subtitle').textContent = jobId;
   const list = $('#job-timeline-list');
   list.textContent = '';
   list.append(node('li', null, 'Loading…'));
+  $('#job-assets-section').hidden = true;
+  $('#job-resolve-section').hidden = !allowResolve;
+  $('#job-resolve-note').value = '';
   dialog.showModal();
   try {
     const data = await getJson(`${ADMIN_BASE}?operation=job-events&jobId=${encodeURIComponent(jobId)}`);
     list.textContent = '';
-    if (!data.events.length) { list.append(node('li', null, 'No events recorded for this job.')); return; }
+    if (!data.events.length) list.append(node('li', null, 'No events recorded for this job.'));
     for (const event of data.events) {
       const item = node('li');
       const stageLine = node('span', 'timeline-stage', `${event.stageFrom || '—'} → ${event.stageTo || event.eventType}`);
@@ -140,6 +222,27 @@ async function openJobTimeline(jobId) {
   } catch (error) {
     list.textContent = '';
     list.append(node('li', null, error.message || 'Could not load this job’s timeline.'));
+  }
+  await loadJobAssets(jobId);
+}
+
+async function resolveCurrentJob() {
+  if (!currentTimelineJobId) return;
+  const button = $('#job-resolve-confirm');
+  button.disabled = true;
+  button.textContent = 'Resolving…';
+  try {
+    await postJson(`${ADMIN_BASE}?operation=resolve-job`, { jobId: currentTimelineJobId, note: $('#job-resolve-note').value });
+    setStatus(`Job ${currentTimelineJobId} marked failed and any reserved credits released.`);
+    panelData.attention = null;
+    panelData.overview = null;
+    $('#job-timeline-dialog').close();
+    await loadPanel('attention', true);
+  } catch (error) {
+    setStatus(error.message || 'Could not resolve this job.', true);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Mark failed & release credits';
   }
 }
 
@@ -159,6 +262,13 @@ async function loadPanel(name, force = false) {
       const data = await getJson(`${ADMIN_BASE}?operation=accounts`);
       panelData.accounts = data.accounts;
       renderAccounts(data.accounts);
+    } else if (name === 'billing') {
+      const [ledger, stripe] = await Promise.all([
+        getJson(`${ADMIN_BASE}?operation=credit-ledger`),
+        getJson(`${ADMIN_BASE}?operation=stripe-events`),
+      ]);
+      panelData.billing = { transactions: ledger.transactions, events: stripe.events };
+      renderBilling(panelData.billing);
     }
     setStatus('');
   } catch (error) {
@@ -197,6 +307,7 @@ async function init() {
     loadPanel(name, true);
   });
   $('#job-timeline-close').addEventListener('click', () => $('#job-timeline-dialog').close());
+  $('#job-resolve-confirm').addEventListener('click', resolveCurrentJob);
 }
 
 init();
