@@ -36,7 +36,14 @@
 
 .lp-section-inner { width: min(1080px, calc(100% - 48px)); margin: 0 auto; }
 .lp-section { padding: 72px 0; }
-.lp-eyebrow { margin: 0 0 10px; color: var(--primary-strong); font-size: 11px; font-weight: 700; letter-spacing: .14em; }
+
+/* A small chrome tick + sentence-case label, standing in for the tracked
+   all-caps convention every other AI-generated landing page reaches for.
+   The tick reuses the same blue-to-silver gradient as the hero fade and
+   the CTA band's hairline, so it reads as one recurring brand device
+   rather than a new decoration invented for this one spot. */
+.lp-eyebrow { display: inline-flex; align-items: center; gap: 10px; margin: 0 0 12px; color: var(--primary-strong); font-size: 13px; font-weight: 640; }
+.lp-eyebrow::before { content: ''; flex: none; width: 20px; height: 2px; background: linear-gradient(90deg, var(--primary), #9aa5c2); }
 
 /* Hero + silk shader. The dark-to-light transition below is deliberately a
    dissolve, not a hard edge: the canvas itself fades to transparent over its
@@ -75,6 +82,7 @@
   text-align: center;
 }
 .lp-hero .lp-eyebrow { color: #c7d2e8; }
+.lp-hero .lp-eyebrow::before { background: linear-gradient(90deg, #c7d2e8, #6f7cae); }
 .lp-hero h1 { color: #fff; font-size: clamp(32px, 5vw, 52px); }
 .lp-hero-sub { margin: 18px auto 0; max-width: 620px; color: #c4cbdc; font-size: 16px; line-height: 1.6; }
 .lp-hero-sub strong { color: #fff; }
