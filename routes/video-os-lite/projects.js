@@ -4,6 +4,18 @@ import { projectDto } from '../../db/dto.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { parseOrThrow, projectRequestSchema, standardProjectRequestSchema } from '../../lib/video-os-validation.js';
 
+function logProjectFailure(error) {
+  const cause = error?.cause || error;
+  console.error(JSON.stringify({
+    event: 'video_os_project_failure',
+    code: cause?.code || null,
+    constraint: cause?.constraint || null,
+    table: cause?.table || null,
+    column: cause?.column || null,
+    failureCategory: error?.failureCategory || null,
+  }));
+}
+
 export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
   try {
@@ -39,6 +51,8 @@ export default async function handler(req, res) {
     const project = await saveProject({ ...payload, accountId: session.accountId });
     return send(res, payload.id ? 200 : 201, { ok: true, project: projectDto(project) });
   } catch (error) {
-    return send(res, error.statusCode || 400, { ok: false, error: error.message || 'Project request failed.', issues: error.issues });
+    logProjectFailure(error);
+    const publicMessage = error?.publicMessage || (error?.statusCode ? error.message : 'Project request failed.');
+    return send(res, error.statusCode || 400, { ok: false, error: publicMessage, issues: error.issues });
   }
 }

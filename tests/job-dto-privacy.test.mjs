@@ -291,6 +291,9 @@ test('all externally reachable persisted identity responses use the common DTO b
   assert.doesNotMatch(download, /avatar|voice|jobDto/);
   assert.match(projects, /\.map\(projectDto\)/);
   assert.match(projects, /project: projectDto\(project\)/);
+  assert.match(projects, /event: 'video_os_project_failure'/);
+  assert.match(projects, /error: publicMessage/);
+  assert.doesNotMatch(projects, /error:\s*error\.message/);
   const routes = JSON.parse(routesText).routes.map((route) => route.src);
   assert.equal(routes.includes('/api/video-os-lite/results'), true);
   assert.equal(routes.includes('/api/video-os-lite/finalize'), true);
