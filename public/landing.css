@@ -93,8 +93,8 @@
 
 /* CEO video */
 .lp-video-inner { display: grid; grid-template-columns: 1fr 1.15fr; gap: 48px; align-items: center; }
-.lp-video-frame { position: relative; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow); background: #0b1220; }
-.lp-video-frame video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #0b1220; }
+.lp-video-frame { position: relative; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow); background: #09113e; }
+.lp-video-frame video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #09113e; }
 .lp-video-play {
   position: absolute; inset: 0; margin: auto; width: 64px; height: 64px; border-radius: 50%;
   border: none; background: rgba(255, 255, 255, .92); color: var(--primary-strong);
