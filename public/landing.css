@@ -16,6 +16,22 @@
   background: var(--surface);
 }
 
+/* studio.css's bare `main` selector is written for the authenticated app
+   shell's persistent 232px left sidebar (width: min(1408px, calc(100% -
+   232px)); margin-left: 232px). This page has no sidebar, but its own
+   <main id="main"> still matched that rule -- shifted right and
+   width-capped the whole page this whole time, which is the actual cause
+   of the hero looking off-center and not spanning the real screen width,
+   not the shader. Each section already manages its own centering via
+   .lp-section-inner, so main itself just needs to go edge-to-edge. */
+.landing-body main {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+}
+
 .lp-nav {
   position: sticky;
   top: 0;
