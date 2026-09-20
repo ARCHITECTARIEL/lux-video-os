@@ -583,7 +583,10 @@ export async function saveStandardProject({ accountId, title, identityId, narrat
       accountId,
       identityId,
       title,
-      script: null,
+      // Legacy Video OS databases still enforce projects.script NOT NULL.
+      // Standard carries narration as a bound private audio asset, so the
+      // compatible no-script representation is an empty string.
+      script: '',
       avatar: {},
       voice: {},
       settings: { tier: 'STANDARD', contractVersion: 'standard-narration-v1', narrationAudioAssetId },

@@ -69,6 +69,11 @@ test('project creation establishes its signed Postgres owner before persistence'
   const standardEnsureIndex = source.indexOf('await ensureAccount({');
   const standardSaveIndex = source.indexOf('await saveStandardProject({');
   assert.ok(standardEnsureIndex >= 0 && standardSaveIndex > standardEnsureIndex, 'Standard project creation must synchronize the signed account before persistence');
+  const repositorySource = readFileSync('db/repositories.js', 'utf8');
+  const standardProjectStart = repositorySource.indexOf('export async function saveStandardProject');
+  const standardProjectEnd = repositorySource.indexOf('export async function listProjects', standardProjectStart);
+  assert.match(repositorySource.slice(standardProjectStart, standardProjectEnd), /script:\s*''/,
+    'Standard projects must remain compatible with legacy projects.script NOT NULL schemas without inventing script content');
   const ensureIndex = source.lastIndexOf('await ensureAccount({');
   const saveIndex = source.lastIndexOf('await saveProject({');
   assert.ok(ensureIndex >= 0, 'project route must synchronize the signed account');
