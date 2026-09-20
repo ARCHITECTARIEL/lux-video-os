@@ -274,12 +274,13 @@ test('job DTO sanitization is side-effect free and never logs rejected values', 
 });
 
 test('all externally reachable persisted identity responses use the common DTO boundary', async () => {
-  const [results, finalize, render, download, projects, routesText] = await Promise.all([
+  const [results, finalize, render, download, projects, standard, routesText] = await Promise.all([
     readFile(new URL('../routes/video-os-lite/results-v2.js', import.meta.url), 'utf8'),
     readFile(new URL('../api/video-os-lite/finalize-v2.js', import.meta.url), 'utf8'),
     readFile(new URL('../api/video-os-lite/render-v2.js', import.meta.url), 'utf8'),
     readFile(new URL('../api/video-os-lite/download-v2.js', import.meta.url), 'utf8'),
     readFile(new URL('../routes/video-os-lite/projects.js', import.meta.url), 'utf8'),
+    readFile(new URL('../routes/video-os-lite/standard.js', import.meta.url), 'utf8'),
     readFile(new URL('../vercel.json', import.meta.url), 'utf8'),
   ]);
 
@@ -294,6 +295,9 @@ test('all externally reachable persisted identity responses use the common DTO b
   assert.match(projects, /event: 'video_os_project_failure'/);
   assert.match(projects, /error: publicMessage/);
   assert.doesNotMatch(projects, /error:\s*error\.message/);
+  assert.match(standard, /event: 'video_os_standard_failure'/);
+  assert.match(standard, /error: 'Standard narration request could not be completed\.'/);
+  assert.doesNotMatch(standard, /error:\s*error\.message/);
   const routes = JSON.parse(routesText).routes.map((route) => route.src);
   assert.equal(routes.includes('/api/video-os-lite/results'), true);
   assert.equal(routes.includes('/api/video-os-lite/finalize'), true);

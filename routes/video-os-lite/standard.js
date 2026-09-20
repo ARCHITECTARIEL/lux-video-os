@@ -17,6 +17,18 @@ const readinessQuerySchema = z.object({
   narrationConsentId: z.string().uuid().optional(),
 }).strict();
 
+function logStandardFailure(error) {
+  const cause = error?.cause || error;
+  console.error(JSON.stringify({
+    event: 'video_os_standard_failure',
+    code: cause?.code || null,
+    constraint: cause?.constraint || null,
+    table: cause?.table || null,
+    column: cause?.column || null,
+    failureCategory: error?.failureCategory || null,
+  }));
+}
+
 export function createStandardContractHandler({
   authenticate = sessionFromRequest,
   repository = standardNarrationRepository,
@@ -55,6 +67,7 @@ export function createStandardContractHandler({
       const publicResult = Object.fromEntries(fields.filter(key => result[key] !== undefined).map(key => [key, result[key]]));
       return send(res, operation === 'revoke' ? 200 : 201, { ok: true, [operation === 'quote' ? 'quote' : 'consent']: publicResult });
     } catch (error) {
+      logStandardFailure(error);
       return send(res, [400, 401, 402, 403, 404, 409, 410, 422, 503].includes(error.statusCode) ? error.statusCode : 503, { ok: false, code: sanitizeStandardNarrationReason(error.code), error: 'Standard narration request could not be completed.' });
     }
   };
