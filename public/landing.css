@@ -55,13 +55,20 @@
 .lp-hero {
   position: relative;
   overflow: hidden;
-  min-height: 760px;
+  /* Fills the actual device screen, mobile or desktop -- 100vh first as a
+     fallback, then 100svh (small viewport height, excludes a mobile
+     browser's address-bar chrome) where supported, so it's never taller
+     than the real visible screen and never leaves a sliver of the next
+     section peeking in on load. */
+  min-height: 100vh;
+  min-height: 100svh;
   display: flex;
   align-items: center;
   /* A fixed-height tail (not a percentage) so the fade always lands in the
      reserved space below the vertically-centered content, never under it,
-     regardless of how tall the content block itself ends up being. */
-  background: linear-gradient(180deg, #09113e 0%, #12219c calc(100% - 320px), #7f8db3 calc(100% - 110px), var(--surface) 100%);
+     regardless of how tall the content block itself ends up being. Wider
+     than the first pass -- a mist dissolves gradually, not a quick cut. */
+  background: linear-gradient(180deg, #09113e 0%, #12219c calc(100% - 460px), #7f8db3 calc(100% - 160px), var(--surface) 100%);
   color: #f4f6fb;
 }
 #lp-silk-canvas {
@@ -70,8 +77,8 @@
   width: 100%;
   height: 100%;
   display: block;
-  mask-image: linear-gradient(180deg, #000 0%, #000 calc(100% - 220px), transparent calc(100% - 20px));
-  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 calc(100% - 220px), transparent calc(100% - 20px));
+  mask-image: linear-gradient(180deg, #000 0%, #000 calc(100% - 340px), transparent calc(100% - 20px));
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 calc(100% - 340px), transparent calc(100% - 20px));
 }
 .lp-hero-inner {
   position: relative;
@@ -174,8 +181,8 @@
 @media (max-width: 760px) {
   .lp-nav-links { display: none; }
   .lp-video-inner { grid-template-columns: 1fr; }
-  /* Taller than desktop, not shorter: the headline wraps to more lines on a
-     narrow screen, and the fade tail below still needs its own clear room
-     underneath that taller content block. */
-  .lp-hero { min-height: 820px; }
+  /* No mobile-specific hero height override needed: min-height (not a fixed
+     height) already fills the real device screen via 100vh/100svh, and
+     grows taller on its own if a wrapped headline needs more room than
+     that -- it never clips. */
 }
