@@ -3,7 +3,18 @@
    layout shapes (hero, silk canvas, tier/price cards, compare table,
    accordion) that the app shell has no equivalent for. */
 
-.landing-body { background: var(--surface); }
+/* Retints studio.css's shared --primary tokens to the LUX brand blue for
+   this page only (scoped to .landing-body, not :root) -- the app shell's
+   own screens keep their existing palette untouched. Every .button.primary,
+   compare-table accent, badge, and card tint on this page is built from
+   these three tokens already, so overriding them here is enough to carry
+   the hero's brand blue/silver through the rest of the page. */
+.landing-body {
+  --primary: #1a2b9e;
+  --primary-strong: #10195e;
+  --primary-soft: #eef1f8;
+  background: var(--surface);
+}
 
 .lp-nav {
   position: sticky;
