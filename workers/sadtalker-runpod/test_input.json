@@ -1,0 +1,17 @@
+{
+  "input": {
+    "schemaVersion": 1,
+    "jobId": "replace-with-generated-fixture",
+    "portrait": {
+      "mimeType": "image/png",
+      "sha256": "replace-with-fixture-hash",
+      "base64": "replace-with-fixture-data"
+    },
+    "drivenAudio": {
+      "mimeType": "audio/wav",
+      "sha256": "replace-with-fixture-hash",
+      "durationMs": 1000,
+      "base64": "replace-with-fixture-data"
+    }
+  }
+}

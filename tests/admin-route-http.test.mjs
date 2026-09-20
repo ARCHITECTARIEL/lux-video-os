@@ -54,7 +54,7 @@ test('admin route rejects requests with neither a valid admin cookie nor bearer 
   assert.equal(res.statusCode, 401);
 });
 
-test('admin route accepts VIDEO_OS_ADMIN_TOKEN as a bearer token', async () => {
+test('admin route accepts VIDEO_OS_ADMIN_TOKEN as a bearer token', { skip: !dbAvailable && 'DATABASE_URL not configured; jobs operation needs the live repository' }, async () => {
   const original = process.env.VIDEO_OS_ADMIN_TOKEN;
   process.env.VIDEO_OS_ADMIN_TOKEN = 'proof-admin-token';
   try {

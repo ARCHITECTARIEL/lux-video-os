@@ -20,7 +20,7 @@ import { listInFlightJobs, markJobFailedAndRelease } from '../db/repositories.js
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
 import { failWorkflow as failPremiumWorkflow, finishProviderMedia, pollProvider, submitProvider } from '../workflows/video-render.js';
-import { failWorkflow as failStandardWorkflow, resolveAndRender } from '../workflows/standard-render.js';
+import { driveStandardJob, failWorkflow as failStandardWorkflow } from '../workflows/standard-render.js';
 
 const POLL_INTERVAL_MS = Number(process.env.RENDER_WORKER_POLL_MS || 8000);
 const CONCURRENCY = Math.max(1, Number(process.env.RENDER_WORKER_CONCURRENCY || 4));
@@ -31,7 +31,7 @@ function log(event, details = {}) {
 
 export async function driveJob(job) {
   if (job.provider === 'sadtalker') {
-    await resolveAndRender(job.id);
+    await driveStandardJob(job);
     return;
   }
   // Premium (HeyGen): each call re-derives the correct next action from the
