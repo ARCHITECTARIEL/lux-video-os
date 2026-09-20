@@ -617,7 +617,12 @@ export async function finalizeReadyJob(jobId, artifact) {
     await tx.insert(mediaAssets).values({ accountId: job.accountId, jobId, kind: 'final', privatePathname: artifact.privatePathname, contentType: 'video/mp4', bytes: artifact.bytes, sha256: artifact.sha256 }).onConflictDoUpdate({ target: mediaAssets.privatePathname, set: { bytes: artifact.bytes, sha256: artifact.sha256, contentType: 'video/mp4' } });
     const [ready] = await tx.update(videoJobs).set({ status: 'ready', output: artifact, failureCategory: null, updatedAt: new Date(), completedAt: new Date() }).where(eq(videoJobs.id, jobId)).returning();
     await tx.insert(jobEvents).values({ jobId, correlationId: job.correlationId, eventType: 'finish.completed', stageFrom: job.status, stageTo: 'ready', details: { bytes: artifact.bytes, sha256: artifact.sha256, ffmpegMs: artifact.ffmpegMs } });
-    return ready;
+    // Additive, non-enumerable-in-spirit marker: the early return above (job
+    // already ready) omits this, so callers can tell "just now finalized"
+    // apart from "idempotent replay of an already-ready job" -- e.g. to send
+    // a completion notification exactly once instead of on every workflow
+    // step retry.
+    return { ...ready, justCompleted: true };
   });
 }
 

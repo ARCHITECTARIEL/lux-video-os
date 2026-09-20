@@ -4,6 +4,7 @@ import { featureEnabled, requireRenderAccountAuthorization } from '../lib/video-
 import { assertTalentSelectionsAvailable, loadTalentInventory } from '../api/video-os/talent.js';
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
+import { notifyRenderReady } from '../lib/video-os-render-notify.js';
 import { pollHeygen, submitHeygen } from '../services/heygen.js';
 import { finishMedia } from '../services/media-finisher.js';
 import { finishMediaWithHyperframes } from '../services/hyperframes-finisher.js';
@@ -77,7 +78,8 @@ export async function finishProviderMedia(jobId, sourceUrl) {
   const artifact = finishingEngine() === 'hyperframes'
     ? await finishMediaWithHyperframes(job, sourceUrl)
     : await finishMedia(job, sourceUrl);
-  await finalizeReadyJob(jobId, artifact);
+  const finalized = await finalizeReadyJob(jobId, artifact);
+  await notifyRenderReady(job, finalized);
   return artifact;
 }
 

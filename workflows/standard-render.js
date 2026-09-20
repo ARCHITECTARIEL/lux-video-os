@@ -4,6 +4,7 @@ import { finalizeReadyJob, getJob, markJobFailedAndRelease, transitionJob } from
 import { standardNarrationRepository } from '../db/standard-narration-repository.js';
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
+import { notifyRenderReady } from '../lib/video-os-render-notify.js';
 import { renderStandardSimulation } from '../services/sadtalker-simulator.js';
 
 // Exported for the same reason as workflows/video-render.js's step exports:
@@ -27,7 +28,8 @@ export async function resolveAndRender(jobId) {
     const artifact = await renderStandardSimulation(resolved.input, resolved.assets, { format: job.format, title: job.title });
     await transitionJob({ jobId, stageTo: 'provider_ready', eventType: 'provider.ready' });
     await transitionJob({ jobId, stageTo: 'finishing', eventType: 'finish.started' });
-    await finalizeReadyJob(jobId, artifact);
+    const finalized = await finalizeReadyJob(jobId, artifact);
+    await notifyRenderReady(job, finalized);
     return artifact;
   } catch (error) {
     captureJobError(error, { jobId, accountId: job.accountId, correlationId: job.correlationId, stage: 'standard_render', failureCategory: classifyFailure(error, 'PROVIDER_SUBMIT') });
