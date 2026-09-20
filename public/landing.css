@@ -27,17 +27,34 @@
 .lp-section { padding: 72px 0; }
 .lp-eyebrow { margin: 0 0 10px; color: var(--primary-strong); font-size: 11px; font-weight: 700; letter-spacing: .14em; }
 
-/* Hero + silk shader */
+/* Hero + silk shader. The dark-to-light transition below is deliberately a
+   dissolve, not a hard edge: the canvas itself fades to transparent over its
+   lower third (mask-image) while the section's own background gradient
+   underneath carries the same deep cobalt -> LUX royal blue -> brushed
+   silver -> white sequence, so the animated texture and its backdrop fade
+   in step and the hero reads as bleeding into the page rather than being
+   boxed off from it. */
 .lp-hero {
   position: relative;
   overflow: hidden;
-  min-height: 640px;
+  min-height: 760px;
   display: flex;
   align-items: center;
-  background: #0b1220;
+  /* A fixed-height tail (not a percentage) so the fade always lands in the
+     reserved space below the vertically-centered content, never under it,
+     regardless of how tall the content block itself ends up being. */
+  background: linear-gradient(180deg, #09113e 0%, #12219c calc(100% - 320px), #7f8db3 calc(100% - 110px), var(--surface) 100%);
   color: #f4f6fb;
 }
-#lp-silk-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#lp-silk-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  mask-image: linear-gradient(180deg, #000 0%, #000 calc(100% - 220px), transparent calc(100% - 20px));
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 calc(100% - 220px), transparent calc(100% - 20px));
+}
 .lp-hero-inner {
   position: relative;
   z-index: 1;
@@ -46,7 +63,7 @@
   padding: 96px 0;
   text-align: center;
 }
-.lp-hero .lp-eyebrow { color: #9fb4ff; }
+.lp-hero .lp-eyebrow { color: #c7d2e8; }
 .lp-hero h1 { color: #fff; font-size: clamp(32px, 5vw, 52px); }
 .lp-hero-sub { margin: 18px auto 0; max-width: 620px; color: #c4cbdc; font-size: 16px; line-height: 1.6; }
 .lp-hero-sub strong { color: #fff; }
@@ -122,5 +139,8 @@
 @media (max-width: 760px) {
   .lp-nav-links { display: none; }
   .lp-video-inner { grid-template-columns: 1fr; }
-  .lp-hero { min-height: 560px; }
+  /* Taller than desktop, not shorter: the headline wraps to more lines on a
+     narrow screen, and the fade tail below still needs its own clear room
+     underneath that taller content block. */
+  .lp-hero { min-height: 820px; }
 }

@@ -84,9 +84,12 @@ function initSilkBackground() {
       vec3 halfDir = normalize(lightDir + vec3(0.0, 0.0, 1.0));
       float spec = pow(max(dot(normal, halfDir), 0.0), 48.0);
 
-      vec3 deep = vec3(0.043, 0.071, 0.126);
-      vec3 mid = vec3(0.11, 0.21, 0.46);
-      vec3 sheen = vec3(0.62, 0.73, 1.0);
+      // LUX brand palette: deep cobalt through the brand's own royal blue,
+      // with a brushed-silver sheen (not icy blue-white) to match the
+      // wordmark's chrome bevel highlight.
+      vec3 deep = vec3(0.035, 0.067, 0.243);
+      vec3 mid = vec3(0.071, 0.129, 0.580);
+      vec3 sheen = vec3(0.769, 0.804, 0.863);
 
       vec3 color = mix(deep, mid, h * 0.75 + diffuse * 0.22);
       color += sheen * spec * 0.75;
