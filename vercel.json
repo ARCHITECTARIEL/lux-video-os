@@ -90,14 +90,14 @@
                    },
                    {
                        "src":  "/dashboard",
-                       "dest":  "/public/dashboard.html",
+                       "dest":  "/dashboard.html",
                        "headers":  {
                                        "Cache-Control":  "no-store"
                                    }
                    },
                    {
                        "src":  "/admin-console",
-                       "dest":  "/public/admin-console.html",
+                       "dest":  "/admin-console.html",
                        "headers":  {
                                        "Cache-Control":  "no-store"
                                    }
@@ -111,7 +111,7 @@
                    },
                    {
                        "src":  "/welcome",
-                       "dest":  "/public/landing.html",
+                       "dest":  "/landing.html",
                        "headers":  {
                                        "Cache-Control":  "no-store"
                                    }

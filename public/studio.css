@@ -1,4 +1,4 @@
-@font-face {
+﻿@font-face {
   font-family: "Geist LUX";
   src: url("/assets/studio/geist-latin.woff2") format("woff2");
   font-weight: 100 900;
@@ -270,19 +270,71 @@ dialog::backdrop { background: rgba(17,24,39,.58); }
 .review-summary > div strong { text-align: right; overflow-wrap: anywhere; }
 .review-warning { margin: 16px 0 0; padding: 12px; border-left: 3px solid #c88a13; background: var(--warning-soft); color: var(--warning); }
 .dialog-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
-.auth-modal > p { margin-bottom: 18px; }
-.auth-box { display: grid; gap: 16px; }
-.auth-method { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; }
+/* Auth modal: scoped brand-blue/silver retint (matches the /welcome landing
+   page's real LUX palette) so this, the single most-seen piece of UI in the
+   whole app, isn't left on the generic --primary blue everything else still
+   uses. Deliberately scoped to #auth-modal rather than :root -- the rest of
+   the app shell is untouched. */
+#auth-modal {
+  --primary: #1a2b9e;
+  --primary-strong: #10195e;
+  --primary-soft: #eef1f8;
+  padding: 0;
+  border: 0;
+}
+#auth-modal .auth-close { position: absolute; top: 14px; right: 14px; z-index: 2; background: rgba(255, 255, 255, .12); color: #fff; }
+#auth-modal .auth-close:hover { background: rgba(255, 255, 255, .22); }
+.auth-modal-head {
+  position: relative;
+  padding: 28px 28px 22px;
+  border-radius: 12px 12px 0 0;
+  background: linear-gradient(160deg, #10195e 0%, #1a2b9e 65%, #4453c2 100%);
+  color: #fff;
+}
+.auth-brand { display: inline-flex; align-items: baseline; margin-bottom: 16px; font-family: inherit; font-size: 15px; font-weight: 800; letter-spacing: .03em; color: #fff; }
+.auth-brand span { color: #b9c3ff; }
+.auth-modal-head h2 { margin: 0; color: #fff; font-size: 21px; }
+.auth-modal-head p { margin: 6px 0 0; color: #c9cfea; font-size: 13px; }
+.auth-switch {
+  display: inline-flex;
+  margin-top: 20px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .14);
+}
+.auth-switch button {
+  min-height: 34px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #d6dbf5;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.auth-switch button[aria-pressed="true"] { background: #fff; color: var(--primary-strong); }
+.auth-box { display: grid; gap: 14px; padding: 24px 28px 28px; }
+.auth-google {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 46px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 650;
+  text-decoration: none;
+}
+.auth-google:hover { background: var(--surface-muted); }
+.auth-google-icon { width: 18px; height: 18px; flex: none; }
+.auth-divider { display: flex; align-items: center; gap: 12px; margin: 2px 0; color: var(--muted); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }
+.auth-divider::before, .auth-divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.auth-method { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
 .auth-method > strong { margin-bottom: 3px; }
 .auth-method > label { font-size: 12px; font-weight: 680; }
-.access-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 5px 0 8px; padding: 0; border: 0; }
-.access-choice legend { grid-column: 1 / -1; margin-bottom: 6px; font-size: 12px; font-weight: 680; }
-.access-choice label { cursor: pointer; }
-.access-choice input { position: absolute; opacity: 0; }
-.access-choice span { display: grid; min-height: 58px; padding: 9px; border: 1px solid var(--line); border-radius: 7px; }
-.access-choice span small { color: var(--muted); font-size: 10px; }
-.access-choice input:checked + span { border-color: var(--primary); background: var(--primary-soft); }
-.access-choice input:focus-visible + span { outline: 3px solid var(--primary); outline-offset: 3px; }
 .auth-session-summary { display: grid; gap: 3px; padding: 16px; border: 1px solid #a9d9c8; border-radius: 9px; background: var(--success-soft); }
 .auth-session-summary span, .auth-session-summary small { color: var(--success); }
 #auth-status { min-height: 20px; margin: 0; font-size: 12px; }
@@ -344,7 +396,6 @@ dialog::backdrop { background: rgba(17,24,39,.58); }
 @media (max-width: 390px) {
   .mobile-header .wordmark-product { display: none; }
   .tier-tabs { grid-template-columns: 1fr; }
-  .access-choice { grid-template-columns: 1fr; }
   dialog { width: calc(100% - 20px); padding: 18px; }
 }
 

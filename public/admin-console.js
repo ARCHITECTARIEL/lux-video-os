@@ -404,23 +404,11 @@ function activateTab(name) {
   loadPanel(name);
 }
 
-async function init() {
-  try {
-    await getJson(`${ADMIN_BASE}?operation=overview`);
-  } catch (error) {
-    if (error.status === 401) {
-      $('#admin-denied').hidden = false;
-      $('#admin-auth-state').textContent = 'Signed out';
-      $('#admin-auth-state').dataset.state = 'error';
-      return;
-    }
-    setStatus(error.message || 'Could not reach the admin API.', true);
-  }
-  $('#admin-auth-state').textContent = 'Owner access';
-  $('#admin-auth-state').dataset.state = 'signed-in';
-  $('#admin-content').hidden = false;
-  activateTab('overview');
-
+// Separate from checkAuthAndReveal() below: this runs exactly once, at page
+// load. checkAuthAndReveal() runs once at load and again after a successful
+// admin-login submit -- if it also bound these listeners, a successful
+// login would double (then triple, ...) every click handler on this page.
+function bindStaticListeners() {
   for (const button of $$('[data-admin-tab]')) button.addEventListener('click', () => activateTab(button.dataset.adminTab));
   $('#admin-refresh').addEventListener('click', () => {
     const active = $$('[data-admin-tab]').find((button) => button.getAttribute('aria-selected') === 'true');
@@ -437,6 +425,48 @@ async function init() {
   $('#job-approve-button').addEventListener('click', approveCurrentJob);
   $('#job-delete-video-button').addEventListener('click', deleteCurrentJobVideo);
   $('#job-retry-button').addEventListener('click', retryCurrentJob);
+  $('#admin-login-form').addEventListener('submit', adminLogin);
+}
+
+async function adminLogin(event) {
+  event.preventDefault();
+  const username = $('#admin-login-username').value.trim();
+  const password = $('#admin-login-password').value;
+  const submit = $('#admin-login-submit');
+  const status = $('#admin-login-status');
+  submit.disabled = true;
+  status.textContent = '';
+  try {
+    await postJson('/api/video-os-lite/admin-login', { username, password });
+    $('#admin-denied').hidden = true;
+    await checkAuthAndReveal();
+  } catch (error) {
+    status.textContent = error.message || 'Sign-in failed.';
+    submit.disabled = false;
+  }
+}
+
+async function checkAuthAndReveal() {
+  try {
+    await getJson(`${ADMIN_BASE}?operation=overview`);
+  } catch (error) {
+    if (error.status === 401) {
+      $('#admin-denied').hidden = false;
+      $('#admin-auth-state').textContent = 'Signed out';
+      $('#admin-auth-state').dataset.state = 'error';
+      return;
+    }
+    setStatus(error.message || 'Could not reach the admin API.', true);
+  }
+  $('#admin-auth-state').textContent = 'Owner access';
+  $('#admin-auth-state').dataset.state = 'signed-in';
+  $('#admin-content').hidden = false;
+  activateTab('overview');
+}
+
+async function init() {
+  bindStaticListeners();
+  await checkAuthAndReveal();
 }
 
 init();

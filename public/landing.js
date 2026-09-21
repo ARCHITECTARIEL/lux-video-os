@@ -61,35 +61,50 @@ function initSilkBackground() {
       return fbm(p + 3.5 * r);
     }
 
-    float height(vec2 p) {
-      float n = warpedFbm(p);
-      float ridged = 1.0 - abs(n * 2.0 - 1.0);
-      return pow(ridged, 2.0);
+    // Volumetric density, not a surface height -- no normal map, no specular
+    // glint. That lighting model is what read as "liquid/wavy" before; a
+    // mist is diffuse, so it's built from two soft, differently-scaled fbm
+    // layers blended together (a large slow bank plus finer drifting
+    // detail) instead of one ridge-sharpened surface.
+    float mistDensity(vec2 p) {
+      float bank = fbm(p * 0.6);
+      float detail = warpedFbm(p * 1.4);
+      return mix(bank, detail, 0.55);
     }
 
     void main() {
       vec2 uv = gl_FragCoord.xy / uResolution.xy;
       vec2 p = uv;
       p.x *= uResolution.x / uResolution.y;
-      vec2 stretched = vec2(p.x * 1.6, p.y * 0.6); // anisotropic stretch -> directional folds
+      // Slow upward drift (mist rising) instead of the old anisotropic
+      // stretch that produced directional silk-like folds.
+      vec2 drifting = p + vec2(0.0, -uTime * 0.015);
 
-      float e = 0.0025;
-      float h = height(stretched);
-      float hx = height(stretched + vec2(e, 0.0)) - h;
-      float hy = height(stretched + vec2(0.0, e)) - h;
-      vec3 normal = normalize(vec3(-hx, -hy, e * 5.0));
+      float density = mistDensity(drifting);
+      float glow = smoothstep(0.22, 0.88, density);
 
-      vec3 lightDir = normalize(vec3(0.4, 0.7, 0.6));
-      float diffuse = max(dot(normal, lightDir), 0.0);
-      vec3 halfDir = normalize(lightDir + vec3(0.0, 0.0, 1.0));
-      float spec = pow(max(dot(normal, halfDir), 0.0), 48.0);
+      // LUX brand palette: deep cobalt through the brand's own royal blue,
+      // with a brushed-silver sheen (not icy blue-white) to match the
+      // wordmark's chrome bevel highlight.
+      vec3 deep = vec3(0.035, 0.067, 0.243);
+      vec3 mid = vec3(0.071, 0.129, 0.580);
+      vec3 sheen = vec3(0.769, 0.804, 0.863);
 
-      vec3 deep = vec3(0.043, 0.071, 0.126);
-      vec3 mid = vec3(0.11, 0.21, 0.46);
-      vec3 sheen = vec3(0.62, 0.73, 1.0);
+      vec3 color = mix(deep, mid, glow);
+      color = mix(color, sheen, glow * glow * 0.22);
 
-      vec3 color = mix(deep, mid, h * 0.75 + diffuse * 0.22);
-      color += sheen * spec * 0.75;
+      // A soft ring of light expanding from a fixed point, repeating on a
+      // 7-second cycle (within the requested 5-10s cadence) and fading out
+      // both spatially (a thin ring, not a hard edge) and over its own
+      // lifetime, so it reads as an occasional pulse through the mist
+      // rather than a constant, distracting loop.
+      float rippleCycle = 7.0;
+      float ripplePhase = mod(uTime, rippleCycle) / rippleCycle;
+      vec2 center = vec2(0.5 * uResolution.x / uResolution.y, 0.42);
+      float distFromCenter = distance(p, center);
+      float ringRadius = ripplePhase * 1.1;
+      float ring = smoothstep(0.18, 0.0, abs(distFromCenter - ringRadius)) * (1.0 - ripplePhase);
+      color += sheen * ring * 0.45;
 
       gl_FragColor = vec4(color, 1.0);
     }
