@@ -93,16 +93,16 @@ test('one Stripe event can change credit state only once', () => {
   assert.equal(second.state.purchased, 500);
 });
 
-test('workspace login distinguishes demo and owner credentials without leaking secrets', () => {
-  process.env.VIDEO_OS_DEMO_USERNAME = 'demo-user';
-  process.env.VIDEO_OS_DEMO_PASSWORD = 'demo-secret';
+test('workspace login distinguishes workspace and owner credentials without leaking secrets', () => {
+  process.env.VIDEO_OS_WORKSPACE_USERNAME = 'workspace-user';
+  process.env.VIDEO_OS_WORKSPACE_PASSWORD = 'workspace-secret';
   process.env.VIDEO_OS_ADMIN_USERNAME = 'owner-user';
   process.env.VIDEO_OS_ADMIN_PASSWORD = 'owner-secret';
 
-  assert.equal(resolvePasswordAccess('demo', 'demo-user', 'demo-secret'), 'demo');
+  assert.equal(resolvePasswordAccess('workspace', 'workspace-user', 'workspace-secret'), 'workspace');
   assert.equal(resolvePasswordAccess('owner', 'owner-user', 'owner-secret'), 'owner');
-  assert.throws(() => resolvePasswordAccess('owner', 'demo-user', 'demo-secret'), /Invalid owner credentials/);
-  assert.throws(() => resolvePasswordAccess('unknown', 'demo-user', 'demo-secret'), /Choose Demo or Owner access/);
+  assert.throws(() => resolvePasswordAccess('owner', 'workspace-user', 'workspace-secret'), /Invalid owner credentials/);
+  assert.throws(() => resolvePasswordAccess('unknown', 'workspace-user', 'workspace-secret'), /Choose Workspace or Owner access/);
 });
 test('database client uses the transaction-capable Neon serverless driver', () => {
   assert.equal(databaseDriver, 'neon-serverless');

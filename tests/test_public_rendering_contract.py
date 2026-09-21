@@ -50,11 +50,11 @@ def test_account_modal_exposes_explicit_access_and_magic_link_states():
     html = (ROOT / "public" / "index.html").read_text(encoding="utf-8")
     javascript = (ROOT / "public" / "lite.js").read_text(encoding="utf-8")
 
-    assert 'name="access-type"' in html
-    assert 'value="demo"' in html
-    assert 'value="owner"' in html
+    # Owner/admin access was deliberately removed from this customer-facing
+    # modal (moved to a dedicated login on /admin-console) -- only "Demo"
+    # workspace credentials remain here now.
+    assert 'id="password-login-form"' in html
     assert 'id="magic-link-hint"' in html
-    assert "accessType" in javascript
     assert "setAuthPending" in javascript
     assert "dataset.state" in javascript
     assert "Check your inbox" in javascript

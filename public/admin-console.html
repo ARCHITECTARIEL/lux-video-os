@@ -20,8 +20,17 @@
   </header>
 
   <main id="main" tabindex="-1" class="admin-main">
-    <div id="admin-denied" class="notice" role="alert" hidden>
-      <span>Owner sign-in required. <a class="text-link" href="/">Sign in as Owner from the main workspace</a>, then reload this page.</span>
+    <div id="admin-denied" class="admin-login-gate" hidden>
+      <form id="admin-login-form" class="admin-login-card" aria-labelledby="admin-login-heading">
+        <h2 id="admin-login-heading">Admin sign-in</h2>
+        <p>This console is separate from customer sign-in — enter the admin username and password.</p>
+        <label for="admin-login-username">Username</label>
+        <input id="admin-login-username" name="username" type="text" autocomplete="username" required>
+        <label for="admin-login-password">Password</label>
+        <input id="admin-login-password" name="password" type="password" autocomplete="current-password" required>
+        <button class="button primary" id="admin-login-submit" type="submit">Sign in</button>
+        <p id="admin-login-status" role="status" aria-live="polite"></p>
+      </form>
     </div>
 
     <div id="admin-content" hidden>
