@@ -75,25 +75,25 @@ test('password errors are actionable and retry succeeds without losing credentia
     attempts += 1;
     if (attempts === 1) return route.abort('connectionfailed');
     const active = signedInSession({
-      email: 'demo@luxvideoos.local',
-      account: { accountId: 'demo', name: 'LUX Demo', subscription: { plan: 'Demo', status: 'active' } },
-      credits: { accountId: 'demo', balance: 5000, reserved: 0 },
+      email: 'workspace@luxvideoos.local',
+      account: { accountId: 'workspace', name: 'LUX Workspace', subscription: { plan: 'Workspace', status: 'active' } },
+      credits: { accountId: 'workspace', balance: 5000, reserved: 0 },
       entitlements: { liveRendering: true },
     });
     shell.setSession(active);
-    return route.fulfill({ json: { ...active, message: 'Demo workspace unlocked.' } });
+    return route.fulfill({ json: { ...active, message: 'Workspace unlocked.' } });
   });
   await page.goto('/');
   await openAccountDialog(page);
-  await page.locator('#password-username').fill('luxdemo');
+  await page.locator('#password-username').fill('luxworkspace');
   await page.locator('#password-password').fill('local-only');
   await page.locator('#password-login').click();
   await expect(page.locator('#auth-status')).toContainText(/could not reach/i);
   await expect(page.locator('#auth-retry')).toBeVisible();
-  await expect(page.locator('#password-username')).toHaveValue('luxdemo');
+  await expect(page.locator('#password-username')).toHaveValue('luxworkspace');
   await page.locator('#auth-retry').click();
   await expect(page.locator('#auth-modal')).toBeHidden();
-  await expect(page.locator('#account-nav-label')).toContainText('LUX Demo');
+  await expect(page.locator('#account-nav-label')).toContainText('LUX Workspace');
   expect(attempts).toBe(2);
 });
 

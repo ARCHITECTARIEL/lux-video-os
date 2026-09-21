@@ -43,17 +43,17 @@ function timingSafeMatch(input, expected) {
 
 export function resolvePasswordAccess(accessType, username, password) {
   const type = String(accessType || '').trim().toLowerCase();
-  if (!['demo', 'owner'].includes(type)) {
-    throw Object.assign(new Error('Choose Demo or Owner access.'), { statusCode: 400 });
+  if (!['workspace', 'owner'].includes(type)) {
+    throw Object.assign(new Error('Choose Workspace or Owner access.'), { statusCode: 400 });
   }
   const owner = type === 'owner';
-  const expectedUser = process.env[owner ? 'VIDEO_OS_ADMIN_USERNAME' : 'VIDEO_OS_DEMO_USERNAME'];
-  const expectedPassword = process.env[owner ? 'VIDEO_OS_ADMIN_PASSWORD' : 'VIDEO_OS_DEMO_PASSWORD'];
+  const expectedUser = process.env[owner ? 'VIDEO_OS_ADMIN_USERNAME' : 'VIDEO_OS_WORKSPACE_USERNAME'];
+  const expectedPassword = process.env[owner ? 'VIDEO_OS_ADMIN_PASSWORD' : 'VIDEO_OS_WORKSPACE_PASSWORD'];
   if (!expectedUser || !expectedPassword) {
-    throw Object.assign(new Error((owner ? 'Owner' : 'Demo') + ' access is not configured.'), { statusCode: 503 });
+    throw Object.assign(new Error((owner ? 'Owner' : 'Workspace') + ' access is not configured.'), { statusCode: 503 });
   }
   if (!timingSafeMatch(username, expectedUser) || !timingSafeMatch(password, expectedPassword)) {
-    throw Object.assign(new Error('Invalid ' + (owner ? 'owner' : 'demo') + ' credentials.'), { statusCode: 401 });
+    throw Object.assign(new Error('Invalid ' + (owner ? 'owner' : 'workspace') + ' credentials.'), { statusCode: 401 });
   }
   return type;
 }
@@ -71,14 +71,14 @@ function adminCookie(token) {
   return `vos_admin=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${60 * 60 * 12}`;
 }
 
-async function loadDemoWorkspaceAccount() {
-  const email = String(process.env.VIDEO_OS_DEMO_EMAIL || 'demo@luxvideoos.local').trim().toLowerCase();
-  const credits = Math.max(500, Number(process.env.VIDEO_OS_DEMO_CREDITS || 5000));
+async function loadWorkspaceAccount() {
+  const email = String(process.env.VIDEO_OS_WORKSPACE_EMAIL || 'workspace@luxvideoos.local').trim().toLowerCase();
+  const credits = Math.max(500, Number(process.env.VIDEO_OS_WORKSPACE_CREDITS || 5000));
   return updateAuthenticatedAccount({
     accountId: accountIdForEmail(email), email,
-    name: process.env.VIDEO_OS_DEMO_NAME || 'LUX Demo',
-    role: 'demo', initialCredits: credits,
-    entitlementKeys: ['passwordAccess', 'liveRendering'], sourceId: 'demo_password',
+    name: process.env.VIDEO_OS_WORKSPACE_NAME || 'LUX Workspace',
+    role: 'workspace', initialCredits: credits,
+    entitlementKeys: ['passwordAccess', 'liveRendering'], sourceId: 'workspace_password',
   });
 }
 
@@ -88,7 +88,7 @@ export function issueAccountSession(account, maxAgeSeconds = 60 * 60 * 24 * 30) 
 
 function publicAuthError(error) {
   const raw = String(error?.message || 'Auth failed.');
-  if (/invalid (demo|owner) credentials/i.test(raw)) {
+  if (/invalid (workspace|owner) credentials/i.test(raw)) {
     return { status: 401, payload: { ok: false, code: 'invalid_credentials', error: raw } };
   }
   if (/blob|store|private access|access level/i.test(raw)) {
@@ -126,23 +126,24 @@ export default async function handler(req, res) {
       return res.end('CEO access granted');
     }
     if (action === 'password-login') {
-      // Demo-only: this is the customer-facing sign-in flow, and must never
-      // be able to mint the admin cookie -- that's what action=admin-login
-      // (below), reachable only from /admin-console, is for. The request
-      // body's own claimed access type is deliberately never read.
+      // Workspace-only: this is the customer-facing sign-in flow, and must
+      // never be able to mint the admin cookie -- that's what
+      // action=admin-login (below), reachable only from /admin-console, is
+      // for. The request body's own claimed access type is deliberately
+      // never read.
       if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST to sign in with password.' });
       const payload = await readJson(req, 50_000);
-      resolvePasswordAccess('demo', payload.username, payload.password);
-      const account = await loadDemoWorkspaceAccount();
+      resolvePasswordAccess('workspace', payload.username, payload.password);
+      const account = await loadWorkspaceAccount();
       const session = issueAccountSession(account, 60 * 60 * 24 * 30);
       await recordSignIn(account.user.id, 60 * 60 * 24 * 30);
       res.setHeader('Set-Cookie', sessionCookie(session));
       return send(res, 200, {
         ok: true,
         signedIn: true,
-        accessType: 'demo',
+        accessType: 'workspace',
         email: account.user.email,
-        message: 'Demo workspace unlocked.',
+        message: 'Workspace unlocked.',
         ...accountDto(account),
       });
     }

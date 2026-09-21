@@ -97,7 +97,7 @@ export function accountDto(record) {
   const subscriptions = {
     owner: { plan: 'Video OS Owner Access', status: 'active', renewal: 'Owner-managed workspace' },
     ceo: { plan: 'Video OS Lite CEO Preview', status: 'active', renewal: 'Full-access executive preview' },
-    demo: { plan: 'Video OS Lite Demo Access', status: 'active', renewal: 'Password access enabled' },
+    workspace: { plan: 'Video OS Lite Workspace Access', status: 'active', renewal: 'Password access enabled' },
     customer: { plan: 'Video OS', status: 'contained' },
   };
   return {

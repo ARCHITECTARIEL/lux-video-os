@@ -43,9 +43,9 @@ test('password-login validates payload passwords but issues sessions from accoun
   const end = source.indexOf("if (action === 'admin-login') {");
   assert.ok(start >= 0 && end > start, 'password-login handler block must remain recognizable');
   const routeBlock = source.slice(start, end);
-  assert.match(routeBlock, /resolvePasswordAccess\('demo', payload\.username, payload\.password\)/);
-  assert.match(routeBlock, /loadDemoWorkspaceAccount\(\)/);
-  assert.doesNotMatch(routeBlock, /loadDemoWorkspaceAccount\(payload\./);
+  assert.match(routeBlock, /resolvePasswordAccess\('workspace', payload\.username, payload\.password\)/);
+  assert.match(routeBlock, /loadWorkspaceAccount\(\)/);
+  assert.doesNotMatch(routeBlock, /loadWorkspaceAccount\(payload\./);
   assert.match(routeBlock, /const session = issueAccountSession\(account, 60 \* 60 \* 24 \* 30\);/);
   assert.doesNotMatch(routeBlock, /makeSession\(payload\./);
   assert.doesNotMatch(routeBlock, /issueAccountSession\(payload\./);
