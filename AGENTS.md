@@ -1,0 +1,9 @@
+Read `HANDOFF.md` first — it is the current, accurate source of truth for this repo (owner-facing AI video studio, ~65-70% built, 0% launched). Don't trust `README.md` (stale).
+
+Local orientation notes (2026-09-21, not part of HANDOFF.md's own content):
+
+- This directory is a **fresh clone** of the real GitHub repo (`ARCHITECTARIEL/lux-video-os`), reset to match `origin/main` exactly. `main` = `3c70eb9`.
+- A previous local checkout at this same path had diverged 53 commits behind / 104 commits ahead of real `main` with unpushed, abandoned work (SadTalker/GHCR Docker publishing, governance-receipts bureaucracy). It's been archived, untouched, at `C:\Users\ariel\lux-video-os-ORPHANED-2026-09-10` — don't build on it or treat it as current. Sibling directories `lux-video-os-clean`, `lux-video-os-ceo-reconcile`, `lux-video-os-hyperframes-proof`, `lux-video-os-identity-reconciliation` are dangling git worktrees from that same orphaned repo (their `.git` pointer now points nowhere) — also not current, safe to ignore.
+- Two real, current branches are already fetched locally: `integration/session-2026-09-20` (PR #25, open, not yet merged) and `codex/runpod-standard-adapter` (real GPU inference for Standard tier, unmerged, has a known bug — see GitHub issue #23). Note: that branch's worker is currently a thin RunPod-SDK stub with no real GPU/SadTalker inference wired up yet — that work is still ahead.
+- `docs/video-os/research-carried-over/` — salvaged reference docs from the orphaned repo (checkpoint-hash verification, build-env verification, pinned SadTalker build deps) that are relevant groundwork for that still-unbuilt real-inference work. Uncommitted, not yet reviewed by Ariel. See its README for what was and wasn't worth keeping.
+- Immediate priorities, per HANDOFF.md: (1) review/merge PR #25, (2) fix issue #23's credit-release race before merging the RunPod branch, (3) finish issue #24 (Vercel routing cleanup), (4) operational watchdog.
