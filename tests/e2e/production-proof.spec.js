@@ -5,7 +5,7 @@ test('new-job production receipt gate', async ({ page, request, browser }) => {
   const marker = `P0-PROOF-${new Date().toISOString()}-${crypto.randomUUID().slice(0, 8)}`;
   const preflight = await request.get('/api/video-os-lite/results');
   expect(preflight.status()).toBe(401);
-  await page.goto('/');
+  await page.goto('/?signin=1');
   await page.getByRole('button', { name: /sign in/i }).first().click();
   await page.locator('input[name="username"]').fill(process.env.VIDEO_OS_PROOF_USERNAME);
   await page.locator('input[name="password"]').fill(process.env.VIDEO_OS_PROOF_PASSWORD);

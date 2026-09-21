@@ -1940,6 +1940,15 @@ async function refreshWorkspace() {
     state.signedIn = Boolean(session.signedIn);
     state.session = state.signedIn ? session : { ok: true, signedIn: false };
     if (!state.signedIn) {
+      // /welcome is the front door for anonymous visitors now; this shell
+      // is reached directly only via its own ?signin=1 links (from
+      // /welcome's CTAs) or on localhost (dev/E2E, same exemption
+      // fixtureMode already uses) -- everyone else gets redirected there
+      // instead of landing on a signed-out shell.
+      if (!localHost && new URL(location.href).searchParams.get('signin') !== '1') {
+        location.replace('/welcome');
+        return;
+      }
       if (priorAccountId) copywriterController?.clearAccountState();
       clearWorkspaceData();
       renderConnection('signed-out', 'Sign in for saved work');
