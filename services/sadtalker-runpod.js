@@ -100,6 +100,7 @@ export function standardProviderMode(env = process.env) {
 }
 
 export async function submitRunpodStandard(resolved, { format, title } = {}, dependencies = {}) {
+  'use step';
   const env = dependencies.env || process.env;
   const config = requireConfig(env);
   const getter = dependencies.getPrivateBlob || getPrivateBlob;
@@ -142,6 +143,7 @@ export async function submitRunpodStandard(resolved, { format, title } = {}, dep
 }
 
 export async function pollRunpodStandard(providerJobId, dependencies = {}) {
+  'use step';
   if (!PROVIDER_ID_PATTERN.test(String(providerJobId || ''))) throw failure('RunPod job id is invalid.', 'VALIDATION', 400);
   const env = dependencies.env || process.env;
   const config = requireConfig(env);
@@ -164,6 +166,7 @@ export async function pollRunpodStandard(providerJobId, dependencies = {}) {
 }
 
 export async function persistRunpodStandardOutput(job, output, dependencies = {}) {
+  'use step';
   const writer = dependencies.putPrivateBlob || putPrivateBlob;
   const config = requireConfig(dependencies.env || process.env);
   const verified = decodeVerifiedOutput(output, config);
