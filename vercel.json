@@ -132,14 +132,14 @@
                    },
                    {
                        "src":  "/(.*\\.(?:js|css|png|jpg|jpeg|webp|gif|svg|ico|mp4|mov|wav|cube))",
-                       "dest":  "/public/$1",
+                       "dest":  "/$1",
                        "headers":  {
                                        "Cache-Control":  "no-store"
                                    }
                    },
                    {
                        "src":  "/(.*)",
-                       "dest":  "/public/index.html",
+                       "dest":  "/index.html",
                        "headers":  {
                                        "Cache-Control":  "no-store"
                                    }
