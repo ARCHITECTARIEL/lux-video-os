@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { database } from './client.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
 import { authSessions, creditAccounts, creditTransactions, entitlements, identityConsents, jobEvents, mediaAssets, projects, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
@@ -685,8 +685,70 @@ export async function reconciliationSummary() {
 // nothing will resolve automatically).
 const ATTENTION_JOB_STATUSES = Object.freeze(['failed', 'cancelled', 'provider_submit_unknown']);
 
+// Shared with the watchdog (see WATCHDOG_ACTIONABLE_STATUSES /
+// WATCHDOG_AMBIGUOUS_STATUSES below) so "what counts as stale" has exactly
+// one definition across the admin attention list and the automated sweep.
+export const WATCHDOG_STALE_MINUTES_DEFAULT = 30;
+
+// No providerJobId is confirmed to exist yet in any of these -- unlike the
+// unconditional ATTENTION_JOB_STATUSES above, a job only belongs here once
+// it's been silent long enough that "still working normally" stops being a
+// reasonable explanation (dispatch to the workflow runtime never happened,
+// a submission attempt never resolved, etc.).
+const WATCHDOG_STALE_AMBIGUOUS_STATUSES = Object.freeze(['reserved', 'workflow_starting', 'workflow_started', 'provider_submitting']);
+
 export async function listFailedOrStuckJobs(limit = 50) {
-  return database().select().from(videoJobs).where(inArray(videoJobs.status, ATTENTION_JOB_STATUSES)).orderBy(desc(videoJobs.updatedAt)).limit(Math.min(200, limit));
+  return database()
+    .select()
+    .from(videoJobs)
+    .where(or(
+      inArray(videoJobs.status, ATTENTION_JOB_STATUSES),
+      and(
+        inArray(videoJobs.status, WATCHDOG_STALE_AMBIGUOUS_STATUSES),
+        sql`${videoJobs.updatedAt} < now() - (${WATCHDOG_STALE_MINUTES_DEFAULT} * interval '1 minute')`,
+      ),
+    ))
+    .orderBy(desc(videoJobs.updatedAt))
+    .limit(Math.min(200, limit));
+}
+
+// Statuses where a providerJobId is guaranteed to exist (set in the same
+// transitionJob call as the provider_submitted transition) -- safe for the
+// watchdog to give one final poll/finish attempt via
+// worker/render-worker.mjs's driveJobSafely and, failing that, safely time
+// out via markJobFailedAndRelease. Deliberately excludes finish_contained:
+// that status means hosted finishing is disabled by config (see
+// api/video-os-lite/finalize-v2.js's 'hosted_finishing_disabled' response),
+// not a stuck job -- treating it as stale would false-alarm on jobs working
+// exactly as intended.
+const WATCHDOG_ACTIONABLE_STATUSES = Object.freeze(['provider_submitted', 'provider_rendering', 'provider_ready', 'finishing']);
+
+// provider_submit_unknown joins the ambiguous set here (unlike the attention
+// list above, which always shows it regardless of age) -- the watchdog only
+// alerts once a job has been silent past the threshold, not the instant it
+// enters a held state.
+const WATCHDOG_STALE_AMBIGUOUS_ALERT_STATUSES = Object.freeze([...WATCHDOG_STALE_AMBIGUOUS_STATUSES, 'provider_submit_unknown']);
+
+async function listStaleJobsByStatus(statuses, staleAfterMinutes, limit) {
+  return database()
+    .select()
+    .from(videoJobs)
+    .where(and(inArray(videoJobs.status, statuses), sql`${videoJobs.updatedAt} < now() - (${staleAfterMinutes} * interval '1 minute')`))
+    .orderBy(videoJobs.updatedAt)
+    .limit(Math.min(200, limit));
+}
+
+// The two halves of what lib/video-os-watchdog.js's runWatchdogSweep() acts
+// on. Never merge these into one list -- the whole point is that the
+// watchdog treats them differently (attempt recovery vs. alert only), and a
+// combined list would invite a future caller to treat them the same by
+// accident.
+export async function listStalledActionableJobs(staleAfterMinutes = WATCHDOG_STALE_MINUTES_DEFAULT, limit = 25) {
+  return listStaleJobsByStatus(WATCHDOG_ACTIONABLE_STATUSES, staleAfterMinutes, limit);
+}
+
+export async function listStalledAmbiguousJobs(staleAfterMinutes = WATCHDOG_STALE_MINUTES_DEFAULT, limit = 25) {
+  return listStaleJobsByStatus(WATCHDOG_STALE_AMBIGUOUS_ALERT_STATUSES, staleAfterMinutes, limit);
 }
 
 export async function getJobEventTimeline(jobId) {

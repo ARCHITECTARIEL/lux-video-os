@@ -21,7 +21,7 @@ import { accountHash } from '../lib/video-os-security.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
 import { PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../lib/video-os-private-blob.js';
 import { STANDARD_CONTRACT_VERSION, STANDARD_NARRATION_CREDITS, STANDARD_NARRATION_POLICY_VERSION } from '../lib/standard-narration-contract.js';
-import { driveJob } from '../worker/render-worker.mjs';
+import { driveJob } from '../lib/video-os-render-driver.js';
 
 let dbAvailable = true;
 try {
