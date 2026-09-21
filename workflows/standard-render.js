@@ -4,6 +4,7 @@ import { finalizeReadyJob, getJob, markJobFailedAndRelease, transitionJob } from
 import { standardNarrationRepository } from '../db/standard-narration-repository.js';
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
+import { notifyRenderReady } from '../lib/video-os-render-notify.js';
 import { persistRunpodStandardOutput, pollRunpodStandard, standardProviderMode, submitRunpodStandard } from '../services/sadtalker-runpod.js';
 import { renderStandardSimulation } from '../services/sadtalker-simulator.js';
 
@@ -24,7 +25,8 @@ async function resolveAndRenderSimulation(job) {
   const artifact = await renderStandardSimulation(resolved.input, resolved.assets, { format: job.format, title: job.title });
   await transitionJob({ jobId: job.id, stageTo: 'provider_ready', eventType: 'provider.ready' });
   await transitionJob({ jobId: job.id, stageTo: 'finishing', eventType: 'finish.started' });
-  await finalizeReadyJob(job.id, artifact);
+  const finalized = await finalizeReadyJob(job.id, artifact);
+  await notifyRenderReady(job, finalized);
   return artifact;
 }
 
@@ -96,7 +98,8 @@ export async function finishStandardProvider(jobId, output) {
   if (job.status === 'provider_ready') await transitionJob({ jobId, stageTo: 'finishing', eventType: 'finish.started' });
   else if (job.status !== 'finishing') throw Object.assign(new FatalError(`Standard finishing cannot resume from ${job.status}.`), { failureCategory: 'RECONCILIATION' });
   const artifact = await persistRunpodStandardOutput(job, output);
-  await finalizeReadyJob(jobId, artifact);
+  const finalized = await finalizeReadyJob(jobId, artifact);
+  await notifyRenderReady(job, finalized);
   return artifact;
 }
 

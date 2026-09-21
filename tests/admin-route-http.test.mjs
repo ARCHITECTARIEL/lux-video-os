@@ -54,19 +54,23 @@ test('admin route rejects requests with neither a valid admin cookie nor bearer 
   assert.equal(res.statusCode, 401);
 });
 
-test('admin route accepts VIDEO_OS_ADMIN_TOKEN as a bearer token', { skip: !dbAvailable && 'DATABASE_URL not configured; jobs operation needs the live repository' }, async () => {
-  const original = process.env.VIDEO_OS_ADMIN_TOKEN;
-  process.env.VIDEO_OS_ADMIN_TOKEN = 'proof-admin-token';
-  try {
-    const res = response();
-    await adminHandler(request({ url: '/api/video-os-lite/admin?operation=jobs', headers: { authorization: 'Bearer proof-admin-token' } }), res);
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.ok, true);
-  } finally {
-    if (original === undefined) delete process.env.VIDEO_OS_ADMIN_TOKEN;
-    else process.env.VIDEO_OS_ADMIN_TOKEN = original;
-  }
-});
+test(
+  'admin route accepts VIDEO_OS_ADMIN_TOKEN as a bearer token',
+  { skip: !dbAvailable && 'DATABASE_URL not configured; skipping live integration test' },
+  async () => {
+    const original = process.env.VIDEO_OS_ADMIN_TOKEN;
+    process.env.VIDEO_OS_ADMIN_TOKEN = 'proof-admin-token';
+    try {
+      const res = response();
+      await adminHandler(request({ url: '/api/video-os-lite/admin?operation=jobs', headers: { authorization: 'Bearer proof-admin-token' } }), res);
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.body.ok, true);
+    } finally {
+      if (original === undefined) delete process.env.VIDEO_OS_ADMIN_TOKEN;
+      else process.env.VIDEO_OS_ADMIN_TOKEN = original;
+    }
+  },
+);
 
 test('admin route rejects an unknown operation', async () => {
   const original = process.env.VIDEO_OS_ADMIN_TOKEN;

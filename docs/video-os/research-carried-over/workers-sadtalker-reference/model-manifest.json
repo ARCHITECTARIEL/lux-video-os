@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "engine": "SadTalker",
+  "sourceRevision": "cd4c0465ae0b54a6f85af57f5c65fec9fe23e7f8",
+  "profile": "legacy-v0.0.2-crop-with-safe-preprocessing",
+  "requiredArtifacts": [
+    "wav2lip.pth",
+    "auido2pose_00140-model.pth",
+    "auido2exp_00300-model.pth",
+    "epoch_20.pth",
+    "facevid2vid_00189-model.pth.tar",
+    "mapping_00229-model.pth.tar",
+    "alignment_WFLW_4HG.pth",
+    "detection_Resnet50_Final.pth"
+  ],
+  "artifacts": {
+    "wav2lip.pth": {
+      "purpose": "Wav2Lip-derived audio encoder checkpoint used by the legacy SadTalker path",
+      "sourceUrl": "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2/wav2lip.pth",
+      "bytes": 435807851,
+      "transportMd5": "jZ3Xuviy5MEZXHfGW2KpZQ==",
+      "etag": "0x8DB381D4B58AFD7",
+      "lastModified": "Sat, 08 Apr 2023 10:37:47 GMT",
+      "sha256": "B78B681B68AD9FE6C6FB1DEBC6FF43AD05834A8AF8A62FFC4167B7B34EF63C37",
+      "sha256Method": "SELF_COMPUTED",
+      "verifiedAt": "2026-09-03",
+      "licenseRecord": "RA-001-sadtalker-wav2lip-license.md"
+    },
+    "facevid2vid_00189-model.pth.tar": {
+      "purpose": "Legacy SadTalker face-render checkpoint",
+      "sourceUrl": "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2/facevid2vid_00189-model.pth.tar",
+      "bytes": 2112619148,
+      "transportMd5": "Db3zfwKj5+0hFd3uh4mzOg==",
+      "etag": "0x8DB381CD126250E",
+      "lastModified": "Sat, 08 Apr 2023 10:34:22 GMT",
+      "sha256": "FBAD01D46F0510276DC4521322DDE6824A873A4222CD0740C85762E7067EA71D",
+      "sha256Method": "SELF_COMPUTED",
+      "verifiedAt": "2026-09-03"
+    },
+    "auido2exp_00300-model.pth": {
+      "purpose": "Legacy SadTalker audio-to-expression checkpoint",
+      "sourceUrl": "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2/auido2exp_00300-model.pth",
+      "bytes": 34278319,
+      "transportMd5": "Q8wWhxpPZOUBYCMtES+Baw==",
+      "etag": "0x8DB381B47B51BB9",
+      "lastModified": "Sat, 08 Apr 2023 10:23:22 GMT",
+      "sha256": "B7608F0E6B477E50E03CA569AC5B04A841B9217F89D502862FC78FDA4E46DEC4",
+      "sha256Method": "SELF_COMPUTED",
+      "verifiedAt": "2026-09-03"
+    },
+    "auido2pose_00140-model.pth": {
+      "purpose": "Legacy SadTalker audio-to-pose checkpoint",
+      "sourceUrl": "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2/auido2pose_00140-model.pth",
+      "bytes": 95916155,
+      "transportMd5": "gPoa6mRCbXPQ+2RDjIaW4A==",
+      "etag": "0x8DB381B60E10F58",
+      "lastModified": "Sat, 08 Apr 2023 10:24:04 GMT",
+      "sha256": "4FBA6701852DC57EFBED25B1E4276E4FF752941860D69FC4429F08A02326EBCE",
+      "sha256Method": "SELF_COMPUTED",
+      "verifiedAt": "2026-09-03"
+    },
+    "epoch_20.pth": {
+      "purpose": "Legacy SadTalker 3D face-reconstruction checkpoint",
+      "sourceUrl": "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2/epoch_20.pth",
+      "bytes": 288860037,
+      "transportMd5": "Xe1lM1jy27mgqY04NJeoEA==",
+      "etag": "0x8DB381BDC7894D6",
+      "lastModified": "Sat, 08 Apr 2023 10:27:31 GMT",
+      "sha256": "6D17A6B23457B521801BAAE583CB6A58F7238FE6721FC3D65D76407460E9149B",
+      "sha256Method": "SELF_COMPUTED",
+      "verifiedAt": "2026-09-03"
+    },
+    "mapping_00229-model.pth.tar": {
+      "purpose": "Legacy SadTalker crop-profile mapping-network checkpoint",
+      "sourceUrl": "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2/mapping_00229-model.pth.tar",
+      "bytes": 155521183,
+      "transportMd5": "j0UbKCBKNSKo3uyIibc7Eg==",
+      "etag": "0x8DB381CE1203185",
+      "lastModified": "Sat, 08 Apr 2023 10:34:49 GMT",
+      "sha256": "62A1E06006CC963220F6477438518ED86E9788226C62AE382DDC42FBCEFB83F1",
+      "sha256Method": "SELF_COMPUTED",
+      "verifiedAt": "2026-09-03"
+    },
+    "alignment_WFLW_4HG.pth": {
+      "purpose": "Facexlib landmark-alignment checkpoint used by SadTalker safe preprocessing",
+      "sourceUrl": "https://github.com/xinntao/facexlib/releases/download/v0.1.0/alignment_WFLW_4HG.pth",
+      "bytes": 193670248,
+      "transportMd5": null,
+      "transportMd5Status": "UPSTREAM_UNPUBLISHED",
+      "selfComputedMd5": "vQDgoUGblGnnpWJ1hhTIlQ==",
+      "etag": "0x8D9B9C652F55DE7",
+      "lastModified": "Tue, 07 Dec 2021 21:12:49 GMT",
+      "sha256": "BBFD137307A4C7DEBD5C283B9B0CE539466CEE417AC0A155E184D857F9F2899C",
+      "sha256Method": "SELF_COMPUTED",
+      "verifiedAt": "2026-09-03"
+    },
+    "detection_Resnet50_Final.pth": {
+      "purpose": "Facexlib face-detection checkpoint used by SadTalker safe preprocessing",
+      "sourceUrl": "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth",
+      "bytes": 109497761,
+      "transportMd5": null,
+      "transportMd5Status": "UPSTREAM_UNPUBLISHED",
+      "selfComputedMd5": "vOk5vCLYzskSKXFt2TLlbg==",
+      "etag": "0x8D9B9C657E1F0E8",
+      "lastModified": "Tue, 07 Dec 2021 21:12:57 GMT",
+      "sha256": "6D1DE9C2944F2CCDDCA5F5E010EA5AE64A39845A86311AF6FDF30841B0A5A16D",
+      "sha256Method": "SELF_COMPUTED",
+      "verifiedAt": "2026-09-03"
+    }
+  }
+}
