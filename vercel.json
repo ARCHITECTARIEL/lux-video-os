@@ -111,7 +111,7 @@
                    },
                    {
                        "src":  "/welcome",
-                       "dest":  "/public/landing.html",
+                       "dest":  "/landing.html",
                        "headers":  {
                                        "Cache-Control":  "no-store"
                                    }
