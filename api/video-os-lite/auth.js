@@ -86,17 +86,6 @@ export function issueAccountSession(account, maxAgeSeconds = 60 * 60 * 24 * 30) 
   return makeSession(account?.accountId || account?.user?.id, account?.email || account?.user?.email, maxAgeSeconds);
 }
 
-async function loadOwnerAccount(username) {
-  const email = String(process.env.VIDEO_OS_ADMIN_EMAIL || process.env.VIDEO_OS_CEO_EMAIL || 'owner@luxvideoos.local').trim().toLowerCase();
-  const credits = Math.max(1000, Number(process.env.VIDEO_OS_CEO_CREDITS || 10000));
-  return updateAuthenticatedAccount({
-    accountId: accountIdForEmail(email), email,
-    name: process.env.VIDEO_OS_CEO_NAME || String(username || 'LUX Owner').trim() || 'LUX Owner',
-    role: 'owner', initialCredits: credits,
-    entitlementKeys: ['ownerAccess', 'fullAccess', 'liveRendering'], sourceId: 'owner_password',
-  });
-}
-
 function publicAuthError(error) {
   const raw = String(error?.message || 'Auth failed.');
   if (/invalid (demo|owner) credentials/i.test(raw)) {
@@ -137,21 +126,23 @@ export default async function handler(req, res) {
       return res.end('CEO access granted');
     }
     if (action === 'password-login') {
+      // Demo-only: this is the customer-facing sign-in flow, and must never
+      // be able to mint the admin cookie -- that's what action=admin-login
+      // (below), reachable only from /admin-console, is for. The request
+      // body's own claimed access type is deliberately never read.
       if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST to sign in with password.' });
       const payload = await readJson(req, 50_000);
-      const accessType = resolvePasswordAccess(payload.accessType || 'demo', payload.username, payload.password);
-      const account = accessType === 'owner' ? await loadOwnerAccount(payload.username) : await loadDemoWorkspaceAccount();
+      resolvePasswordAccess('demo', payload.username, payload.password);
+      const account = await loadDemoWorkspaceAccount();
       const session = issueAccountSession(account, 60 * 60 * 24 * 30);
       await recordSignIn(account.user.id, 60 * 60 * 24 * 30);
-      const cookies = [sessionCookie(session)];
-      if (accessType === 'owner') cookies.push(adminCookie(makeSession('admin', account.user.email, 60 * 60 * 12)));
-      res.setHeader('Set-Cookie', cookies);
+      res.setHeader('Set-Cookie', sessionCookie(session));
       return send(res, 200, {
         ok: true,
         signedIn: true,
-        accessType,
+        accessType: 'demo',
         email: account.user.email,
-        message: accessType === 'owner' ? 'Owner workspace unlocked.' : 'Demo workspace unlocked.',
+        message: 'Demo workspace unlocked.',
         ...accountDto(account),
       });
     }

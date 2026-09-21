@@ -2030,7 +2030,6 @@ async function passwordLogin(event) {
   if (!form.reportValidity()) return;
   const username = $('#password-username').value.trim();
   const password = $('#password-password').value;
-  const accessType = $('input[name="access-type"]:checked')?.value || 'demo';
   setAuthPending(true, 'password');
   setAuthStatus('Signing in…');
   state.authRetry = () => passwordLogin(new Event('submit'));
@@ -2038,7 +2037,7 @@ async function passwordLogin(event) {
     await getJson('/api/video-os-lite/password-login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accessType, username, password }),
+      body: JSON.stringify({ username, password }),
     });
     state.authRetry = null;
     $('#auth-retry').hidden = true;
@@ -2221,12 +2220,6 @@ $('#auth-retry').addEventListener('click', () => state.authRetry?.());
 $('#workspace-retry').addEventListener('click', refreshWorkspace);
 
 $$('[data-auth-mode]').forEach((button) => button.addEventListener('click', () => setAuthMode(button.dataset.authMode)));
-$('#auth-workspace-toggle').addEventListener('click', () => {
-  const nextType = $('input[name="access-type"]:checked')?.value === 'owner' ? 'demo' : 'owner';
-  $(`input[name="access-type"][value="${nextType}"]`).checked = true;
-  $('#auth-workspace-toggle').setAttribute('aria-pressed', String(nextType === 'owner'));
-  $('#password-username').focus();
-});
 $('#toggle-auth-password').addEventListener('click', () => {
   const input = $('#password-password');
   const showing = input.type === 'text';

@@ -1,4 +1,4 @@
-@font-face {
+﻿@font-face {
   font-family: "Geist LUX";
   src: url("/assets/studio/geist-latin.woff2") format("woff2");
   font-weight: 100 900;
@@ -332,18 +332,9 @@ dialog::backdrop { background: rgba(17,24,39,.58); }
 .auth-google-icon { width: 18px; height: 18px; flex: none; }
 .auth-divider { display: flex; align-items: center; gap: 12px; margin: 2px 0; color: var(--muted); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }
 .auth-divider::before, .auth-divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
-.auth-alternative { padding: 0; border: 0; background: transparent; color: var(--primary-strong); font-size: 13px; font-weight: 640; text-align: center; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .auth-method { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
 .auth-method > strong { margin-bottom: 3px; }
 .auth-method > label { font-size: 12px; font-weight: 680; }
-.access-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 5px 0 8px; padding: 0; border: 0; }
-.access-choice legend { grid-column: 1 / -1; margin-bottom: 6px; font-size: 12px; font-weight: 680; }
-.access-choice label { cursor: pointer; }
-.access-choice input { position: absolute; opacity: 0; }
-.access-choice span { display: grid; min-height: 58px; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
-.access-choice span small { color: var(--muted); font-size: 10px; }
-.access-choice input:checked + span { border-color: var(--primary); background: var(--primary-soft); }
-.access-choice input:focus-visible + span { outline: 3px solid var(--primary); outline-offset: 3px; }
 .auth-session-summary { display: grid; gap: 3px; padding: 16px; border: 1px solid #a9d9c8; border-radius: 9px; background: var(--success-soft); }
 .auth-session-summary span, .auth-session-summary small { color: var(--success); }
 #auth-status { min-height: 20px; margin: 0; font-size: 12px; }
@@ -405,7 +396,6 @@ dialog::backdrop { background: rgba(17,24,39,.58); }
 @media (max-width: 390px) {
   .mobile-header .wordmark-product { display: none; }
   .tier-tabs { grid-template-columns: 1fr; }
-  .access-choice { grid-template-columns: 1fr; }
   dialog { width: calc(100% - 20px); padding: 18px; }
 }
 
