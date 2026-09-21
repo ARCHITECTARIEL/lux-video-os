@@ -9,13 +9,22 @@ import {
 import { handleOptions, parseCookies, readJson, send, verifySessionToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { deletePrivateBlob, getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../../lib/video-os-private-blob.js';
+import { runWatchdogSweep } from '../../lib/video-os-watchdog.js';
 
 function isAdminRequest(req) {
   const token = String(process.env.VIDEO_OS_ADMIN_TOKEN || '').trim();
+  const cronSecret = String(process.env.CRON_SECRET || '').trim();
   const auth = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   let cookieAdmin = false;
   try { cookieAdmin = verifySessionToken(parseCookies(req).vos_admin).accountId === 'admin'; } catch {}
-  return (Boolean(token) && auth === token) || cookieAdmin;
+  // CRON_SECRET follows Vercel's own documented cron-auth convention
+  // (https://vercel.com/docs/cron-jobs/manage-cron-jobs) even though this
+  // repo's watchdog sweep is actually triggered by a GitHub Actions
+  // schedule, not a native Vercel Cron -- see
+  // .github/workflows/watchdog-sweep.yml for why. Reusing the same env var
+  // name keeps the option open to switch triggers later without an admin
+  // route change.
+  return (Boolean(token) && auth === token) || (Boolean(cronSecret) && auth === cronSecret) || cookieAdmin;
 }
 
 async function jobsSummary() {
@@ -156,6 +165,10 @@ async function handlePost(req, res, operation) {
     const job = await handleRetryJob(jobId);
     if (!job) return send(res, 404, { ok: false, error: 'Job not found.' });
     return send(res, 200, { ok: true, job });
+  }
+  if (operation === 'watchdog-sweep') {
+    const staleAfterMinutes = Number(payload.staleAfterMinutes) || undefined;
+    return send(res, 200, { ok: true, sweep: await runWatchdogSweep(staleAfterMinutes ? { staleAfterMinutes } : undefined) });
   }
   if (operation === 'quarantine-asset') {
     const mediaAssetId = String(payload.mediaAssetId || '').trim();

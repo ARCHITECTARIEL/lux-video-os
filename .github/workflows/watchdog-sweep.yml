@@ -1,0 +1,53 @@
+name: Watchdog sweep
+# Triggers lib/video-os-watchdog.js's stalled-job sweep on the deployed
+# Vercel app, on a schedule -- the Vercel-hosted half of operational
+# recovery/supervision (see that module's own comment; the VPS half runs
+# in-process from worker/render-worker.mjs's own loop and needs no
+# scheduler at all).
+#
+# This is a GitHub Actions schedule, not a native Vercel Cron, because the
+# project is on Vercel's Hobby plan, whose cron jobs run at most once a day
+# -- far too coarse to matter for jobs the watchdog treats as stale after
+# 30 minutes. GitHub Actions schedules aren't tied to that limit and this
+# repo already uses Actions for everything else.
+#
+# Requires two repository configuration values (Settings > Secrets and
+# variables > Actions), neither of which exists yet as of this workflow's
+# introduction -- the sweep runs (and is skipped-with-a-clear-message)
+# safely without them, but does nothing useful until both are set:
+#   - Secret VIDEO_OS_CRON_SECRET: must match the deployed app's CRON_SECRET
+#     env var (routes/video-os-lite/admin.js's isAdminRequest() accepts it
+#     as an alternative to VIDEO_OS_ADMIN_TOKEN, following Vercel's own
+#     cron-auth convention even though the trigger here isn't a native
+#     Vercel Cron).
+#   - Variable VIDEO_OS_BASE_URL: the real, live production origin (e.g.
+#     https://lux-video-os.vercel.app or a custom domain), once one exists
+#     -- see HANDOFF.md's "Production launch readiness" line for why this
+#     may not be set yet.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Sweep for stalled render jobs
+        env:
+          CRON_SECRET: ${{ secrets.VIDEO_OS_CRON_SECRET }}
+          BASE_URL: ${{ vars.VIDEO_OS_BASE_URL }}
+        run: |
+          if [ -z "$BASE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::warning::VIDEO_OS_BASE_URL and/or VIDEO_OS_CRON_SECRET are not configured yet -- skipping this run. See this workflow file's header comment for setup."
+            exit 0
+          fi
+          status=$(curl -sS -o response.json -w '%{http_code}' -X POST "$BASE_URL/api/video-os-lite/admin?operation=watchdog-sweep" \
+            -H "Authorization: Bearer $CRON_SECRET" -H "Content-Type: application/json" -d '{}')
+          cat response.json
+          if [ "$status" != "200" ]; then
+            echo "::error::Watchdog sweep request failed with HTTP $status"
+            exit 1
+          fi
