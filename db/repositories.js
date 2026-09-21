@@ -68,6 +68,7 @@ export async function updateAuthenticatedAccount({ accountId, email, name, role 
 // (nothing looks it up to validate a session); it only exists to satisfy
 // the column's not-null/unique constraint.
 export async function recordSignIn(accountId, maxAgeSeconds = 60 * 60 * 24 * 30) {
+  'use step';
   const now = new Date();
   await database().insert(authSessions).values({
     accountId,
@@ -583,7 +584,10 @@ export async function saveStandardProject({ accountId, title, identityId, narrat
       accountId,
       identityId,
       title,
-      script: null,
+      // Legacy Video OS databases still enforce projects.script NOT NULL.
+      // Standard carries narration as a bound private audio asset, so the
+      // compatible no-script representation is an empty string.
+      script: '',
       avatar: {},
       voice: {},
       settings: { tier: 'STANDARD', contractVersion: 'standard-narration-v1', narrationAudioAssetId },
