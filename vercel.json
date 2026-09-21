@@ -131,7 +131,7 @@
                                    }
                    },
                    {
-                       "src":  "/(.*\\.(?:js|css|png|jpg|jpeg|webp|gif|svg|ico|mp4|mov|wav|cube))",
+                       "src":  "/(.*\\.(?:js|css|png|jpg|jpeg|webp|gif|svg|ico|mp4|mov|wav|cube|woff|woff2|ttf|otf))",
                        "dest":  "/$1",
                        "headers":  {
                                        "Cache-Control":  "no-store"
