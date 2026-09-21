@@ -68,6 +68,7 @@ export async function updateAuthenticatedAccount({ accountId, email, name, role 
 // (nothing looks it up to validate a session); it only exists to satisfy
 // the column's not-null/unique constraint.
 export async function recordSignIn(accountId, maxAgeSeconds = 60 * 60 * 24 * 30) {
+  'use step';
   const now = new Date();
   await database().insert(authSessions).values({
     accountId,
