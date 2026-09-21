@@ -60,9 +60,17 @@ export async function submitStandardProvider(jobId) {
     await transitionJob({ jobId, stageTo: 'provider_submitted', eventType: 'provider.submitted', providerJobId: submitted.providerJobId });
     return submitted;
   } catch (error) {
-    const category = classifyFailure(error, 'PROVIDER_SUBMIT');
-    captureJobError(error, { jobId, accountId: job.accountId, correlationId: job.correlationId, stage: 'standard_provider_submit', failureCategory: category });
-    if (category !== 'PROVIDER_SUBMIT_UNKNOWN') throw error;
+    // Every submission-time error -- not just ones classified
+    // PROVIDER_SUBMIT_UNKNOWN -- routes to the safe held state, same as
+    // workflows/video-render.js's submitProvider. A concurrent submit retry
+    // (a Vercel Workflow retry racing the VPS poller, for example) can land
+    // here with a plain RECONCILIATION-category invalid-transition error
+    // from assertJobTransition; conditionally rethrowing that raw would
+    // mark the job failed and release its reserved credits while the
+    // other concurrent submission may genuinely still be in flight --
+    // the exact duplicate-charge/lost-render scenario this function
+    // exists to prevent. See GitHub issue #23.
+    captureJobError(error, { jobId, accountId: job.accountId, correlationId: job.correlationId, stage: 'standard_provider_submit', failureCategory: classifyFailure(error, 'PROVIDER_SUBMIT') });
     await transitionJob({ jobId, stageTo: 'provider_submit_unknown', eventType: 'provider.submit_unknown', failureCategory: 'PROVIDER_SUBMIT_UNKNOWN' });
     throw Object.assign(new FatalError('Standard provider submission outcome is uncertain; automatic resubmission is blocked.'), { failureCategory: 'PROVIDER_SUBMIT_UNKNOWN' });
   }
