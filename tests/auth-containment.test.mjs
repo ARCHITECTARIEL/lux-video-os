@@ -43,12 +43,16 @@ test('password-login validates payload passwords but issues sessions from accoun
   const end = source.indexOf("if (action === 'admin-login') {");
   assert.ok(start >= 0 && end > start, 'password-login handler block must remain recognizable');
   const routeBlock = source.slice(start, end);
-  assert.match(routeBlock, /resolvePasswordAccess\(payload\.accessType \|\| 'demo', payload\.username, payload\.password\)/);
+  assert.match(routeBlock, /resolvePasswordAccess\('demo', payload\.username, payload\.password\)/);
   assert.match(routeBlock, /loadDemoWorkspaceAccount\(\)/);
   assert.doesNotMatch(routeBlock, /loadDemoWorkspaceAccount\(payload\./);
   assert.match(routeBlock, /const session = issueAccountSession\(account, 60 \* 60 \* 24 \* 30\);/);
   assert.doesNotMatch(routeBlock, /makeSession\(payload\./);
   assert.doesNotMatch(routeBlock, /issueAccountSession\(payload\./);
+  // The customer-facing password-login flow must never be able to mint the
+  // admin cookie -- that's action=admin-login's job, reachable only from
+  // /admin-console.
+  assert.doesNotMatch(routeBlock, /adminCookie/);
 });
 
 test('malformed and legacy session values fail closed without echoing input', () => {

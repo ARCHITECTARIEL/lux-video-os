@@ -68,7 +68,7 @@ test('auth dialog openers, close controls, and focus restoration work', async ({
   await expect(opener).toBeFocused();
 });
 
-test('password errors are actionable and retry succeeds without losing access type or credentials', async ({ page }) => {
+test('password errors are actionable and retry succeeds without losing credentials', async ({ page }) => {
   const shell = await stubShell(page);
   let attempts = 0;
   await page.route('**/api/video-os-lite/password-login', async (route) => {
@@ -85,13 +85,11 @@ test('password errors are actionable and retry succeeds without losing access ty
   });
   await page.goto('/');
   await openAccountDialog(page);
-  await page.locator('input[name="access-type"][value="owner"]').check();
   await page.locator('#password-username').fill('luxdemo');
   await page.locator('#password-password').fill('local-only');
   await page.locator('#password-login').click();
   await expect(page.locator('#auth-status')).toContainText(/could not reach/i);
   await expect(page.locator('#auth-retry')).toBeVisible();
-  await expect(page.locator('input[name="access-type"][value="owner"]')).toBeChecked();
   await expect(page.locator('#password-username')).toHaveValue('luxdemo');
   await page.locator('#auth-retry').click();
   await expect(page.locator('#auth-modal')).toBeHidden();
