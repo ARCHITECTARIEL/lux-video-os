@@ -9,6 +9,10 @@
                        "dest":  "/api/video-os-lite/workspace.js"
                    },
                    {
+                       "src":  "/api/video-os-lite/copywriter",
+                       "dest":  "/api/video-os-lite/workspace.js"
+                   },
+                   {
                        "src":  "/api/video-os-lite/identities",
                        "dest":  "/api/video-os-lite/workspace.js"
                    },

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { database } from './client.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
-import { authSessions, creditAccounts, creditTransactions, entitlements, identityConsents, jobEvents, mediaAssets, projects, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
+import { authSessions, creditAccounts, creditTransactions, entitlements, identityConsents, jobEvents, mediaAssets, projects, rateLimits, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
 
 export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING', 'PROCESSING', 'READY', 'FAILED']);
 export const IDENTITY_OVERALL_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING', 'READY', 'PARTIAL_FAILURE', 'FAILED', 'ARCHIVED']);
@@ -856,4 +856,26 @@ export async function markJobReviewed(jobId) {
 export async function markJobVideoDeleted(jobId) {
   const [updated] = await database().update(videoJobs).set({ videoDeletedAt: new Date() }).where(eq(videoJobs.id, jobId)).returning();
   return updated || null;
+}
+
+// Atomic fixed-window counter, safe under concurrent requests for the same
+// key: a single upsert either starts a fresh window (row absent, or the
+// existing window already expired) or increments the live one. Used by the
+// AI Copywriter route to cap requests per account without a second
+// read-then-write round trip that could race.
+export async function consumeRateLimit({ accountId, key, limit, windowMs }) {
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + windowMs);
+  const [row] = await database().insert(rateLimits)
+    .values({ key, accountId, windowStart: now, count: 1, expiresAt })
+    .onConflictDoUpdate({
+      target: rateLimits.key,
+      set: {
+        count: sql`case when ${rateLimits.expiresAt} > now() then ${rateLimits.count} + 1 else 1 end`,
+        windowStart: sql`case when ${rateLimits.expiresAt} > now() then ${rateLimits.windowStart} else now() end`,
+        expiresAt: sql`case when ${rateLimits.expiresAt} > now() then ${rateLimits.expiresAt} else ${expiresAt}::timestamptz end`,
+      },
+    })
+    .returning();
+  return row.count <= limit;
 }
