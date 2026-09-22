@@ -89,13 +89,6 @@
                        "dest":  "/api/video-os-lite/workspace.js"
                    },
                    {
-                       "src":  "/dashboard",
-                       "dest":  "/dashboard.html",
-                       "headers":  {
-                                       "Cache-Control":  "no-store"
-                                   }
-                   },
-                   {
                        "src":  "/admin-console",
                        "dest":  "/admin-console.html",
                        "headers":  {
