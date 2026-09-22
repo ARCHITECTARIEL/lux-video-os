@@ -112,6 +112,18 @@ test('identity voice validation accepts bounded MPEG-1 Layer III audio', () => {
   assert.ok(result.durationSeconds >= 5 && result.durationSeconds < 6);
 });
 
+test('identity upload validation errors carry a publicMessage so the API does not mask them with a generic "Upload failed."', () => {
+  try {
+    validateIdentityUpload({ kind: 'photo', dataUrl: dataUrl('image/png', png(200, 200)) });
+    assert.fail('expected validateIdentityUpload to throw');
+  } catch (error) {
+    assert.equal(error.statusCode, 400);
+    assert.equal(error.publicCode, 'invalid_upload');
+    assert.equal(error.publicMessage, error.message);
+    assert.match(error.publicMessage, /at least 512/);
+  }
+});
+
 test('identity upload rejects non-canonical or empty base64', () => {
   assert.throws(() => decodeStrictDataUrl('data:image/png;base64,'), /malformed/);
   assert.throws(() => decodeStrictDataUrl('data:image/png;base64,%%%='), /malformed/);
