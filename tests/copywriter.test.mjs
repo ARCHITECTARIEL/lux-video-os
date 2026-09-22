@@ -32,7 +32,7 @@ test('copywriterAvailability reflects the enable flag and Gateway key independen
     const ready = copywriterAvailability();
     assert.equal(ready.available, true);
     assert.equal(ready.reason, 'ready');
-    assert.deepEqual(ready.limits, { maxDraftCharacters: 4000, maxBriefCharacters: 2000, maxRevisionCharacters: 600 });
+    assert.deepEqual(ready.limits, { maxDraftCharacters: 900, maxBriefCharacters: 2000, maxRevisionCharacters: 600 });
   } finally {
     if (original.enabled === undefined) delete process.env.VIDEO_OS_COPYWRITER_ENABLED; else process.env.VIDEO_OS_COPYWRITER_ENABLED = original.enabled;
     if (original.key === undefined) delete process.env.AI_GATEWAY_API_KEY; else process.env.AI_GATEWAY_API_KEY = original.key;

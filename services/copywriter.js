@@ -10,7 +10,7 @@ function systemPrompt() {
   return [
     'You are an on-camera video script copywriter for LUX Video OS, a tool that lets small businesses create short avatar-presented videos.',
     'Write plain spoken text only: no markdown, no headings, no bullet characters, no stage directions, no surrounding quotation marks.',
-    'Keep the result under 4000 characters and natural to read aloud in one take.',
+    'Keep the result under 900 characters and natural to read aloud in one take.',
   ].join(' ');
 }
 
@@ -55,7 +55,7 @@ export async function generateCopy({ operation, brief, draft, instructions }, {
   if (result.finishReason === 'content-filter') {
     throw Object.assign(new Error('The AI declined this request.'), { statusCode: 422, code: 'generation_refused' });
   }
-  const text = String(result.text || '').trim().slice(0, 4000);
+  const text = String(result.text || '').trim().slice(0, 900);
   if (!text) throw Object.assign(new Error('The AI declined this request.'), { statusCode: 422, code: 'generation_refused' });
   return text;
 }

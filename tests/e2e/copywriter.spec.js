@@ -4,7 +4,7 @@ const READY = {
   available: true,
   reason: 'ready',
   message: 'AI writing is available. Review suggestions before using them.',
-  limits: { maxDraftCharacters: 4000, maxBriefCharacters: 2000, maxRevisionCharacters: 600 },
+  limits: { maxDraftCharacters: 900, maxBriefCharacters: 2000, maxRevisionCharacters: 600 },
 };
 
 const SETUP_REQUIRED = {

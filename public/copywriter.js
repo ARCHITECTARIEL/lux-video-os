@@ -92,7 +92,7 @@ export function createCopywriterController(options) {
     updateCount(controls.audience, '#copywriter-audience-count', 160);
     updateCount(controls.keyPoints, '#copywriter-key-points-count', 2000);
     updateCount(controls.callToAction, '#copywriter-cta-count', 300);
-    updateCount(controls.draft, '#copywriter-working-count', 4000);
+    updateCount(controls.draft, '#copywriter-working-count', 900);
     updateCount(controls.instructions, '#copywriter-instructions-count', 600);
   }
 
@@ -218,16 +218,16 @@ export function createCopywriterController(options) {
         ...points.map((point) => '• ' + point),
         '',
         payload.brief.callToAction || 'End with one clear next step.',
-      ].join('\n').slice(0, 4000);
+      ].join('\n').slice(0, 900);
     }
     if (operation === 'shorten') {
       const words = payload.draft.split(/\s+/).filter(Boolean);
-      return [marker, '', words.slice(0, Math.max(12, Math.ceil(words.length * .65))).join(' ')].join('\n').slice(0, 4000);
+      return [marker, '', words.slice(0, Math.max(12, Math.ceil(words.length * .65))).join(' ')].join('\n').slice(0, 900);
     }
     if (operation === 'improve_hook') {
-      return [marker, '', 'Start here: ' + payload.brief.topic + ' has one consequence your audience should understand now.', '', payload.draft].join('\n').slice(0, 4000);
+      return [marker, '', 'Start here: ' + payload.brief.topic + ' has one consequence your audience should understand now.', '', payload.draft].join('\n').slice(0, 900);
     }
-    return [marker, '', 'Requested revision: ' + payload.instructions, '', payload.draft].join('\n').slice(0, 4000);
+    return [marker, '', 'Requested revision: ' + payload.instructions, '', payload.draft].join('\n').slice(0, 900);
   }
 
   function applyFailure(error, { availabilityCheck = false } = {}) {
@@ -292,7 +292,7 @@ export function createCopywriterController(options) {
       }
       if (serial !== state.requestSerial) return;
       const text = String(result?.text || '').trim();
-      if (!text || text.length > 4000 || result?.operation !== operation || !UUID_PATTERN.test(String(result?.requestId || '')) || result.requestId !== payload.idempotencyKey) {
+      if (!text || text.length > 900 || result?.operation !== operation || !UUID_PATTERN.test(String(result?.requestId || '')) || result.requestId !== payload.idempotencyKey) {
         throw Object.assign(new Error('Copywriter returned an incomplete candidate. Your working draft was not changed.'), { code: 'generation_incomplete' });
       }
       const stale = state.revision !== baseRevision;
