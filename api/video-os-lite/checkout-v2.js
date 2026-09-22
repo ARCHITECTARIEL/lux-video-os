@@ -1,6 +1,6 @@
 import Stripe from 'stripe';
 import { ensureAccount } from '../../db/repositories.js';
-import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { DEFAULT_TRIAL_CREDITS, handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { featureEnabled, publicOrigin } from '../../lib/video-os-security.js';
 
 const PACKAGES = { 1: { packageId: 'credits_500', credits: 500 }, 2: { packageId: 'credits_1000', credits: 1000 }, 4: { packageId: 'credits_2000', credits: 2000 } };
@@ -17,7 +17,7 @@ export default async function handler(req, res) {
     const price = priceFor(pack);
     const secret = String(process.env.STRIPE_SECRET_KEY || '').trim();
     if (!secret || !price) throw Object.assign(new Error('Stripe package configuration is incomplete.'), { statusCode: 503 });
-    await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 180) });
+    await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: DEFAULT_TRIAL_CREDITS });
     const origin = publicOrigin(req);
     const checkout = await new Stripe(secret).checkout.sessions.create({ mode: 'payment', client_reference_id: session.accountId, success_url: `${origin}/?checkout=success`, cancel_url: `${origin}/?checkout=cancelled`, line_items: [{ price, quantity: 1 }], metadata: { accountId: session.accountId, packageId: pack.packageId, policyVersion: '2026-07-p0' }, allow_promotion_codes: true });
     return send(res, 200, { ok: true, url: checkout.url, sessionId: checkout.id });
