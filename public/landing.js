@@ -176,16 +176,34 @@ function initSilkBackground() {
   window.addEventListener('resize', () => resize());
 }
 
-function initCeoVideo() {
-  const video = document.getElementById('lp-ceo-video');
-  const playButton = document.querySelector('.lp-video-play');
-  if (!video || !playButton) return;
-  playButton.addEventListener('click', () => {
-    if (!video.currentSrc) return; // no real source uploaded yet -- the placeholder note already explains this
-    video.play();
-    playButton.hidden = true;
-  });
+// One play button per video slot across the page (hero example, three
+// Examples cards, two presentation-choice cards, founder video) -- each
+// button's data-play attribute names the <video> id it controls, so this
+// wires all of them from one pass instead of one hardcoded pair per slot.
+function initVideoPlayers() {
+  for (const playButton of document.querySelectorAll('[data-play]')) {
+    const video = document.getElementById(playButton.dataset.play);
+    if (!video) continue;
+    playButton.addEventListener('click', () => {
+      if (!video.currentSrc) return; // no real source uploaded yet -- the placeholder note already explains this
+      video.play();
+      playButton.hidden = true;
+    });
+  }
+  // The hero's "Watch a real example" link both scrolls to and starts the
+  // hero video, standing in for a normal in-page anchor once a real source
+  // exists; harmless no-op today since there is no source to play yet.
+  const watchLink = document.querySelector('[data-play-target]');
+  if (watchLink) {
+    watchLink.addEventListener('click', (event) => {
+      const video = document.getElementById(watchLink.dataset.playTarget);
+      if (!video?.currentSrc) return; // let the anchor's default scroll happen either way
+      event.preventDefault();
+      video.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+      video.play();
+    });
+  }
 }
 
 initSilkBackground();
-initCeoVideo();
+initVideoPlayers();

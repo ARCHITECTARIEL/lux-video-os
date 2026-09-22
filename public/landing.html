@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LUX Video OS — AI video studio for your own likeness or a licensed presenter</title>
-<meta name="description" content="Create talking-head videos two ways: your own photo and voice, or a licensed AI presenter. Built for agencies who need real ownership, private storage, and operational control — not just another avatar demo.">
+<title>LUX Video OS — professional business videos, made from your own words</title>
+<meta name="description" content="Promote an offer, introduce your business, or answer a customer question with a real video. Use your own face and voice, or an AI presenter. Your first video is free.">
 <meta name="theme-color" content="#12219c">
 <link rel="icon" href="/favicon.svg">
 <link rel="stylesheet" href="/studio.css">
@@ -18,14 +18,12 @@
     <span class="wordmark-lux">LUX</span><span class="wordmark-product">VIDEO OS</span>
   </a>
   <nav class="lp-nav-links" aria-label="Primary">
+    <a href="#examples">Examples</a>
     <a href="#how-it-works">How it works</a>
-    <a href="#compare">Why LUX</a>
-    <a href="#pricing">Pricing</a>
-    <a href="#faq">FAQ</a>
   </nav>
   <div class="lp-nav-actions">
     <a class="button quiet compact" href="/?signin=1">Log in</a>
-    <a class="button primary compact" href="/?signin=1">Get started free</a>
+    <a class="button primary compact" href="/?signin=1">Start free</a>
   </div>
 </header>
 
@@ -34,18 +32,129 @@
   <section class="lp-hero">
     <canvas id="lp-silk-canvas" aria-hidden="true"></canvas>
     <div class="lp-hero-inner">
-      <p class="lp-eyebrow">AI video studio</p>
-      <h1>Your face. Your voice. Or a licensed presenter. One studio, real ownership.</h1>
-      <p class="lp-hero-sub">
-        LUX Video OS renders talking-head videos two ways — <strong>Standard</strong>, from a photo and your own
-        recorded narration, or <strong>Premium</strong>, with a licensed AI presenter, cloned voice, and a script.
-        Every render is private to your account, downloadable, and yours.
-      </p>
-      <div class="lp-hero-actions">
-        <a class="button primary" href="/?signin=1">Get started free</a>
-        <a class="button secondary" href="#how-it-works">See how it works</a>
+      <div class="lp-hero-copy">
+        <p class="lp-eyebrow">AI VIDEO FOR YOUR BUSINESS</p>
+        <h1>Professional business videos.<br>Without the production headache.</h1>
+        <p class="lp-hero-sub">Promote your next offer. Explain what you do. Answer a customer question. Create a video using your own face and voice, or let an AI presenter deliver your message.</p>
+        <div class="lp-hero-actions">
+          <a class="button primary" href="/?signin=1">Create my free video</a>
+          <a class="button secondary" href="#lp-hero-video" data-play-target="lp-hero-video">Watch a real example</a>
+        </div>
+        <p class="lp-hero-note">Your first video is free. No credit card required.</p>
       </div>
-      <p class="lp-hero-note">No credit card required to start. Free trial credits included on sign-up.</p>
+      <div class="lp-hero-media">
+        <div class="lp-video-frame" id="lp-hero-video-frame">
+          <!-- Replace poster + <source> below with a real video made with LUX Video OS before launch. -->
+          <video id="lp-hero-video" controls preload="none" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='960' height='540'%3E%3Crect width='960' height='540' fill='%230d1550'/%3E%3C/svg%3E">
+            <source src="" type="video/mp4">
+          </video>
+          <button class="lp-video-play" type="button" data-play="lp-hero-video" aria-label="Play example video">
+            <svg viewBox="0 0 24 24" width="28" height="28"><polygon points="6,4 20,12 6,20" fill="currentColor" stroke="none"></polygon></svg>
+          </button>
+          <p class="lp-video-placeholder-note">Example video coming soon.</p>
+        </div>
+        <p class="lp-hero-media-label">A business introduction, made with LUX Video OS.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="examples" class="lp-section" aria-labelledby="lp-examples-heading">
+    <div class="lp-section-inner">
+      <p class="lp-eyebrow">Examples</p>
+      <h2 id="lp-examples-heading">What does your business need to say next?</h2>
+      <p class="lp-compare-sub">Start with something you already need to share.</p>
+      <div class="lp-example-cards">
+        <article class="lp-example-card">
+          <div class="lp-video-frame lp-video-frame-compact" id="lp-example-offer-frame">
+            <video id="lp-example-offer" controls preload="none" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='360'%3E%3Crect width='640' height='360' fill='%230d1550'/%3E%3C/svg%3E">
+              <source src="" type="video/mp4">
+            </video>
+            <button class="lp-video-play lp-video-play-compact" type="button" data-play="lp-example-offer" aria-label="Play example: promote an offer">
+              <svg viewBox="0 0 24 24" width="20" height="20"><polygon points="6,4 20,12 6,20" fill="currentColor" stroke="none"></polygon></svg>
+            </button>
+            <p class="lp-video-placeholder-note">Example coming soon.</p>
+          </div>
+          <h3>Promote an offer</h3>
+          <p>Give your next special, service, or product a video of its own.</p>
+        </article>
+        <article class="lp-example-card">
+          <div class="lp-video-frame lp-video-frame-compact" id="lp-example-intro-frame">
+            <video id="lp-example-intro" controls preload="none" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='360'%3E%3Crect width='640' height='360' fill='%230d1550'/%3E%3C/svg%3E">
+              <source src="" type="video/mp4">
+            </video>
+            <button class="lp-video-play lp-video-play-compact" type="button" data-play="lp-example-intro" aria-label="Play example: introduce your business">
+              <svg viewBox="0 0 24 24" width="20" height="20"><polygon points="6,4 20,12 6,20" fill="currentColor" stroke="none"></polygon></svg>
+            </button>
+            <p class="lp-video-placeholder-note">Example coming soon.</p>
+          </div>
+          <h3>Introduce your business</h3>
+          <p>Tell people what you do and why it matters.</p>
+        </article>
+        <article class="lp-example-card">
+          <div class="lp-video-frame lp-video-frame-compact" id="lp-example-faq-frame">
+            <video id="lp-example-faq" controls preload="none" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='360'%3E%3Crect width='640' height='360' fill='%230d1550'/%3E%3C/svg%3E">
+              <source src="" type="video/mp4">
+            </video>
+            <button class="lp-video-play lp-video-play-compact" type="button" data-play="lp-example-faq" aria-label="Play example: answer a customer question">
+              <svg viewBox="0 0 24 24" width="20" height="20"><polygon points="6,4 20,12 6,20" fill="currentColor" stroke="none"></polygon></svg>
+            </button>
+            <p class="lp-video-placeholder-note">Example coming soon.</p>
+          </div>
+          <h3>Answer a customer question</h3>
+          <p>Turn an explanation you repeat every week into a video you can share.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="how-it-works" class="lp-section lp-section-tint" aria-labelledby="lp-how-heading">
+    <div class="lp-section-inner">
+      <p class="lp-eyebrow">How it works</p>
+      <h2 id="lp-how-heading">From &ldquo;I should make a video&rdquo; to making one.</h2>
+      <p class="lp-compare-sub">You bring the message. LUX helps turn it into a video.</p>
+      <ol class="lp-steps lp-steps-compact">
+        <li><span class="lp-step-num">1</span><h3>Choose who does the talking.</h3><p>Use your own face and voice, or choose an AI presenter.</p></li>
+        <li><span class="lp-step-num">2</span><h3>Add your message.</h3><p>Add your recording or script, depending on the option you choose. Need help with the words? Use the AI writing tools in the script-based workflow.</p></li>
+        <li><span class="lp-step-num">3</span><h3>Create, review, and download.</h3><p>Review the credit cost before creating your video. When it's ready, watch the result and download it.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="lp-section lp-tiers" aria-labelledby="lp-tiers-heading">
+    <div class="lp-section-inner">
+      <p class="lp-eyebrow">Two ways to deliver your message</p>
+      <h2 id="lp-tiers-heading">Be the face of your business. Or choose a presenter.</h2>
+      <p class="lp-compare-sub">Two ways to deliver your message. Choose the one that fits.</p>
+      <div class="lp-tier-cards">
+        <article class="lp-tier-card">
+          <div class="lp-video-frame lp-video-frame-compact" id="lp-tier-standard-frame">
+            <video id="lp-tier-standard" controls preload="none" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='360'%3E%3Crect width='640' height='360' fill='%230d1550'/%3E%3C/svg%3E">
+              <source src="" type="video/mp4">
+            </video>
+            <button class="lp-video-play lp-video-play-compact" type="button" data-play="lp-tier-standard" aria-label="Play example: make it personal">
+              <svg viewBox="0 0 24 24" width="20" height="20"><polygon points="6,4 20,12 6,20" fill="currentColor" stroke="none"></polygon></svg>
+            </button>
+            <p class="lp-video-placeholder-note">Example coming soon.</p>
+          </div>
+          <p class="lp-tier-label">Standard</p>
+          <h3>Make it personal.</h3>
+          <p>Use your own photo and voice to put yourself in the message.</p>
+        </article>
+        <article class="lp-tier-card lp-tier-card-premium">
+          <div class="lp-video-frame lp-video-frame-compact" id="lp-tier-premium-frame">
+            <video id="lp-tier-premium" controls preload="none" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='360'%3E%3Crect width='640' height='360' fill='%230d1550'/%3E%3C/svg%3E">
+              <source src="" type="video/mp4">
+            </video>
+            <button class="lp-video-play lp-video-play-compact" type="button" data-play="lp-tier-premium" aria-label="Play example: let an AI presenter do the talking">
+              <svg viewBox="0 0 24 24" width="20" height="20"><polygon points="6,4 20,12 6,20" fill="currentColor" stroke="none"></polygon></svg>
+            </button>
+            <p class="lp-video-placeholder-note">Example coming soon.</p>
+          </div>
+          <p class="lp-tier-label">Premium</p>
+          <h3>Let an AI presenter do the talking.</h3>
+          <p>Choose a presenter and voice, then add your script.</p>
+        </article>
+      </div>
     </div>
   </section>
 
@@ -53,87 +162,35 @@
     <div class="lp-section-inner lp-video-inner">
       <div class="lp-video-copy">
         <p class="lp-eyebrow">From our founder</p>
-        <h2 id="lp-video-heading">A two-minute walkthrough, from the person who built this for you</h2>
-        <p>Why we built two rendering tiers instead of one, who this is actually for, and what "you own the output" means in practice.</p>
+        <h2 id="lp-video-heading">You've got a business to run</h2>
+        <p>A quick word on why we built this, and what to try first.</p>
       </div>
       <div class="lp-video-frame">
-        <!-- Replace poster + <source> below with the real CEO welcome video before launch. -->
+        <!-- Replace poster + <source> below with the real founder welcome video before launch. -->
         <video id="lp-ceo-video" controls preload="none" poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='960' height='540'%3E%3Crect width='960' height='540' fill='%2309113e'/%3E%3C/svg%3E">
           <source src="" type="video/mp4">
         </video>
-        <button class="lp-video-play" type="button" aria-label="Play welcome video from the CEO">
+        <button class="lp-video-play" type="button" data-play="lp-ceo-video" aria-label="Play welcome video from the founder">
           <svg viewBox="0 0 24 24" width="28" height="28"><polygon points="6,4 20,12 6,20" fill="currentColor" stroke="none"></polygon></svg>
         </button>
-        <p class="lp-video-placeholder-note">Video coming soon — this slot is wired and ready.</p>
+        <p class="lp-video-placeholder-note">Video coming soon.</p>
       </div>
     </div>
   </section>
 
-  <section id="how-it-works" class="lp-section" aria-labelledby="lp-how-heading">
-    <div class="lp-section-inner">
-      <p class="lp-eyebrow">How it works</p>
-      <h2 id="lp-how-heading">Four steps, either tier</h2>
-      <ol class="lp-steps">
-        <li><span class="lp-step-num">1</span><h3>Choose your tier</h3><p>Standard for your own likeness and voice, Premium for a licensed AI presenter with a script.</p></li>
-        <li><span class="lp-step-num">2</span><h3>Provide your inputs</h3><p>Upload a portrait and narration, or write a script and pick a presenter and voice.</p></li>
-        <li><span class="lp-step-num">3</span><h3>Confirm your quote</h3><p>See the exact credit cost before anything renders — nothing submits without your confirmation.</p></li>
-        <li><span class="lp-step-num">4</span><h3>Download your video</h3><p>Your finished MP4 is private to your account from the moment it's ready.</p></li>
-      </ol>
-    </div>
-  </section>
-
-  <section class="lp-section lp-tiers" aria-labelledby="lp-tiers-heading">
-    <div class="lp-section-inner">
-      <p class="lp-eyebrow">Two tiers</p>
-      <h2 id="lp-tiers-heading">Not every video needs a licensed avatar</h2>
-      <div class="lp-tier-cards">
-        <article class="lp-tier-card">
-          <h3>Standard</h3>
-          <p class="lp-tier-tagline">Your own photo. Your own voice.</p>
-          <p>Upload a portrait and a recorded narration — LUX renders a talking-head video from your own likeness, with your own consent on file for every render.</p>
-          <ul>
-            <li>Your own identity, not a stock avatar</li>
-            <li>Consent tracked per render</li>
-            <li>Fastest path from idea to video</li>
-          </ul>
-        </article>
-        <article class="lp-tier-card lp-tier-card-premium">
-          <h3>Premium</h3>
-          <p class="lp-tier-tagline">A licensed AI presenter, your script.</p>
-          <p>Write or generate a script, pick a presenter and voice, and get a fully produced Premium render — cinematic color grading included.</p>
-          <ul>
-            <li>Licensed presenter and voice library</li>
-            <li>AI copywriter to draft your script</li>
-            <li>Film grain and color-grade finishing</li>
-          </ul>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <section id="compare" class="lp-section lp-compare" aria-labelledby="lp-compare-heading">
-    <div class="lp-section-inner">
-      <p class="lp-eyebrow">Why LUX</p>
-      <h2 id="lp-compare-heading">Built for teams who've outgrown a single-avatar demo tool</h2>
-      <p class="lp-compare-sub">Most AI presenter platforms — HeyGen, avatar-clone tools, and the rest — give you one rendering model and a per-seat login. LUX is built around actually operating a video business on top of that layer.</p>
-      <div class="lp-table-wrap">
-        <table class="lp-compare-table">
-          <thead><tr><th scope="col">Capability</th><th scope="col">Typical avatar platform</th><th scope="col">LUX Video OS</th></tr></thead>
-          <tbody>
-            <tr><th scope="row">Your own likeness, not just a stock avatar</th><td>Rarely first-class</td><td>Standard tier, built in</td></tr>
-            <tr><th scope="row">Licensed presenter + script generation</th><td>Yes, one model</td><td>Yes, plus AI copywriter</td></tr>
-            <tr><th scope="row">Private, downloadable output you own</th><td>Varies by plan</td><td>Always private to your account</td></tr>
-            <tr><th scope="row">Operations console (accounts, jobs, credits, retries)</th><td>Not typically exposed</td><td>Full admin console included</td></tr>
-            <tr><th scope="row">Usage-based credits, no forced subscription</th><td>Usually subscription-only</td><td>Credit packs, use at your pace</td></tr>
-          </tbody>
-        </table>
-      </div>
+  <section class="lp-section lp-free-offer" aria-labelledby="lp-free-heading">
+    <div class="lp-section-inner lp-free-offer-inner">
+      <p class="lp-eyebrow">Your first video</p>
+      <h2 id="lp-free-heading">Try it with your business. Your first video is free.</h2>
+      <p class="lp-compare-sub">Pick something you already need to say. Make the video. See how it looks. Hear how it sounds. Then decide what comes next.</p>
+      <a class="button primary" href="/?signin=1">Create my free video</a>
+      <p class="lp-hero-note">Your new account includes enough credits to create one video.</p>
     </div>
   </section>
 
   <section id="pricing" class="lp-section lp-pricing" aria-labelledby="lp-pricing-heading">
     <div class="lp-section-inner">
-      <p class="lp-eyebrow">Pricing</p>
+      <p class="lp-eyebrow">After your free video</p>
       <h2 id="lp-pricing-heading">Pay for what you render</h2>
       <p class="lp-compare-sub">Every render costs credits, not a seat. A Standard or Premium video is 90 credits. Buy a pack, use it whenever.</p>
       <div class="lp-price-cards">
@@ -164,14 +221,26 @@
     </div>
   </section>
 
-  <section id="faq" class="lp-section lp-faq" aria-labelledby="lp-faq-heading">
+  <section id="faq" class="lp-section lp-faq lp-section-tint" aria-labelledby="lp-faq-heading">
     <div class="lp-section-inner">
       <p class="lp-eyebrow">FAQ</p>
       <h2 id="lp-faq-heading">Questions people actually ask</h2>
       <div class="lp-accordion">
         <details class="lp-faq-item">
-          <summary>What's the real difference between Standard and Premium?</summary>
-          <p>Standard uses your own uploaded photo and your own recorded audio — it's you, narrating in your own voice. Premium uses a licensed AI presenter with a chosen voice and a script you write or generate, for a fully produced, presenter-led video.</p>
+          <summary>What can I make with LUX Video OS?</summary>
+          <p>Create videos that introduce your business, explain a service, promote an offer, announce something new, or answer a customer question.</p>
+        </details>
+        <details class="lp-faq-item">
+          <summary>Do I have to appear in the video?</summary>
+          <p>No. You can use your own photo and voice, or choose an AI presenter to deliver your message.</p>
+        </details>
+        <details class="lp-faq-item">
+          <summary>Can LUX help me write the script?</summary>
+          <p>Yes. The script-based workflow includes AI writing help. Review and adjust the draft so it accurately reflects your business, your offer, and your voice.</p>
+        </details>
+        <details class="lp-faq-item">
+          <summary>What is included for free?</summary>
+          <p>Your new account includes enough credits to create one video, so you can try the process and see the result before buying more credits.</p>
         </details>
         <details class="lp-faq-item">
           <summary>Do I own the videos I create?</summary>
@@ -195,8 +264,9 @@
 
   <section class="lp-cta-band" aria-labelledby="lp-cta-heading">
     <div class="lp-section-inner">
-      <h2 id="lp-cta-heading">Start with free credits. No card required.</h2>
-      <a class="button primary" href="/?signin=1">Get started free</a>
+      <h2 id="lp-cta-heading">You already have something worth saying.</h2>
+      <p class="lp-compare-sub lp-cta-sub">An offer. An introduction. An answer your customers need. Start with one video.</p>
+      <a class="button primary" href="/?signin=1">Create my free video</a>
     </div>
   </section>
 

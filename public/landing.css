@@ -39,16 +39,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: nowrap;
   gap: 20px;
   padding: 16px 32px;
   background: rgba(255, 255, 255, .88);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
 }
-.lp-nav-links { display: flex; gap: 24px; }
-.lp-nav-links a { color: var(--muted); font-weight: 620; font-size: 13px; text-decoration: none; }
+.lp-nav-links { display: flex; gap: 24px; flex: none; }
+.lp-nav-links a { color: var(--muted); font-weight: 620; font-size: 13px; text-decoration: none; white-space: nowrap; }
 .lp-nav-links a:hover { color: var(--ink); }
-.lp-nav-actions { display: flex; align-items: center; gap: 10px; }
+.lp-nav-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 
 .lp-section-inner { width: min(1080px, calc(100% - 48px)); margin: 0 auto; }
 .lp-section { padding: 72px 0; }
@@ -99,20 +100,27 @@
 .lp-hero-inner {
   position: relative;
   z-index: 1;
-  width: min(760px, calc(100% - 48px));
+  width: min(1160px, calc(100% - 48px));
   margin: 0 auto;
-  padding: 96px 0;
-  text-align: center;
+  padding: 88px 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 56px;
+  align-items: center;
 }
 .lp-hero .lp-eyebrow { color: #c7d2e8; }
 .lp-hero .lp-eyebrow::before { background: linear-gradient(90deg, #c7d2e8, #6f7cae); }
-.lp-hero h1 { color: #fff; font-size: clamp(32px, 5vw, 52px); }
-.lp-hero-sub { margin: 18px auto 0; max-width: 620px; color: #c4cbdc; font-size: 16px; line-height: 1.6; }
+.lp-hero h1 { margin: 0; color: #fff; font-size: clamp(30px, 4vw, 46px); }
+.lp-hero-sub { margin: 18px 0 0; max-width: 520px; color: #c4cbdc; font-size: 16px; line-height: 1.6; }
 .lp-hero-sub strong { color: #fff; }
-.lp-hero-actions { display: flex; justify-content: center; gap: 12px; margin-top: 32px; flex-wrap: wrap; }
+.lp-hero-actions { display: flex; gap: 12px; margin-top: 30px; flex-wrap: wrap; }
 .lp-hero-note { margin-top: 16px; color: #8b93a8; font-size: 12px; }
 .lp-hero .button.secondary { border-color: rgba(255, 255, 255, .35); background: transparent; color: #fff; }
 .lp-hero .button.secondary:hover { background: rgba(255, 255, 255, .1); }
+
+.lp-hero-media { display: flex; flex-direction: column; gap: 10px; }
+.lp-hero-media .lp-video-frame { box-shadow: 0 20px 60px -20px rgba(3, 6, 30, .6); }
+.lp-hero-media-label { margin: 0; color: #9fa8c4; font-size: 12px; text-align: center; }
 
 /* CEO video */
 .lp-video-inner { display: grid; grid-template-columns: 1fr 1.15fr; gap: 48px; align-items: center; }
@@ -130,24 +138,49 @@
 .lp-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 24px; margin: 32px 0 0; padding: 0; list-style: none; }
 .lp-steps li { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .lp-step-num { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin-bottom: 12px; border-radius: 50%; background: var(--primary-soft); color: var(--primary-strong); font-weight: 700; font-size: 13px; }
+/* Three compact steps, not the old four large cards -- background is
+   already the section's own tint (.lp-section-tint), so each step reads as
+   a plain white card floating on it rather than a second nested tint. */
+.lp-steps-compact li { background: var(--surface); }
+.lp-steps-compact h3 { margin: 0 0 6px; font-size: 15px; }
+.lp-steps-compact p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
 
 /* Tier cards */
 .lp-tier-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 32px; }
-.lp-tier-card { padding: 28px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); }
+.lp-tier-card { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); }
 .lp-tier-card-premium { border-color: var(--primary); background: var(--primary-soft); }
-.lp-tier-tagline { color: var(--ink); font-weight: 620; margin: 4px 0 12px; }
-.lp-tier-card ul { margin: 14px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
-.lp-tier-card li { margin-bottom: 6px; }
+.lp-tier-label { margin: 0 0 4px; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+.lp-tier-card h3 { margin: 0 0 6px; font-size: 17px; }
+.lp-tier-card > p:last-child { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
 
-/* Compare table */
 .lp-compare-sub { max-width: 640px; color: var(--muted); }
-.lp-table-wrap { margin-top: 24px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
-.lp-compare-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.lp-compare-table th, .lp-compare-table td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--line); }
-.lp-compare-table thead th { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
-.lp-compare-table tbody th { font-weight: 620; color: var(--ink); }
-.lp-compare-table tbody tr:last-child td, .lp-compare-table tbody tr:last-child th { border-bottom: 0; }
-.lp-compare-table td:last-child { color: var(--primary-strong); font-weight: 620; }
+
+/* Alternating section tint -- a quiet rhythm device between hero-adjacent
+   sections, not a repeat of the hero's own deep-blue treatment. */
+.lp-section-tint { background: var(--primary-soft); }
+
+/* Compact video frame, reused by the Examples, presentation-choice, and
+   (eventually) any other card that needs its own small preview instead of
+   the hero/founder video's full-width treatment. */
+.lp-video-frame-compact { aspect-ratio: 16 / 9; margin-bottom: 16px; }
+.lp-video-frame-compact video { aspect-ratio: 16 / 9; }
+.lp-video-play-compact { width: 44px; height: 44px; }
+
+/* Examples */
+.lp-example-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; margin-top: 32px; }
+.lp-example-card { padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); }
+.lp-example-card h3 { margin: 0 0 6px; font-size: 16px; }
+.lp-example-card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+
+/* Free offer -- the primary conversion moment between "how it works" and
+   the paid packs below it, so it gets its own quiet emphasis (a tinted
+   band, centered) without borrowing the hero's dark treatment a second
+   time on the same page. */
+.lp-free-offer { background: var(--primary-soft); text-align: center; }
+.lp-free-offer-inner { display: flex; flex-direction: column; align-items: center; }
+.lp-free-offer h2 { max-width: 640px; }
+.lp-free-offer .lp-compare-sub { text-align: center; margin: 12px auto 28px; }
+.lp-free-offer .button { margin-bottom: 14px; }
 
 /* Pricing */
 .lp-price-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 24px; margin-top: 32px; }
@@ -187,7 +220,8 @@
   height: 3px;
   background: linear-gradient(90deg, #12219c, #9aa5c2, #12219c);
 }
-.lp-cta-band .button { margin-top: 18px; }
+.lp-cta-sub { text-align: center; margin: 12px auto 0; }
+.lp-cta-band .button { margin-top: 22px; }
 .lp-footer { padding: 40px 0; border-top: 1px solid var(--line); }
 .lp-footer-inner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
 .lp-footer-inner nav { display: flex; gap: 18px; }
@@ -208,9 +242,16 @@
 
 @media (max-width: 760px) {
   .lp-nav-links { display: none; }
+  /* Keeps the mobile header to one line at any phone width: drop the
+     "VIDEO OS" subtitle and shrink the wordmark rather than let it push
+     the compact Log in / Start free buttons onto a second row. */
+  .lp-nav { padding: 12px 16px; gap: 10px; }
+  .lp-nav .wordmark-lux { font-size: 22px; }
+  .lp-nav .wordmark-product { display: none; }
   .lp-video-inner { grid-template-columns: 1fr; }
-  /* No mobile-specific hero height override needed: min-height (not a fixed
-     height) already fills the real device screen via 100vh/100svh, and
-     grows taller on its own if a wrapped headline needs more room than
-     that -- it never clips. */
+  .lp-hero { align-items: flex-start; min-height: 0; }
+  .lp-hero-inner { grid-template-columns: 1fr; padding: 24px 0 56px; gap: 28px; }
+  .lp-hero-media { order: 2; }
+  .lp-hero-copy { order: 1; text-align: left; }
+  .lp-hero-actions { justify-content: flex-start; }
 }
