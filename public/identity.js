@@ -670,6 +670,7 @@ function handlePhotoFile(file) {
   } catch (error) {
     state.photoFile = null;
     $('#photo-input').value = '';
+    $('#photo-capture-input').value = '';
     showFieldError($('#photo-input'), $('#photo-error'), error.message);
     return;
   }
@@ -738,6 +739,7 @@ $('#check-my-identities').addEventListener('click', checkMyIdentities);
 $('#commit-retry-anyway').addEventListener('click', retryCommitAnyway);
 $('#resume-polling').addEventListener('click', resumePolling);
 $('#photo-input').addEventListener('change', (event) => handlePhotoFile(event.target.files[0] || null));
+$('#photo-capture-input').addEventListener('change', (event) => handlePhotoFile(event.target.files[0] || null));
 $('#voice-input').addEventListener('change', (event) => handleVoiceFile(event.target.files[0] || null));
 $('#identity-name').addEventListener('input', () => {
   if ($('#identity-name').value.trim()) clearFieldError($('#identity-name'), $('#identity-name-error'));

@@ -134,11 +134,17 @@
       <fieldset data-panel="1" tabindex="-1">
         <legend>Your Photo</legend>
         <div class="split">
-          <label class="dropzone" id="photo-drop">
-            <input id="photo-input" type="file" accept="image/jpeg,image/png" required aria-describedby="photo-requirements photo-error">
-            <img id="photo-preview" alt="Selected portrait preview" hidden>
-            <span id="photo-prompt"><strong>Choose a portrait</strong><small id="photo-requirements">JPEG or PNG &middot; 512-8192 px &middot; up to 3 MB</small></span>
-          </label>
+          <div class="photo-picker">
+            <label class="dropzone" id="photo-drop">
+              <input id="photo-input" type="file" accept="image/jpeg,image/png" required aria-describedby="photo-requirements photo-error">
+              <img id="photo-preview" alt="Selected portrait preview" hidden>
+              <span id="photo-prompt"><strong>Choose a portrait</strong><small id="photo-requirements">JPEG or PNG &middot; 512-8192 px &middot; up to 3 MB</small></span>
+            </label>
+            <div class="photo-capture-row">
+              <span aria-hidden="true">or</span>
+              <label class="button secondary file-button">Take a photo<input id="photo-capture-input" type="file" accept="image/jpeg,image/png" capture="user" aria-label="Take a portrait photo with your camera"></label>
+            </div>
+          </div>
           <div class="guidance"><h3>A strong photo has</h3><ul><li>One front-facing adult</li><li>Even light and a neutral expression</li><li>Head and shoulders fully visible</li><li>No sunglasses, filters, or heavy blur</li></ul></div>
         </div>
         <p id="photo-error" class="field-error" role="alert" hidden></p>
