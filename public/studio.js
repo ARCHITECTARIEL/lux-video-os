@@ -1293,7 +1293,7 @@ function prepareAnotherPremiumDraft() {
   renderCompositionPreview();
   $('#premium-title').value = '';
   $('#script-input').value = '';
-  $('#script-count').textContent = '0 / 4000';
+  $('#script-count').textContent = '0 / 900';
   setFieldError($('#premium-title'), $('#premium-title-error'));
   setFieldError($('#script-input'), $('#premium-script-error'));
   setFieldError($('#avatar-search'), $('#premium-cast-error'));
@@ -1802,7 +1802,7 @@ function restoreLatestProject() {
   }
   renderCompositionPreview();
   $('#script-input').value = project.script || '';
-  $('#script-count').textContent = $('#script-input').value.length + ' / 4000';
+  $('#script-count').textContent = $('#script-input').value.length + ' / 900';
   const identity = project.identityId ? state.identities.find((item) => item.id === project.identityId && item.ready === true && !item.archivedAt) : null;
   if (identity) {
     choosePremiumIdentity(identity);
@@ -1893,7 +1893,7 @@ function clearWorkspaceData() {
   renderCompositionPreview();
   $('#premium-title').value = '';
   $('#script-input').value = '';
-  $('#script-count').textContent = '0 / 4000';
+  $('#script-count').textContent = '0 / 900';
   setFieldError($('#premium-title'), $('#premium-title-error'));
   setFieldError($('#script-input'), $('#premium-script-error'));
   setFieldError($('#avatar-search'), $('#premium-cast-error'));
@@ -2240,7 +2240,7 @@ $('#toggle-auth-password').addEventListener('click', () => {
 });
 
 $('#script-input').addEventListener('input', () => {
-  $('#script-count').textContent = $('#script-input').value.length + ' / 4000';
+  $('#script-count').textContent = $('#script-input').value.length + ' / 900';
   if ($('#script-input').value.trim()) setFieldError($('#script-input'), $('#premium-script-error'));
   renderPremiumAvailability();
 });

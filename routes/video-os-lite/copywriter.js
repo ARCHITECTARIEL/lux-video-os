@@ -14,9 +14,9 @@ const briefSchema = z.object({
 
 const requestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('draft'), idempotencyKey: z.string().uuid(), brief: briefSchema }).strict(),
-  z.object({ operation: z.literal('shorten'), idempotencyKey: z.string().uuid(), brief: briefSchema, draft: z.string().trim().min(1).max(4000) }).strict(),
-  z.object({ operation: z.literal('improve_hook'), idempotencyKey: z.string().uuid(), brief: briefSchema, draft: z.string().trim().min(1).max(4000) }).strict(),
-  z.object({ operation: z.literal('revise'), idempotencyKey: z.string().uuid(), brief: briefSchema, draft: z.string().trim().min(1).max(4000), instructions: z.string().trim().min(1).max(600) }).strict(),
+  z.object({ operation: z.literal('shorten'), idempotencyKey: z.string().uuid(), brief: briefSchema, draft: z.string().trim().min(1).max(900) }).strict(),
+  z.object({ operation: z.literal('improve_hook'), idempotencyKey: z.string().uuid(), brief: briefSchema, draft: z.string().trim().min(1).max(900) }).strict(),
+  z.object({ operation: z.literal('revise'), idempotencyKey: z.string().uuid(), brief: briefSchema, draft: z.string().trim().min(1).max(900), instructions: z.string().trim().min(1).max(600) }).strict(),
 ]);
 
 // An explicit owner kill-switch separate from "not configured yet" (below):
@@ -33,7 +33,7 @@ export function copywriterAvailability() {
     available: true,
     reason: 'ready',
     message: 'AI writing is available. Review suggestions before using them.',
-    limits: { maxDraftCharacters: 4000, maxBriefCharacters: 2000, maxRevisionCharacters: 600 },
+    limits: { maxDraftCharacters: 900, maxBriefCharacters: 2000, maxRevisionCharacters: 600 },
   };
 }
 
