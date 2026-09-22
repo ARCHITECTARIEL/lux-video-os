@@ -134,6 +134,14 @@
 .lp-video-play svg { margin-left: 3px; }
 .lp-video-placeholder-note { position: absolute; left: 0; right: 0; bottom: 12px; margin: 0; text-align: center; color: #c4cbdc; font-size: 11px; }
 
+/* Screen-recording walkthrough, centered below the three steps -- same
+   frame treatment as the founder video (this is evidence, not a card), just
+   capped narrower so it reads as a supporting demo rather than a second
+   hero moment. */
+.lp-walkthrough { max-width: 640px; margin: 40px auto 0; }
+.lp-walkthrough .lp-video-frame { box-shadow: var(--shadow); }
+.lp-walkthrough .lp-hero-media-label { margin-top: 10px; color: var(--muted); }
+
 /* Steps */
 .lp-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 24px; margin: 32px 0 0; padding: 0; list-style: none; }
 .lp-steps li { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
