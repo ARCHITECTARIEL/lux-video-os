@@ -192,6 +192,18 @@
 .lp-footer-inner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
 .lp-footer-inner nav { display: flex; gap: 18px; }
 .lp-footer-inner nav a { color: var(--muted); font-size: 13px; text-decoration: none; }
+
+/* Plain-prose reading layout for /privacy and /terms, reusing this file's
+   nav/footer chrome rather than introducing a third stylesheet. */
+.lp-legal { padding: 56px 0 80px; }
+.lp-legal-inner { width: min(760px, calc(100% - 48px)); margin: 0 auto; }
+.lp-legal-inner h1 { margin: 0 0 8px; font-size: 32px; }
+.lp-legal-updated { margin: 0 0 40px; color: var(--muted); font-size: 13px; }
+.lp-legal-inner h2 { margin: 40px 0 12px; font-size: 19px; }
+.lp-legal-inner p { margin: 0 0 16px; color: var(--ink); font-size: 14px; line-height: 1.7; }
+.lp-legal-inner ul { margin: 0 0 16px; padding-left: 20px; }
+.lp-legal-inner li { margin: 0 0 8px; color: var(--ink); font-size: 14px; line-height: 1.7; }
+.lp-legal-inner a { color: var(--primary); }
 .lp-footer-copy { width: 100%; margin: 0; color: var(--muted); font-size: 12px; }
 
 @media (max-width: 760px) {

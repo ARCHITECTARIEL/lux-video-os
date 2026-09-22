@@ -117,6 +117,20 @@
                                    }
                    },
                    {
+                       "src":  "/privacy",
+                       "dest":  "/privacy.html",
+                       "headers":  {
+                                       "Cache-Control":  "no-store"
+                                   }
+                   },
+                   {
+                       "src":  "/terms",
+                       "dest":  "/terms.html",
+                       "headers":  {
+                                       "Cache-Control":  "no-store"
+                                   }
+                   },
+                   {
                        "src":  "/exports/(.*)",
                        "dest":  "/public/exports/$1",
                        "headers":  {
