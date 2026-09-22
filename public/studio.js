@@ -308,7 +308,7 @@ function showTierComparison() {
     ['Standard script', 'Not required'],
     ['Premium', 'Presenter + voice + exact script'],
     ['Live availability', 'Checked separately for each tier'],
-  ], 'Standard live rendering is not available yet. Premium keeps its existing signed-in workflow and is checked again when submitted.');
+  ], 'Both tiers are live. Availability is checked again for the signed-in account when you submit.');
   openDialog($('#review-dialog'), $('[data-dialog-close]', $('#review-dialog')));
 }
 
@@ -1919,6 +1919,7 @@ function renderWorkspace() {
   renderPremiumCast();
   renderPremiumAvailability();
   renderResults();
+  configureStandardSubmit();
   copywriterController?.syncSession();
   copywriterController?.syncPremiumState();
 }

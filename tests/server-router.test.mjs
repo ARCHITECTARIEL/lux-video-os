@@ -49,14 +49,22 @@ test('server router: static JS asset is served from public/ with the right conte
   });
 });
 
-test('server router: explicit /public/ prefixed dest (/dashboard) and implicit (/identity) both resolve', async () => {
+test('server router: explicit /public/ prefixed dest (/admin-console) and implicit (/identity) both resolve', async () => {
   await withServer(async (base) => {
-    const dashboard = await request(`${base}/dashboard`);
-    assert.equal(dashboard.status, 200);
-    assert.equal(dashboard.headers['cache-control'], 'no-store');
+    const adminConsole = await request(`${base}/admin-console`);
+    assert.equal(adminConsole.status, 200);
+    assert.equal(adminConsole.headers['cache-control'], 'no-store');
     const identity = await request(`${base}/identity`);
     assert.equal(identity.status, 200);
     assert.match(identity.body, /<html/i);
+  });
+});
+
+test('server router: retired /dashboard route falls back to the SPA shell, not the legacy cockpit', async () => {
+  await withServer(async (base) => {
+    const res = await request(`${base}/dashboard`);
+    assert.equal(res.status, 200);
+    assert.doesNotMatch(res.body, /Hosted MVP Mode/);
   });
 });
 

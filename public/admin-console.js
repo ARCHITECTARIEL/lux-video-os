@@ -426,6 +426,19 @@ function bindStaticListeners() {
   $('#job-delete-video-button').addEventListener('click', deleteCurrentJobVideo);
   $('#job-retry-button').addEventListener('click', retryCurrentJob);
   $('#admin-login-form').addEventListener('submit', adminLogin);
+  $('#admin-sign-out').addEventListener('click', adminSignOut);
+}
+
+async function adminSignOut() {
+  try {
+    await postJson('/api/video-os-lite/session', {});
+  } catch {}
+  $('#admin-content').hidden = true;
+  $('#admin-denied').hidden = false;
+  $('#admin-auth-state').textContent = 'Signed out';
+  $('#admin-auth-state').dataset.state = 'error';
+  $('#admin-login-username').value = '';
+  $('#admin-login-password').value = '';
 }
 
 async function adminLogin(event) {
