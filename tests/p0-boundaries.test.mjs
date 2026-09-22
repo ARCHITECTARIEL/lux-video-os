@@ -56,12 +56,17 @@ test('media policy rejects localhost, HTTP, and unallowlisted hosts', () => {
   assert.equal(assertAllowedMediaUrl('https://media.heygen.example/a.mp4').hostname, 'media.heygen.example');
 });
 
-test('contained rendering requires one exact configured account', () => {
+test('contained rendering requires an exact match against the configured allowlist', () => {
   delete process.env.VIDEO_OS_RENDER_ACCOUNT_ID;
   assert.throws(() => requireRenderAccountAuthorization('acct-a'), /not configured/);
   process.env.VIDEO_OS_RENDER_ACCOUNT_ID = 'acct-a';
   assert.equal(requireRenderAccountAuthorization('acct-a'), true);
   assert.throws(() => requireRenderAccountAuthorization('acct-b'), /not authorized/);
+  process.env.VIDEO_OS_RENDER_ACCOUNT_ID = 'acct-a, acct-b ,acct-c';
+  assert.equal(requireRenderAccountAuthorization('acct-a'), true);
+  assert.equal(requireRenderAccountAuthorization('acct-b'), true);
+  assert.equal(requireRenderAccountAuthorization('acct-c'), true);
+  assert.throws(() => requireRenderAccountAuthorization('acct-d'), /not authorized/);
   delete process.env.VIDEO_OS_RENDER_ACCOUNT_ID;
 });
 

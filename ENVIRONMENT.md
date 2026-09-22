@@ -54,7 +54,7 @@ Required only for the providers you enable:
 Contained durable rendering requires all of the following in the same non-production deployment:
 
 - `VIDEO_OS_DURABLE_WORKFLOW_ENABLED=true`
-- `VIDEO_OS_RENDER_ACCOUNT_ID`: one exact authorized account ID; requests from every other account fail closed.
+- `VIDEO_OS_RENDER_ACCOUNT_ID`: one or more exact authorized account IDs, comma-separated; requests from every other account fail closed. Keep this list to explicitly trusted testers while `VIDEO_OS_BILLING_ENABLED` stays false -- every render an allowlisted account triggers is a real, unbilled provider cost.
 - `VIDEO_OS_TRIAL_CREDITS`: optional override for the free trial credit balance every new account gets on first sign-in (any path -- Google, magic-link, or workspace password). Defaults to `180` (`lib/video-os-account.js`'s `DEFAULT_TRIAL_CREDITS`) if unset -- not zero. This single constant is the only place that default lives; every account-creation call site imports it rather than re-deriving its own fallback (a prior version of this codebase had that duplicated inconsistently, silently giving 0 credits on some sign-in paths and 180 on others).
 - `VIDEO_OS_HOSTED_FINISHING_ENABLED=true` only when bounded finishing and private final storage are being explicitly tested.
 - `VIDEO_OS_PROVIDER_MEDIA_HOSTS`: comma-separated exact provider media hostnames. Subdomain wildcards are not accepted.
