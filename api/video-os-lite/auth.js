@@ -4,7 +4,7 @@ import { getAccountContext, recordSignIn, updateAuthenticatedAccount } from '../
 import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, DEFAULT_TRIAL_CREDITS, handleOptions, makeSession, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
-import { publicOrigin } from '../../lib/video-os-security.js';
+import { accountAllowedForContainedRendering, publicOrigin } from '../../lib/video-os-security.js';
 
 function route(req) {
   const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
@@ -204,10 +204,18 @@ export default async function handler(req, res) {
       const tokens = await exchangeGoogleCode({ code, redirectUri });
       const profile = await fetchGoogleProfile(tokens.access_token);
       const accountId = accountIdForEmail(profile.email);
+      const entitlementKeys = ['googleAccess'];
+      // A Google sign-in that lands on the contained-rendering allowlist
+      // needs the same liveRendering entitlement the workspace account gets
+      // -- otherwise the backend containment check would pass but the
+      // frontend's separate entitlementAllowsPremium() gate (studio.js)
+      // still shows "Premium is not enabled for this account". Two gates,
+      // one real grant.
+      if (accountAllowedForContainedRendering(accountId)) entitlementKeys.push('liveRendering');
       await updateAuthenticatedAccount({
         accountId, email: profile.email, name: profile.name, role: 'customer',
         initialCredits: DEFAULT_TRIAL_CREDITS,
-        entitlementKeys: ['googleAccess'], sourceId: 'google_oauth',
+        entitlementKeys, sourceId: 'google_oauth',
       });
       const session = makeSession(accountId, profile.email);
       await recordSignIn(accountId);
