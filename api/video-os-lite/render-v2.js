@@ -6,7 +6,7 @@ import { standardNarrationRepository } from '../../db/standard-narration-reposit
 import { assertTalentSelectionsAvailable, loadTalentInventory } from '../video-os/talent.js';
 import { captureJobError } from '../../lib/video-os-observability.js';
 import { featureEnabled, requestId, requireRenderAccountAuthorization } from '../../lib/video-os-security.js';
-import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { DEFAULT_TRIAL_CREDITS, handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../../lib/video-os-identity-policy.js';
 import { parseOrThrow, renderRequestSchema } from '../../lib/video-os-validation.js';
 import { videoRenderWorkflowMetadata } from '../../workflows/video-render-metadata.js';
@@ -99,7 +99,7 @@ async function handleStandardRender(req, res, session, body, correlationId) {
   let workflowDispatchAttempted = false;
   let workflowAccepted = false;
   try {
-    const account = await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 0) });
+    const account = await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: DEFAULT_TRIAL_CREDITS });
     const reserved = await standardNarrationRepository.reserveRender({
       jobId: `job-${crypto.randomUUID()}`,
       accountId: session.accountId,
@@ -194,7 +194,7 @@ async function handlePremiumRender(req, res, session, body, correlationId) {
       const inventory = await loadTalentInventory();
       assertTalentSelectionsAvailable(inventory.talent, payload);
     }
-    const account = await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 0) });
+    const account = await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: DEFAULT_TRIAL_CREDITS });
     const reserved = await reserveRender({ jobId: `job-${crypto.randomUUID()}`, accountId: session.accountId, idempotencyKey: payload.idempotencyKey, correlationId, provider: payload.provider, title: payload.title, format: payload.format, costCredits: 90, input: authorizedInput });
     reservedJob = reserved.job;
     const claimed = await claimWorkflowStart(reserved.job.id);

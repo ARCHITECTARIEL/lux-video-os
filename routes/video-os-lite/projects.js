@@ -1,7 +1,7 @@
 // Routed through the consolidated workspace function to stay within the Vercel function limit.
 import { ensureAccount, listProjects, saveProject, saveStandardProject } from '../../db/repositories.js';
 import { projectDto } from '../../db/dto.js';
-import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { DEFAULT_TRIAL_CREDITS, handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { parseOrThrow, projectRequestSchema, standardProjectRequestSchema } from '../../lib/video-os-validation.js';
 
 function logProjectFailure(error) {
@@ -29,7 +29,7 @@ export default async function handler(req, res) {
         accountId: session.accountId,
         email: session.email,
         name: session.email || 'Video OS Account',
-        initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 0),
+        initialCredits: DEFAULT_TRIAL_CREDITS,
       });
       const project = await saveStandardProject({
         accountId: session.accountId,
@@ -45,7 +45,7 @@ export default async function handler(req, res) {
         accountId: session.accountId,
         email: session.email,
         name: session.email || 'Video OS Account',
-        initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 0),
+        initialCredits: DEFAULT_TRIAL_CREDITS,
       });
     }
     const project = await saveProject({ ...payload, accountId: session.accountId });

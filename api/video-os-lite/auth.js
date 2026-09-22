@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { accountDto } from '../../db/dto.js';
 import { getAccountContext, recordSignIn, updateAuthenticatedAccount } from '../../db/repositories.js';
-import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, handleOptions, makeSession, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
+import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, DEFAULT_TRIAL_CREDITS, handleOptions, makeSession, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
 import { publicOrigin } from '../../lib/video-os-security.js';
@@ -170,7 +170,7 @@ export default async function handler(req, res) {
       const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
       const token = url.searchParams.get('token');
       const { accountId, email } = await validateMagicToken(token);
-      await updateAuthenticatedAccount({ accountId, email, name: email, role: 'customer', initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 180), entitlementKeys: ['magicLinkAccess'], sourceId: 'magic_link' });
+      await updateAuthenticatedAccount({ accountId, email, name: email, role: 'customer', initialCredits: DEFAULT_TRIAL_CREDITS, entitlementKeys: ['magicLinkAccess'], sourceId: 'magic_link' });
       await consumeMagicToken(token);
       const session = makeSession(accountId, email);
       await recordSignIn(accountId);
@@ -206,7 +206,7 @@ export default async function handler(req, res) {
       const accountId = accountIdForEmail(profile.email);
       await updateAuthenticatedAccount({
         accountId, email: profile.email, name: profile.name, role: 'customer',
-        initialCredits: Number(process.env.VIDEO_OS_TRIAL_CREDITS || 0),
+        initialCredits: DEFAULT_TRIAL_CREDITS,
         entitlementKeys: ['googleAccess'], sourceId: 'google_oauth',
       });
       const session = makeSession(accountId, profile.email);

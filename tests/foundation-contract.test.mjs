@@ -80,7 +80,7 @@ test('project creation establishes its signed Postgres owner before persistence'
   assert.ok(saveIndex > ensureIndex, 'account synchronization must precede project insertion');
   assert.match(source.slice(0, ensureIndex), /if \(!payload\.id\) \{/);
   assert.match(source, /accountId:\s*session\.accountId/);
-  assert.match(source, /initialCredits:\s*Number\(process\.env\.VIDEO_OS_TRIAL_CREDITS/);
+  assert.match(source, /initialCredits:\s*DEFAULT_TRIAL_CREDITS/);
 });
 
 test('render start uses immutable workflow metadata registered by the build manifest', () => {
