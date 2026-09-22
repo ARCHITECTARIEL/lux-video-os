@@ -26,6 +26,7 @@
     "dependencies": {
         "@neondatabase/serverless": "^1.1.0",
         "@sentry/node": "^10.74.0",
+        "@vercel/analytics": "^2.0.1",
         "@vercel/blob": "latest",
         "@vercel/sandbox": "2.8.0",
         "ai": "^7.0.0",
