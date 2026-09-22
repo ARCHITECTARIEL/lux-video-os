@@ -11,6 +11,8 @@ import { eq } from 'drizzle-orm';
 import { assertDatabaseConfigured, database } from '../db/client.js';
 import { users } from '../db/schema.js';
 import authHandler from '../api/video-os-lite/auth.js';
+import { getAccountContext } from '../db/repositories.js';
+import { accountIdForEmail } from '../lib/video-os-account.js';
 import { verifySessionToken } from '../lib/video-os-account.js';
 
 let dbAvailable = true;
@@ -26,6 +28,7 @@ const originalEnvironment = {
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
   VIDEO_OS_PUBLIC_ORIGIN: process.env.VIDEO_OS_PUBLIC_ORIGIN,
+  VIDEO_OS_RENDER_ACCOUNT_ID: process.env.VIDEO_OS_RENDER_ACCOUNT_ID,
 };
 
 function request({ method = 'GET', url, cookie }) {
@@ -136,6 +139,44 @@ test(
     const payload = verifySessionToken(token);
     assert.equal(payload.email, email.toLowerCase());
     assert.ok(setCookies.some((cookie) => cookie.startsWith('vos_oauth_state=') && cookie.includes('Max-Age=0')), 'the state cookie must be cleared');
+  },
+);
+
+test(
+  'google-callback grants liveRendering only when the resulting account is on the render allowlist',
+  { skip: !dbAvailable && 'DATABASE_URL not configured; skipping live integration test' },
+  async (t) => {
+    process.env.GOOGLE_CLIENT_ID = 'client-id';
+    process.env.GOOGLE_CLIENT_SECRET = 'client-secret';
+    process.env.VIDEO_OS_PUBLIC_ORIGIN = ORIGIN;
+    const allowedEmail = `google-allowlisted-${crypto.randomUUID()}@example.com`;
+    const deniedEmail = `google-not-allowlisted-${crypto.randomUUID()}@example.com`;
+    const allowedAccountId = accountIdForEmail(allowedEmail);
+    t.after(async () => {
+      await database().delete(users).where(eq(users.id, allowedAccountId)).catch(() => {});
+      await database().delete(users).where(eq(users.id, accountIdForEmail(deniedEmail))).catch(() => {});
+    });
+    process.env.VIDEO_OS_RENDER_ACCOUNT_ID = `other-account,${allowedAccountId}`;
+
+    async function signIn(email, state) {
+      globalThis.fetch = async (url) => {
+        if (String(url).includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
+        if (String(url).includes('openidconnect.googleapis.com/v1/userinfo')) return new Response(JSON.stringify({ email, email_verified: true, name: 'Google Test User' }), { status: 200 });
+        throw new Error(`unexpected fetch to ${url}`);
+      };
+      const res = response();
+      await authHandler(request({ url: `/api/video-os-lite/google-callback?code=proof-code&state=${state}`, cookie: `vos_oauth_state=${state}` }), res);
+      assert.equal(res.statusCode, 302);
+    }
+
+    await signIn(allowedEmail, 'allowlisted-state');
+    const allowedContext = await getAccountContext(allowedAccountId);
+    assert.equal(allowedContext.entitlements.liveRendering, true, 'an allowlisted account must get liveRendering so the frontend Premium gate opens too');
+    assert.equal(allowedContext.entitlements.googleAccess, true);
+
+    await signIn(deniedEmail, 'denied-state');
+    const deniedContext = await getAccountContext(accountIdForEmail(deniedEmail));
+    assert.equal(deniedContext.entitlements.liveRendering, undefined, 'an account outside the allowlist must not get liveRendering');
   },
 );
 
