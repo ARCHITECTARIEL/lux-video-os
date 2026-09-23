@@ -29,6 +29,7 @@ const originalEnvironment = {
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
   VIDEO_OS_PUBLIC_ORIGIN: process.env.VIDEO_OS_PUBLIC_ORIGIN,
   VIDEO_OS_RENDER_ACCOUNT_ID: process.env.VIDEO_OS_RENDER_ACCOUNT_ID,
+  VIDEO_OS_STANDARD_RENDER_EMAIL_DOMAINS: process.env.VIDEO_OS_STANDARD_RENDER_EMAIL_DOMAINS,
   // Not read by google-login (the 501-when-unconfigured test below deletes
   // GOOGLE_CLIENT_ID/SECRET directly and doesn't need this), but
   // google-callback's makeSession() does -- a bare .env.local dev checkout
@@ -187,6 +188,38 @@ test(
     const deniedContext = await getAccountContext(accountIdForEmail(deniedEmail));
     assert.equal(deniedContext.entitlements.liveRendering, undefined, 'an account outside the allowlist must not get liveRendering');
     assert.equal(deniedContext.entitlements.standardRendering, undefined, 'an account outside the allowlist must not get standardRendering');
+  },
+);
+
+test(
+  'google-callback grants standardRendering only (never liveRendering) via VIDEO_OS_STANDARD_RENDER_EMAIL_DOMAINS, independent of the ID allowlist',
+  { skip: !dbAvailable && 'DATABASE_URL not configured; skipping live integration test' },
+  async (t) => {
+    process.env.GOOGLE_CLIENT_ID = 'client-id';
+    process.env.GOOGLE_CLIENT_SECRET = 'client-secret';
+    process.env.VIDEO_OS_PUBLIC_ORIGIN = ORIGIN;
+    if (!originalEnvironment.VIDEO_OS_SESSION_SECRET) process.env.VIDEO_OS_SESSION_SECRET = 'google-signin-route-test-secret-with-adequate-length';
+    process.env.VIDEO_OS_RENDER_ACCOUNT_ID = 'some-other-account-not-in-this-test';
+    process.env.VIDEO_OS_STANDARD_RENDER_EMAIL_DOMAINS = 'trusted-test-domain.example';
+    const domainEmail = `google-domain-${crypto.randomUUID()}@trusted-test-domain.example`;
+    const domainAccountId = accountIdForEmail(domainEmail);
+    t.after(async () => {
+      await database().delete(users).where(eq(users.id, domainAccountId)).catch(() => {});
+    });
+
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
+      if (String(url).includes('openidconnect.googleapis.com/v1/userinfo')) return new Response(JSON.stringify({ email: domainEmail, email_verified: true, name: 'Domain Test User' }), { status: 200 });
+      throw new Error(`unexpected fetch to ${url}`);
+    };
+    const state = 'domain-allowed-state';
+    const res = response();
+    await authHandler(request({ url: `/api/video-os-lite/google-callback?code=proof-code&state=${state}`, cookie: `vos_oauth_state=${state}` }), res);
+    assert.equal(res.statusCode, 302);
+
+    const context = await getAccountContext(domainAccountId);
+    assert.equal(context.entitlements.standardRendering, true, 'a domain-matched account must get standardRendering');
+    assert.equal(context.entitlements.liveRendering, undefined, 'a domain match must never grant liveRendering -- Premium\'s backend gate only checks accountId, not email, so granting it here would recreate a real gate mismatch');
   },
 );
 
