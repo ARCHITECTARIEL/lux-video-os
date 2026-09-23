@@ -15,6 +15,7 @@
         "codeql:enforce": "node tools/enforce-codeql-sarif.mjs",
         "test:e2e": "playwright test",
         "db:check": "drizzle-kit check",
+        "db:verify": "node tools/check-migrations.mjs",
         "db:generate": "drizzle-kit generate",
         "db:migrate": "drizzle-kit migrate",
         "db:dry-run": "node tools/dry-run-migrations.mjs",
