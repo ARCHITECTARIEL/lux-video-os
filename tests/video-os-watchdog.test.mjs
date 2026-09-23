@@ -16,8 +16,8 @@ import test from 'node:test';
 import { eq } from 'drizzle-orm';
 import { assertDatabaseConfigured, database } from '../db/client.js';
 import {
-  claimWorkflowStart, ensureAccount, getJob, listFailedOrStuckJobs, listStalledActionableJobs, listStalledAmbiguousJobs,
-  reserveRender, transitionJob,
+  claimWorkflowStart, ensureAccount, getAccountContext, getJob, listFailedOrStuckJobs, listStalledActionableJobs, listStalledAmbiguousJobs,
+  listStalledSafeToReleaseJobs, reserveRender, transitionJob,
 } from '../db/repositories.js';
 import { users, videoJobs } from '../db/schema.js';
 import { runWatchdogSweep } from '../lib/video-os-watchdog.js';
@@ -91,6 +91,77 @@ test(
       assert.ok(!ids.includes(freshSubmitting), 'a merely-in-progress submission must not show up as needing attention');
       assert.ok(!ids.includes(staleRendering), 'the attention list is for jobs a human must act on -- the watchdog handles provider_rendering on its own');
     });
+  },
+);
+
+async function makeReservedOnlyJob(accountId, { minutesAgo, costCredits = 5 } = {}) {
+  const jobId = `job-watchdog-test-${crypto.randomUUID()}`;
+  await reserveRender({
+    jobId, accountId, idempotencyKey: crypto.randomUUID(), correlationId: `corr-${jobId}`,
+    provider: 'heygen', title: 'Watchdog Reserved-Only Test', format: 'vertical', costCredits, input: {},
+  });
+  // Deliberately never calls claimWorkflowStart() -- this is the only way a
+  // real job stays at exactly 'reserved': the process died (or a bug
+  // prevented it) between reserveRender() and claimWorkflowStart(), so no
+  // provider was ever contacted.
+  if (minutesAgo) await backdateUpdatedAt(jobId, minutesAgo);
+  return jobId;
+}
+
+test(
+  'watchdog: a job stuck at exactly reserved is found by the safe-to-release query, not the ambiguous one',
+  { skip: !dbAvailable && 'DATABASE_URL not configured; skipping live integration test' },
+  async (t) => {
+    const accountId = `test-watchdog-reserved-${crypto.randomUUID()}`;
+    t.after(async () => {
+      await database().delete(users).where(eq(users.id, accountId)).catch(() => {});
+    });
+    await ensureAccount({ accountId, email: null, name: 'Watchdog Reserved Test', initialCredits: 1000 });
+
+    const staleReserved = await makeReservedOnlyJob(accountId, { minutesAgo: 45 });
+    const freshReserved = await makeReservedOnlyJob(accountId, { minutesAgo: 5 });
+
+    const safeToRelease = await listStalledSafeToReleaseJobs(30, 200);
+    const safeIds = safeToRelease.map((job) => job.id);
+    assert.ok(safeIds.includes(staleReserved), 'a stale reserved-only job must be found');
+    assert.ok(!safeIds.includes(freshReserved), 'a fresh reserved job must not be found yet');
+
+    const ambiguous = await listStalledAmbiguousJobs(30, 200);
+    assert.ok(!ambiguous.map((job) => job.id).includes(staleReserved), 'reserved must not also appear in the alert-only ambiguous bucket -- it gets the safer auto-release treatment instead');
+  },
+);
+
+test(
+  'watchdog: a stale reserved-only job is auto-released with credits returned, while a genuinely ambiguous job in the same sweep is left untouched',
+  { skip: !dbAvailable && 'DATABASE_URL not configured; skipping live integration test' },
+  async (t) => {
+    const accountId = `test-watchdog-release-${crypto.randomUUID()}`;
+    t.after(async () => {
+      await database().delete(users).where(eq(users.id, accountId)).catch(() => {});
+    });
+    await ensureAccount({ accountId, email: null, name: 'Watchdog Release Test', initialCredits: 1000 });
+
+    const staleReserved = await makeReservedOnlyJob(accountId, { minutesAgo: 45, costCredits: 12 });
+    const staleAmbiguous = await makeJob(accountId, { status: 'provider_submitting', minutesAgo: 45 });
+    const before = await getAccountContext(accountId);
+    assert.equal(before.credits.reserved, 12 + 5, 'both jobs should have reserved credits before the sweep (12 from the reserved-only job, 5 from the default-cost ambiguous job)');
+
+    const result = await runWatchdogSweep({ staleAfterMinutes: 30, limit: 200 });
+    assert.ok(result.safeToReleaseFound >= 1);
+    assert.equal(result.released, result.jobs.releasedIds.length);
+    assert.ok(result.jobs.releasedIds.includes(staleReserved));
+    assert.ok(result.jobs.alertedIds.includes(staleAmbiguous), 'the genuinely ambiguous job must still only be alerted on, per GitHub issue #23');
+
+    const releasedJob = await getJob(staleReserved);
+    assert.equal(releasedJob.status, 'failed');
+    assert.equal(releasedJob.failureCategory, 'RECONCILIATION');
+
+    const ambiguousJob = await getJob(staleAmbiguous);
+    assert.equal(ambiguousJob.status, 'provider_submitting', 'the ambiguous job must be completely untouched by the same sweep that released the reserved-only one');
+
+    const after = await getAccountContext(accountId);
+    assert.equal(after.credits.reserved, 5, 'only the reserved-only job\'s 12 credits should be released -- the ambiguous job\'s 5 stay reserved, unresolved');
+    assert.equal(after.credits.balance, before.credits.balance, 'the release only reduces reserved, never spends or removes balance -- no charge for a render that never started');
   },
 );
 

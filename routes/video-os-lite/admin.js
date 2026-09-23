@@ -9,6 +9,7 @@ import {
 import { handleOptions, parseCookies, readJson, send, verifySessionToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { deletePrivateBlob, getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../../lib/video-os-private-blob.js';
+import { timingSafeMatch } from '../../lib/video-os-security.js';
 import { runWatchdogSweep } from '../../lib/video-os-watchdog.js';
 
 function isAdminRequest(req) {
@@ -23,8 +24,11 @@ function isAdminRequest(req) {
   // schedule, not a native Vercel Cron -- see
   // .github/workflows/watchdog-sweep.yml for why. Reusing the same env var
   // name keeps the option open to switch triggers later without an admin
-  // route change.
-  return (Boolean(token) && auth === token) || (Boolean(cronSecret) && auth === cronSecret) || cookieAdmin;
+  // route change. timingSafeMatch (not ===) matches every other secret
+  // comparison in this codebase -- this route now also guards a real
+  // credit-minting mutation (operation=grant-credit), which raised the
+  // value of this check beyond what a plain string compare should protect.
+  return (Boolean(token) && timingSafeMatch(auth, token)) || (Boolean(cronSecret) && timingSafeMatch(auth, cronSecret)) || cookieAdmin;
 }
 
 async function jobsSummary() {

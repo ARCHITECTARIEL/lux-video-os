@@ -19,6 +19,11 @@ const accounts = [
   { accountId: 'account-proof-1', email: 'proof@example.test', role: 'customer', createdAt: '2026-09-18T12:00:00.000Z', balance: 200, reserved: 0 },
 ];
 
+const creditLedger = [
+  { accountId: 'account-proof-1', sourceType: 'admin_grant', amount: 180, balanceAfter: 380, metadata: { note: 'backfilling a pre-fix trial grant' }, createdAt: '2026-09-23T17:00:00.000Z' },
+  { accountId: 'account-proof-1', sourceType: 'render', amount: -90, balanceAfter: 290, metadata: {}, createdAt: '2026-09-23T16:00:00.000Z' },
+];
+
 const jobEvents = [
   { stageFrom: null, stageTo: 'reserved', eventType: 'render.reserved', failureCategory: null, createdAt: '2026-09-19T19:58:00.000Z' },
   { stageFrom: 'reserved', stageTo: 'workflow_started', eventType: 'workflow.prepared', failureCategory: null, createdAt: '2026-09-19T19:58:05.000Z' },
@@ -36,6 +41,8 @@ async function stubAdminApi(page, { authorized = true } = {}) {
     if (operation === 'attention') return route.fulfill({ json: { ok: true, jobs: attentionJobs } });
     if (operation === 'accounts') return route.fulfill({ json: { ok: true, accounts } });
     if (operation === 'job-events') return route.fulfill({ json: { ok: true, jobId: url.searchParams.get('jobId'), events: jobEvents } });
+    if (operation === 'credit-ledger') return route.fulfill({ json: { ok: true, transactions: creditLedger } });
+    if (operation === 'stripe-events') return route.fulfill({ json: { ok: true, events: [] } });
     if (operation === 'video') return route.fulfill({ status: 200, contentType: 'video/mp4', body: Buffer.from('fake-mp4-bytes') });
     if (method === 'POST' && operation === 'approve-job') return route.fulfill({ json: { ok: true, job: { ...readyJob, reviewedAt: '2026-09-19T20:10:00.000Z' } } });
     if (method === 'POST' && operation === 'delete-video') return route.fulfill({ json: { ok: true, job: { ...readyJob, videoDeletedAt: '2026-09-19T20:11:00.000Z' } } });
@@ -73,6 +80,18 @@ test('authorized owner sees real overview stats and can switch tabs', async ({ p
   await page.locator('[data-admin-tab="accounts"]').click();
   await expect(page.locator('#panel-accounts')).toBeVisible();
   await expect(page.locator('#accounts-table')).toContainText('proof@example.test');
+});
+
+test('the billing ledger shows a credit grant\'s note, and a real dash for a transaction with none', async ({ page }) => {
+  await stubAdminApi(page);
+  await page.goto('/admin-console.html');
+  await page.locator('[data-admin-tab="billing"]').click();
+  await expect(page.locator('#panel-billing')).toBeVisible();
+
+  const ledgerRows = page.locator('#ledger-table tbody tr');
+  await expect(ledgerRows).toHaveCount(2);
+  await expect(ledgerRows.nth(0)).toContainText('backfilling a pre-fix trial grant');
+  await expect(ledgerRows.nth(1)).toContainText('—');
 });
 
 test('viewing a job timeline shows its real, ordered stage history', async ({ page }) => {

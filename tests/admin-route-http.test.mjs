@@ -72,6 +72,27 @@ test(
   },
 );
 
+test(
+  'admin route rejects a wrong bearer token, whether same length or a different length',
+  { skip: !dbAvailable && 'DATABASE_URL not configured; skipping live integration test' },
+  async () => {
+    const original = process.env.VIDEO_OS_ADMIN_TOKEN;
+    process.env.VIDEO_OS_ADMIN_TOKEN = 'proof-admin-token';
+    try {
+      const sameLength = response();
+      await adminHandler(request({ url: '/api/video-os-lite/admin?operation=jobs', headers: { authorization: 'Bearer proof-wrong-token' } }), sameLength);
+      assert.equal(sameLength.statusCode, 401, 'a same-length wrong token must still be rejected under timingSafeMatch');
+
+      const differentLength = response();
+      await adminHandler(request({ url: '/api/video-os-lite/admin?operation=jobs', headers: { authorization: 'Bearer x' } }), differentLength);
+      assert.equal(differentLength.statusCode, 401, 'a different-length wrong token must be rejected');
+    } finally {
+      if (original === undefined) delete process.env.VIDEO_OS_ADMIN_TOKEN;
+      else process.env.VIDEO_OS_ADMIN_TOKEN = original;
+    }
+  },
+);
+
 test('admin route rejects an unknown operation', async () => {
   const original = process.env.VIDEO_OS_ADMIN_TOKEN;
   process.env.VIDEO_OS_ADMIN_TOKEN = 'proof-admin-token';
@@ -258,6 +279,30 @@ test(
 
       const after = await database().query.creditAccounts.findFirst({ where: (table, { eq: equals }) => equals(table.accountId, accountId) });
       assert.equal(after.balance, before.balance + 50, 'a replayed request with the same idempotencyKey must not grant twice');
+    });
+
+    await t.test('POST operation=grant-credit under real concurrency: exactly one of two simultaneous identical requests applies, the other gets a clean duplicate response', async () => {
+      const key = crypto.randomUUID();
+      const before = await database().query.creditAccounts.findFirst({ where: (table, { eq: equals }) => equals(table.accountId, accountId) });
+      const first = response();
+      const second = response();
+      // Genuinely concurrent, not sequential -- this is the exact race the
+      // fix targets: two requests racing to claim the same idempotencyKey,
+      // not one request replaying after the first has already committed.
+      await Promise.all([
+        adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId, amount: 30, idempotencyKey: key }, cookie: adminCookie }), first),
+        adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId, amount: 30, idempotencyKey: key }, cookie: adminCookie }), second),
+      ]);
+
+      const results = [first, second];
+      assert.equal(results.filter((r) => r.statusCode === 200).length, 2, 'neither concurrent request should surface a raw, unhandled error');
+      const applied = results.filter((r) => r.body.applied === true);
+      const duplicates = results.filter((r) => r.body.applied === false && r.body.duplicate === true);
+      assert.equal(applied.length, 1, 'exactly one of the two concurrent requests must win the grant');
+      assert.equal(duplicates.length, 1, 'the loser must get a clean duplicate response, not a raw constraint-violation error');
+
+      const after = await database().query.creditAccounts.findFirst({ where: (table, { eq: equals }) => equals(table.accountId, accountId) });
+      assert.equal(after.balance, before.balance + 30, 'the amount must be applied exactly once, even under real concurrency');
     });
 
     await t.test('POST operation=grant-credit rejects a negative amount that would take the balance below zero', async () => {
