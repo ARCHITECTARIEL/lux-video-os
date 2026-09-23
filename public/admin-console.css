@@ -111,6 +111,9 @@
 .asset-list li[data-quarantined="true"] { border-color: #efb5ae; background: var(--danger-soft); }
 .asset-list .asset-quarantined-label { color: var(--danger); font-weight: 650; font-size: 12px; }
 
+.grant-credit-form { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.grant-credit-form input[type="number"] { width: 84px; min-height: 32px; padding: 5px 8px; }
+
 @media (max-width: 640px) {
   .admin-main { width: calc(100% - 32px); }
   .admin-topbar { padding: 14px 16px; }

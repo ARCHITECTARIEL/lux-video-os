@@ -225,6 +225,74 @@ test(
       await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=resolve-job', body: { jobId: 'job-does-not-exist' }, cookie: adminCookie }), res);
       assert.equal(res.statusCode, 404);
     });
+
+    await t.test('POST operation=grant-credit adds real credits to the real account balance', async () => {
+      const before = await database().query.creditAccounts.findFirst({ where: (table, { eq: equals }) => equals(table.accountId, accountId) });
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId, amount: 180, note: 'backfilling a pre-fix trial grant', idempotencyKey: crypto.randomUUID() }, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.body.applied, true);
+      assert.equal(res.body.balanceAfter, before.balance + 180);
+
+      const accountsRes = response();
+      await adminHandler(request({ url: '/api/video-os-lite/admin?operation=accounts', cookie: adminCookie }), accountsRes);
+      assert.equal(accountsRes.body.accounts.find((account) => account.accountId === accountId).balance, before.balance + 180);
+
+      const ledgerRes = response();
+      await adminHandler(request({ url: '/api/video-os-lite/admin?operation=credit-ledger', cookie: adminCookie }), ledgerRes);
+      assert.ok(ledgerRes.body.transactions.some((tx) => tx.accountId === accountId && tx.sourceType === 'admin_grant' && tx.amount === 180), 'the grant must be visible in the credit ledger');
+    });
+
+    await t.test('POST operation=grant-credit replays idempotently on the same key, without double-granting', async () => {
+      const key = crypto.randomUUID();
+      const before = await database().query.creditAccounts.findFirst({ where: (table, { eq: equals }) => equals(table.accountId, accountId) });
+      const first = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId, amount: 50, idempotencyKey: key }, cookie: adminCookie }), first);
+      assert.equal(first.body.applied, true);
+
+      const second = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId, amount: 50, idempotencyKey: key }, cookie: adminCookie }), second);
+      assert.equal(second.statusCode, 200);
+      assert.equal(second.body.applied, false);
+      assert.equal(second.body.duplicate, true);
+
+      const after = await database().query.creditAccounts.findFirst({ where: (table, { eq: equals }) => equals(table.accountId, accountId) });
+      assert.equal(after.balance, before.balance + 50, 'a replayed request with the same idempotencyKey must not grant twice');
+    });
+
+    await t.test('POST operation=grant-credit rejects a negative amount that would take the balance below zero', async () => {
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId, amount: -1_000_000, idempotencyKey: crypto.randomUUID() }, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 400);
+    });
+
+    await t.test('POST operation=grant-credit validates its inputs before touching the database', async () => {
+      const missingAccount = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { amount: 10, idempotencyKey: crypto.randomUUID() }, cookie: adminCookie }), missingAccount);
+      assert.equal(missingAccount.statusCode, 400);
+
+      const zeroAmount = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId, amount: 0, idempotencyKey: crypto.randomUUID() }, cookie: adminCookie }), zeroAmount);
+      assert.equal(zeroAmount.statusCode, 400);
+
+      const fractionalAmount = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId, amount: 1.5, idempotencyKey: crypto.randomUUID() }, cookie: adminCookie }), fractionalAmount);
+      assert.equal(fractionalAmount.statusCode, 400);
+
+      const tooLarge = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId, amount: 1_000_000, idempotencyKey: crypto.randomUUID() }, cookie: adminCookie }), tooLarge);
+      assert.equal(tooLarge.statusCode, 400);
+
+      const missingKey = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId, amount: 10 }, cookie: adminCookie }), missingKey);
+      assert.equal(missingKey.statusCode, 400);
+    });
+
+    await t.test('POST operation=grant-credit 404s cleanly for an account that does not exist', async () => {
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId: `test-admin-route-nonexistent-${crypto.randomUUID()}`, amount: 10, idempotencyKey: crypto.randomUUID() }, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 404);
+    });
   },
 );
 

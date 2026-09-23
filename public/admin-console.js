@@ -130,6 +130,30 @@ function renderJobsTable(jobs) {
   }
 }
 
+async function grantAccountCredit(event, accountId) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const input = $('input[type="number"]', form);
+  const amount = Number(input.value);
+  if (!Number.isInteger(amount) || amount === 0) {
+    setStatus('Enter a non-zero whole number of credits to grant.', true);
+    return;
+  }
+  const note = window.prompt('Note for this grant (optional, shown in the credit ledger):', '') || '';
+  const button = $('button', form);
+  button.disabled = true;
+  try {
+    await postJson(`${ADMIN_BASE}?operation=grant-credit`, { accountId, amount, note, idempotencyKey: crypto.randomUUID() });
+    input.value = '';
+    await loadPanel('accounts', true);
+    setStatus(`Granted ${amount} credit(s) to ${accountId}.`);
+  } catch (error) {
+    setStatus(error.message || 'Credit grant failed.', true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderAccounts(accounts) {
   const tbody = $('#accounts-table tbody');
   tbody.textContent = '';
@@ -143,6 +167,19 @@ function renderAccounts(accounts) {
       node('td', null, String(account.balance ?? 0)),
       node('td', null, String(account.reserved ?? 0)),
     );
+    const actionCell = node('td');
+    const form = node('form', 'grant-credit-form');
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.step = '1';
+    input.placeholder = '± credits';
+    input.setAttribute('aria-label', `Credits to grant ${account.email || account.accountId}`);
+    const button = node('button', 'button quiet compact', 'Grant');
+    button.type = 'submit';
+    form.append(input, button);
+    form.addEventListener('submit', (event) => grantAccountCredit(event, account.accountId));
+    actionCell.append(form);
+    row.append(actionCell);
     tbody.append(row);
   }
 }
