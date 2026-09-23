@@ -8,7 +8,7 @@ const node = (tag, className, text) => {
 };
 
 const ADMIN_BASE = '/api/video-os-lite/admin';
-const panelData = { overview: null, jobs: null, attention: null, accounts: null, billing: null };
+const panelData = { overview: null, jobs: null, attention: null, accounts: null, testers: null, billing: null };
 let currentTimelineJob = null;
 
 async function getJson(url, options = {}) {
@@ -181,6 +181,111 @@ function renderAccounts(accounts) {
     actionCell.append(form);
     row.append(actionCell);
     tbody.append(row);
+  }
+}
+
+function renderTestersTable(testers) {
+  const tbody = $('#testers-table tbody');
+  tbody.textContent = '';
+  const empty = $('#testers-empty');
+  if (!testers || !testers.length) {
+    if (empty) empty.hidden = false;
+    return;
+  }
+  if (empty) empty.hidden = true;
+  for (const tester of testers) {
+    const row = node('tr');
+    const isDomainTester = String(tester.email || '').toLowerCase().endsWith('@luxmarketingcompany.com');
+    row.append(
+      node('td', null, tester.email || '—'),
+      node('td', null, tester.name || '—'),
+      node('td', null, isDomainTester ? 'Team Domain' : (tester.role || 'tester')),
+      node('td', null, String(tester.balance ?? 0)),
+      node('td', null, String(tester.spent ?? 0)),
+      node('td', null, formatDate(tester.createdAt)),
+    );
+    const actionCell = node('td');
+    const topUpButton = node('button', 'button quiet compact', '+1,000');
+    topUpButton.type = 'button';
+    topUpButton.title = 'Grant 1,000 testing credits';
+    topUpButton.style.marginRight = '0.5rem';
+    topUpButton.addEventListener('click', async () => {
+      topUpButton.disabled = true;
+      topUpButton.textContent = '…';
+      try {
+        await postJson(`${ADMIN_BASE}?operation=grant-credit`, {
+          accountId: tester.accountId,
+          amount: 1000,
+          idempotencyKey: crypto.randomUUID(),
+          note: 'Tester top-up via Admin Console',
+        });
+        panelData.testers = null;
+        await loadPanel('testers', true);
+      } catch (err) {
+        setStatus(err.message || 'Credit grant failed.', true);
+        topUpButton.disabled = false;
+        topUpButton.textContent = '+1,000';
+      }
+    });
+    actionCell.append(topUpButton);
+
+    if (!isDomainTester) {
+      const revokeButton = node('button', 'button quiet compact', 'Revoke');
+      revokeButton.type = 'button';
+      revokeButton.style.color = 'var(--danger)';
+      revokeButton.addEventListener('click', async () => {
+        if (!confirm(`Revoke tester status for ${tester.email}?`)) return;
+        revokeButton.disabled = true;
+        revokeButton.textContent = '…';
+        try {
+          await postJson(`${ADMIN_BASE}?operation=revoke-tester`, { accountId: tester.accountId });
+          panelData.testers = null;
+          await loadPanel('testers', true);
+        } catch (err) {
+          setStatus(err.message || 'Revocation failed.', true);
+          revokeButton.disabled = false;
+          revokeButton.textContent = 'Revoke';
+        }
+      });
+      actionCell.append(revokeButton);
+    }
+    row.append(actionCell);
+    tbody.append(row);
+  }
+}
+
+async function registerTester(event) {
+  event.preventDefault();
+  const emailInput = $('#tester-email');
+  const nameInput = $('#tester-name');
+  const creditsInput = $('#tester-credits');
+  const noteInput = $('#tester-note');
+  const submit = $('#register-tester-submit');
+  const status = $('#register-tester-status');
+
+  const email = emailInput.value.trim();
+  const name = nameInput.value.trim();
+  const credits = Number(creditsInput.value) || 5000;
+  const note = noteInput.value.trim();
+
+  if (!email) return;
+  submit.disabled = true;
+  status.textContent = 'Registering tester…';
+  status.style.color = '';
+
+  try {
+    await postJson(`${ADMIN_BASE}?operation=register-tester`, { email, name, credits, note });
+    status.textContent = `Tester ${email} registered with ${credits} credits!`;
+    emailInput.value = '';
+    nameInput.value = '';
+    noteInput.value = '';
+    panelData.testers = null;
+    await loadPanel('testers', true);
+  } catch (err) {
+    status.textContent = err.message || 'Failed to register tester.';
+    status.style.color = 'var(--danger)';
+  } finally {
+    submit.disabled = false;
   }
 }
 
@@ -422,6 +527,10 @@ async function loadPanel(name, force = false) {
       const data = await getJson(`${ADMIN_BASE}?operation=accounts`);
       panelData.accounts = data.accounts;
       renderAccounts(data.accounts);
+    } else if (name === 'testers') {
+      const data = await getJson(`${ADMIN_BASE}?operation=testers`);
+      panelData.testers = data.testers;
+      renderTestersTable(data.testers);
     } else if (name === 'billing') {
       const [ledger, stripe] = await Promise.all([
         getJson(`${ADMIN_BASE}?operation=credit-ledger`),
@@ -465,6 +574,7 @@ function bindStaticListeners() {
   $('#job-retry-button').addEventListener('click', retryCurrentJob);
   $('#admin-login-form').addEventListener('submit', adminLogin);
   $('#admin-sign-out').addEventListener('click', adminSignOut);
+  $('#register-tester-form')?.addEventListener('submit', registerTester);
 }
 
 async function adminSignOut() {

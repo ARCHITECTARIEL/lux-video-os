@@ -4,7 +4,7 @@ import { consumeRateLimit, ensureAccount, getAccountContext, recordSignIn, updat
 import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, DEFAULT_TRIAL_CREDITS, handleOptions, makeSession, normalizeEmail, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
-import { containedRenderingEntitlementKeys, publicOrigin } from '../../lib/video-os-security.js';
+import { containedRenderingEntitlementKeys, isTesterAccountId, isTesterEmailDomain, publicOrigin } from '../../lib/video-os-security.js';
 
 function route(req) {
   const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
@@ -197,8 +197,11 @@ export default async function handler(req, res) {
       const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
       const token = url.searchParams.get('token');
       const { accountId, email } = await validateMagicToken(token);
+      const isTester = isTesterEmailDomain(email) || isTesterAccountId(accountId);
+      const role = isTester ? 'tester' : 'customer';
+      const initialCredits = isTester ? 5000 : DEFAULT_TRIAL_CREDITS;
       const entitlementKeys = ['magicLinkAccess', ...containedRenderingEntitlementKeys(accountId, email)];
-      await updateAuthenticatedAccount({ accountId, email, name: email, role: 'customer', initialCredits: DEFAULT_TRIAL_CREDITS, entitlementKeys, sourceId: 'magic_link' });
+      await updateAuthenticatedAccount({ accountId, email, name: email, role, initialCredits, entitlementKeys, sourceId: 'magic_link' });
       await consumeMagicToken(token);
       const session = makeSession(accountId, email);
       await recordSignIn(accountId);
@@ -232,15 +235,13 @@ export default async function handler(req, res) {
       const tokens = await exchangeGoogleCode({ code, redirectUri });
       const profile = await fetchGoogleProfile(tokens.access_token);
       const accountId = accountIdForEmail(profile.email);
-      // containedRenderingEntitlementKeys() re-derives liveRendering/
-      // standardRendering fresh from the ID allowlist and the email-domain
-      // rule on every sign-in -- see its own comment in video-os-security.js
-      // for why this must be recomputed here rather than trusted to persist
-      // from an earlier sign-in via a different method.
+      const isTester = isTesterEmailDomain(profile.email) || isTesterAccountId(accountId);
+      const role = isTester ? 'tester' : 'customer';
+      const initialCredits = isTester ? 5000 : DEFAULT_TRIAL_CREDITS;
       const entitlementKeys = ['googleAccess', ...containedRenderingEntitlementKeys(accountId, profile.email)];
       await updateAuthenticatedAccount({
-        accountId, email: profile.email, name: profile.name, role: 'customer',
-        initialCredits: DEFAULT_TRIAL_CREDITS,
+        accountId, email: profile.email, name: profile.name, role,
+        initialCredits,
         entitlementKeys, sourceId: 'google_oauth',
       });
       const session = makeSession(accountId, profile.email);

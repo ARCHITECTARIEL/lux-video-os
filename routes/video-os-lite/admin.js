@@ -2,9 +2,9 @@
 import crypto from 'node:crypto';
 import { dispatchClaimedJob } from '../../api/video-os-lite/render-v2.js';
 import {
-  adminResolveJob, claimWorkflowStart, getAdminOverview, getJob, getJobEventTimeline, grantAdminCredit, listFailedOrStuckJobs,
+  adminResolveJob, claimWorkflowStart, getAdminOverview, getJob, getJobEventTimeline, grantAdminCredit, listAdminTesters, listFailedOrStuckJobs,
   listMediaAssetsForJob, listRecentAccounts, listRecentCreditTransactions, listRecentJobs, listRecentStripeEvents,
-  markJobReviewed, markJobVideoDeleted, quarantineMediaAsset, reserveRender,
+  markJobReviewed, markJobVideoDeleted, quarantineMediaAsset, registerAdminTester, reserveRender, revokeAdminTester,
 } from '../../db/repositories.js';
 import { handleOptions, parseCookies, readJson, send, verifySessionToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
@@ -74,6 +74,7 @@ async function handleGet(req, res, operation, url) {
   if (operation === 'jobs') return send(res, 200, { ok: true, ...(await jobsSummary()) });
   if (operation === 'overview') return send(res, 200, { ok: true, overview: await getAdminOverview() });
   if (operation === 'attention') return send(res, 200, { ok: true, jobs: await listFailedOrStuckJobs(200) });
+  if (operation === 'testers') return send(res, 200, { ok: true, testers: await listAdminTesters() });
   if (operation === 'accounts') return send(res, 200, { ok: true, accounts: await listRecentAccounts(200) });
   if (operation === 'credit-ledger') return send(res, 200, { ok: true, transactions: await listRecentCreditTransactions(200) });
   if (operation === 'stripe-events') return send(res, 200, { ok: true, events: await listRecentStripeEvents(200) });
@@ -203,6 +204,23 @@ async function handlePost(req, res, operation) {
     // purely so the reason isn't lost entirely.
     console.log(JSON.stringify({ event: 'video_os_admin_quarantine', mediaAssetId, reason: String(payload.reason || '').slice(0, 300) || null }));
     return send(res, 200, { ok: true, asset });
+  }
+  if (operation === 'register-tester') {
+    const email = String(payload.email || '').trim();
+    const name = String(payload.name || '').trim();
+    const credits = Number(payload.credits) || 5000;
+    const note = String(payload.note || '').trim();
+    if (!email) return send(res, 400, { ok: false, error: 'email is required.' });
+    const tester = await registerAdminTester({ email, name, credits, note });
+    console.log(JSON.stringify({ event: 'video_os_admin_register_tester', email, accountId: tester.account?.id, credits }));
+    return send(res, 200, { ok: true, tester });
+  }
+  if (operation === 'revoke-tester') {
+    const accountId = String(payload.accountId || '').trim();
+    if (!accountId) return send(res, 400, { ok: false, error: 'accountId is required.' });
+    const result = await revokeAdminTester(accountId);
+    console.log(JSON.stringify({ event: 'video_os_admin_revoke_tester', accountId }));
+    return send(res, 200, { ok: true, result });
   }
   return send(res, 400, { ok: false, error: `Unknown admin operation: ${operation}` });
 }

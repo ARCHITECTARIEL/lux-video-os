@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { database } from './client.js';
+import { registerTesterAccountId, revokeTesterAccountId } from '../lib/video-os-security.js';
+import { accountIdForEmail } from '../lib/video-os-account.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
 import { authSessions, creditAccounts, creditTransactions, entitlements, identityConsents, jobEvents, mediaAssets, projects, rateLimits, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
 
@@ -47,7 +49,19 @@ export async function updateAuthenticatedAccount({ accountId, email, name, role 
     const now = new Date();
     await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account', role })
       .onConflictDoUpdate({ target: users.id, set: { email: email || null, name: name || 'Video OS Account', role, updatedAt: now } });
-    await tx.insert(creditAccounts).values({ accountId, balance: initialCredits }).onConflictDoNothing();
+    if (role === 'tester' && initialCredits > 0) {
+      registerTesterAccountId(accountId);
+      await tx.insert(creditAccounts).values({ accountId, balance: initialCredits })
+        .onConflictDoUpdate({
+          target: creditAccounts.accountId,
+          set: {
+            balance: sql`greatest(${creditAccounts.balance}, ${initialCredits})`,
+            updatedAt: now,
+          },
+        });
+    } else {
+      await tx.insert(creditAccounts).values({ accountId, balance: initialCredits }).onConflictDoNothing();
+    }
     const existingGrants = await tx.select().from(entitlements).where(eq(entitlements.accountId, accountId));
     const { desiredKeys } = reconcileAuthenticatedEntitlements(existingGrants, entitlementKeys);
     await tx.update(entitlements).set({ enabled: false, updatedAt: now }).where(and(eq(entitlements.accountId, accountId), eq(entitlements.sourceType, AUTH_ENTITLEMENT_SOURCE), eq(entitlements.enabled, true)));
@@ -951,3 +965,106 @@ export async function consumeRateLimit({ accountId, key, limit, windowMs }) {
     .returning();
   return row.count <= limit;
 }
+
+export async function registerAdminTester({ email, name, credits = 5000, note = 'Registered via Admin Console' }) {
+  if (!email || !String(email).includes('@')) throw Object.assign(new Error('Valid email address is required.'), { statusCode: 400 });
+  const normalizedEmail = String(email).trim().toLowerCase();
+  const accountId = accountIdForEmail(normalizedEmail);
+  const initialCredits = Math.max(100, Number(credits) || 5000);
+  registerTesterAccountId(accountId);
+
+  return database().transaction(async (tx) => {
+    const now = new Date();
+    await tx.insert(users).values({
+      id: accountId,
+      email: normalizedEmail,
+      name: name || normalizedEmail,
+      role: 'tester',
+      createdAt: now,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: users.id,
+      set: {
+        role: 'tester',
+        email: normalizedEmail,
+        name: name || normalizedEmail,
+        updatedAt: now,
+      },
+    });
+
+    await tx.insert(creditAccounts).values({
+      accountId,
+      balance: initialCredits,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: creditAccounts.accountId,
+      set: {
+        balance: sql`greatest(${creditAccounts.balance}, ${initialCredits})`,
+        updatedAt: now,
+      },
+    });
+
+    const testerEntitlements = ['standardRendering', 'liveRendering', 'tester'];
+    for (const key of testerEntitlements) {
+      await tx.insert(entitlements).values({
+        accountId,
+        entitlementKey: key,
+        enabled: true,
+        sourceType: 'admin_tester_grant',
+        sourceId: 'admin_console',
+        metadata: { note: String(note || '').slice(0, 200) },
+        updatedAt: now,
+      }).onConflictDoUpdate({
+        target: [entitlements.accountId, entitlements.entitlementKey],
+        set: {
+          enabled: true,
+          sourceType: 'admin_tester_grant',
+          sourceId: 'admin_console',
+          metadata: { note: String(note || '').slice(0, 200) },
+          updatedAt: now,
+        },
+      });
+    }
+
+    return getAccountContext(accountId, tx);
+  });
+}
+
+export async function listAdminTesters() {
+  const rows = await database().select({
+    accountId: users.id,
+    email: users.email,
+    name: users.name,
+    role: users.role,
+    createdAt: users.createdAt,
+    balance: creditAccounts.balance,
+    spent: creditAccounts.spent,
+  })
+  .from(users)
+  .leftJoin(creditAccounts, eq(users.id, creditAccounts.accountId))
+  .where(or(
+    eq(users.role, 'tester'),
+    sql`${users.email} like '%@luxmarketingcompany.com'`
+  ))
+  .orderBy(desc(users.createdAt));
+
+  for (const r of rows) {
+    registerTesterAccountId(r.accountId);
+  }
+  return rows;
+}
+
+export async function revokeAdminTester(accountId) {
+  if (!accountId) throw Object.assign(new Error('accountId is required.'), { statusCode: 400 });
+  revokeTesterAccountId(accountId);
+  return database().transaction(async (tx) => {
+    const now = new Date();
+    await tx.update(users).set({ role: 'customer', updatedAt: now }).where(eq(users.id, accountId));
+    await tx.update(entitlements).set({ enabled: false, updatedAt: now }).where(and(
+      eq(entitlements.accountId, accountId),
+      inArray(entitlements.entitlementKey, ['standardRendering', 'liveRendering', 'tester'])
+    ));
+    return getAccountContext(accountId, tx);
+  });
+}
+
