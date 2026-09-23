@@ -4,7 +4,7 @@ import { getAccountContext, recordSignIn, updateAuthenticatedAccount } from '../
 import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, DEFAULT_TRIAL_CREDITS, handleOptions, makeSession, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
-import { accountAllowedForContainedRendering, publicOrigin } from '../../lib/video-os-security.js';
+import { accountAllowedForContainedRendering, publicOrigin, standardRenderingEmailDomainAllowed } from '../../lib/video-os-security.js';
 
 function route(req) {
   const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
@@ -217,6 +217,12 @@ export default async function handler(req, res) {
       // Standard-tier rendering was unreachable by any real customer
       // account until now.
       if (accountAllowedForContainedRendering(accountId)) entitlementKeys.push('liveRendering', 'standardRendering');
+      // A narrower, email-domain-based path onto standardRendering only
+      // (never liveRendering/Premium -- see standardRenderingEmailDomainAllowed()'s
+      // own comment for why) -- e.g. VIDEO_OS_STANDARD_RENDER_EMAIL_DOMAINS=
+      // luxmarketingcompany.com lets the whole team test Standard without
+      // hand-adding each account's hashed ID to the containment allowlist.
+      else if (standardRenderingEmailDomainAllowed(profile.email)) entitlementKeys.push('standardRendering');
       await updateAuthenticatedAccount({
         accountId, email: profile.email, name: profile.name, role: 'customer',
         initialCredits: DEFAULT_TRIAL_CREDITS,
