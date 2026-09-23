@@ -1,0 +1,49 @@
+name: Stripe reconciliation
+# Triggers lib/video-os-stripe-reconciliation.js's Stripe-vs-ledger
+# reconciliation on the deployed Vercel app, on a schedule -- see that
+# module's own comment for why it exists (docs/P0-RELEASE-GATE.md's
+# operating contract requires "Reconcile daily: ... every Stripe event has
+# at most one applied grant"). Same trigger shape as
+# .github/workflows/watchdog-sweep.yml, but daily rather than every 15
+# minutes: this checks money correctness against Stripe's own records, not
+# job health, and the gate doc's own SLO is "reconciliation complete daily
+# by 10:00 UTC" -- 09:00 UTC gives an hour of margin before that deadline.
+#
+# Requires the same two repository configuration values watchdog-sweep.yml
+# does (Settings > Secrets and variables > Actions) -- reused, not
+# duplicated:
+#   - Secret VIDEO_OS_CRON_SECRET
+#   - Variable VIDEO_OS_BASE_URL
+# The run is skipped-with-a-clear-message if either is unset, same as the
+# watchdog sweep. Also requires STRIPE_SECRET_KEY to be configured on the
+# deployed app itself -- reconcileStripePayments() fails loud (503) if it
+# isn't, which is correct: there is nothing to reconcile against until real
+# Stripe keys exist, and this workflow should not silently report "clean"
+# in that case.
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reconcile Stripe payments against the credit ledger
+        env:
+          CRON_SECRET: ${{ secrets.VIDEO_OS_CRON_SECRET }}
+          BASE_URL: ${{ vars.VIDEO_OS_BASE_URL }}
+        run: |
+          if [ -z "$BASE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::warning::VIDEO_OS_BASE_URL and/or VIDEO_OS_CRON_SECRET are not configured yet -- skipping this run. See this workflow file's header comment for setup."
+            exit 0
+          fi
+          status=$(curl -sS -o response.json -w '%{http_code}' -X POST "$BASE_URL/api/video-os-lite/admin?operation=stripe-reconciliation" \
+            -H "Authorization: Bearer $CRON_SECRET" -H "Content-Type: application/json" -d '{}')
+          cat response.json
+          if [ "$status" != "200" ]; then
+            echo "::error::Stripe reconciliation request failed with HTTP $status"
+            exit 1
+          fi

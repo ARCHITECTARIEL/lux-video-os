@@ -10,6 +10,7 @@ import { handleOptions, parseCookies, readJson, send, verifySessionToken } from 
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { deletePrivateBlob, getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../../lib/video-os-private-blob.js';
 import { timingSafeMatch } from '../../lib/video-os-security.js';
+import { reconcileStripePayments } from '../../lib/video-os-stripe-reconciliation.js';
 import { runWatchdogSweep } from '../../lib/video-os-watchdog.js';
 
 function isAdminRequest(req) {
@@ -173,6 +174,12 @@ async function handlePost(req, res, operation) {
   if (operation === 'watchdog-sweep') {
     const staleAfterMinutes = Number(payload.staleAfterMinutes) || undefined;
     return send(res, 200, { ok: true, sweep: await runWatchdogSweep(staleAfterMinutes ? { staleAfterMinutes } : undefined) });
+  }
+  if (operation === 'stripe-reconciliation') {
+    const lookbackHours = Number(payload.lookbackHours) || undefined;
+    const reconciliation = await reconcileStripePayments(lookbackHours ? { lookbackHours } : undefined);
+    console.log(JSON.stringify({ event: 'video_os_stripe_reconciliation', mismatchCount: reconciliation.mismatchCount, sessionsChecked: reconciliation.sessionsChecked }));
+    return send(res, 200, { ok: true, reconciliation });
   }
   if (operation === 'grant-credit') {
     const accountId = String(payload.accountId || '').trim();

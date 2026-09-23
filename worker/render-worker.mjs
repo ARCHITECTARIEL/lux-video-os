@@ -21,17 +21,26 @@
 // without ever throwing, e.g. a provider that silently stops responding,
 // and nothing here would otherwise notice).
 //
+// Same reasoning for lib/video-os-stripe-reconciliation.js's Stripe-vs-
+// ledger check, on its own much-slower-still timer (default 24h, matching
+// docs/P0-RELEASE-GATE.md's "reconcile daily") -- the VPS half of that
+// gate's requirement, mirroring .github/workflows/stripe-reconciliation.yml
+// on the Vercel side.
+//
 // Run with: node worker/render-worker.mjs
 // Env: RENDER_WORKER_POLL_MS (default 8000), RENDER_WORKER_CONCURRENCY (default 4),
-//      RENDER_WORKER_WATCHDOG_INTERVAL_MS (default 300000 / 5 minutes)
+//      RENDER_WORKER_WATCHDOG_INTERVAL_MS (default 300000 / 5 minutes),
+//      RENDER_WORKER_STRIPE_RECONCILIATION_INTERVAL_MS (default 86400000 / 24 hours)
 
 import { listInFlightJobs } from '../db/repositories.js';
 import { driveJobSafely, log } from '../lib/video-os-render-driver.js';
+import { reconcileStripePayments } from '../lib/video-os-stripe-reconciliation.js';
 import { runWatchdogSweep } from '../lib/video-os-watchdog.js';
 
 const POLL_INTERVAL_MS = Number(process.env.RENDER_WORKER_POLL_MS || 8000);
 const CONCURRENCY = Math.max(1, Number(process.env.RENDER_WORKER_CONCURRENCY || 4));
 const WATCHDOG_INTERVAL_MS = Number(process.env.RENDER_WORKER_WATCHDOG_INTERVAL_MS || 5 * 60_000);
+const STRIPE_RECONCILIATION_INTERVAL_MS = Number(process.env.RENDER_WORKER_STRIPE_RECONCILIATION_INTERVAL_MS || 24 * 60 * 60_000);
 
 async function runBatch(jobs) {
   const queue = [...jobs];
@@ -58,10 +67,24 @@ async function runWatchdogSweepSafely() {
   }
 }
 
+async function runStripeReconciliationSafely() {
+  try {
+    const result = await reconcileStripePayments();
+    log('render_worker.stripe_reconciled', { sessionsChecked: result.sessionsChecked, mismatchCount: result.mismatchCount });
+  } catch (error) {
+    // Expected/benign until real STRIPE_SECRET_KEY is configured
+    // (reconcileStripePayments() fails loud with a 503-shaped error in
+    // that case) -- log at the same level regardless, an operator reading
+    // logs can tell the two apart from the message.
+    log('render_worker.stripe_reconciliation_failed', { error: String(error?.message || error) });
+  }
+}
+
 async function mainLoop() {
-  log('render_worker.started', { pollIntervalMs: POLL_INTERVAL_MS, concurrency: CONCURRENCY, watchdogIntervalMs: WATCHDOG_INTERVAL_MS });
+  log('render_worker.started', { pollIntervalMs: POLL_INTERVAL_MS, concurrency: CONCURRENCY, watchdogIntervalMs: WATCHDOG_INTERVAL_MS, stripeReconciliationIntervalMs: STRIPE_RECONCILIATION_INTERVAL_MS });
   let stopping = false;
   let lastWatchdogRunAt = 0;
+  let lastStripeReconciliationRunAt = 0;
   const stop = () => { stopping = true; log('render_worker.stopping'); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
@@ -77,6 +100,10 @@ async function mainLoop() {
     if (Date.now() - lastWatchdogRunAt >= WATCHDOG_INTERVAL_MS) {
       lastWatchdogRunAt = Date.now();
       await runWatchdogSweepSafely();
+    }
+    if (Date.now() - lastStripeReconciliationRunAt >= STRIPE_RECONCILIATION_INTERVAL_MS) {
+      lastStripeReconciliationRunAt = Date.now();
+      await runStripeReconciliationSafely();
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }

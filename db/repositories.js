@@ -897,6 +897,20 @@ export async function listRecentStripeEvents(limit = 50) {
   return database().select().from(stripeEvents).orderBy(desc(stripeEvents.receivedAt)).limit(Math.min(200, limit));
 }
 
+// Both scoped by time, not by an incoming ID list, so lib/video-os-stripe-
+// reconciliation.js can build its own in-memory sessionId -> row maps from
+// one bounded query each, then check every real Stripe session it fetched
+// against them (and vice versa) without N+1 lookups.
+export async function listStripeEventsSince(since, limit = 500) {
+  return database().select().from(stripeEvents).where(gte(stripeEvents.receivedAt, since)).orderBy(desc(stripeEvents.receivedAt)).limit(Math.min(1000, limit));
+}
+
+export async function listStripeCreditTransactionsSince(since, limit = 500) {
+  return database().select().from(creditTransactions)
+    .where(and(eq(creditTransactions.sourceType, 'stripe'), gte(creditTransactions.createdAt, since)))
+    .orderBy(desc(creditTransactions.createdAt)).limit(Math.min(1000, limit));
+}
+
 // Admin-only tracking flag, deliberately with no effect on customer-facing
 // behavior or the job status state machine -- see the schema column's own
 // comment in db/schema.js.
