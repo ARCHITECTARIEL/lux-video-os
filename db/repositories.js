@@ -225,6 +225,28 @@ export async function issueStripeCredit({ stripeEventId, eventType, livemode, pa
   });
 }
 
+// Manual admin credit adjustment -- e.g. topping up an account created before
+// a trial-credits fix shipped, or a support/goodwill grant. Deliberately
+// separate from issueStripeCredit(): this never touches `purchased`, which
+// specifically represents money actually paid. idempotencyKey follows the
+// same replay-safe pattern as every other credit-affecting write in this
+// file (unique on sourceType+sourceId), so a double-submitted admin request
+// can never double-grant.
+export async function grantAdminCredit({ accountId, amount, note, idempotencyKey }) {
+  return database().transaction(async (tx) => {
+    const existing = (await tx.select().from(creditTransactions)
+      .where(and(eq(creditTransactions.sourceType, 'admin_grant'), eq(creditTransactions.sourceId, idempotencyKey))).limit(1))[0];
+    if (existing) return { applied: false, duplicate: true, balanceAfter: existing.balanceAfter };
+    const account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId)).for('update').limit(1))[0];
+    if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
+    const balanceAfter = account.balance + amount;
+    if (balanceAfter < 0) throw Object.assign(new Error('Grant would take the account balance below zero.'), { statusCode: 400, failureCategory: 'VALIDATION' });
+    await tx.update(creditAccounts).set({ balance: balanceAfter, updatedAt: new Date() }).where(eq(creditAccounts.accountId, accountId));
+    await tx.insert(creditTransactions).values({ accountId, sourceType: 'admin_grant', sourceId: idempotencyKey, amount, balanceAfter, metadata: { note: String(note || '').slice(0, 300) || null } });
+    return { applied: true, duplicate: false, balanceAfter };
+  });
+}
+
 export async function addMediaAsset(asset) {
   const [created] = await database().insert(mediaAssets).values(asset).onConflictDoUpdate({ target: mediaAssets.privatePathname, set: { bytes: asset.bytes, sha256: asset.sha256, contentType: asset.contentType } }).returning();
   return created;

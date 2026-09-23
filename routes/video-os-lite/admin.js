@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import { dispatchClaimedJob } from '../../api/video-os-lite/render-v2.js';
 import {
-  adminResolveJob, claimWorkflowStart, getAdminOverview, getJob, getJobEventTimeline, listFailedOrStuckJobs,
+  adminResolveJob, claimWorkflowStart, getAdminOverview, getJob, getJobEventTimeline, grantAdminCredit, listFailedOrStuckJobs,
   listMediaAssetsForJob, listRecentAccounts, listRecentCreditTransactions, listRecentJobs, listRecentStripeEvents,
   markJobReviewed, markJobVideoDeleted, quarantineMediaAsset, reserveRender,
 } from '../../db/repositories.js';
@@ -169,6 +169,17 @@ async function handlePost(req, res, operation) {
   if (operation === 'watchdog-sweep') {
     const staleAfterMinutes = Number(payload.staleAfterMinutes) || undefined;
     return send(res, 200, { ok: true, sweep: await runWatchdogSweep(staleAfterMinutes ? { staleAfterMinutes } : undefined) });
+  }
+  if (operation === 'grant-credit') {
+    const accountId = String(payload.accountId || '').trim();
+    const amount = Number(payload.amount);
+    const idempotencyKey = String(payload.idempotencyKey || '').trim();
+    if (!accountId) return send(res, 400, { ok: false, error: 'accountId is required.' });
+    if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > 100_000) return send(res, 400, { ok: false, error: 'amount must be a non-zero integer with a magnitude of 100,000 or less.' });
+    if (!idempotencyKey) return send(res, 400, { ok: false, error: 'idempotencyKey is required.' });
+    const result = await grantAdminCredit({ accountId, amount, note: payload.note, idempotencyKey });
+    console.log(JSON.stringify({ event: 'video_os_admin_credit_grant', accountId, amount, duplicate: result.duplicate, note: String(payload.note || '').slice(0, 300) || null }));
+    return send(res, 200, { ok: true, ...result });
   }
   if (operation === 'quarantine-asset') {
     const mediaAssetId = String(payload.mediaAssetId || '').trim();
