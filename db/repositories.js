@@ -234,15 +234,31 @@ export async function issueStripeCredit({ stripeEventId, eventType, livemode, pa
 // can never double-grant.
 export async function grantAdminCredit({ accountId, amount, note, idempotencyKey }) {
   return database().transaction(async (tx) => {
-    const existing = (await tx.select().from(creditTransactions)
-      .where(and(eq(creditTransactions.sourceType, 'admin_grant'), eq(creditTransactions.sourceId, idempotencyKey))).limit(1))[0];
-    if (existing) return { applied: false, duplicate: true, balanceAfter: existing.balanceAfter };
+    // Lock the account row FIRST, before any duplicate check -- this
+    // serializes concurrent grants for the same account through this one
+    // transaction at a time, closing the race the previous check-then-write
+    // order had (two concurrent requests with the same idempotencyKey could
+    // both pass an early SELECT, then the second would hit the
+    // credit_transactions_source_uq unique constraint on INSERT as a raw,
+    // uncaught error instead of a clean duplicate response). The insert
+    // below is the actual atomic claim -- onConflictDoNothing() means only
+    // one concurrent transaction ever wins it, and because the account
+    // stays locked until this transaction commits or rolls back, the loser
+    // sees the conflict *before* ever touching creditAccounts.balance, so
+    // there's no window where a duplicate could double-apply the amount.
     const account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId)).for('update').limit(1))[0];
     if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
     const balanceAfter = account.balance + amount;
     if (balanceAfter < 0) throw Object.assign(new Error('Grant would take the account balance below zero.'), { statusCode: 400, failureCategory: 'VALIDATION' });
+    const [created] = await tx.insert(creditTransactions)
+      .values({ accountId, sourceType: 'admin_grant', sourceId: idempotencyKey, amount, balanceAfter, metadata: { note: String(note || '').slice(0, 300) || null } })
+      .onConflictDoNothing().returning();
+    if (!created) {
+      const existing = (await tx.select().from(creditTransactions)
+        .where(and(eq(creditTransactions.sourceType, 'admin_grant'), eq(creditTransactions.sourceId, idempotencyKey))).limit(1))[0];
+      return { applied: false, duplicate: true, balanceAfter: existing?.balanceAfter ?? account.balance };
+    }
     await tx.update(creditAccounts).set({ balance: balanceAfter, updatedAt: new Date() }).where(eq(creditAccounts.accountId, accountId));
-    await tx.insert(creditTransactions).values({ accountId, sourceType: 'admin_grant', sourceId: idempotencyKey, amount, balanceAfter, metadata: { note: String(note || '').slice(0, 300) || null } });
     return { applied: true, duplicate: false, balanceAfter };
   });
 }
@@ -748,8 +764,24 @@ const WATCHDOG_ACTIONABLE_STATUSES = Object.freeze(['provider_submitted', 'provi
 // provider_submit_unknown joins the ambiguous set here (unlike the attention
 // list above, which always shows it regardless of age) -- the watchdog only
 // alerts once a job has been silent past the threshold, not the instant it
-// enters a held state.
-const WATCHDOG_STALE_AMBIGUOUS_ALERT_STATUSES = Object.freeze([...WATCHDOG_STALE_AMBIGUOUS_STATUSES, 'provider_submit_unknown']);
+// enters a held state. 'reserved' is deliberately excluded -- see
+// WATCHDOG_SAFE_TO_RELEASE_STATUSES below for why it gets its own, safer
+// treatment instead of joining this alert-only bucket.
+const WATCHDOG_STALE_AMBIGUOUS_ALERT_STATUSES = Object.freeze(['workflow_starting', 'workflow_started', 'provider_submitting', 'provider_submit_unknown']);
+
+// A job stuck at exactly 'reserved' (not any later status) proves
+// claimWorkflowStart() was never called -- reserveRender() and
+// claimWorkflowStart() are the only two transitions in or out of this
+// status, and nothing between them ever contacts a provider. Unlike every
+// other stale status above, there is no "a provider call might secretly be
+// in flight" risk here to guess wrong about (GitHub issue #23's whole
+// concern) -- so, unlike those, this is safe to auto-release rather than
+// only alert on. claimWorkflowStart()'s own status-guard already handles
+// the race where the original request is still genuinely in flight and
+// completes after this fires: it re-checks status==='reserved' under a row
+// lock and returns null if it's already moved on, and render-v2.js already
+// treats a null claim as "report the job's current status," not a crash.
+const WATCHDOG_SAFE_TO_RELEASE_STATUSES = Object.freeze(['reserved']);
 
 async function listStaleJobsByStatus(statuses, staleAfterMinutes, limit) {
   return database()
@@ -771,6 +803,10 @@ export async function listStalledActionableJobs(staleAfterMinutes = WATCHDOG_STA
 
 export async function listStalledAmbiguousJobs(staleAfterMinutes = WATCHDOG_STALE_MINUTES_DEFAULT, limit = 25) {
   return listStaleJobsByStatus(WATCHDOG_STALE_AMBIGUOUS_ALERT_STATUSES, staleAfterMinutes, limit);
+}
+
+export async function listStalledSafeToReleaseJobs(staleAfterMinutes = WATCHDOG_STALE_MINUTES_DEFAULT, limit = 25) {
+  return listStaleJobsByStatus(WATCHDOG_SAFE_TO_RELEASE_STATUSES, staleAfterMinutes, limit);
 }
 
 export async function getJobEventTimeline(jobId) {

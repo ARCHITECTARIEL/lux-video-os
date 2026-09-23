@@ -113,6 +113,29 @@ test('notifyWatchdogSweep sends to both configured channels when the sweep is no
   assert.deepEqual(calledUrls.sort(), ['https://api.resend.com/emails', 'https://hooks.slack.example/services/T/B/X'].sort());
 });
 
+test('notifyWatchdogSweep treats an auto-released reserved-only job as notable and reports it distinctly from a timed-out or alerted one', async (t) => {
+  t.after(restore);
+  process.env.RESEND_API_KEY = 'resend-key-proof';
+  process.env.AUTH_FROM_EMAIL = 'no-reply@video-os.example';
+  process.env.WATCHDOG_ALERT_EMAIL = 'ariel@luxmarketingcompany.com';
+  delete process.env.WATCHDOG_SLACK_WEBHOOK_URL;
+  let called = false;
+  let body = '';
+  globalThis.fetch = async (url, options) => {
+    called = true;
+    body = String(options?.body || '');
+    return new Response(JSON.stringify({ id: 'proof' }), { status: 200 });
+  };
+  const result = cleanResult({
+    released: 1,
+    jobs: { recovery: [], alertedIds: [], releasedIds: ['job-reserved-only'] },
+  });
+  await notifyWatchdogSweep(result);
+  assert.equal(called, true, 'a sweep that only auto-released a job must still notify -- it is notable, not a clean/silent sweep');
+  assert.match(body, /reserved but never dispatched/, 'the summary must explain what happened, not just that something did');
+  assert.match(body, /job-reserved-only/, 'the released job\'s ID must be included in the notification');
+});
+
 test('notifyWatchdogSweep never throws when only one channel is configured (the other 501s)', async (t) => {
   t.after(restore);
   process.env.RESEND_API_KEY = 'resend-key-proof';

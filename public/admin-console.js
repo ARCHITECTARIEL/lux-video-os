@@ -194,6 +194,7 @@ function renderBilling({ transactions, events }) {
       node('td', null, tx.sourceType),
       node('td', null, String(tx.amount)),
       node('td', null, String(tx.balanceAfter)),
+      node('td', null, tx.metadata?.note || '—'),
       node('td', null, formatDate(tx.createdAt)),
     );
     ledgerBody.append(row);
