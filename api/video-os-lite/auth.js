@@ -4,7 +4,7 @@ import { getAccountContext, recordSignIn, updateAuthenticatedAccount } from '../
 import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, DEFAULT_TRIAL_CREDITS, handleOptions, makeSession, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
-import { accountAllowedForContainedRendering, publicOrigin, standardRenderingEmailDomainAllowed } from '../../lib/video-os-security.js';
+import { containedRenderingEntitlementKeys, publicOrigin } from '../../lib/video-os-security.js';
 
 function route(req) {
   const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
@@ -74,10 +74,16 @@ function adminCookie(token) {
 async function loadWorkspaceAccount() {
   const email = String(process.env.VIDEO_OS_WORKSPACE_EMAIL || 'workspace@luxvideoos.local').trim().toLowerCase();
   const credits = Math.max(500, Number(process.env.VIDEO_OS_WORKSPACE_CREDITS || 5000));
+  const accountId = accountIdForEmail(email);
   return updateAuthenticatedAccount({
-    accountId: accountIdForEmail(email), email,
+    accountId, email,
     name: process.env.VIDEO_OS_WORKSPACE_NAME || 'LUX Workspace',
     role: 'workspace', initialCredits: credits,
+    // liveRendering/standardRendering are unconditional here (not gated by
+    // containedRenderingEntitlementKeys) -- the workspace credential is
+    // itself the trust boundary, same as it's always been; this just keeps
+    // it explicit rather than accidentally relying on the shared helper
+    // ever returning something for this account.
     entitlementKeys: ['passwordAccess', 'liveRendering', 'standardRendering'], sourceId: 'workspace_password',
   });
 }
@@ -170,7 +176,8 @@ export default async function handler(req, res) {
       const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
       const token = url.searchParams.get('token');
       const { accountId, email } = await validateMagicToken(token);
-      await updateAuthenticatedAccount({ accountId, email, name: email, role: 'customer', initialCredits: DEFAULT_TRIAL_CREDITS, entitlementKeys: ['magicLinkAccess'], sourceId: 'magic_link' });
+      const entitlementKeys = ['magicLinkAccess', ...containedRenderingEntitlementKeys(accountId, email)];
+      await updateAuthenticatedAccount({ accountId, email, name: email, role: 'customer', initialCredits: DEFAULT_TRIAL_CREDITS, entitlementKeys, sourceId: 'magic_link' });
       await consumeMagicToken(token);
       const session = makeSession(accountId, email);
       await recordSignIn(accountId);
@@ -204,25 +211,12 @@ export default async function handler(req, res) {
       const tokens = await exchangeGoogleCode({ code, redirectUri });
       const profile = await fetchGoogleProfile(tokens.access_token);
       const accountId = accountIdForEmail(profile.email);
-      const entitlementKeys = ['googleAccess'];
-      // A Google sign-in that lands on the contained-rendering allowlist
-      // needs the same liveRendering entitlement the workspace account gets
-      // -- otherwise the backend containment check would pass but the
-      // frontend's separate entitlementAllowsPremium() gate (studio.js)
-      // still shows "Premium is not enabled for this account". Two gates,
-      // one real grant. standardRendering rides the same allowlist check --
-      // db/standard-narration-repository.js's requireCurrentEntitlement()
-      // is a third, independent gate (standardRendering/fullAccess/
-      // ownerAccess) that no sign-in path granted before this, meaning
-      // Standard-tier rendering was unreachable by any real customer
-      // account until now.
-      if (accountAllowedForContainedRendering(accountId)) entitlementKeys.push('liveRendering', 'standardRendering');
-      // A narrower, email-domain-based path onto standardRendering only
-      // (never liveRendering/Premium -- see standardRenderingEmailDomainAllowed()'s
-      // own comment for why) -- e.g. VIDEO_OS_STANDARD_RENDER_EMAIL_DOMAINS=
-      // luxmarketingcompany.com lets the whole team test Standard without
-      // hand-adding each account's hashed ID to the containment allowlist.
-      else if (standardRenderingEmailDomainAllowed(profile.email)) entitlementKeys.push('standardRendering');
+      // containedRenderingEntitlementKeys() re-derives liveRendering/
+      // standardRendering fresh from the ID allowlist and the email-domain
+      // rule on every sign-in -- see its own comment in video-os-security.js
+      // for why this must be recomputed here rather than trusted to persist
+      // from an earlier sign-in via a different method.
+      const entitlementKeys = ['googleAccess', ...containedRenderingEntitlementKeys(accountId, profile.email)];
       await updateAuthenticatedAccount({
         accountId, email: profile.email, name: profile.name, role: 'customer',
         initialCredits: DEFAULT_TRIAL_CREDITS,
