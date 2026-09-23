@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - codex/runpod-standard-adapter
     paths:
       - workers/sadtalker-runpod/**
@@ -31,4 +32,7 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
-          tags: ghcr.io/architectariel/lux-video-os-sadtalker-runpod:transport-${{ github.sha }}
+          tags: |
+            ghcr.io/architectariel/lux-video-os-sadtalker-runpod:latest
+            ghcr.io/architectariel/lux-video-os-sadtalker-runpod:v1.0.0
+            ghcr.io/architectariel/lux-video-os-sadtalker-runpod:transport-${{ github.sha }}
