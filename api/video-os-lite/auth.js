@@ -78,7 +78,7 @@ async function loadWorkspaceAccount() {
     accountId: accountIdForEmail(email), email,
     name: process.env.VIDEO_OS_WORKSPACE_NAME || 'LUX Workspace',
     role: 'workspace', initialCredits: credits,
-    entitlementKeys: ['passwordAccess', 'liveRendering'], sourceId: 'workspace_password',
+    entitlementKeys: ['passwordAccess', 'liveRendering', 'standardRendering'], sourceId: 'workspace_password',
   });
 }
 
@@ -210,8 +210,13 @@ export default async function handler(req, res) {
       // -- otherwise the backend containment check would pass but the
       // frontend's separate entitlementAllowsPremium() gate (studio.js)
       // still shows "Premium is not enabled for this account". Two gates,
-      // one real grant.
-      if (accountAllowedForContainedRendering(accountId)) entitlementKeys.push('liveRendering');
+      // one real grant. standardRendering rides the same allowlist check --
+      // db/standard-narration-repository.js's requireCurrentEntitlement()
+      // is a third, independent gate (standardRendering/fullAccess/
+      // ownerAccess) that no sign-in path granted before this, meaning
+      // Standard-tier rendering was unreachable by any real customer
+      // account until now.
+      if (accountAllowedForContainedRendering(accountId)) entitlementKeys.push('liveRendering', 'standardRendering');
       await updateAuthenticatedAccount({
         accountId, email: profile.email, name: profile.name, role: 'customer',
         initialCredits: DEFAULT_TRIAL_CREDITS,

@@ -29,6 +29,12 @@ const originalEnvironment = {
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
   VIDEO_OS_PUBLIC_ORIGIN: process.env.VIDEO_OS_PUBLIC_ORIGIN,
   VIDEO_OS_RENDER_ACCOUNT_ID: process.env.VIDEO_OS_RENDER_ACCOUNT_ID,
+  // Not read by google-login (the 501-when-unconfigured test below deletes
+  // GOOGLE_CLIENT_ID/SECRET directly and doesn't need this), but
+  // google-callback's makeSession() does -- a bare .env.local dev checkout
+  // may not define this, which otherwise turns every live-DB test in this
+  // file into a confusing 501 that has nothing to do with Google config.
+  VIDEO_OS_SESSION_SECRET: process.env.VIDEO_OS_SESSION_SECRET,
 };
 
 function request({ method = 'GET', url, cookie }) {
@@ -115,6 +121,7 @@ test(
     process.env.GOOGLE_CLIENT_ID = 'client-id';
     process.env.GOOGLE_CLIENT_SECRET = 'client-secret';
     process.env.VIDEO_OS_PUBLIC_ORIGIN = ORIGIN;
+    if (!originalEnvironment.VIDEO_OS_SESSION_SECRET) process.env.VIDEO_OS_SESSION_SECRET = 'google-signin-route-test-secret-with-adequate-length';
     const email = `google-signin-test-${crypto.randomUUID()}@example.com`;
     t.after(async () => {
       const accountId = `user-${crypto.createHash('sha256').update(email).digest('hex').slice(0, 24)}`;
@@ -143,12 +150,13 @@ test(
 );
 
 test(
-  'google-callback grants liveRendering only when the resulting account is on the render allowlist',
+  'google-callback grants liveRendering and standardRendering only when the resulting account is on the render allowlist',
   { skip: !dbAvailable && 'DATABASE_URL not configured; skipping live integration test' },
   async (t) => {
     process.env.GOOGLE_CLIENT_ID = 'client-id';
     process.env.GOOGLE_CLIENT_SECRET = 'client-secret';
     process.env.VIDEO_OS_PUBLIC_ORIGIN = ORIGIN;
+    if (!originalEnvironment.VIDEO_OS_SESSION_SECRET) process.env.VIDEO_OS_SESSION_SECRET = 'google-signin-route-test-secret-with-adequate-length';
     const allowedEmail = `google-allowlisted-${crypto.randomUUID()}@example.com`;
     const deniedEmail = `google-not-allowlisted-${crypto.randomUUID()}@example.com`;
     const allowedAccountId = accountIdForEmail(allowedEmail);
@@ -172,11 +180,13 @@ test(
     await signIn(allowedEmail, 'allowlisted-state');
     const allowedContext = await getAccountContext(allowedAccountId);
     assert.equal(allowedContext.entitlements.liveRendering, true, 'an allowlisted account must get liveRendering so the frontend Premium gate opens too');
+    assert.equal(allowedContext.entitlements.standardRendering, true, 'an allowlisted account must also get standardRendering, or requireCurrentEntitlement() blocks every Standard-tier request');
     assert.equal(allowedContext.entitlements.googleAccess, true);
 
     await signIn(deniedEmail, 'denied-state');
     const deniedContext = await getAccountContext(accountIdForEmail(deniedEmail));
     assert.equal(deniedContext.entitlements.liveRendering, undefined, 'an account outside the allowlist must not get liveRendering');
+    assert.equal(deniedContext.entitlements.standardRendering, undefined, 'an account outside the allowlist must not get standardRendering');
   },
 );
 
