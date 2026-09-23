@@ -26,8 +26,21 @@ function readinessUrl(binding, narrationConsentId) {
   return `/api/video-os-lite/standard?${query}`;
 }
 
+// A readiness check (or any other well-formed 200/4xx/409 response whose
+// content just isn't what this stage expected) is a DEFINITIVE answer --
+// nothing is ambiguous about it, and it must never be shown as "the
+// connection was lost." Real uncertainty is narrowly the set of signals
+// getJson() (public/studio.js) produces when no real response ever came
+// back at all (an aborted/timed-out fetch, or the network failing outright)
+// or when the server's own reply couldn't even be parsed -- mirrors
+// submitPremium()'s catch in public/studio.js, the existing correct
+// pattern for this. A thrown contractError() from this file's own
+// higher-level checks (readiness mismatch, binding mismatch, an invalid
+// consent/quote) never sets `retryable` and never carries one of these
+// codes, so it now correctly falls through as a normal, specific error
+// instead of being swallowed into the early-stage-uncertain recovery flow.
 function isUncertain(error) {
-  return !Number.isInteger(error?.status);
+  return error?.retryable === true || ['network_timeout', 'network_unavailable', 'invalid_response'].includes(error?.code);
 }
 
 export function createStandardController({ request, uuid = () => crypto.randomUUID(), onStage = () => {} }) {
