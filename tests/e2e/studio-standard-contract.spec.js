@@ -263,6 +263,81 @@ test('an uncertain project write allows a safe retry once no existing project is
   expect(projectAttempts).toBe(2);
 });
 
+// Covers a real production incident (2026-09-23): a well-formed, definitive
+// readiness answer (a real 200 with a specific reasonCode the server is
+// certain about) was being shown to the user as "The connection was lost
+// before we could confirm this submission was saved. Do not try again yet."
+// -- the same misleading message reserved for a genuine dropped connection.
+// isUncertain() in public/standard-contract.js only used to check whether
+// the thrown error carried a numeric HTTP status; a readiness-mismatch
+// contractError() never did, so every reasonCode other than the one
+// literal string handled at each checkpoint was misclassified as
+// "uncertain, don't retry" instead of showing its real, specific,
+// actionable message. These three tests prove the fix from both directions:
+// a well-formed different-reasonCode answer must show its real message and
+// leave the form editable (not the uncertain-recovery flow), and a genuine
+// network failure on the same consent/quote requests must still correctly
+// trigger the real uncertain-recovery flow.
+test('an unexpected reasonCode at the pre-consent readiness check shows its real message, not a false "connection was lost"', async ({ page }) => {
+  await mockOwnerStandardApi(page);
+  await page.route('**/api/video-os-lite/standard*', (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, readiness: { ready: false, reasonCode: 'standard_narration_insufficient_credits' } }) });
+  });
+  await fillOwnerStandardForm(page);
+
+  await page.locator('#standard-submit').click();
+  await expect(page.locator('#standard-status')).toContainText('do not have enough credits');
+  await expect(page.locator('#standard-status')).not.toContainText('connection was lost');
+  await expect(page.locator('#standard-early-uncertain')).toBeHidden();
+  // Definitive failures re-lock the submit button behind a fresh review
+  // (existing, correct behavior, unrelated to this fix) -- what matters
+  // here is that it's the normal "needs review" state, never the uncertain-
+  // recovery lock, and the rest of the form is editable again.
+  await expect(page.locator('#standard-submit')).toHaveText('Submit Standard video');
+  await expect(page.locator('#video-title')).toBeEnabled();
+  await page.locator('#review-inputs').click();
+  await page.locator('#review-complete').click();
+  await expect(page.locator('#standard-submit')).toBeEnabled();
+});
+
+test('an unexpected reasonCode at the post-consent readiness check shows its real message, not a false "connection was lost"', async ({ page }) => {
+  const captured = await mockOwnerStandardApi(page);
+  let readinessChecks = 0;
+  await page.route('**/api/video-os-lite/standard*', (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    readinessChecks += 1;
+    const readiness = readinessChecks === 1
+      ? { ready: false, reasonCode: 'standard_narration_consent_required' }
+      : { ready: false, reasonCode: 'standard_narration_account_not_authorized' };
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, readiness }) });
+  });
+  await fillOwnerStandardForm(page);
+
+  await page.locator('#standard-submit').click();
+  await expect(page.locator('#standard-status')).toContainText('standard_narration_account_not_authorized');
+  await expect(page.locator('#standard-status')).not.toContainText('connection was lost');
+  await expect(page.locator('#standard-early-uncertain')).toBeHidden();
+  await expect(page.locator('#standard-submit')).toHaveText('Submit Standard video');
+  await expect(page.locator('#video-title')).toBeEnabled();
+  expect(captured.consent, 'consent must have been recorded before the post-consent readiness check ran').not.toBeNull();
+});
+
+test('a genuine network failure recording consent still correctly triggers the real uncertain-recovery flow', async ({ page }) => {
+  await mockOwnerStandardApi(page);
+  await page.route('**/api/video-os-lite/standard*', (route) => {
+    if (route.request().method() === 'POST' && route.request().postDataJSON()?.operation === 'consent') return route.abort('connectionfailed');
+    return route.fallback();
+  });
+  await fillOwnerStandardForm(page);
+
+  await page.locator('#standard-submit').click();
+  await expect(page.locator('#standard-status')).toContainText('connection was lost');
+  await expect(page.locator('#standard-early-uncertain')).toBeVisible();
+  await expect(page.locator('#standard-submit')).toBeDisabled();
+  await expect(page.locator('#standard-check-existing')).toBeFocused();
+});
+
 for (const [outcome, message] of [['consent', /consent does not authorize/], ['unavailable', /rendering is disabled/]]) {
   test(`${outcome} fails closed without network mutation or output`, async ({ page }) => {
     const writes = await setup(page, outcome);

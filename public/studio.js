@@ -935,6 +935,7 @@ function standardFailureMessage(error) {
     'standard_narration_account_gate_unavailable', 'standard_narration_account_not_authorized',
   ]);
   if (unavailable.has(error?.code)) return `Standard runtime is not live for this account (${error.code}). No render was submitted.`;
+  if (error?.code === 'standard_narration_insufficient_credits') return 'You do not have enough credits for this render. No render was submitted.';
   return error?.message || 'Standard submission could not be completed.';
 }
 
