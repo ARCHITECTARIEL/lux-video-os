@@ -106,6 +106,41 @@ test('admin route rejects an unknown operation', async () => {
   }
 });
 
+test(
+  'POST operation=stripe-reconciliation is wired to the real reconciliation sweep and fails loud (503), not a silent "clean," when Stripe is not configured',
+  async () => {
+    // Doesn't need DATABASE_URL: reconcileStripePayments() (lib/video-os-
+    // stripe-reconciliation.js) builds its own Stripe client before it ever
+    // touches the DB, so an unconfigured STRIPE_SECRET_KEY fails before any
+    // repository call happens. Full mocked-success coverage of the
+    // reconciliation sweep itself lives in
+    // tests/video-os-stripe-reconciliation.test.mjs, which injects a fake
+    // Stripe client directly -- something an HTTP caller of this admin
+    // route deliberately cannot do.
+    const originalToken = process.env.VIDEO_OS_ADMIN_TOKEN;
+    const originalStripeKey = process.env.STRIPE_SECRET_KEY;
+    process.env.VIDEO_OS_ADMIN_TOKEN = 'proof-admin-token';
+    delete process.env.STRIPE_SECRET_KEY;
+    try {
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=stripe-reconciliation', body: {}, headers: { authorization: 'Bearer proof-admin-token' } }), res);
+      assert.equal(res.statusCode, 503, 'this must fail loud, not silently report a clean sweep, when Stripe is not configured -- see .github/workflows/stripe-reconciliation.yml\'s header comment for why');
+      assert.match(res.body.error, /STRIPE_SECRET_KEY/);
+    } finally {
+      if (originalToken === undefined) delete process.env.VIDEO_OS_ADMIN_TOKEN;
+      else process.env.VIDEO_OS_ADMIN_TOKEN = originalToken;
+      if (originalStripeKey === undefined) delete process.env.STRIPE_SECRET_KEY;
+      else process.env.STRIPE_SECRET_KEY = originalStripeKey;
+    }
+  },
+);
+
+test('POST operation=stripe-reconciliation is rejected the same as any other operation without valid admin auth', async () => {
+  const res = response();
+  await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=stripe-reconciliation', body: {} }), res);
+  assert.equal(res.statusCode, 401);
+});
+
 test('job-events without a jobId is a clean 400, not a crash', async () => {
   const original = process.env.VIDEO_OS_ADMIN_TOKEN;
   process.env.VIDEO_OS_ADMIN_TOKEN = 'proof-admin-token';

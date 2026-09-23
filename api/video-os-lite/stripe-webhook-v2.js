@@ -6,7 +6,10 @@ import { featureEnabled } from '../../lib/video-os-security.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { parseOrThrow, stripeCheckoutSessionSchema } from '../../lib/video-os-validation.js';
 
-const PACKAGE_CREDITS = { credits_500: 500, credits_1000: 1000, credits_2000: 2000 };
+// Exported so lib/video-os-stripe-reconciliation.js checks the same
+// package->credits mapping this handler actually grants against, instead of
+// a second, driftable copy.
+export const PACKAGE_CREDITS = { credits_500: 500, credits_1000: 1000, credits_2000: 2000 };
 
 export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
