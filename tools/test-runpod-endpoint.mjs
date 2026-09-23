@@ -8,6 +8,31 @@ const TINY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 // Minimal 44-byte silent WAV header as audio test fixture
 const SILENT_WAV_BASE64 = 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 
+function createWavFixture(durationSeconds = 1, sampleRate = 16000) {
+  const numSamples = Math.floor(durationSeconds * sampleRate);
+  const dataSize = numSamples * 2;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  for (let i = 0; i < numSamples; i++) {
+    const t = i / sampleRate;
+    const sample = Math.floor(Math.sin(2 * Math.PI * 440 * t) * 8000);
+    buffer.writeInt16LE(sample, 44 + i * 2);
+  }
+  return buffer;
+}
+
 async function main() {
   const apiKey = String(process.env.RUNPOD_API_KEY || '').trim();
   const endpointId = String(process.env.VIDEO_OS_RUNPOD_ENDPOINT_ID || '').trim();
@@ -54,12 +79,29 @@ async function main() {
 
   // 2. Submit test execution
   console.log('\n[2/3] Submitting synthetic test execution...');
+  const portraitBytes = Buffer.from(TINY_PNG_BASE64, 'base64');
+  const audioBytes = createWavFixture(1, 16000);
+  const portraitSha256 = crypto.createHash('sha256').update(portraitBytes).digest('hex');
+  const audioSha256 = crypto.createHash('sha256').update(audioBytes).digest('hex');
+
   const runPayload = {
     input: {
-      image_base64: TINY_PNG_BASE64,
-      audio_base64: SILENT_WAV_BASE64,
-      output_limit_bytes: 7_000_000,
-      allow_simulated: allowSimulated,
+      schemaVersion: 1,
+      jobId: `test-${Date.now()}`,
+      correlationId: `corr-${Date.now()}`,
+      format: 'mp4',
+      title: 'runpod-diagnostic',
+      portrait: {
+        mimeType: 'image/png',
+        sha256: portraitSha256,
+        base64: portraitBytes.toString('base64'),
+      },
+      drivenAudio: {
+        mimeType: 'audio/wav',
+        sha256: audioSha256,
+        durationMs: 1000,
+        base64: audioBytes.toString('base64'),
+      },
     },
   };
 
@@ -107,7 +149,8 @@ async function main() {
     if (status === 'COMPLETED') {
       completed = true;
       const output = pollData.output || {};
-      const mp4Bytes = output.mp4_base64 ? Buffer.from(output.mp4_base64, 'base64') : null;
+      const videoB64 = output.videoBase64 || output.mp4_base64;
+      const mp4Bytes = videoB64 ? Buffer.from(videoB64, 'base64') : null;
       console.log('\n================================================================');
       console.log('                     TEST RESULT: SUCCESS                       ');
       console.log('================================================================');
