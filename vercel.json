@@ -129,14 +129,14 @@
                    },
                    {
                        "src":  "/exports/(.*)",
-                       "dest":  "/public/exports/$1",
+                       "dest":  "/exports/$1",
                        "headers":  {
                                        "Cache-Control":  "no-store"
                                    }
                    },
                    {
                        "src":  "/uploads/(.*)",
-                       "dest":  "/public/uploads/$1",
+                       "dest":  "/uploads/$1",
                        "headers":  {
                                        "Cache-Control":  "no-store"
                                    }
