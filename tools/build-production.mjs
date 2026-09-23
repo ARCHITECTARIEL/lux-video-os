@@ -35,6 +35,9 @@ async function stageWorkflowFfmpeg(stepFunction) {
 
 const target = process.argv.includes('--preview') ? 'preview' : 'production';
 
+const migrationCheck = new URL('check-migrations.mjs', import.meta.url);
+run(migrationCheck, []);
+
 await rm(output, { recursive: true, force: true });
 run(vercelCli, ['build', '--target', target]);
 const configUrl = new URL('config.json', output);
