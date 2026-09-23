@@ -49,6 +49,7 @@
         <button type="button" role="tab" aria-selected="false" data-admin-tab="jobs">Jobs</button>
         <button type="button" role="tab" aria-selected="false" data-admin-tab="attention">Needs attention</button>
         <button type="button" role="tab" aria-selected="false" data-admin-tab="accounts">Accounts</button>
+        <button type="button" role="tab" aria-selected="false" data-admin-tab="testers">MVP Testers</button>
         <button type="button" role="tab" aria-selected="false" data-admin-tab="billing">Billing</button>
       </nav>
 
@@ -74,6 +75,56 @@
       <section id="panel-accounts" class="admin-panel" role="tabpanel" hidden>
         <p class="section-copy">Most recently created accounts.</p>
         <div class="table-wrap"><table class="data-table" id="accounts-table"><thead><tr><th>Account</th><th>Email</th><th>Role</th><th>Created</th><th>Balance</th><th>Reserved</th><th>Grant credits</th></tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <section id="panel-testers" class="admin-panel" role="tabpanel" hidden>
+        <div class="notice" role="status" style="margin-bottom:1.5rem">
+          <strong>⚡ Automatic Tester Access</strong>: All sign-ins ending with <code>@luxmarketingcompany.com</code> automatically receive full Standard & Premium rendering access and 5,000 testing credits.
+        </div>
+
+        <div class="admin-tester-card" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:8px; padding:1.25rem; margin-bottom:1.5rem">
+          <h2 class="admin-subheading" style="margin-top:0">Register New Tester</h2>
+          <p class="section-copy">Whitelist any email to grant full Standard and Premium rendering capabilities and test credits without payment gates.</p>
+          <form id="register-tester-form" style="display:flex; flex-wrap:wrap; gap:1rem; align-items:flex-end">
+            <div style="flex:1; min-width:200px">
+              <label for="tester-email" style="display:block; font-size:0.875rem; font-weight:600; margin-bottom:0.25rem">Tester Email *</label>
+              <input id="tester-email" type="email" placeholder="tester@example.com" required style="width:100%; padding:0.5rem; border:1px solid #cbd5e1; border-radius:6px">
+            </div>
+            <div style="flex:1; min-width:160px">
+              <label for="tester-name" style="display:block; font-size:0.875rem; font-weight:600; margin-bottom:0.25rem">Full Name</label>
+              <input id="tester-name" type="text" placeholder="Tester Name" style="width:100%; padding:0.5rem; border:1px solid #cbd5e1; border-radius:6px">
+            </div>
+            <div style="width:130px">
+              <label for="tester-credits" style="display:block; font-size:0.875rem; font-weight:600; margin-bottom:0.25rem">Credits</label>
+              <input id="tester-credits" type="number" value="5000" min="100" max="100000" style="width:100%; padding:0.5rem; border:1px solid #cbd5e1; border-radius:6px">
+            </div>
+            <div style="flex:1; min-width:180px">
+              <label for="tester-note" style="display:block; font-size:0.875rem; font-weight:600; margin-bottom:0.25rem">Notes</label>
+              <input id="tester-note" type="text" placeholder="e.g. VIP Pilot Partner" style="width:100%; padding:0.5rem; border:1px solid #cbd5e1; border-radius:6px">
+            </div>
+            <button class="button primary" id="register-tester-submit" type="submit" style="height:38px">Register Tester</button>
+          </form>
+          <p id="register-tester-status" role="status" aria-live="polite" style="margin-top:0.5rem"></p>
+        </div>
+
+        <h2 class="admin-subheading">Active Testers</h2>
+        <div class="table-wrap">
+          <table class="data-table" id="testers-table">
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Name</th>
+                <th>Role</th>
+                <th>Balance</th>
+                <th>Spent</th>
+                <th>Registered</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p id="testers-empty" class="inline-empty" hidden>No external testers registered yet.</p>
       </section>
 
       <section id="panel-billing" class="admin-panel" role="tabpanel" hidden>
