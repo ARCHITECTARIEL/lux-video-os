@@ -36,6 +36,12 @@ function harness(overrides = {}) {
     requestId: () => 'upload-correlation-123',
     sessionFromRequest: () => ({ accountId: 'account-one' }),
     assertDatabaseConfigured: () => true,
+    // Every existing test in this file predates rate limiting and uses a
+    // synthetic accountId that isn't a real DB row -- default to always
+    // allowing so those tests keep exercising what they were written to
+    // test, not this. See tests/upload-rate-limit.test.mjs for real
+    // coverage of the rate-limit path itself.
+    rateLimit: async () => true,
     blobToken: () => 'test-token-never-sent',
     putPrivateBlob: async (_classification, pathname) => {
       calls.blobWrites += 1;

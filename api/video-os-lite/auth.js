@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { accountDto } from '../../db/dto.js';
-import { getAccountContext, recordSignIn, updateAuthenticatedAccount } from '../../db/repositories.js';
-import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, DEFAULT_TRIAL_CREDITS, handleOptions, makeSession, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
+import { consumeRateLimit, ensureAccount, getAccountContext, recordSignIn, updateAuthenticatedAccount } from '../../db/repositories.js';
+import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, DEFAULT_TRIAL_CREDITS, handleOptions, makeSession, normalizeEmail, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
 import { containedRenderingEntitlementKeys, publicOrigin } from '../../lib/video-os-security.js';
@@ -9,6 +9,15 @@ import { containedRenderingEntitlementKeys, publicOrigin } from '../../lib/video
 function route(req) {
   const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
   return url.pathname.split('/').pop();
+}
+
+// Magic-link requests send a real email via Resend per call
+// (sendMagicEmail below) with no session/credential required -- a cheap
+// email-bombing vector against any address, not just the requester's own.
+// 5/hour is loose enough that a customer who mistyped their email or lost
+// the first link isn't locked out, but tight enough to stop a flood.
+function magicLinkHourlyLimit() {
+  return Number(process.env.VIDEO_OS_MAGIC_LINK_HOURLY_LIMIT || 5);
 }
 function assertCeoToken(value) {
   const expected = String(process.env.VIDEO_OS_CEO_ACCESS_TOKEN || '').trim();
@@ -166,6 +175,18 @@ export default async function handler(req, res) {
       if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST to request a sign-in link.' });
       const payload = await readJson(req);
       if (!process.env.RESEND_API_KEY || !process.env.AUTH_FROM_EMAIL) throw Object.assign(new Error('Email sign-in is not configured. Add RESEND_API_KEY and AUTH_FROM_EMAIL in Vercel.'), { statusCode: 501 });
+      // Rate limiting keys on account_id (a real foreign key into users),
+      // but no account may exist yet for a first-ever sign-in attempt --
+      // ensureAccount() is the same idempotent, no-op-if-present pattern
+      // already used before reserveRender() elsewhere (render-v2.js), not
+      // a new behavior class. It's a real, minor side effect worth naming:
+      // a person who requests a link but never clicks it now has a bare
+      // account row (0 credits, no entitlements) rather than nothing.
+      const requestedEmail = normalizeEmail(payload.email);
+      const requestedAccountId = accountIdForEmail(requestedEmail);
+      await ensureAccount({ accountId: requestedAccountId, email: requestedEmail, name: requestedEmail });
+      const allowed = await consumeRateLimit({ accountId: requestedAccountId, key: `magic-link:hourly:${requestedEmail}`, limit: magicLinkHourlyLimit(), windowMs: 60 * 60 * 1000 });
+      if (!allowed) return send(res, 429, { ok: false, code: 'rate_limited', error: 'Sign-in link requests limit reached. Try again in a while.' });
       const { token, record } = await saveMagicToken(payload.email);
       const origin = publicOrigin(req);
       const magicUrl = `${origin}/api/video-os-lite/auth-verify?token=${encodeURIComponent(token)}`;
