@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { assertDatabaseConfigured } from '../../db/client.js';
-import { addUploadMediaAsset, getOwnedMediaAsset } from '../../db/repositories.js';
+import { addUploadMediaAsset, consumeRateLimit, getOwnedMediaAsset } from '../../db/repositories.js';
 import { sessionFromRequest } from '../../lib/video-os-account.js';
 import { validateIdentityUpload } from '../../lib/identity-upload.js';
 import { deletePrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../../lib/video-os-private-blob.js';
@@ -101,6 +101,14 @@ export function createUploadHandler(overrides = {}) {
     getOwnedMediaAsset,
     logUploadPersistenceError,
     putPrivateBlob,
+    // Uploads are individually cheap, but a flood is still a real storage/
+    // DB-write abuse vector -- 60/hour is generous for legitimate use (a
+    // customer uploading several identity photos/recordings across
+    // multiple attempts in one session) while still bounding the worst
+    // case. See routes/video-os-lite/copywriter.js for the established
+    // VIDEO_OS_*_HOURLY_LIMIT pattern this mirrors.
+    rateLimit: consumeRateLimit,
+    uploadHourlyLimit: () => Number(process.env.VIDEO_OS_UPLOAD_HOURLY_LIMIT || 60),
     requestId,
     sessionFromRequest,
     ...overrides,
@@ -112,6 +120,8 @@ export function createUploadHandler(overrides = {}) {
     const correlationId = dependencies.requestId(req);
     try {
       const session = dependencies.sessionFromRequest(req);
+      const allowed = await dependencies.rateLimit({ accountId: session.accountId, key: `upload:hourly:${session.accountId}`, limit: dependencies.uploadHourlyLimit(), windowMs: 60 * 60 * 1000 });
+      if (!allowed) throw routeError('Upload limit reached. Try again in a while.', 429, 'VALIDATION', 'rate_limited');
       const payload = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
       const dataUrl = String(payload.dataUrl || '');
       const identityKind = payload.kind === 'identity_photo' ? 'photo' : payload.kind === 'identity_voice' ? 'voice' : null;

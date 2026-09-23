@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { start } from 'workflow/api';
 import { accountDto, jobDto } from '../../db/dto.js';
-import { claimWorkflowStart, ensureAccount, getJob, getOwnedProject, getRenderAuthorizedIdentity, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
+import { claimWorkflowStart, consumeRateLimit, ensureAccount, getJob, getOwnedProject, getRenderAuthorizedIdentity, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
 import { standardNarrationRepository } from '../../db/standard-narration-repository.js';
 import { assertTalentSelectionsAvailable, loadTalentInventory } from '../video-os/talent.js';
 import { captureJobError } from '../../lib/video-os-observability.js';
@@ -27,6 +27,26 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 // dispatch is a no-op here -- the poll loop picks it up on its own.
 export function dispatchesViaVercelWorkflow() {
   return String(process.env.WORKFLOW_DISPATCH_MODE || 'vercel').trim().toLowerCase() === 'vercel';
+}
+
+// Render submissions directly gate real credit-spend and real provider
+// cost -- tighter than uploads (see uploads.js's VIDEO_OS_UPLOAD_HOURLY_LIMIT
+// for the same pattern at a looser limit). 20/hour is generous for genuine
+// iterative use (rendering several variations in one session) while still
+// bounding an unthrottled client's worst-case credit-reservation attempts
+// to a small, recoverable number per hour. Exported (and rateLimit/limit
+// injectable) so the 429 path is directly unit-testable without needing
+// 20+ real requests against a live DB -- this file doesn't use the
+// factory-injection pattern the rest of this codebase's routes do
+// (routes/video-os-lite/copywriter.js, api/video-os-lite/uploads.js), so
+// this is scoped narrowly rather than refactoring the whole handler.
+export function renderHourlyLimit() {
+  return Number(process.env.VIDEO_OS_RENDER_HOURLY_LIMIT || 20);
+}
+
+export async function assertRenderRateLimit(accountId, { rateLimit = consumeRateLimit, limit = renderHourlyLimit() } = {}) {
+  const allowed = await rateLimit({ accountId, key: `render:hourly:${accountId}`, limit, windowMs: 60 * 60 * 1000 });
+  if (!allowed) throw Object.assign(new Error('Render request limit reached. Try again in a while.'), { statusCode: 429, code: 'rate_limited' });
 }
 
 // Shared by the admin console's "retry this render" action
@@ -161,6 +181,7 @@ export default async function handler(req, res) {
     const session = sessionFromRequest(req);
     if (!featureEnabled('VIDEO_OS_DURABLE_WORKFLOW_ENABLED')) return send(res, 503, { ok: false, code: 'durable_workflow_disabled', error: 'Live rendering is contained pending workflow verification.' });
     requireRenderAccountAuthorization(session.accountId);
+    await assertRenderRateLimit(session.accountId);
     const body = await readJson(req);
     narrationRequest = isNarrationRequest(body);
     const correlationId = requestId(req);
