@@ -2,6 +2,7 @@ import { PREMIUM_COMPOSITION_CATALOG, resolvePremiumComposition } from './premiu
 import { FEATURED_CAST, curateDefaultCast, matchedVoiceId, prioritizeVoices } from './video-os-cast.js';
 import { createCopywriterController } from './copywriter.js';
 import { createStandardController } from './standard-contract.js';
+import { createStudioPreviewController } from './studio-preview-player.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -67,6 +68,7 @@ const state = {
 let copywriterController = null;
 let standardContractController = null;
 let standardContractJob = null;
+let studioPreviewController = null;
 
 const node = (tag, className, text) => {
   const element = document.createElement(tag);
@@ -1133,6 +1135,7 @@ function choosePremiumIdentity(identity) {
   setFieldError($('#avatar-search'), $('#premium-cast-error'));
   renderPremiumCast();
   renderPremiumAvailability();
+  studioPreviewController?.updatePresenter(state.premium.avatar);
 }
 
 function choosePremiumAvatar(item, { explicit = true } = {}) {
@@ -1150,6 +1153,7 @@ function choosePremiumAvatar(item, { explicit = true } = {}) {
   if (!explicit && !state.premium.voice && state.libraries.voice.length) state.premium.voice = prioritizeVoices(state.libraries.voice, item)[0] || null;
   renderPremiumCast();
   renderPremiumAvailability();
+  studioPreviewController?.updatePresenter(item);
 }
 
 function choosePremiumVoice(item, { explicit = true } = {}) {
@@ -1302,6 +1306,9 @@ function prepareAnotherPremiumDraft() {
   $('#generate-video').hidden = false;
   syncPremiumControlLock();
   renderPremiumAvailability();
+  studioPreviewController?.updatePresenter(null);
+  studioPreviewController?.updateTitle('');
+  studioPreviewController?.updateScriptAndCaptions('');
   $('#premium-title').focus();
 }
 
@@ -1821,6 +1828,9 @@ function restoreLatestProject() {
     state.premium.controlsLocked = true;
     syncPremiumControlLock();
   }
+  studioPreviewController?.updatePresenter(state.premium.avatar);
+  studioPreviewController?.updateScriptAndCaptions($('#script-input').value);
+  studioPreviewController?.updateTitle($('#premium-title').value);
 }
 
 function selectDefaultPremiumCast() {
@@ -2137,6 +2147,19 @@ copywriterController = createCopywriterController({
   closeDialog,
   announce,
   showToast,
+});
+
+studioPreviewController = createStudioPreviewController({
+  getScript: () => $('#script-input')?.value || '',
+  getTitle: () => $('#premium-title')?.value || '',
+  getPresenter: () => state.premium.avatar,
+  onFormatChange: (format) => {
+    const select = $('#export-format');
+    if (select && select.value !== format) {
+      select.value = format;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  },
 });
 
 $('#open-menu').addEventListener('click', () => {
