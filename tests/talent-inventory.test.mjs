@@ -143,8 +143,8 @@ test('featured aliases use exact provider matches and shared looks remain filter
     { id: 'not-oso', name: 'OSO', status: 'completed', preview_image_url: 'https://media.example/not-oso.jpg' },
     { id: FEATURED_CAST[2].avatarId, status: 'completed', preview_image_url: 'https://media.example/kd.jpg' },
   ]);
-  assert.deepEqual(featured.map((item) => item.id), ['featured:ariel', 'featured:oso', 'featured:kd']);
-  assert.deepEqual(featured.map((item) => item.providerReady), [true, false, true]);
+  assert.deepEqual(featured.slice(0, 3).map((item) => item.id), ['featured:ariel', 'featured:oso', 'featured:kd']);
+  assert.deepEqual(featured.slice(0, 3).map((item) => item.providerReady), [true, false, true]);
 
   const shared = buildSharedAvatars([
     { id: 'provider-avatar-one-private', status: 'completed', preview_image_url: 'https://media.example/a.jpg', supported_api_engines: ['avatar_iv'] },

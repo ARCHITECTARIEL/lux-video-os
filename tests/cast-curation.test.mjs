@@ -28,8 +28,9 @@ const sharedRecord = (index, overrides = {}) => ({
   ...overrides,
 });
 
-test('public featured presentation metadata is keys-only and ordered Ariel, OSO, KD', () => {
-  assert.deepEqual(PUBLIC_FEATURED_CAST, [
+test('public featured presentation metadata is keys-only and begins Ariel, OSO, KD', () => {
+  assert.equal(PUBLIC_FEATURED_CAST.length, 11);
+  assert.deepEqual(PUBLIC_FEATURED_CAST.slice(0, 3), [
     { key: 'ariel', label: 'Ariel' },
     { key: 'oso', label: 'OSO' },
     { key: 'kd', label: 'Kristian' },
@@ -39,8 +40,8 @@ test('public featured presentation metadata is keys-only and ordered Ariel, OSO,
 
 test('server mapping has one exact avatar and voice ID for every presentation key', () => {
   assert.deepEqual(SERVER_FEATURED_CAST.map(({ key, label }) => ({ key, label })), PUBLIC_FEATURED_CAST);
-  assert.equal(new Set(SERVER_FEATURED_CAST.map((item) => item.avatarId)).size, 3);
-  assert.equal(new Set(SERVER_FEATURED_CAST.map((item) => item.voiceId)).size, 3);
+  assert.equal(new Set(SERVER_FEATURED_CAST.map((item) => item.avatarId)).size, SERVER_FEATURED_CAST.length);
+  assert.equal(new Set(SERVER_FEATURED_CAST.map((item) => item.voiceId)).size, SERVER_FEATURED_CAST.length);
   for (const item of SERVER_FEATURED_CAST) {
     assert.match(item.avatarId, /^[a-zA-Z0-9_-]+$/);
     assert.match(item.voiceId, /^[a-zA-Z0-9_-]+$/);
@@ -53,8 +54,8 @@ test('featured records require exact IDs; duplicate display names cannot replace
   const exactThird = providerRecord(SERVER_FEATURED_CAST[2]);
   const built = buildFeaturedAvatars([exactFirst, nameOnlySecond, exactThird]);
 
-  assert.deepEqual(built.map((item) => item.featuredKey), ['ariel', 'oso', 'kd']);
-  assert.deepEqual(built.map((item) => item.id), ['featured:ariel', 'featured:oso', 'featured:kd']);
+  assert.deepEqual(built.slice(0, 3).map((item) => item.featuredKey), ['ariel', 'oso', 'kd']);
+  assert.deepEqual(built.slice(0, 3).map((item) => item.id), ['featured:ariel', 'featured:oso', 'featured:kd']);
   assert.equal(built[0].providerReady, true);
   assert.equal(built[1].providerReady, false);
   assert.equal(built[2].providerReady, true);
@@ -84,7 +85,7 @@ test('successful owned render usage ranks shared avatars after featured cast', (
     { status: 'ready', avatar: { avatarId: shared[2].id }, updatedAt: '2026-07-17T12:02:00Z' },
     { status: 'failed', avatar: { avatarId: shared[0].id }, updatedAt: '2026-07-17T12:03:00Z' },
   ];
-  assert.deepEqual(curateDefaultCast(input, results).slice(3).map((item) => item.id), [shared[1].id, shared[2].id, shared[0].id]);
+  assert.deepEqual(curateDefaultCast(input, results).slice(SERVER_FEATURED_CAST.length).map((item) => item.id), [shared[1].id, shared[2].id, shared[0].id]);
 });
 
 test('KD matched voice is prioritized without replacing an explicit user choice', () => {

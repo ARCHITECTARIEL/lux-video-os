@@ -128,8 +128,16 @@
 .lp-video-frame video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #09113e; }
 .lp-video-play {
   position: absolute; inset: 0; margin: auto; width: 64px; height: 64px; border-radius: 50%;
-  border: none; background: rgba(255, 255, 255, .92); color: var(--primary-strong);
+  border: 1px solid rgba(255, 255, 255, 0.4); background: rgba(255, 255, 255, .92); color: var(--primary-strong);
   display: flex; align-items: center; justify-content: center; cursor: pointer;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease, box-shadow 0.2s ease;
+  backdrop-filter: blur(8px);
+}
+.lp-video-play:hover {
+  transform: scale(1.08);
+  background: #ffffff;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
 }
 .lp-video-play svg { margin-left: 3px; }
 .lp-video-placeholder-note { position: absolute; left: 0; right: 0; bottom: 12px; margin: 0; text-align: center; color: #c4cbdc; font-size: 11px; }
