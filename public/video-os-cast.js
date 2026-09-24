@@ -2,7 +2,31 @@ export const FEATURED_CAST = Object.freeze([
   Object.freeze({ key: 'ariel', label: 'Ariel' }),
   Object.freeze({ key: 'oso', label: 'OSO' }),
   Object.freeze({ key: 'kd', label: 'Kristian' }),
+  // Multicultural Men
+  Object.freeze({ key: 'marcus', label: 'Marcus' }),
+  Object.freeze({ key: 'mateo', label: 'Mateo' }),
+  Object.freeze({ key: 'kenji', label: 'Kenji' }),
+  Object.freeze({ key: 'liam', label: 'Liam' }),
+  // Multicultural Women
+  Object.freeze({ key: 'maya', label: 'Maya' }),
+  Object.freeze({ key: 'sofia', label: 'Sofia' }),
+  Object.freeze({ key: 'hana', label: 'Hana' }),
+  Object.freeze({ key: 'elena', label: 'Elena' }),
 ]);
+
+export const FEATURED_CAST_METADATA = Object.freeze({
+  ariel: Object.freeze({ gender: 'male', ethnicity: 'hispanic', role: 'Executive Anchor' }),
+  oso: Object.freeze({ gender: 'male', ethnicity: 'multicultural', role: 'Brand Ambassador' }),
+  kd: Object.freeze({ gender: 'male', ethnicity: 'caucasian', role: 'Executive Anchor' }),
+  marcus: Object.freeze({ gender: 'male', ethnicity: 'black', role: 'Tech & Enterprise' }),
+  mateo: Object.freeze({ gender: 'male', ethnicity: 'hispanic', role: 'Sales & Growth' }),
+  kenji: Object.freeze({ gender: 'male', ethnicity: 'asian', role: 'Product & Strategy' }),
+  liam: Object.freeze({ gender: 'male', ethnicity: 'caucasian', role: 'Creative Director' }),
+  maya: Object.freeze({ gender: 'female', ethnicity: 'black', role: 'Executive Briefing' }),
+  sofia: Object.freeze({ gender: 'female', ethnicity: 'hispanic', role: 'Brand & Outreach' }),
+  hana: Object.freeze({ gender: 'female', ethnicity: 'asian', role: 'FinTech & Operations' }),
+  elena: Object.freeze({ gender: 'female', ethnicity: 'caucasian', role: 'Client Success' }),
+});
 
 const featuredKeys = new Set(FEATURED_CAST.map((item) => item.key));
 const featuredOrder = new Map(FEATURED_CAST.map((item, index) => [item.key, index]));

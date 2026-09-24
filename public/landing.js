@@ -185,9 +185,17 @@ function initVideoPlayers() {
     const video = document.getElementById(playButton.dataset.play);
     if (!video) continue;
     playButton.addEventListener('click', () => {
-      if (!video.currentSrc) return; // no real source uploaded yet -- the placeholder note already explains this
-      video.play();
+      video.play().catch(() => {});
       playButton.hidden = true;
+    });
+    video.addEventListener('play', () => {
+      playButton.hidden = true;
+    });
+    video.addEventListener('pause', () => {
+      playButton.hidden = false;
+    });
+    video.addEventListener('ended', () => {
+      playButton.hidden = false;
     });
   }
   // The hero's "Watch a real example" link both scrolls to and starts the

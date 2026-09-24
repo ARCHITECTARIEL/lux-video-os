@@ -8,10 +8,12 @@ import { notifyRenderReady } from '../lib/video-os-render-notify.js';
 import { pollHeygen, submitHeygen } from '../services/heygen.js';
 import { finishMedia } from '../services/media-finisher.js';
 import { finishMediaWithHyperframes } from '../services/hyperframes-finisher.js';
+import { finishMediaWithRemotion } from '../services/remotion-finisher.js';
 
 export function finishingEngine(env = process.env) {
   const requested = String(env.VIDEO_OS_COMPOSITION_ENGINE || 'ffmpeg').trim().toLowerCase();
   if (requested === 'ffmpeg' || requested === '') return 'ffmpeg';
+  if (requested === 'remotion') return 'remotion';
   if (requested !== 'hyperframes') throw Object.assign(new Error(`Unsupported composition engine: ${requested}`), { failureCategory: 'CONFIG_MISSING' });
   if (String(env.VIDEO_OS_HYPERFRAMES_ENABLED || '').toLowerCase() !== 'true') throw Object.assign(new Error('HyperFrames was requested but disabled.'), { failureCategory: 'CONFIG_MISSING' });
   return 'hyperframes';
@@ -77,6 +79,8 @@ export async function finishProviderMedia(jobId, sourceUrl) {
   else if (job.status !== 'finishing') throw Object.assign(new FatalError(`Finishing cannot resume from ${job.status}.`), { failureCategory: 'RECONCILIATION' });
   const artifact = finishingEngine() === 'hyperframes'
     ? await finishMediaWithHyperframes(job, sourceUrl)
+    : finishingEngine() === 'remotion'
+    ? await finishMediaWithRemotion(job, sourceUrl)
     : await finishMedia(job, sourceUrl);
   const finalized = await finalizeReadyJob(jobId, artifact);
   await notifyRenderReady(job, finalized);
