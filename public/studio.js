@@ -1207,26 +1207,38 @@ function renderPremiumCast() {
   if (state.premium.avatar?.source === 'heygen' && !avatars.some((item) => item.id === state.premium.avatar.id)) avatars = [state.premium.avatar, ...avatars].slice(0, 20);
   const avatarQuery = $('#avatar-search').value.trim().toLowerCase();
   const filteredAvatars = avatarQuery ? avatars.filter((item) => (String(item.name || '') + ' ' + String(item.id || '')).toLowerCase().includes(avatarQuery)) : avatars;
-  const featured = FEATURED_CAST.map((entry) => filteredAvatars.find((item) => item.featuredKey === entry.key)).filter(Boolean);
-  const shared = filteredAvatars.filter((item) => !featured.some((candidate) => candidate.id === item.id));
+
+  const STUDIO_MAX_CHOICES = 5;
+  const topFeaturedKeys = FEATURED_CAST.slice(0, STUDIO_MAX_CHOICES).map((item) => item.key);
+  const allowedKeys = new Set(topFeaturedKeys);
+
+  // Exactly 5 curated featured presenters; unapproved HeyGen characters are purged
+  const featured = topFeaturedKeys
+    .map((key) => filteredAvatars.find((item) => item.featuredKey === key))
+    .filter(Boolean);
+
   $('#featured-cast-list').replaceChildren(...featured.map((item) => {
     const card = premiumOption(item, 'avatar');
     card.dataset.featuredKey = item.featuredKey;
     return card;
   }));
-  $('#avatar-list').replaceChildren(...(shared.length ? shared.map((item) => premiumOption(item, 'avatar')) : (featured.length ? [] : [node('p', 'inline-empty', avatarQuery ? 'No presenters match this search.' : 'No Premium presenters are available.')])));
-  $('#avatar-count').textContent = filteredAvatars.length + ' curated presenter' + (filteredAvatars.length === 1 ? '' : 's');
+  // Purge any raw HeyGen public characters: only show message if search yields no results
+  $('#avatar-list').replaceChildren(...(featured.length ? [] : [node('p', 'inline-empty', avatarQuery ? 'No presenters match this search.' : 'No Premium presenters are available.')]));
+  $('#avatar-count').textContent = featured.length + ' curated presenter' + (featured.length === 1 ? '' : 's');
   $('#avatar-more').hidden = true;
 
-  let voices = prioritizeVoices(state.libraries.voice, state.premium.avatar);
-  if (state.premium.voice) voices = [state.premium.voice, ...voices.filter((item) => item.id !== state.premium.voice.id)];
+  // Exactly 5 curated matched voices corresponding to the top 5 presenters
+  let voices = prioritizeVoices(state.libraries.voice, state.premium.avatar)
+    .filter((item) => item.featuredKey && allowedKeys.has(item.featuredKey));
+  if (state.premium.voice && !voices.some((item) => item.id === state.premium.voice.id)) {
+    voices = [state.premium.voice, ...voices];
+  }
   const voiceQuery = $('#voice-search').value.trim().toLowerCase();
   const filteredVoices = voiceQuery ? voices.filter((item) => (String(item.name || '') + ' ' + String(item.id || '')).toLowerCase().includes(voiceQuery)) : voices;
-  const visibleVoices = filteredVoices.slice(0, state.visible.voice);
+  const visibleVoices = filteredVoices.slice(0, STUDIO_MAX_CHOICES);
   $('#voice-list').replaceChildren(...(visibleVoices.length ? visibleVoices.map((item) => premiumOption(item, 'voice')) : [node('p', 'inline-empty', voiceQuery ? 'No voices match this search.' : 'No Premium voices are available.') ]));
-  $('#voice-count').textContent = filteredVoices.length + ' available voice' + (filteredVoices.length === 1 ? '' : 's');
-  $('#voice-more').hidden = visibleVoices.length >= filteredVoices.length;
-  $('#voice-more').textContent = 'Show ' + Math.min(20, filteredVoices.length - visibleVoices.length) + ' more voices';
+  $('#voice-count').textContent = visibleVoices.length + ' available voice' + (visibleVoices.length === 1 ? '' : 's');
+  $('#voice-more').hidden = true;
 }
 
 function premiumInputsValid({ focus = false, showErrors = focus } = {}) {

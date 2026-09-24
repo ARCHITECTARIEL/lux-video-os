@@ -185,10 +185,17 @@ function initVideoPlayers() {
     const video = document.getElementById(playButton.dataset.play);
     if (!video) continue;
     playButton.addEventListener('click', () => {
+      // Pause all other videos before starting this one
+      for (const other of document.querySelectorAll('video')) {
+        if (other !== video && !other.paused) other.pause();
+      }
       video.play().catch(() => {});
       playButton.hidden = true;
     });
     video.addEventListener('play', () => {
+      for (const other of document.querySelectorAll('video')) {
+        if (other !== video && !other.paused) other.pause();
+      }
       playButton.hidden = true;
     });
     video.addEventListener('pause', () => {

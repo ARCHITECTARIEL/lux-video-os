@@ -1,3 +1,13 @@
+> [!IMPORTANT]
+> **COMPREHENSIVE DEVELOPER HANDOFF PACKET**: A complete, deep-dive architectural atlas covering every page, every button, every effect, every function, and all sustainability/anti-brittleness audits is now available at [`docs/DEVELOPER_HANDOFF.md`](docs/DEVELOPER_HANDOFF.md).
+> 
+> **Recent Sprint Achievements (2026-09-24)**:
+> 1. **Welcome Page Video Playback**: Fixed walkthrough video source, wired all 8 video frames to real HD MP4 showcase assets in `public/assets/showcase/`, and added mutual-audio pause enforcement.
+> 2. **Studio Presenter & Voice Curation**: Purged unapproved HeyGen characters from the presenter list; strictly capped Studio to the top 5 curated presenters (Ariel, OSO, Kristian, Marcus, Maya) and their 5 matched voices.
+> 3. **Google Sign-In Web Crypto Compatibility**: Fixed `crypto.randomBytes` failure for edge/serverless auth.
+> 4. **RunPod GPU Endpoint Audit**: Inspected serverless endpoint `glcefbevsyxu78` for live Standard-tier deployment.
+> 5. **Test Invariants Maintained**: 295/295 unit tests and 4/4 Vitest tests passing cleanly.
+
 # LUX Video OS — Developer Handoff (updated 2026-09-23)
 
 Read this first. The root `README.md` is stale (describes an old Python-based version of this app) — ignore it. This document is the real, current source of truth. It's organized by *topic*, not by session — if you want the blow-by-blow history of how this codebase got here, see "Project history" near the bottom; everything above that is simply "what's true right now."
