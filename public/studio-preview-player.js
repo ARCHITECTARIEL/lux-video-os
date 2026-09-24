@@ -14,7 +14,7 @@ import {
   getLowerThirdAnimation,
   computeCaptionSegments,
   estimateScriptDuration,
-} from '../remotion/preview-composition.js';
+} from './remotion/preview-composition.js';
 
 const $ = (selector, root = document) => root?.querySelector(selector);
 const $$ = (selector, root = document) => [...(root?.querySelectorAll(selector) || [])];
