@@ -1,8 +1,6 @@
-import crypto from 'node:crypto';
 import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { database } from './client.js';
-import { registerTesterAccountId, revokeTesterAccountId } from '../lib/video-os-security.js';
-import { accountIdForEmail } from '../lib/video-os-account.js';
+import { registerTesterAccountId, revokeTesterAccountId } from '../lib/video-os-testers.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
 import { authSessions, creditAccounts, creditTransactions, entitlements, identityConsents, jobEvents, mediaAssets, projects, rateLimits, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
 
@@ -969,7 +967,8 @@ export async function consumeRateLimit({ accountId, key, limit, windowMs }) {
 export async function registerAdminTester({ email, name, credits = 5000, note = 'Registered via Admin Console' }) {
   if (!email || !String(email).includes('@')) throw Object.assign(new Error('Valid email address is required.'), { statusCode: 400 });
   const normalizedEmail = String(email).trim().toLowerCase();
-  const accountId = accountIdForEmail(normalizedEmail);
+  const { createHash } = await import('node:crypto');
+  const accountId = 'acct-' + createHash('sha256').update(normalizedEmail).digest('hex').slice(0, 16);
   const initialCredits = Math.max(100, Number(credits) || 5000);
   registerTesterAccountId(accountId);
 
