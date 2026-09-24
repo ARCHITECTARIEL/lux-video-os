@@ -1214,7 +1214,7 @@ function renderPremiumCast() {
     card.dataset.featuredKey = item.featuredKey;
     return card;
   }));
-  $('#avatar-list').replaceChildren(...(shared.length ? shared.map((item) => premiumOption(item, 'avatar')) : [node('p', 'inline-empty', avatarQuery ? 'No presenters match this search.' : 'No Premium presenters are available.') ]));
+  $('#avatar-list').replaceChildren(...(shared.length ? shared.map((item) => premiumOption(item, 'avatar')) : (featured.length ? [] : [node('p', 'inline-empty', avatarQuery ? 'No presenters match this search.' : 'No Premium presenters are available.')])));
   $('#avatar-count').textContent = filteredAvatars.length + ' curated presenter' + (filteredAvatars.length === 1 ? '' : 's');
   $('#avatar-more').hidden = true;
 
