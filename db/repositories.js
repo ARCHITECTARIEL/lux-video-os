@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { database } from './client.js';
 import { registerTesterAccountId, revokeTesterAccountId } from '../lib/video-os-testers.js';
@@ -81,14 +82,23 @@ export async function updateAuthenticatedAccount({ accountId, email, name, role 
 // the column's not-null/unique constraint.
 export async function recordSignIn(accountId, maxAgeSeconds = 60 * 60 * 24 * 30) {
   'use step';
-  const now = new Date();
-  await database().insert(authSessions).values({
-    accountId,
-    sessionHash: crypto.randomBytes(24).toString('hex'),
-    issuedAt: now,
-    expiresAt: new Date(now.getTime() + maxAgeSeconds * 1000),
-    lastSeenAt: now,
-  }).catch(() => {}); // best-effort analytics; a failure here must never block sign-in itself
+  try {
+    const now = new Date();
+    const sessionHash = (typeof crypto?.randomBytes === 'function')
+      ? crypto.randomBytes(24).toString('hex')
+      : (globalThis.crypto?.getRandomValues)
+        ? Buffer.from(globalThis.crypto.getRandomValues(new Uint8Array(24))).toString('hex')
+        : (crypto?.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Date.now().toString(36));
+    await database().insert(authSessions).values({
+      accountId,
+      sessionHash,
+      issuedAt: now,
+      expiresAt: new Date(now.getTime() + maxAgeSeconds * 1000),
+      lastSeenAt: now,
+    });
+  } catch {
+    // best-effort analytics; a failure here must never block sign-in itself
+  }
 }
 
 export async function getAccount(accountId, executor = database()) {

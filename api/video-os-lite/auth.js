@@ -43,7 +43,13 @@ function timingSafeMatch(input, expected) {
   const targetPadded = Buffer.alloc(MAX_CREDENTIAL_BYTES);
   valueBuffer.copy(valuePadded, 0, 0, MAX_CREDENTIAL_BYTES);
   targetBuffer.copy(targetPadded, 0, 0, MAX_CREDENTIAL_BYTES);
-  const contentsMatch = crypto.timingSafeEqual(valuePadded, targetPadded);
+  const contentsMatch = (typeof crypto?.timingSafeEqual === 'function')
+    ? crypto.timingSafeEqual(valuePadded, targetPadded)
+    : (() => {
+        let mismatch = 0;
+        for (let i = 0; i < MAX_CREDENTIAL_BYTES; i++) mismatch |= valuePadded[i] ^ targetPadded[i];
+        return mismatch === 0;
+      })();
   return contentsMatch
     && valueBuffer.length === targetBuffer.length
     && valueBuffer.length <= MAX_CREDENTIAL_BYTES
@@ -213,7 +219,11 @@ export default async function handler(req, res) {
     if (action === 'google-login') {
       if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'Use GET to sign in with Google.' });
       if (!googleOAuthConfigured()) throw Object.assign(new Error('Google sign-in is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.'), { statusCode: 501 });
-      const state = crypto.randomBytes(24).toString('base64url');
+      const state = (typeof crypto?.randomBytes === 'function')
+        ? crypto.randomBytes(24).toString('base64url')
+        : (globalThis.crypto?.getRandomValues)
+          ? Buffer.from(globalThis.crypto.getRandomValues(new Uint8Array(24))).toString('base64url')
+          : Buffer.from(Array.from({ length: 24 }, () => Math.floor(Math.random() * 256))).toString('base64url');
       const redirectUri = `${publicOrigin(req)}/api/video-os-lite/google-callback`;
       res.setHeader('Set-Cookie', oauthStateCookie(state));
       res.statusCode = 302;
