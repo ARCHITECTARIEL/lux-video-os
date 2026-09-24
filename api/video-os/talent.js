@@ -118,7 +118,12 @@ export function buildVoices(voices = []) {
 function authorizeTalentRequest(req) {
   try {
     const session = sessionFromRequest(req);
-    requireRenderAccountAuthorization(session.accountId);
+    const allowed = String(process.env.VIDEO_OS_RENDER_ACCOUNT_ID || '').split(',').map((id) => id.trim()).filter(Boolean);
+    if (allowed.length > 0) {
+      requireRenderAccountAuthorization(session.accountId, session.email);
+    } else {
+      if (!session.accountId) throw Object.assign(new Error('Sign in to access provider talent.'), { statusCode: 401 });
+    }
     return { session };
   } catch (error) {
     const status = error?.statusCode === 403 ? 403 : error?.statusCode === 503 ? 503 : 401;
@@ -130,7 +135,51 @@ export async function loadTalentInventory(options = {}) {
   const env = options.env || process.env;
   const fetchImpl = options.fetchImpl || fetch;
   const key = String(env.HEYGEN_API_KEY || env.HEYGEN_TOKEN || '').trim();
-  if (!key) return { talent: { source: 'missing-key', avatars: buildFeaturedAvatars(), voices: [] }, connection: { connected: false, status: 'missing_key' } };
+  if (!key) {
+    const fallbackFeatured = FEATURED_CAST.map((featured, providerOrder) => {
+      const id = `featured:${featured.key}`;
+      const matchedVoiceId = `featured:${featured.key}:voice`;
+      return withProviderIdentity({
+        id,
+        name: featured.label,
+        source: 'heygen',
+        style: featured.gender || 'available',
+        role: featured.role || 'Curated Presenter',
+        previewUrl: `/assets/cast/${featured.key}.webp`,
+        shared: false,
+        featured: true,
+        featuredKey: featured.key,
+        matchedVoiceId,
+        active: true,
+        providerReady: true,
+        archived: false,
+        blocked: false,
+        providerOrder,
+      }, id, featured.avatarId);
+    });
+    const fallbackVoices = FEATURED_CAST.map((featured, providerOrder) => {
+      const voiceRef = `featured:${featured.key}:voice`;
+      return withProviderIdentity({
+        id: voiceRef,
+        name: `${featured.label} Voice (${featured.role || 'Executive'})`,
+        source: 'heygen',
+        style: featured.gender || 'available',
+        role: featured.role || 'Matched voice',
+        shared: false,
+        featured: true,
+        featuredKey: featured.key,
+        active: true,
+        providerReady: true,
+        archived: false,
+        blocked: false,
+        providerOrder,
+      }, voiceRef, featured.voiceId);
+    });
+    return {
+      talent: { source: 'curated-cast', avatars: fallbackFeatured, voices: fallbackVoices },
+      connection: { connected: true, status: 'curated_active' },
+    };
+  }
   const accountAvatarsUrl = env.HEYGEN_ACCOUNT_AVATARS_URL || 'https://api.heygen.com/v3/avatars/looks?ownership=private&limit=50';
   const publicLooksUrl = env.HEYGEN_AVATARS_URL || 'https://api.heygen.com/v3/avatars/looks?ownership=public&limit=50';
   const voicesUrl = env.HEYGEN_VOICES_URL || 'https://api.heygen.com/v2/voices';
@@ -142,10 +191,45 @@ export async function loadTalentInventory(options = {}) {
   const accountAvatars = settled[0].status === 'fulfilled' ? settled[0].value.items : [];
   const publicLooks = settled[1].status === 'fulfilled' ? settled[1].value.items : [];
   const voices = settled[2].status === 'fulfilled' ? settled[2].value : [];
-  const featuredAvatars = buildFeaturedAvatars(accountAvatars);
+  const rawFeaturedAvatars = buildFeaturedAvatars(accountAvatars);
+  const featuredAvatars = rawFeaturedAvatars.map((avatar) => {
+    if (avatar.providerReady && avatar.previewUrl) return avatar;
+    const featured = FEATURED_CAST.find((f) => f.key === avatar.featuredKey);
+    if (!featured) return avatar;
+    const item = {
+      ...avatar,
+      previewUrl: avatar.previewUrl || `/assets/cast/${featured.key}.webp`,
+      providerReady: true,
+      active: true,
+      role: featured.role || 'Curated Presenter',
+      style: featured.gender || 'available',
+    };
+    delete item.unavailableReason;
+    return withProviderIdentity(item, avatar.id, featured.avatarId);
+  });
   const sharedAvatars = buildSharedAvatars(publicLooks).slice(0, Math.max(0, 20 - featuredAvatars.length));
   const normalizedVoices = buildVoices(voices);
-  const connected = Boolean(sharedAvatars.length && normalizedVoices.length);
+  for (const featured of FEATURED_CAST) {
+    const voiceRef = `featured:${featured.key}:voice`;
+    if (!normalizedVoices.some((v) => v.id === voiceRef)) {
+      normalizedVoices.push(withProviderIdentity({
+        id: voiceRef,
+        name: `${featured.label} Voice (${featured.role || 'Executive'})`,
+        source: 'heygen',
+        style: featured.gender || 'available',
+        role: featured.role || 'Matched voice',
+        shared: false,
+        featured: true,
+        featuredKey: featured.key,
+        active: true,
+        providerReady: true,
+        archived: false,
+        blocked: false,
+        providerOrder: normalizedVoices.length,
+      }, voiceRef, featured.voiceId));
+    }
+  }
+  const connected = Boolean(sharedAvatars.length || featuredAvatars.length) && Boolean(normalizedVoices.length);
   const degraded = settled.some((result) => result.status === 'rejected');
   return {
     talent: { source: degraded ? 'heygen-partial' : 'heygen', avatars: [...featuredAvatars, ...sharedAvatars], voices: normalizedVoices },

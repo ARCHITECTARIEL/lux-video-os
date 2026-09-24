@@ -10,10 +10,12 @@ import {
   revokeTesterAccountId,
 } from '../lib/video-os-security.js';
 
-test('isTesterEmailDomain: automatically identifies @luxmarketingcompany.com as tester domain', () => {
+test('isTesterEmailDomain: automatically identifies @luxmarketingcompany.com and designated tester emails', () => {
   assert.equal(isTesterEmailDomain('ariel@luxmarketingcompany.com'), true);
   assert.equal(isTesterEmailDomain('team.member@luxmarketingcompany.com'), true);
   assert.equal(isTesterEmailDomain('ARIEL@LUXMARKETINGCOMPANY.COM'), true);
+  assert.equal(isTesterEmailDomain('arielsmailbox@gmail.com'), true);
+  assert.equal(isTesterEmailDomain('ARIELSMAILBOX@GMAIL.COM'), true);
   assert.equal(isTesterEmailDomain('someone@othercompany.com'), false);
   assert.equal(isTesterEmailDomain(''), false);
 });
@@ -44,4 +46,9 @@ test('tester account registry: in-memory whitelist grants rendering access witho
 
   revokeTesterAccountId(externalId);
   assert.equal(isTesterAccountId(externalId), false);
+});
+
+test('requireRenderAccountAuthorization: authorizes tester email even without in-memory registry or env var', () => {
+  assert.equal(requireRenderAccountAuthorization('acct-fresh-lambda', 'arielsmailbox@gmail.com'), true);
+  assert.equal(requireRenderAccountAuthorization('acct-fresh-lambda', 'ariel@luxmarketingcompany.com'), true);
 });
