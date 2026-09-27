@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "engine": "LatentSync",
+  "sourceRevision": "a229c3948406bc2cf6eaf4873e662e70c6a04746",
+  "profile": "1.6-stage2_512-mediapipe-face-detector",
+  "requiredArtifacts": [
+    "latentsync_unet.pt",
+    "whisper/tiny.pt",
+    "stabilityai/sd-vae-ft-mse",
+    "face_landmarker.task"
+  ],
+  "artifacts": {
+    "latentsync_unet.pt": {
+      "purpose": "LatentSync 1.6 U-Net checkpoint -- the actual lip-sync diffusion model",
+      "sourceUrl": "https://huggingface.co/ByteDance/LatentSync-1.6/resolve/main/latentsync_unet.pt",
+      "bytes": null,
+      "sha256": null,
+      "sha256Method": "NOT_YET_DOWNLOADED",
+      "verifiedAt": null,
+      "licenseRecord": "RA-002-latentsync-weights-openrail-license.md",
+      "note": "Too large to download in this environment. ByteDance's own HuggingFace discussion (huggingface.co/ByteDance/LatentSync/discussions/3) states this checkpoint is licensed OpenRAIL++, NOT Apache-2.0 like the repo code -- do not treat it as commercially cleared until that license's exact terms are obtained and archived at the licenseRecord path above, per the open item already flagged to the user. Populate bytes/sha256/verifiedAt for real after the first actual download, the same way the SadTalker reference manifest's entries were verified."
+    },
+    "whisper/tiny.pt": {
+      "purpose": "Whisper tiny checkpoint (cross_attention_dim=384 config) -- audio-to-embedding encoder",
+      "sourceUrl": "https://huggingface.co/ByteDance/LatentSync-1.6/resolve/main/whisper/tiny.pt",
+      "bytes": null,
+      "sha256": null,
+      "sha256Method": "NOT_YET_DOWNLOADED",
+      "verifiedAt": null,
+      "note": "MIT-licensed upstream (openai/whisper) -- no commercial-use concern. Small enough (~75MB) to download and hash in a follow-up pass; not done in this task to keep scope to what was explicitly asked."
+    },
+    "stabilityai/sd-vae-ft-mse": {
+      "purpose": "Stability AI VAE used by the diffusion pipeline to decode latents to pixels",
+      "sourceUrl": "https://huggingface.co/stabilityai/sd-vae-ft-mse",
+      "bytes": null,
+      "sha256": null,
+      "sha256Method": "NOT_APPLICABLE_HF_SNAPSHOT",
+      "verifiedAt": null,
+      "licenseRecord": "RA-003-stability-vae-license.md",
+      "note": "Fetched via diffusers.AutoencoderKL.from_pretrained(\"stabilityai/sd-vae-ft-mse\") in the upstream inference script -- a multi-file HF snapshot, not a single checksummable artifact the same way as the .pt files above. Pin an exact revision/commit hash (not just \"main\") when this is actually provisioned onto the model volume, and set HF_HUB_OFFLINE=1 (already in this Dockerfile) so a job never depends on live Hub access. Exact license terms for this specific revision still need independent confirmation -- flagged, not yet done, per the open item already raised with the user."
+    },
+    "face_landmarker.task": {
+      "purpose": "MediaPipe Face Landmarker task bundle -- replaces InsightFace's buffalo_l pack for face detection/landmarks, used by face_detector_mediapipe.py",
+      "sourceUrl": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      "bytes": 3758596,
+      "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+      "sha256Method": "SELF_COMPUTED",
+      "verifiedAt": "2026-09-27",
+      "note": "Apache-2.0 (Google MediaPipe Solutions model asset). This is the one artifact in this manifest that was actually downloaded and hashed for real as part of this task, and is also what tools/verify_face_detector.py used for its visual verification run."
+    }
+  }
+}

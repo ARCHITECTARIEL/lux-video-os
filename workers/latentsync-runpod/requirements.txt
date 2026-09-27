@@ -1,0 +1,42 @@
+# Derived from bytedance/LatentSync's own requirements.txt (commit a229c394,
+# see source/PROVENANCE.md), with these deliberate deviations:
+#
+#  - torch / torchvision / the --extra-index-url line are DROPPED: the
+#    Dockerfile's base image (pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime)
+#    already ships matching cu121 builds; reinstalling here risks pulling a
+#    conflicting wheel.
+#  - insightface / onnxruntime-gpu are DROPPED: this worker replaces
+#    LatentSync's InsightFace-based face detector with a MediaPipe-based one
+#    (see face_detector_mediapipe.py) specifically to avoid InsightFace's
+#    non-commercial-only model license. Nothing in this image should ever
+#    import insightface.
+#  - gradio is DROPPED: this worker has no UI, only a RunPod queue handler.
+#  - runpod is ADDED: the actual serverless queue client this image runs.
+#  - face-alignment (1adrianb/face-alignment) is DROPPED: confirmed via
+#    `grep -rl face_alignment` across the whole upstream repo (latentsync/
+#    and scripts/) that NOTHING imports it -- it's only a listed dependency
+#    of files this worker never vendors (training/eval scripts). If a future
+#    vendor refresh adds a file that imports it, re-add it here AND check
+#    its own license (and any pretrained weights it downloads) first --
+#    don't assume it's clean just because it wasn't checked this time.
+diffusers==0.32.2
+transformers==4.48.0
+decord==0.6.0
+accelerate==0.26.1
+einops==0.7.0
+omegaconf==2.3.0
+opencv-python==4.9.0.80
+mediapipe==0.10.11
+python_speech_features==0.6
+librosa==0.10.1
+scenedetect==0.6.1
+ffmpeg-python==0.2.0
+imageio==2.31.1
+imageio-ffmpeg==0.5.1
+lpips==0.1.4
+face-alignment==1.4.1
+huggingface-hub==0.30.2
+numpy==1.26.4
+kornia==0.8.0
+DeepCache==0.1.1
+runpod==1.10.1
