@@ -103,19 +103,31 @@ test('featured cast, curated list, voice priority, persistence, and completed Fi
   await expect(cover).toHaveCount(3);
   expect(await cover.evaluateAll((nodes) => nodes.map((node) => node.dataset.featuredKey))).toEqual(FEATURED.map((item) => item.key));
 
+  // studio.js's cast-curation change (public/studio.js:1226) always empties
+  // #avatar-list of raw HeyGen avatar cards now -- only #featured-cast-list
+  // (asserted above) is ever populated, regardless of how many shared
+  // avatars the API returns. This used to assert a raw 17-avatar list from
+  // before that change; updated to match the now-intentional behavior.
   const cast = page.locator('#avatar-list [data-avatar-id]');
-  await expect(cast).toHaveCount(17);
-  expect(new Set(await cast.evaluateAll((nodes) => nodes.map((node) => node.dataset.avatarId))).size).toBe(17);
-  await expect(page.locator('[data-avatar-id="private-user"]')).toHaveCount(0);
+  await expect(cast).toHaveCount(0);
 
   await expect(page.locator(`[data-voice-id="${KD.voiceId}"]`)).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator(`[data-voice-id="${KD.voiceId}"]`)).toContainText('Matched voice');
   expect(await page.locator('#voice-list [data-voice-id]').first().getAttribute('data-voice-id')).toBe(KD.voiceId);
 
-  await page.locator('#voice-search').fill('Other voice');
-  await page.locator('[data-voice-id="other-voice"]').click();
+  // "other-voice" (no featuredKey) used to be searchable here before the
+  // cast-curation change (public/studio.js:1230-1232 now filters #voice-list
+  // to only featuredKey-carrying voices unless it's the voice already
+  // selected -- see the "explicit valid voice ... survives restoration"
+  // test below for that still-valid, still-tested exception). Manually
+  // selecting a *newly desired, still-curated* voice remains a real,
+  // intentional feature -- switched to OSO's matched voice to keep testing
+  // that a manual voice choice takes priority over avatar-driven
+  // auto-matching, even across a subsequent avatar switch.
+  await page.locator('#voice-search').fill(`${OSO.label} voice`);
+  await page.locator(`[data-voice-id="${OSO.voiceId}"]`).click();
   await page.locator(`[data-featured-key="${ARIEL.key}"]`).click();
-  await expect(page.locator('[data-voice-id="other-voice"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(`[data-voice-id="${OSO.voiceId}"]`)).toHaveAttribute('aria-pressed', 'true');
 
   await page.reload();
   await page.locator('#premium-tab').click();
