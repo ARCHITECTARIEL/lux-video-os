@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { database } from './client.js';
 import { registerTesterAccountId, revokeTesterAccountId } from '../lib/video-os-testers.js';
@@ -84,11 +83,15 @@ export async function recordSignIn(accountId, maxAgeSeconds = 60 * 60 * 24 * 30)
   'use step';
   try {
     const now = new Date();
-    const sessionHash = (typeof crypto?.randomBytes === 'function')
-      ? crypto.randomBytes(24).toString('hex')
-      : (globalThis.crypto?.getRandomValues)
-        ? Buffer.from(globalThis.crypto.getRandomValues(new Uint8Array(24))).toString('hex')
-        : (crypto?.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Date.now().toString(36));
+    // Deliberately never references a statically-imported `node:crypto` binding:
+    // this function runs inside a Vercel `workflow` step, whose bundler bans any
+    // reference to a Node built-in module at build time regardless of a runtime
+    // typeof-guard around it (that guard doesn't help -- the bundler can't see
+    // through it). globalThis.crypto is a runtime property read on the Web
+    // Crypto global, not a module import, so it isn't subject to that ban.
+    const sessionHash = globalThis.crypto?.getRandomValues
+      ? Buffer.from(globalThis.crypto.getRandomValues(new Uint8Array(24))).toString('hex')
+      : (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Date.now().toString(36));
     await database().insert(authSessions).values({
       accountId,
       sessionHash,
