@@ -114,7 +114,16 @@ async function handleStandardRender(req, res, session, body, correlationId) {
     throw Object.assign(new Error('JSON required.'), { statusCode: 400 });
   }
   const audioReference = assertStandardSubmissionShape(body);
-  if (!standardNarrationActivation({ accountId: session.accountId }).ready) throw Object.assign(new Error('Standard narration is not activated.'), { statusCode: 503, code: 'standard_narration_unavailable' });
+  const activation = standardNarrationActivation({ accountId: session.accountId });
+  // This is a defensive re-check at final submission (the primary signal the
+  // customer sees comes earlier, from the readiness GET, which already
+  // propagates the specific reasonCode via db/standard-narration-repository.js's
+  // consentStatus()). Propagate the same specific reasonCode here too, rather
+  // than collapsing it to the generic UNAVAILABLE code -- this only matters
+  // for the rare race where a flag flips mid-flow, but an on-call engineer
+  // reading logs/responses for that race deserves to know which of the four
+  // independent gates actually tripped, not just "something's off."
+  if (!activation.ready) throw Object.assign(new Error('Standard narration is not activated.'), { statusCode: 503, code: activation.reasonCode || 'standard_narration_unavailable' });
   let reservedJob;
   let workflowDispatchAttempted = false;
   let workflowAccepted = false;
