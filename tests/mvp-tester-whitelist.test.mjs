@@ -20,14 +20,30 @@ test('isTesterEmailDomain: automatically identifies @luxmarketingcompany.com and
   assert.equal(isTesterEmailDomain(''), false);
 });
 
-test('containedRenderingEntitlementKeys: grants full Standard, Premium, and Tester entitlements to @luxmarketingcompany.com', () => {
+// This test previously asserted the opposite of what it now asserts --
+// discovered as a real, live bug (not just a coverage gap) during Premium-
+// tier edge-case testing: a pure @luxmarketingcompany.com domain match
+// (any address on that domain, not a specific designated person) was
+// granting full liveRendering (Premium) via containedRenderingEntitlementKeys,
+// directly contradicting the already-established, deliberately-reasoned
+// contract in tests/google-signin-route.test.mjs ("a domain match must
+// never grant liveRendering -- Premium's backend gate only checks
+// accountId, not email, so granting it here would recreate a real gate
+// mismatch"). Confirmed the leak was real via direct reproduction before
+// fixing lib/video-os-security.js + lib/video-os-testers.js. Updated here
+// to match the corrected, intended behavior: a domain match grants
+// standardRendering (its actual purpose -- testing Standard tier) and
+// never liveRendering or backend containment authorization.
+test('containedRenderingEntitlementKeys: a pure @luxmarketingcompany.com domain match grants Standard and Tester only, never liveRendering', () => {
   const accountId = 'acct-lux-tester-1';
   const keys = containedRenderingEntitlementKeys(accountId, 'dev@luxmarketingcompany.com');
-  assert.ok(keys.includes('liveRendering'));
+  assert.ok(!keys.includes('liveRendering'), 'a domain match must never grant liveRendering -- see the reasoning above');
   assert.ok(keys.includes('standardRendering'));
   assert.ok(keys.includes('tester'));
-  assert.equal(isTesterAccountId(accountId), true);
-  assert.equal(requireRenderAccountAuthorization(accountId), true);
+  // A domain-only match does not register the account as a tester ID, and
+  // (unlike the exact-match case) must not authorize Premium containment.
+  assert.equal(isTesterAccountId(accountId), false);
+  assert.throws(() => requireRenderAccountAuthorization(accountId), { statusCode: 503 });
 });
 
 test('tester account registry: in-memory whitelist grants rendering access without environment variables', () => {
@@ -48,7 +64,7 @@ test('tester account registry: in-memory whitelist grants rendering access witho
   assert.equal(isTesterAccountId(externalId), false);
 });
 
-test('requireRenderAccountAuthorization: authorizes tester email even without in-memory registry or env var', () => {
-  assert.equal(requireRenderAccountAuthorization('acct-fresh-lambda', 'arielsmailbox@gmail.com'), true);
-  assert.equal(requireRenderAccountAuthorization('acct-fresh-lambda', 'ariel@luxmarketingcompany.com'), true);
+test('requireRenderAccountAuthorization: an exact designated tester email authorizes even without in-memory registry or env var, but a mere domain match does not', () => {
+  assert.equal(requireRenderAccountAuthorization('acct-fresh-lambda-1', 'arielsmailbox@gmail.com'), true);
+  assert.throws(() => requireRenderAccountAuthorization('acct-fresh-lambda-2', 'ariel@luxmarketingcompany.com'), { statusCode: 503 });
 });
