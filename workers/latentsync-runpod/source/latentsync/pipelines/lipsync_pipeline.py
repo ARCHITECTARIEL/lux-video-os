@@ -254,11 +254,29 @@ class LipsyncPipeline(DiffusionPipeline):
         boxes = []
         affine_matrices = []
         print(f"Affine transforming {len(video_frames)} faces...")
-        for frame in tqdm.tqdm(video_frames):
-            face, box, affine_matrix = self.image_processor.affine_transform(frame)
+        # A single frame with no detectable face (motion blur, a quick head
+        # turn, a hand crossing the mouth) used to abort the entire job --
+        # confirmed for real on GPU hardware: a 242-frame real video failed
+        # outright at frame 127 this way. Faces don't teleport at 25fps, so
+        # falling back to the immediately-preceding frame's detection for a
+        # transient miss is visually safe and matches how video face
+        # trackers commonly handle this. Still fails loudly if the very
+        # first frame has no prior detection to fall back to.
+        last_good = None
+        for index, frame in enumerate(tqdm.tqdm(video_frames)):
+            try:
+                face, box, affine_matrix = self.image_processor.affine_transform(frame)
+            except RuntimeError as error:
+                if last_good is None:
+                    raise RuntimeError(
+                        f"Face not detected on frame {index} and no prior frame to fall back to"
+                    ) from error
+                print(f"Face not detected on frame {index}; reusing the previous frame's detection")
+                face, box, affine_matrix = last_good
             faces.append(face)
             boxes.append(box)
             affine_matrices.append(affine_matrix)
+            last_good = (face, box, affine_matrix)
 
         faces = torch.stack(faces)
         return faces, boxes, affine_matrices

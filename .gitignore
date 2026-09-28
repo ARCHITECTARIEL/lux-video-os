@@ -15,6 +15,7 @@ playwright-report/
 .pytest_cache/
 .vscode/
 .workflow-data/
+.claude/
 
 # Environment, credentials, and certificates
 .env

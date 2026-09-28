@@ -65,6 +65,30 @@ The landmark-index mapping was verified visually, not just by inspection —
 see `workers/latentsync-runpod/tools/verify_face_detector.py` and its
 output under `tools/verify-output/`.
 
+## Modified: `latentsync/pipelines/lipsync_pipeline.py` (`affine_transform_video`)
+
+**Why:** a real GPU verification run (2026-09-28, RTX 4090, RunPod) proved
+the original behavior of this method: a single video frame with no
+detectable face (motion blur, a quick head turn) raises immediately and
+aborts the entire job. Confirmed for real, not theorized -- a 242-frame
+real test video failed outright at frame 127 this way. This is inherited
+from upstream (both the original InsightFace-based detector and the
+MediaPipe-based replacement share this all-or-nothing behavior via
+`ImageProcessor.affine_transform`'s `RuntimeError("Face not detected")`),
+not something introduced by the detector swap -- but it's a real
+production risk: one bad frame anywhere in a customer's self-recorded
+video would currently kill their entire paid render.
+
+**What changed:** `affine_transform_video` now catches that specific
+`RuntimeError` per-frame and falls back to the immediately-preceding
+frame's `(face, box, affine_matrix)` rather than propagating. Faces don't
+teleport between frames at 25fps, so reusing the last known-good detection
+for one transient miss is visually safe -- this is a standard pattern for
+video face trackers. Still fails loudly (no silent fallback) if the very
+first frame has no prior detection to fall back to. Each fallback prints a
+frame-indexed log line, so a customer render that had to lean on this is
+visible and auditable in production logs, not silent.
+
 ## Known un-audited dependency
 
 `latentsync/whisper/whisper/` is itself a vendored fork of OpenAI's Whisper
