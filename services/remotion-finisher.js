@@ -57,6 +57,7 @@ export async function finishMediaWithRemotion(job, sourceUrl, dependencies = {})
 
   const download = dependencies.downloadProviderMedia || downloadProviderMedia;
   const putBlob = dependencies.putPrivateBlob || putPrivateBlob;
+  const runner = dependencies.runFfmpeg || runFfmpeg;
 
   try {
     const sourceBytes = await download(sourceUrl, input);
@@ -66,7 +67,7 @@ export async function finishMediaWithRemotion(job, sourceUrl, dependencies = {})
       presenterSubtitle: 'LUX Video OS'
     });
 
-    await runFfmpeg([
+    await runner([
       '-y', '-i', input,
       '-vf', vf,
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22',
@@ -76,6 +77,9 @@ export async function finishMediaWithRemotion(job, sourceUrl, dependencies = {})
     ]);
 
     const info = await stat(output);
+    // See services/media-finisher.js's finishMedia for why this can't be
+    // skipped: a zero-exit FFmpeg run is not proof of a usable result.
+    if (!info.size) throw Object.assign(new Error('Remotion FFmpeg engine produced an empty output file.'), { failureCategory: 'FINISH_REMOTION' });
     const sha256 = await hashFile(output);
     const pathname = `video-os/finals/${safeName(job.accountId)}/${safeName(job.id)}-${sha256}.mp4`;
 
