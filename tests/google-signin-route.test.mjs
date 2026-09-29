@@ -14,6 +14,7 @@ import authHandler from '../api/video-os-lite/auth.js';
 import { getAccountContext } from '../db/repositories.js';
 import { accountIdForEmail } from '../lib/video-os-account.js';
 import { verifySessionToken } from '../lib/video-os-account.js';
+import { isTesterAccountId } from '../lib/video-os-security.js';
 
 let dbAvailable = true;
 try {
@@ -220,6 +221,66 @@ test(
     const context = await getAccountContext(domainAccountId);
     assert.equal(context.entitlements.standardRendering, true, 'a domain-matched account must get standardRendering');
     assert.equal(context.entitlements.liveRendering, undefined, 'a domain match must never grant liveRendering -- Premium\'s backend gate only checks accountId, not email, so granting it here would recreate a real gate mismatch');
+  },
+);
+
+// Real bug found and fixed during a follow-up beta-test pass (2026-09-28):
+// a pure domain match sets role: 'tester' purely for the extra-starting-
+// credits/admin-visibility distinction (deliberately broad, unrelated to
+// entitlement granting) -- but updateAuthenticatedAccount() used to call
+// registerTesterAccountId() whenever role === 'tester', silently
+// registering the account into the global tester-bypass set on its very
+// FIRST sign-in. isTesterAccountId() is then treated by
+// containedRenderingEntitlementKeys() as equivalent to an exact,
+// individually-designated tester -- full liveRendering. So a SECOND
+// sign-in by the exact same domain-matched account (or an in-flight
+// render-authorization check on the same warm serverless instance) would
+// get full Premium, reopening the leak through a fourth path -- the only
+// one of the four found so far that fires on ordinary customer sign-in,
+// not an explicit admin action.
+test(
+  'a pure domain-matched Google sign-in never registers the account into the global tester bypass set -- and a SECOND sign-in still grants Standard only',
+  { skip: !dbAvailable && 'DATABASE_URL not configured; skipping live integration test' },
+  async (t) => {
+    process.env.GOOGLE_CLIENT_ID = 'client-id';
+    process.env.GOOGLE_CLIENT_SECRET = 'client-secret';
+    process.env.VIDEO_OS_PUBLIC_ORIGIN = ORIGIN;
+    if (!originalEnvironment.VIDEO_OS_SESSION_SECRET) process.env.VIDEO_OS_SESSION_SECRET = 'google-signin-route-test-secret-with-adequate-length';
+    process.env.VIDEO_OS_STANDARD_RENDER_EMAIL_DOMAINS = 'trusted-test-domain.example';
+    const domainEmail = `google-domain-registration-${crypto.randomUUID()}@trusted-test-domain.example`;
+    const domainAccountId = accountIdForEmail(domainEmail);
+    t.after(async () => {
+      await database().delete(users).where(eq(users.id, domainAccountId)).catch(() => {});
+    });
+
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
+      if (String(url).includes('openidconnect.googleapis.com/v1/userinfo')) return new Response(JSON.stringify({ email: domainEmail, email_verified: true, name: 'Domain Test User' }), { status: 200 });
+      throw new Error(`unexpected fetch to ${url}`);
+    };
+
+    assert.equal(isTesterAccountId(domainAccountId), false, 'sanity check: a freshly generated account must not already be tester-registered');
+
+    const firstState = 'domain-registration-state-1';
+    const firstRes = response();
+    await authHandler(request({ url: `/api/video-os-lite/google-callback?code=proof-code&state=${firstState}`, cookie: `vos_oauth_state=${firstState}` }), firstRes);
+    assert.equal(firstRes.statusCode, 302);
+    assert.equal(isTesterAccountId(domainAccountId), false, 'a pure domain match must NEVER register into the global tester bypass set, even though role is set to \'tester\' for credit-amount purposes -- that is a deliberately separate signal');
+    const afterFirst = await getAccountContext(domainAccountId);
+    assert.equal(afterFirst.entitlements.liveRendering, undefined, 'the first sign-in itself must not grant liveRendering');
+    assert.equal(afterFirst.entitlements.standardRendering, true, 'the first sign-in must still grant standardRendering');
+
+    // The real regression: before this fix, the FIRST sign-in's
+    // registration side-effect would poison isTesterAccountId() for every
+    // sign-in after it. Prove the second sign-in is equally correct.
+    const secondState = 'domain-registration-state-2';
+    const secondRes = response();
+    await authHandler(request({ url: `/api/video-os-lite/google-callback?code=proof-code&state=${secondState}`, cookie: `vos_oauth_state=${secondState}` }), secondRes);
+    assert.equal(secondRes.statusCode, 302);
+    assert.equal(isTesterAccountId(domainAccountId), false, 'a second sign-in by the same domain-matched account must still not be tester-registered');
+    const afterSecond = await getAccountContext(domainAccountId);
+    assert.equal(afterSecond.entitlements.liveRendering, undefined, 'a second sign-in by the same pure domain match must still never grant liveRendering -- this is the exact case that was broken before this fix');
+    assert.equal(afterSecond.entitlements.standardRendering, true, 'standardRendering must still be correctly granted on the second sign-in');
   },
 );
 

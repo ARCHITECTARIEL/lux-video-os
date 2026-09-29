@@ -4,7 +4,7 @@ import { consumeRateLimit, ensureAccount, getAccountContext, recordSignIn, updat
 import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, DEFAULT_TRIAL_CREDITS, handleOptions, makeSession, normalizeEmail, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
-import { containedRenderingEntitlementKeys, isTesterAccountId, isTesterEmailDomain, publicOrigin } from '../../lib/video-os-security.js';
+import { containedRenderingEntitlementKeys, isTesterAccountId, isTesterEmailDomain, isTesterEmailExact, publicOrigin } from '../../lib/video-os-security.js';
 
 function route(req) {
   const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
@@ -207,7 +207,11 @@ export default async function handler(req, res) {
       const role = isTester ? 'tester' : 'customer';
       const initialCredits = isTester ? 5000 : DEFAULT_TRIAL_CREDITS;
       const entitlementKeys = ['magicLinkAccess', ...containedRenderingEntitlementKeys(accountId, email)];
-      await updateAuthenticatedAccount({ accountId, email, name: email, role, initialCredits, entitlementKeys, sourceId: 'magic_link' });
+      // Narrow, not the broad `isTester` above: a pure domain match must
+      // never register into the global tester bypass set (see
+      // updateAuthenticatedAccount's own comment for why).
+      const registerAsTester = isTesterEmailExact(email) || isTesterAccountId(accountId);
+      await updateAuthenticatedAccount({ accountId, email, name: email, role, initialCredits, entitlementKeys, sourceId: 'magic_link', registerAsTester });
       await consumeMagicToken(token);
       const session = makeSession(accountId, email);
       await recordSignIn(accountId);
@@ -249,10 +253,13 @@ export default async function handler(req, res) {
       const role = isTester ? 'tester' : 'customer';
       const initialCredits = isTester ? 5000 : DEFAULT_TRIAL_CREDITS;
       const entitlementKeys = ['googleAccess', ...containedRenderingEntitlementKeys(accountId, profile.email)];
+      // Narrow, not the broad `isTester` above -- see the magic-link path
+      // just above and updateAuthenticatedAccount's own comment.
+      const registerAsTester = isTesterEmailExact(profile.email) || isTesterAccountId(accountId);
       await updateAuthenticatedAccount({
         accountId, email: profile.email, name: profile.name, role,
         initialCredits,
-        entitlementKeys, sourceId: 'google_oauth',
+        entitlementKeys, sourceId: 'google_oauth', registerAsTester,
       });
       const session = makeSession(accountId, profile.email);
       await recordSignIn(accountId);

@@ -42,12 +42,27 @@ export async function ensureAccount({ accountId, email, name, initialCredits = 0
   });
 }
 
-export async function updateAuthenticatedAccount({ accountId, email, name, role = 'customer', initialCredits = 0, entitlementKeys = [], sourceId = null }) {
+export async function updateAuthenticatedAccount({ accountId, email, name, role = 'customer', initialCredits = 0, entitlementKeys = [], sourceId = null, registerAsTester = false }) {
   return database().transaction(async (tx) => {
     const now = new Date();
     await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account', role })
       .onConflictDoUpdate({ target: users.id, set: { email: email || null, name: name || 'Video OS Account', role, updatedAt: now } });
-    if (role === 'tester' && initialCredits > 0) {
+    // Deliberately decoupled from `role`: role is also set to 'tester' for a
+    // pure domain match (extra starting credits + admin-console visibility,
+    // both intentionally broad -- see lib/video-os-testers.js), but
+    // registerTesterAccountId() feeds REGISTERED_TESTER_ACCOUNTS, which
+    // isTesterAccountId() then treats as equivalent to an exact,
+    // individually-designated tester -- full liveRendering, not just
+    // Standard. Gating this on `role === 'tester'` used to mean EVERY
+    // domain-matched sign-in (magic-link or Google) silently registered
+    // itself into that bypass set, reopening the exact liveRendering leak
+    // fixed in containedRenderingEntitlementKeys() through yet another path
+    // (the third instance found so far was the admin console merely
+    // listing testers; this is a fourth, and fires on ordinary sign-in
+    // itself). Callers must now pass registerAsTester explicitly, computed
+    // from the same narrow isTesterEmailExact()/isTesterAccountId() check
+    // used everywhere else this distinction already matters.
+    if (registerAsTester && initialCredits > 0) {
       registerTesterAccountId(accountId);
       await tx.insert(creditAccounts).values({ accountId, balance: initialCredits })
         .onConflictDoUpdate({
