@@ -1075,8 +1075,27 @@ export async function listAdminTesters() {
   ))
   .orderBy(desc(users.createdAt));
 
+  // Real bug fixed here (found via beta-test edge-casing, 2026-09-28): this
+  // used to call registerTesterAccountId() on EVERY row, including ones
+  // that only appear because of the broad domain-wildcard clause above, not
+  // just ones explicitly registered via registerAdminTester (role='tester').
+  // isTesterAccountId() -- which registerTesterAccountId() feeds -- is
+  // treated as full-access equivalent to an exact designated tester by
+  // lib/video-os-security.js's containedRenderingEntitlementKeys(), the
+  // exact function just fixed (see that file's own history) to stop a pure
+  // domain match from granting Premium (liveRendering). Simply loading the
+  // admin console's tester list (a routine GET, not even an explicit admin
+  // action) was silently re-registering every domain-matched account into
+  // the in-memory tester set, reopening the identical leak through a
+  // different trigger path: the account's NEXT sign-in would then grant
+  // full Premium via isTesterAccountId(), bypassing the domain-only
+  // restriction entirely. Only register accounts that were genuinely,
+  // explicitly designated testers (role === 'tester', the real output of
+  // registerAdminTester) -- a domain-matched row is still shown in this
+  // list for admin visibility, it just no longer mutates global state as a
+  // side effect of being displayed.
   for (const r of rows) {
-    registerTesterAccountId(r.accountId);
+    if (r.role === 'tester') registerTesterAccountId(r.accountId);
   }
   return rows;
 }
