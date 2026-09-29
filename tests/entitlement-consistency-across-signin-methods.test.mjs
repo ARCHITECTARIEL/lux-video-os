@@ -21,7 +21,7 @@ import crypto from 'node:crypto';
 import test from 'node:test';
 import { eq } from 'drizzle-orm';
 import { assertDatabaseConfigured, database } from '../db/client.js';
-import { users } from '../db/schema.js';
+import { entitlements, users } from '../db/schema.js';
 import authHandler from '../api/video-os-lite/auth.js';
 import { getAccountContext } from '../db/repositories.js';
 import { isTesterAccountId } from '../lib/video-os-security.js';
@@ -184,6 +184,45 @@ test(
     assert.equal(afterMagicLink.entitlements.standardRendering, true, 'switching to magic-link must not lose standardRendering');
     assert.equal(afterMagicLink.entitlements.magicLinkAccess, true);
     assert.equal(afterMagicLink.entitlements.googleAccess, undefined, 'the earlier googleAccess grant is correctly gone -- only contained-rendering entitlements are meant to persist across methods, not method-specific markers');
+  },
+);
+
+// The most important open question from the domain-match liveRendering leak
+// fix (lib/video-os-security.js, lib/video-os-testers.js): the fix stops NEW
+// over-grants, but does a sign-in AFTER the fix actually CORRECT an account
+// that was already over-granted liveRendering BEFORE the fix shipped, or
+// does a stale DB row silently survive? Traced db/repositories.js's
+// updateAuthenticatedAccount() directly: it disables ALL existing
+// AUTH_ENTITLEMENT_SOURCE grants first (unconditionally), then re-enables
+// only the freshly-computed desiredKeys -- a full reconcile, not an
+// additive insert-if-missing. This proves that behavior end to end against
+// a real stale row, not just by reading the transaction code.
+test(
+  'a stale liveRendering grant from before this fix is correctly disabled on the account\'s next sign-in -- the fix corrects PAST over-grants, not just future ones',
+  { skip: !blobAvailable && 'DATABASE_URL / BLOB_READ_WRITE_TOKEN not configured; skipping live integration test' },
+  async (t) => {
+    setupCommonEnv();
+    process.env.VIDEO_OS_RENDER_ACCOUNT_ID = 'some-other-account-not-in-this-test';
+    process.env.VIDEO_OS_STANDARD_RENDER_EMAIL_DOMAINS = 'trusted-test-domain.example';
+    const email = `stale-downgrade-${crypto.randomUUID()}@trusted-test-domain.example`;
+    const accountId = accountIdForEmail(email);
+    t.after(async () => { await database().delete(users).where(eq(users.id, accountId)).catch(() => {}); });
+
+    // Simulate the pre-fix state directly: a user row plus a wrongly-granted,
+    // still-enabled liveRendering entitlement -- exactly what the old buggy
+    // containedRenderingEntitlementKeys() used to write for a pure domain
+    // match. This deliberately bypasses the (now-fixed) real grant path --
+    // the point is to prove a sign-in AFTER the fix corrects a row that was
+    // already wrong BEFORE the fix, not to re-derive it fresh from scratch.
+    await database().insert(users).values({ id: accountId, email, name: 'Video OS Account' }).onConflictDoNothing();
+    await database().insert(entitlements).values({ accountId, entitlementKey: 'liveRendering', enabled: true, sourceType: 'validated_auth', sourceId: 'pre-fix-stale-grant-simulation' });
+    const beforeSignIn = await getAccountContext(accountId);
+    assert.equal(beforeSignIn.entitlements.liveRendering, true, 'setup sanity check: the stale over-grant is really there before sign-in');
+
+    await verifyMagicLink(email);
+    const afterSignIn = await getAccountContext(accountId);
+    assert.equal(afterSignIn.entitlements.liveRendering, undefined, 'a fresh sign-in after the fix must disable a stale pre-fix liveRendering over-grant for a domain-only match, not just avoid granting new ones');
+    assert.equal(afterSignIn.entitlements.standardRendering, true, 'the correct standardRendering grant must still be present after reconciliation');
   },
 );
 

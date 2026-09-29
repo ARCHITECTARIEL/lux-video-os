@@ -76,7 +76,7 @@ test('the handler checks the render rate limit after authorization but before re
   const end = source.indexOf('async function handlePremiumRender');
   assert.ok(start >= 0 && end > start, 'handler block must remain recognizable');
   const handlerBlock = source.slice(start, end);
-  const authIndex = handlerBlock.indexOf('requireRenderAccountAuthorization(session.accountId)');
+  const authIndex = handlerBlock.indexOf('requireRenderAccountAuthorization(session.accountId, session.email)');
   const rateLimitIndex = handlerBlock.indexOf('await assertRenderRateLimit(session.accountId)');
   const readBodyIndex = handlerBlock.indexOf('const body = await readJson(req)');
   assert.ok(authIndex >= 0 && rateLimitIndex > authIndex, 'rate limit must be checked only after account authorization succeeds');

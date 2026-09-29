@@ -189,7 +189,16 @@ export default async function handler(req, res) {
   try {
     const session = sessionFromRequest(req);
     if (!featureEnabled('VIDEO_OS_DURABLE_WORKFLOW_ENABLED')) return send(res, 503, { ok: false, code: 'durable_workflow_disabled', error: 'Live rendering is contained pending workflow verification.' });
-    requireRenderAccountAuthorization(session.accountId);
+    // Pass email too, not just accountId: requireRenderAccountAuthorization's
+    // isTesterEmailExact() check only fires when email is provided. Without
+    // it, a designated individual tester's access depended on
+    // REGISTERED_TESTER_ACCOUNTS already having their accountId from a prior
+    // sign-in on this same warm serverless instance -- non-deterministic
+    // across cold starts. session.email is already available here (used two
+    // lines below for ensureAccount) and requireRenderAccountAuthorization's
+    // email path is narrow (isTesterEmailExact only, never a domain match),
+    // so this closes a real gap with no broadening of who gets authorized.
+    requireRenderAccountAuthorization(session.accountId, session.email);
     await assertRenderRateLimit(session.accountId);
     const body = await readJson(req);
     narrationRequest = isNarrationRequest(body);
