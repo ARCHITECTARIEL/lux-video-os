@@ -42,12 +42,27 @@ export async function ensureAccount({ accountId, email, name, initialCredits = 0
   });
 }
 
-export async function updateAuthenticatedAccount({ accountId, email, name, role = 'customer', initialCredits = 0, entitlementKeys = [], sourceId = null }) {
+export async function updateAuthenticatedAccount({ accountId, email, name, role = 'customer', initialCredits = 0, entitlementKeys = [], sourceId = null, registerAsTester = false }) {
   return database().transaction(async (tx) => {
     const now = new Date();
     await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account', role })
       .onConflictDoUpdate({ target: users.id, set: { email: email || null, name: name || 'Video OS Account', role, updatedAt: now } });
-    if (role === 'tester' && initialCredits > 0) {
+    // Deliberately decoupled from `role`: role is also set to 'tester' for a
+    // pure domain match (extra starting credits + admin-console visibility,
+    // both intentionally broad -- see lib/video-os-testers.js), but
+    // registerTesterAccountId() feeds REGISTERED_TESTER_ACCOUNTS, which
+    // isTesterAccountId() then treats as equivalent to an exact,
+    // individually-designated tester -- full liveRendering, not just
+    // Standard. Gating this on `role === 'tester'` used to mean EVERY
+    // domain-matched sign-in (magic-link or Google) silently registered
+    // itself into that bypass set, reopening the exact liveRendering leak
+    // fixed in containedRenderingEntitlementKeys() through yet another path
+    // (the third instance found so far was the admin console merely
+    // listing testers; this is a fourth, and fires on ordinary sign-in
+    // itself). Callers must now pass registerAsTester explicitly, computed
+    // from the same narrow isTesterEmailExact()/isTesterAccountId() check
+    // used everywhere else this distinction already matters.
+    if (registerAsTester && initialCredits > 0) {
       registerTesterAccountId(accountId);
       await tx.insert(creditAccounts).values({ accountId, balance: initialCredits })
         .onConflictDoUpdate({
@@ -1060,8 +1075,27 @@ export async function listAdminTesters() {
   ))
   .orderBy(desc(users.createdAt));
 
+  // Real bug fixed here (found via beta-test edge-casing, 2026-09-28): this
+  // used to call registerTesterAccountId() on EVERY row, including ones
+  // that only appear because of the broad domain-wildcard clause above, not
+  // just ones explicitly registered via registerAdminTester (role='tester').
+  // isTesterAccountId() -- which registerTesterAccountId() feeds -- is
+  // treated as full-access equivalent to an exact designated tester by
+  // lib/video-os-security.js's containedRenderingEntitlementKeys(), the
+  // exact function just fixed (see that file's own history) to stop a pure
+  // domain match from granting Premium (liveRendering). Simply loading the
+  // admin console's tester list (a routine GET, not even an explicit admin
+  // action) was silently re-registering every domain-matched account into
+  // the in-memory tester set, reopening the identical leak through a
+  // different trigger path: the account's NEXT sign-in would then grant
+  // full Premium via isTesterAccountId(), bypassing the domain-only
+  // restriction entirely. Only register accounts that were genuinely,
+  // explicitly designated testers (role === 'tester', the real output of
+  // registerAdminTester) -- a domain-matched row is still shown in this
+  // list for admin visibility, it just no longer mutates global state as a
+  // side effect of being displayed.
   for (const r of rows) {
-    registerTesterAccountId(r.accountId);
+    if (r.role === 'tester') registerTesterAccountId(r.accountId);
   }
   return rows;
 }

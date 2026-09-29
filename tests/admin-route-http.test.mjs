@@ -11,6 +11,7 @@ import { users } from '../db/schema.js';
 import adminHandler from '../routes/video-os-lite/admin.js';
 import { makeSession } from '../lib/video-os-account.js';
 import { getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../lib/video-os-private-blob.js';
+import { isTesterAccountId } from '../lib/video-os-testers.js';
 
 let dbAvailable = true;
 try {
@@ -372,6 +373,109 @@ test(
       const res = response();
       await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=grant-credit', body: { accountId: `test-admin-route-nonexistent-${crypto.randomUUID()}`, amount: 10, idempotencyKey: crypto.randomUUID() }, cookie: adminCookie }), res);
       assert.equal(res.statusCode, 404);
+    });
+
+    // operation=accounts returns real customer email addresses (see
+    // listRecentAccounts()) -- confirming this specific PII-bearing
+    // endpoint, not just the generic default operation, is unreachable
+    // without real admin auth.
+    await t.test('operation=accounts (which returns real customer emails) is rejected without valid admin auth', async () => {
+      const res = response();
+      await adminHandler(request({ url: '/api/video-os-lite/admin?operation=accounts' }), res);
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.body.ok, false);
+      assert.equal(res.body.accounts, undefined, 'a rejected request must never carry real account data in the response body');
+    });
+
+    const testerEmail = `test-admin-tester-${crypto.randomUUID()}@luxmarketingcompany.com`;
+    let testerAccountId;
+    await t.test('POST operation=register-tester creates a real tester account with full entitlements', async () => {
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=register-tester', body: { email: testerEmail, name: 'Admin Route Tester', credits: 2500, note: 'proof test' }, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.body.tester.user.email, testerEmail);
+      assert.equal(res.body.tester.user.role, 'tester');
+      assert.equal(res.body.tester.credits.balance, 2500);
+      assert.equal(res.body.tester.entitlements.liveRendering, true);
+      assert.equal(res.body.tester.entitlements.standardRendering, true);
+      testerAccountId = res.body.tester.user.id;
+      t.after(async () => { await database().delete(users).where(eq(users.id, testerAccountId)).catch(() => {}); });
+
+      assert.equal(isTesterAccountId(testerAccountId), true, 'registerAdminTester must actually register the account in the in-memory tester set, not just the database');
+
+      const listRes = response();
+      await adminHandler(request({ url: '/api/video-os-lite/admin?operation=testers', cookie: adminCookie }), listRes);
+      assert.equal(listRes.statusCode, 200);
+      assert.ok(listRes.body.testers.some((row) => row.accountId === testerAccountId), 'the newly registered tester must appear in the admin testers listing');
+    });
+
+    await t.test('POST operation=register-tester rejects a missing or invalid email before touching the database', async () => {
+      const missing = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=register-tester', body: { name: 'No Email' }, cookie: adminCookie }), missing);
+      assert.equal(missing.statusCode, 400);
+
+      const invalid = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=register-tester', body: { email: 'not-an-email' }, cookie: adminCookie }), invalid);
+      assert.equal(invalid.statusCode, 400);
+    });
+
+    await t.test('POST operation=revoke-tester actually revokes: role reverts, entitlements disable, and the in-memory registration is removed', async () => {
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=revoke-tester', body: { accountId: testerAccountId }, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.body.result.user.role, 'customer');
+      assert.equal(res.body.result.entitlements.liveRendering, undefined, 'a disabled entitlement must not appear as granted');
+
+      assert.equal(isTesterAccountId(testerAccountId), false, 'revoke must actually clear the in-memory tester registration, not just flip the DB role -- otherwise the account stays a tester in effect until the next process restart');
+    });
+
+    await t.test('POST operation=revoke-tester requires accountId', async () => {
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=revoke-tester', body: {}, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 400);
+    });
+
+    // Real bug found and fixed during this beta-test pass (db/repositories.js
+    // listAdminTesters()): loading the admin testers list used to call
+    // registerTesterAccountId() for EVERY row the broad domain-wildcard
+    // query matched, not just ones explicitly registered via
+    // registerAdminTester -- silently re-registering any @luxmarketingcompany.com
+    // account into the in-memory tester set, which lib/video-os-security.js's
+    // containedRenderingEntitlementKeys() treats as full Premium access via
+    // isTesterAccountId(). That reopened the exact liveRendering leak the
+    // entitlement fix (containedRenderingEntitlementKeys splitting exact vs
+    // domain-only matches) was meant to close, through a different trigger:
+    // an admin merely viewing the tester list, not an explicit grant.
+    await t.test('viewing the admin testers list does NOT silently register a plain domain-matched account as a tester (regression proof for the just-fixed liveRendering leak)', async () => {
+      const domainMatchedAccountId = `test-admin-domain-only-${crypto.randomUUID()}`;
+      const domainMatchedEmail = `plain-employee-${crypto.randomUUID()}@luxmarketingcompany.com`;
+      await ensureAccount({ accountId: domainMatchedAccountId, email: domainMatchedEmail, name: 'Plain Domain Match', initialCredits: 0 });
+      t.after(async () => { await database().delete(users).where(eq(users.id, domainMatchedAccountId)).catch(() => {}); });
+
+      assert.equal(isTesterAccountId(domainMatchedAccountId), false, 'a freshly created domain-matched account must not already be tester-registered');
+
+      const listRes = response();
+      await adminHandler(request({ url: '/api/video-os-lite/admin?operation=testers', cookie: adminCookie }), listRes);
+      assert.equal(listRes.statusCode, 200);
+      assert.ok(listRes.body.testers.some((row) => row.accountId === domainMatchedAccountId), 'the account should still be VISIBLE in the listing (it does match the domain), just not silently registered as a side effect of being listed');
+
+      assert.equal(isTesterAccountId(domainMatchedAccountId), false, 'merely appearing in the admin testers listing (via the domain-wildcard clause, never through registerAdminTester) must NOT register the account as a tester -- doing so would silently grant it full liveRendering on its next sign-in, reopening the leak fixed in containedRenderingEntitlementKeys()');
+    });
+
+    await t.test('POST operation=watchdog-sweep is wired to the real sweep and returns a well-shaped result', async () => {
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=watchdog-sweep', body: {}, cookie: adminCookie }), res);
+      assert.equal(res.statusCode, 200);
+      assert.ok(res.body.sweep, 'must return a real sweep result object');
+      assert.equal(typeof res.body.sweep.actionableFound, 'number');
+      assert.equal(typeof res.body.sweep.ambiguousFound, 'number');
+      assert.equal(typeof res.body.sweep.safeToReleaseFound, 'number');
+    });
+
+    await t.test('POST operation=watchdog-sweep is rejected without valid admin auth, same as any other mutating operation', async () => {
+      const res = response();
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=watchdog-sweep', body: {} }), res);
+      assert.equal(res.statusCode, 401);
     });
   },
 );

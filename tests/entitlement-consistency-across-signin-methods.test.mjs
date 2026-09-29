@@ -24,6 +24,7 @@ import { assertDatabaseConfigured, database } from '../db/client.js';
 import { entitlements, users } from '../db/schema.js';
 import authHandler from '../api/video-os-lite/auth.js';
 import { getAccountContext } from '../db/repositories.js';
+import { isTesterAccountId } from '../lib/video-os-security.js';
 import { accountIdForEmail, saveMagicToken } from '../lib/video-os-account.js';
 
 let dbAvailable = true;
@@ -222,5 +223,49 @@ test(
     const afterSignIn = await getAccountContext(accountId);
     assert.equal(afterSignIn.entitlements.liveRendering, undefined, 'a fresh sign-in after the fix must disable a stale pre-fix liveRendering over-grant for a domain-only match, not just avoid granting new ones');
     assert.equal(afterSignIn.entitlements.standardRendering, true, 'the correct standardRendering grant must still be present after reconciliation');
+  },
+);
+
+// Real bug found and fixed during a follow-up beta-test pass (2026-09-28):
+// a pure domain-matched sign-in (magic-link OR Google) sets role: 'tester'
+// purely for the extra-starting-credits/admin-visibility distinction --
+// deliberately broad, accepted, and unrelated to entitlement granting. But
+// updateAuthenticatedAccount() used to call registerTesterAccountId()
+// whenever role === 'tester', which feeds isTesterAccountId() -- treated by
+// containedRenderingEntitlementKeys() as equivalent to an exact,
+// individually-designated tester: full liveRendering, not just Standard.
+// That meant literally ANY domain-matched account's first sign-in silently
+// registered itself into the global tester-bypass set, and its very next
+// sign-in (or an in-flight render-authorization check on the same warm
+// instance) would then get full Premium access -- reopening the exact leak
+// containedRenderingEntitlementKeys() was fixed to close, through a fourth
+// path, and the only one of the four that fires on ordinary customer
+// sign-in rather than an explicit admin action.
+test(
+  'a pure domain-matched magic-link sign-in never registers the account into the global tester bypass set -- and a SECOND sign-in still grants Standard only, not liveRendering',
+  { skip: !blobAvailable && 'DATABASE_URL / BLOB_READ_WRITE_TOKEN not configured; skipping live integration test' },
+  async (t) => {
+    setupCommonEnv();
+    process.env.VIDEO_OS_STANDARD_RENDER_EMAIL_DOMAINS = 'trusted-test-domain.example';
+    const email = `plain-employee-${crypto.randomUUID()}@trusted-test-domain.example`;
+    const accountId = accountIdForEmail(email);
+    t.after(async () => { await database().delete(users).where(eq(users.id, accountId)).catch(() => {}); });
+
+    assert.equal(isTesterAccountId(accountId), false, 'sanity check: a freshly generated account must not already be tester-registered');
+
+    await verifyMagicLink(email);
+    assert.equal(isTesterAccountId(accountId), false, 'a pure domain match must NEVER register into the global tester bypass set, even though role is set to \'tester\' for credit-amount purposes -- that is a deliberately separate signal');
+    const afterFirstSignIn = await getAccountContext(accountId);
+    assert.equal(afterFirstSignIn.entitlements.liveRendering, undefined, 'the first sign-in itself must not grant liveRendering for a pure domain match');
+    assert.equal(afterFirstSignIn.entitlements.standardRendering, true, 'the first sign-in must still grant standardRendering');
+
+    // The real regression: before this fix, the FIRST sign-in's registration
+    // side-effect would poison isTesterAccountId() for every sign-in after
+    // it. Prove the second sign-in is equally correct, not just the first.
+    await verifyMagicLink(email);
+    assert.equal(isTesterAccountId(accountId), false, 'a second sign-in by the same domain-matched account must still not be tester-registered');
+    const afterSecondSignIn = await getAccountContext(accountId);
+    assert.equal(afterSecondSignIn.entitlements.liveRendering, undefined, 'a second sign-in by the same pure domain match must still never grant liveRendering -- this is the exact case that was broken before this fix');
+    assert.equal(afterSecondSignIn.entitlements.standardRendering, true, 'standardRendering must still be correctly granted on the second sign-in');
   },
 );
