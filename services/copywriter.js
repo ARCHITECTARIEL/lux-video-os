@@ -37,10 +37,16 @@ function promptFor({ operation, brief, draft, instructions }) {
 export async function generateCopy({ operation, brief, draft, instructions }, {
   model = String(process.env.VIDEO_OS_COPYWRITER_MODEL || '').trim() || DEFAULT_COPYWRITER_MODEL,
   timeoutMs = 28_000,
+  // Injectable for tests only -- every real caller leaves this at the
+  // default, so this is a no-op change for production. Lets
+  // tests/copywriter-service.test.mjs exercise the real timeout/
+  // content-filter/empty-output/error-mapping logic below directly,
+  // without hitting a real paid AI Gateway call or faking its wire format.
+  generateTextFn = generateText,
 } = {}) {
   let result;
   try {
-    result = await generateText({
+    result = await generateTextFn({
       model,
       system: systemPrompt(),
       prompt: promptFor({ operation, brief, draft, instructions }),
