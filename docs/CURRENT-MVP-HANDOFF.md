@@ -2,7 +2,7 @@
 
 # VIDEO OS — current developer handoff
 
-**Last audited: 2026-10-01. Start here after root HANDOFF.md.** This file supersedes older status, priority, branch and deployment claims in HANDOFF.md, DEVELOPER_HANDOFF.md, README.md and the September 29 ZIP. Historical architecture notes remain references, not release evidence.
+**Last audited: 2026-10-01.** For "what's left to ship, in priority order," read [../NEXT-DEVELOPER-HANDOFF.md](../NEXT-DEVELOPER-HANDOFF.md) first — this file is the detailed chronological session log underneath it. This file supersedes older status, priority, branch and deployment claims in HANDOFF.md, DEVELOPER_HANDOFF.md, README.md and the September 29 ZIP. Historical architecture notes remain references, not release evidence.
 
 ## Latest October 1 (night) — P0 proof scoped, deliberately not started
 
