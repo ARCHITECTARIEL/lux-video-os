@@ -65,8 +65,32 @@ export const ALLOWED_FINDINGS = [
   {
     ruleId: 'js/xss-through-dom',
     file: 'public/identity.js',
-    lineHash: '5ac89a4a69d37f7c:1',
-    reason: "objectUrl always comes from URL.createObjectURL(file): a same-origin blob: reference the browser itself mints to in-memory binary data, never a string an attacker controls. Assigning it to .src loads media, never parsed as HTML. See setLocalPreviewSource() in public/identity.js.",
+    lineHash: 'c3ef00b0ab89e30:1',
+    reason: "objectUrl always comes from URL.createObjectURL(file): a same-origin blob: reference the browser itself mints to in-memory binary data, never a string an attacker controls. Assigning it to .src loads media, never parsed as HTML. See setLocalPreviewSource() in public/identity.js. (Hash refreshed 2026-10-01; same reviewed line, unrelated edits elsewhere in the file shifted its content slightly.)",
+  },
+  {
+    ruleId: 'js/xss-through-dom',
+    file: 'public/identity.js',
+    lineHash: '95ae43dd25326669:1',
+    reason: "photoUrl is either a local blob: URL (see the identity.js:69 entry above) or the output of safeOwnedPreview(), which only returns strings starting with the fixed same-origin path prefix '/api/video-os-lite/asset?' (otherwise ''). A root-relative path can't resolve to another origin, and .src on <img> only loads media -- it is never parsed as HTML or script. See safeOwnedPreview() and syncConsentMediaReview() in public/identity.js.",
+  },
+  {
+    ruleId: 'js/xss-through-dom',
+    file: 'public/identity.js',
+    lineHash: '2df3069966afa719:1',
+    reason: "Same reasoning and safeOwnedPreview() gate as the identity.js:608 entry above, for the video preview's '/api/video-os-lite/enrollments?' prefix.",
+  },
+  {
+    ruleId: 'js/incomplete-url-substring-sanitization',
+    file: 'tests/enrollment-api.test.mjs',
+    lineHash: 'd6acd7548ef185c8:1',
+    reason: "This is a test assertion verifying a response body does not leak the private Blob storage domain, not a runtime trust decision made on untrusted input. The flagged substring check never gates access or sanitizes anything in production code.",
+  },
+  {
+    ruleId: 'js/incomplete-sanitization',
+    file: 'tests/heygen-reconciliation-contract.test.mjs',
+    lineHash: '2f3e7b9a9f2c42f5:1',
+    reason: "This constructs a deliberately non-canonical test fixture to verify the real signature verifier (verifyApproval) correctly rejects it -- it is test-fixture generation, not a production sanitizer processing untrusted input.",
   },
 ];
 
