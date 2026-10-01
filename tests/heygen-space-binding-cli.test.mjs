@@ -57,3 +57,33 @@ test('CLI suppresses database/provider error payloads and rejects unsafe status'
   const unsafe = await run(['status', ...base], { resolveFreshHeygenSpaceBinding: async () => ({}), safeHeygenSpaceBindingStatus: () => ({ scopeType: 'space', environment: 'production', runtimeActivation: true }) });
   assert.equal(unsafe.exitCode, 1); assert.equal(unsafe.output, '');
 });
+
+test('production bootstrap requires --owner-authorized and wires the confirmation phrase through to the repository', async () => {
+  const withoutFlag = await run(
+    ['bootstrap', '--environment', 'production', '--account-id', accountId, '--private-evidence-dir', privateDir],
+    {},
+  );
+  assert.equal(withoutFlag.exitCode, 1);
+  assert.equal(withoutFlag.loads, 0, 'must fail before even loading the repository');
+
+  const branded = {};
+  let observedConfirmation;
+  const result = await run(
+    ['bootstrap', '--environment', 'production', '--account-id', accountId, '--private-evidence-dir', privateDir, '--owner-authorized'],
+    {
+      PRODUCTION_BINDING_CONFIRMATION_PHRASE: 'confirmation-phrase-from-repository',
+      bootstrapVerifiedHeygenSpaceBinding: async input => {
+        observedConfirmation = process.env.VIDEO_OS_PRODUCTION_BINDING_CONFIRMED;
+        assert.deepEqual(input, { accountId, privateEvidenceDir: privateDir });
+        return branded;
+      },
+      safeHeygenSpaceBindingStatus: binding => {
+        assert.equal(binding, branded);
+        return { scopeType: 'space', environment: 'production', runtimeActivation: false, verified: true };
+      },
+    },
+  );
+  assert.equal(result.exitCode, 0);
+  assert.equal(observedConfirmation, 'confirmation-phrase-from-repository', 'CLI must forward the repository\'s own exported phrase, not a duplicated string');
+  assert.equal(process.env.VIDEO_OS_SPACE_BINDING_ENVIRONMENT, 'production');
+});

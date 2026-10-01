@@ -35,11 +35,29 @@ import {
 
 export const HEYGEN_SPACE_BINDING_VERSION = 'heygen-space-binding/v1';
 
-const VERIFICATION_TARGET_PATH = fileURLToPath(new URL(import.meta.url).pathname.endsWith('/index.js')
-  ? new URL('./runtime-repository/config/database-target.verification.json', import.meta.url)
-  : new URL('../config/database-target.verification.json', import.meta.url));
-const PINNED_VERIFICATION_TARGET_CANONICAL_SHA256 = '2bb9ea3cfafa560248ba9caf02e0f6bd4d2c85b03b5a6a75450b2934c49f0d8e';
+const BUNDLED = new URL(import.meta.url).pathname.endsWith('/index.js');
+const TARGET_PATHS = Object.freeze({
+  verification: fileURLToPath(BUNDLED
+    ? new URL('./runtime-repository/config/database-target.verification.json', import.meta.url)
+    : new URL('../config/database-target.verification.json', import.meta.url)),
+  production: fileURLToPath(BUNDLED
+    ? new URL('./runtime-repository/config/database-target.production.json', import.meta.url)
+    : new URL('../config/database-target.production.json', import.meta.url)),
+});
+// Each pin is a reviewed, exact canonical-JSON hash of its target manifest's
+// `target` object (see defaultTargetPreflight). A manifest edit -- even an
+// otherwise-legitimate one -- must not silently widen what this binds to;
+// the pin has to be deliberately recomputed and reviewed, same as before.
+const PINNED_TARGET_CANONICAL_SHA256 = Object.freeze({
+  verification: '2bb9ea3cfafa560248ba9caf02e0f6bd4d2c85b03b5a6a75450b2934c49f0d8e',
+  production: '0207fdc0d223cd91e94478623502472d89eb2b2b3aadcf137c2b8584c32fc3d1',
+});
 const PINNED_APPLICATION_PROJECT_ID = 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW';
+// Binding the real production target additionally requires this exact,
+// separate, explicit confirmation -- distinct from merely requesting
+// `VIDEO_OS_SPACE_BINDING_ENVIRONMENT=production` -- so a production bind
+// can never happen as a side effect of routine verification-environment use.
+export const PRODUCTION_BINDING_CONFIRMATION_PHRASE = 'yes-bind-real-production-heygen-space';
 const SHA256 = /^[a-f0-9]{64}$/;
 const SPACE_PROOF_VERSION = 'heygen-space-qualification-proof/v1';
 const SPACE_EVIDENCE_REF_VERSION = 'heygen-space-anchor-evidence/v1';
@@ -172,21 +190,36 @@ function providerOriginScopeKey(credentialScopeFingerprint) {
   return createHash('sha256').update(PROVIDER_CREDENTIAL_SCOPE_DOMAIN).update(credentialScopeFingerprint, 'utf8').digest('hex');
 }
 
-function assertVerificationEnvironment(env) {
+// Returns the validated binding environment ('verification' or 'production').
+// Two independent concerns are checked here and must both keep holding:
+// (1) this administrative tool must never execute inside the actual deployed
+// Vercel production runtime, regardless of which target it is binding to;
+// (2) only an explicitly, separately confirmed request may target the real
+// production database -- requesting the environment alone is not enough.
+function assertBindingEnvironment(env) {
   const requested = typeof env.VIDEO_OS_SPACE_BINDING_ENVIRONMENT === 'string'
     ? env.VIDEO_OS_SPACE_BINDING_ENVIRONMENT.trim()
     : '';
   const vercelEnvironment = typeof env.VERCEL_ENV === 'string' ? env.VERCEL_ENV.trim().toLowerCase() : '';
-  if (vercelEnvironment === 'production' || requested === 'production') {
-    throw failure('CANONICAL_TARGET_UNVERIFIED', 'Canonical production binding target is not verified.');
+  if (vercelEnvironment === 'production') {
+    throw failure('CANONICAL_TARGET_UNVERIFIED', 'This administrative binding tool must never run inside the deployed production runtime.');
   }
-  if (requested !== 'verification') {
-    throw failure('HEYGEN_BINDING_ENVIRONMENT_UNSUPPORTED', 'Only the pinned verification target is supported.');
+  if (requested !== 'verification' && requested !== 'production') {
+    throw failure('HEYGEN_BINDING_ENVIRONMENT_UNSUPPORTED', 'Only the pinned verification or production target is supported.');
+  }
+  if (requested === 'production') {
+    const confirmed = typeof env.VIDEO_OS_PRODUCTION_BINDING_CONFIRMED === 'string'
+      ? env.VIDEO_OS_PRODUCTION_BINDING_CONFIRMED.trim()
+      : '';
+    if (confirmed !== PRODUCTION_BINDING_CONFIRMATION_PHRASE) {
+      throw failure('PRODUCTION_BINDING_NOT_EXPLICITLY_CONFIRMED', 'Binding the real production target requires a separate, explicit confirmation.');
+    }
   }
   const observedProject = String(env.VERCEL_PROJECT_ID || '').trim();
   if (observedProject && observedProject !== PINNED_APPLICATION_PROJECT_ID) {
     throw failure('APPLICATION_PROJECT_MISMATCH', 'Application project identity does not match the pinned target.');
   }
+  return requested;
 }
 
 function canonicalDatabaseUrl(env) {
@@ -198,46 +231,48 @@ function canonicalDatabaseUrl(env) {
 }
 
 async function defaultTargetPreflight(env, dependencies) {
-  assertVerificationEnvironment(env);
+  const environment = assertBindingEnvironment(env);
+  const targetPath = TARGET_PATHS[environment];
   const databaseUrl = canonicalDatabaseUrl(env);
-  const targetMetadata = await dependencies.lstat(VERIFICATION_TARGET_PATH);
+  const targetMetadata = await dependencies.lstat(targetPath);
   if (!targetMetadata.isFile() || targetMetadata.isSymbolicLink()) {
-    throw failure('TARGET_MANIFEST_UNBOUND', 'Pinned verification target manifest is not a regular repository file.');
+    throw failure('TARGET_MANIFEST_UNBOUND', `Pinned ${environment} target manifest is not a regular repository file.`);
   }
-  const targetEvidence = await dependencies.loadTargetManifest(VERIFICATION_TARGET_PATH, {
-    requiredEnvironment: 'verification',
+  const targetEvidence = await dependencies.loadTargetManifest(targetPath, {
+    requiredEnvironment: environment,
   });
   const targetCanonicalSha256 = createHash('sha256').update(canonicalJsonBytes(targetEvidence.target)).digest('hex');
-  if (targetCanonicalSha256 !== PINNED_VERIFICATION_TARGET_CANONICAL_SHA256
-    || targetEvidence.targetManifestBinding !== 'verification-manifest') {
-    throw failure('TARGET_MANIFEST_UNBOUND', 'Pinned verification target manifest changed.');
+  const expectedBinding = environment === 'production' ? 'canonical-repository-manifest' : 'verification-manifest';
+  if (targetCanonicalSha256 !== PINNED_TARGET_CANONICAL_SHA256[environment]
+    || targetEvidence.targetManifestBinding !== expectedBinding) {
+    throw failure('TARGET_MANIFEST_UNBOUND', `Pinned ${environment} target manifest changed.`);
   }
   const { target } = targetEvidence;
-  const canonical = dependencies.validateTarget(databaseUrl, target, 'verification');
+  const canonical = dependencies.validateTarget(databaseUrl, target, environment);
   const unpooledUrl = env.DATABASE_URL_UNPOOLED;
   if (unpooledUrl !== undefined && (typeof unpooledUrl !== 'string' || unpooledUrl !== unpooledUrl.trim())) {
     throw failure('DATABASE_URL_INVALID', 'The optional unpooled database URL is invalid.');
   }
-  const unpooled = unpooledUrl ? dependencies.validateTarget(unpooledUrl, target, 'verification') : null;
-  const schemaEvidence = await dependencies.loadSchemaLock(VERIFICATION_TARGET_PATH, target);
+  const unpooled = unpooledUrl ? dependencies.validateTarget(unpooledUrl, target, environment) : null;
+  const schemaEvidence = await dependencies.loadSchemaLock(targetPath, target);
   const databaseEvidence = await dependencies.checkDatabaseMigrations(databaseUrl, {
     ...targetEvidence,
     ...schemaEvidence,
     target,
-    requiredEnvironment: 'verification',
+    requiredEnvironment: environment,
     validatedCanonicalTarget: canonical,
     validatedUnpooledTarget: unpooled,
   });
   if (databaseEvidence?.verified !== true || databaseEvidence.scope !== 'live-database'
-    || databaseEvidence.journalVerified !== true || databaseEvidence.environment !== 'verification'
+    || databaseEvidence.journalVerified !== true || databaseEvidence.environment !== environment
     || databaseEvidence.targetManifestSha256 !== targetEvidence.targetManifestSha256) {
-    throw failure('DATABASE_PREFLIGHT_FAILED', 'Pinned verification database did not pass strict migration and schema checks.');
+    throw failure('DATABASE_PREFLIGHT_FAILED', `Pinned ${environment} database did not pass strict migration and schema checks.`);
   }
   return deepFreeze({
-    environment: 'verification',
+    environment,
     projectId: PINNED_APPLICATION_PROJECT_ID,
     databaseBindingSha256: dependencies.databaseBindingSha256({
-      environment: 'verification',
+      environment,
       providerProjectId: target.projectId,
       providerBranchId: target.branchId,
       databaseName: target.database,
@@ -249,8 +284,8 @@ async function defaultTargetPreflight(env, dependencies) {
 }
 
 function assertRuntimeInputsStable(env, preflight, credential) {
-  assertVerificationEnvironment(env);
-  if (canonicalDatabaseUrl(env) !== preflight.databaseUrl
+  if (assertBindingEnvironment(env) !== preflight.environment
+    || canonicalDatabaseUrl(env) !== preflight.databaseUrl
     || String(env.DATABASE_URL_UNPOOLED || '') !== String(preflight.unpooledUrl || '')
     || selectCredential(env) !== credential) {
     throw failure('HEYGEN_BINDING_INPUT_DRIFT', 'Binding inputs changed during qualification.');
@@ -411,7 +446,7 @@ function makeBinding({ accountId, preflight, proof, binding, scope, promotion })
 function assertBindingIdentity(binding) {
   if (!BINDING_BRANDS.has(binding) || !Object.isFrozen(binding)
     || binding.version !== HEYGEN_SPACE_BINDING_VERSION || binding.provider !== 'heygen'
-    || binding.scopeType !== 'space' || binding.environment !== 'verification') {
+    || binding.scopeType !== 'space' || !['verification', 'production'].includes(binding.environment)) {
     throw failure('HEYGEN_SPACE_BINDING_UNVERIFIED', 'HeyGen space binding is not verified.');
   }
   exactText(binding.projectId, 'binding projectId', 255);

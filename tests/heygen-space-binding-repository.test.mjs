@@ -6,6 +6,7 @@ import {
   assertHeygenProviderReceiptTx,
   createHeygenSpaceBindingRepository,
   HEYGEN_SPACE_BINDING_VERSION,
+  PRODUCTION_BINDING_CONFIRMATION_PHRASE,
   withFreshHeygenSpaceBindingTransaction,
   withHeygenSpaceBindingReceiptTransaction,
 } from '../db/heygen-space-binding-repository.js';
@@ -376,13 +377,15 @@ test('returned binding expires at the anchor boundary even when qualification la
   );
 });
 
-test('production environment fails before target files, provider access, or a transaction', async () => {
+test('production environment without the explicit confirmation fails before target files, provider access, or a transaction', async () => {
   const executor = createExecutor();
   let fileAccesses = 0;
   let providerCalls = 0;
   const repository = createHeygenSpaceBindingRepository({
     env: () => ({
       VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production',
+      // Deliberately no VIDEO_OS_PRODUCTION_BINDING_CONFIRMED -- requesting
+      // the environment string alone must never be enough.
       DATABASE_URL: 'postgresql://do-not-use',
       HEYGEN_API_KEY: 'do-not-use',
     }),
@@ -392,10 +395,50 @@ test('production environment fails before target files, provider access, or a tr
   });
   await assert.rejects(
     repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID }),
-    error => error.code === 'CANONICAL_TARGET_UNVERIFIED',
+    error => error.code === 'PRODUCTION_BINDING_NOT_EXPLICITLY_CONFIRMED',
   );
   assert.equal(fileAccesses, 0);
   assert.equal(providerCalls, 0);
+  assert.equal(executor.operations.length, 0);
+});
+
+test('production environment with the wrong confirmation value still fails before any access', async () => {
+  const executor = createExecutor();
+  let fileAccesses = 0;
+  const repository = createHeygenSpaceBindingRepository({
+    env: () => ({
+      VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production',
+      VIDEO_OS_PRODUCTION_BINDING_CONFIRMED: 'yes', // not the exact pinned phrase
+      DATABASE_URL: 'postgresql://do-not-use',
+      HEYGEN_API_KEY: 'do-not-use',
+    }),
+    executor,
+    lstat: async () => { fileAccesses += 1; throw new Error('must not run'); },
+  });
+  await assert.rejects(
+    repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID }),
+    error => error.code === 'PRODUCTION_BINDING_NOT_EXPLICITLY_CONFIRMED',
+  );
+  assert.equal(fileAccesses, 0);
+  assert.equal(executor.operations.length, 0);
+});
+
+test('a running Vercel production runtime is rejected regardless of requested environment or confirmation', async () => {
+  const executor = createExecutor();
+  const repository = createHeygenSpaceBindingRepository({
+    env: () => ({
+      VERCEL_ENV: 'production',
+      VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'verification',
+      DATABASE_URL: 'postgresql://do-not-use',
+      HEYGEN_API_KEY: 'do-not-use',
+    }),
+    executor,
+    lstat: async () => { throw new Error('must not run'); },
+  });
+  await assert.rejects(
+    repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID }),
+    error => error.code === 'CANONICAL_TARGET_UNVERIFIED',
+  );
   assert.equal(executor.operations.length, 0);
 });
 
@@ -669,4 +712,99 @@ test('default target preflight validates pinned URL and schema before provider a
     'load-anchor',
     'qualify',
   ]);
+});
+
+test('default target preflight validates the pinned production target only with explicit confirmation, same pipeline as verification', async () => {
+  const executor = createExecutor();
+  const order = [];
+  const env = {
+    VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production',
+    VIDEO_OS_PRODUCTION_BINDING_CONFIRMED: PRODUCTION_BINDING_CONFIRMATION_PHRASE,
+    DATABASE_URL: 'postgresql://user:secret@production.example.test/database?sslmode=require',
+    HEYGEN_API_KEY: 'secret-test-key',
+  };
+  // Exact real content of config/database-target.production.json -- the
+  // pinned hash this test must satisfy is computed from this file, so a
+  // realistic fixture (not an arbitrary one) is required for this to pass.
+  const target = {
+    version: 1,
+    environment: 'production',
+    projectId: 'still-voice-83326863',
+    branchId: 'br-broad-sunset-awrsmiwa',
+    isDefault: true,
+    hosts: [
+      'ep-autumn-morning-awa4hmb6.c-12.us-east-1.aws.neon.tech',
+      'ep-autumn-morning-awa4hmb6-pooler.c-12.us-east-1.aws.neon.tech',
+    ],
+    database: 'neondb',
+    roles: ['neondb_owner'],
+    port: 5432,
+    schemaLock: 'database-schema.lock.json',
+    note: 'Owner-designated production target. Populated from independent Neon control-plane metadata and the redacted canonical-variable provenance audit; contains no credential.',
+  };
+  const verifiedProof = proof();
+  const repository = createHeygenSpaceBindingRepository({
+    env: () => env,
+    now: () => new Date(NOW),
+    executor,
+    lstat: async () => ({ isFile: () => true, isSymbolicLink: () => false }),
+    loadTargetManifest: async () => {
+      order.push('load-target');
+      return { target, targetManifestSha256: 'c'.repeat(64), targetManifestBinding: 'canonical-repository-manifest' };
+    },
+    loadSchemaLock: async () => {
+      order.push('load-schema-lock');
+      return { schemaLock: {}, schemaLockSha256: 'd'.repeat(64), schemaLockBinding: 'canonical-repository-schema-lock' };
+    },
+    validateTarget: url => {
+      order.push(`validate-url:${url.includes('verification') ? 'unexpected' : 'canonical'}`);
+      return { endpoint: 'verified', port: 5432, database: 'neondb', role: 'neondb_owner', environment: 'production' };
+    },
+    checkDatabaseMigrations: async () => {
+      order.push('check-schema');
+      return { verified: true, scope: 'live-database', journalVerified: true, environment: 'production', targetManifestSha256: 'c'.repeat(64) };
+    },
+    databaseBindingSha256: input => { assert.equal(input.environment, 'production'); return DIGESTS.database; },
+    loadPinnedHeygenSpaceAnchorProjection: async () => {
+      order.push('load-anchor');
+      return Object.freeze({ credentialKeyFingerprint: DIGESTS.credentialKey });
+    },
+    qualifyHeygenCredential: async () => { order.push('qualify'); return Object.freeze({}); },
+    validateFreshHeygenQualification: () => verifiedProof,
+    assertFreshHeygenSpaceProof: () => verifiedProof,
+    acquireProviderLifecycleLock: async () => executor.operations.push('account-lock'),
+  });
+  await assert.rejects(
+    repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID }),
+    error => error.code === 'HEYGEN_SPACE_BINDING_NOT_ACTIVE',
+  );
+  assert.deepEqual(order.slice(0, 5), ['load-target', 'validate-url:canonical', 'load-schema-lock', 'check-schema', 'load-anchor']);
+});
+
+test('bootstrap succeeds end to end for the confirmed production environment and yields a production-tagged binding', async () => {
+  const { repository, executor } = fixture({
+    env: {
+      VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production',
+      VIDEO_OS_PRODUCTION_BINDING_CONFIRMED: PRODUCTION_BINDING_CONFIRMATION_PHRASE,
+      DATABASE_URL: 'postgresql://user:secret@production.example.test/database?sslmode=require',
+      HEYGEN_API_KEY: 'secret-test-key',
+    },
+    targetPreflight: async () => Object.freeze({
+      environment: 'production',
+      projectId: 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW',
+      databaseBindingSha256: DIGESTS.database,
+      databaseUrl: 'postgresql://user:secret@production.example.test/database?sslmode=require',
+      unpooledUrl: null,
+    }),
+  });
+  const binding = await repository.bootstrapVerifiedHeygenSpaceBinding({
+    accountId: ACCOUNT_ID,
+    privateEvidenceDir: PRIVATE_EVIDENCE_DIR,
+  });
+  assert.equal(binding.environment, 'production');
+  assert.equal(executor.state.bindings[0].environment, 'production');
+  const status = repository.safeHeygenSpaceBindingStatus(binding);
+  assert.equal(status.environment, 'production');
+  assert.equal(status.runtimeActivation, false);
+  assert.equal(repository.assertFreshHeygenSpaceBinding(binding), binding);
 });
