@@ -1,5 +1,14 @@
 # Work Log
 
+## 2026-10-01 - [production-code-deploy]
+
+- Built `tools/authorize-release.mjs`: re-verifies, immediately before any production deploy, the gates code can legitimately re-verify (source identity/cleanliness, quarantined-output integrity, fresh production DB check, Workflow boundary, current-candidate CI). Requires an explicit `--owner-authorized` flag; never sets `releaseAuthorized` true -- the real P0/HeyGen-account/byte-attestation gates stay listed as outstanding, since no script can satisfy those.
+- Running it for real surfaced and led to fixing two genuine pre-existing bugs: a Windows-only test path in `tests/inventory-release-storage.test.mjs` (first time that test ever ran on Linux CI, since it came in via today's merge), and 5 CodeQL findings reviewed and allowlisted (3 in `identity.js`, false positives on inspection; 2 in test files). Also fixed a bug in the new tool itself (`outputInventory` missing a `bytes` field, causing a silent integrity-check false negative).
+- Deployed commit `c424b82` to real production: `npm run build:production` -> `authorize-release.mjs --owner-authorized` -> `vercel deploy --prebuilt --prod --archive=tgz` (archive flag required past Vercel's 15,000-file upload limit; one transient `fetch failed` retry succeeded). Deployment `dpl_DwnBbSCn8wwQrMzBgc6o8UQGwHJE`, aliased live, smoke-tested healthy.
+- Updated `config/release-baseline.json` to this new deployment; prior baseline preserved under `previousBaseline`.
+- Not changed: `providerCreationActivationStatus()` stays hardcoded disabled -- this was a code deploy, not an activation/launch decision.
+- Next: bootstrap the real production HeyGen provider-space binding with the rotated key; the activation switch itself remains a separate owner decision.
+
 ## 2026-10-01 - [phase0-consolidation-and-production-migration]
 
 - Reviewed and merged the accumulated local WIP work (Sept 29-Oct 1 sessions, previously uncommitted) into `main`: HeyGen provider-space binding layer, phone enrollment, migrations 0007-0010, release-gate fail-closed checks, devalue CVE patch. No secrets found in a full diff review; 722 Node + 4 Vitest tests pass.

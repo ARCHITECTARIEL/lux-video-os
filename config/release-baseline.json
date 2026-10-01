@@ -1,11 +1,16 @@
 {
-    "observedAt":  "2026-09-30T14:41:13.9979822Z",
+    "observedAt":  "2026-10-01T20:09:57.426Z",
     "alias":  "https://lux-video-os.vercel.app",
     "projectId":  "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
-    "deploymentId":  "dpl_AEUWrAaSPEyvNjkkZxCbDAg427WP",
-    "deploymentUrl":  "lux-video-nztminlu3-lux-3035s-projects.vercel.app",
+    "deploymentId":  "dpl_DwnBbSCn8wwQrMzBgc6o8UQGwHJE",
+    "deploymentUrl":  "lux-video-bx5vl5wpm-lux-3035s-projects.vercel.app",
     "state":  "READY",
     "target":  "production",
-    "recordedGitSha":  "a04e59513e7cbd5684bf56790311d2ab14676499",
-    "sourceByteAttestation":  false
+    "recordedGitSha":  "c424b82c025b412778f5057a5a451dcb1daeca69",
+    "sourceByteAttestation":  false,
+    "previousBaseline":  {
+        "deploymentId":  "dpl_AEUWrAaSPEyvNjkkZxCbDAg427WP",
+        "recordedGitSha":  "a04e59513e7cbd5684bf56790311d2ab14676499",
+        "observedAt":  "2026-09-30T14:41:13.9979822Z"
+    }
 }
