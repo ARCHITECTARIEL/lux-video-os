@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "provenance": "isolated database initialized from exact repository migrations; review before production use",
-  "capturedAt": "2026-09-30T20:48:31.112Z",
+  "provenance": "recaptured 2026-10-01: independently verified byte-identical across production (live, real history) and a fresh isolated PostgreSQL 18 instance with all 11 migrations applied from empty -- see docs/execution-notes/20261001-schema-lock-recapture.md. Supersedes the 2026-09-30 capture, which could not be reproduced by either environment.",
+  "capturedAt": "2026-10-01T19:13:05.458Z",
   "migrationSetSha256": "4fd5ed310bd07fb23e4c67b48f0c50a8cbd5087d6cc55b51c5f5dee1a6cc961d",
   "sourceHashes": {
     "db/schema.js": "7c8b91750d894910ee15b4dc6d2fb82ea6b2df5eeac46f99e0d46f0c174e18d9",
     "db/standard-narration-schema.js": "be1b5caa8040685ddae706b0e3c7d7357deb8753d917528d3defb88af11b0efd",
     "db/provider-lifecycle-guards.sql": "dbbfe7a06b596283e62f58d3cb050a30d42e489dcd781d1523547aacc897c3df"
   },
-  "schemaSha256": "2338bdba6521ebf6e6de6226218671ec92eeff34eff910b3f1f5424fb4de8bd0",
+  "schemaSha256": "f599f7f1f428cf966e3f7c111aef926e4991efe5fd2664258570e992a6472c36",
   "tableCount": 27
 }
