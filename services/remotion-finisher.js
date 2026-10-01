@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os';
+import { mkdtemp } from 'node:fs/promises';
+import { inspectMedia } from './final-media-validation.js';
 import ffmpegPath from 'ffmpeg-static';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -13,7 +16,7 @@ export const REMOTION_COMPOSITION_ID = 'lux-remotion-finisher';
 const safeName = (value) => String(value || 'video-os').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'video-os';
 
 function dimensions(format) {
-  if (format === 'portrait') return [1080, 1920];
+  if (format === 'vertical' || format === 'portrait') return [1080, 1920];
   if (format === 'square') return [1080, 1080];
   return [1920, 1080];
 }
@@ -50,7 +53,7 @@ export function buildRemotionFilterGraph(width, height, options = {}) {
 export async function finishMediaWithRemotion(job, sourceUrl, dependencies = {}) {
   if (!ffmpegPath) throw Object.assign(new Error('Remotion render compute is unavailable.'), { failureCategory: 'CONFIG_MISSING' });
   const [width, height] = dimensions(job.format);
-  const workdir = join('/tmp', `video-os-remotion-${safeName(job.id)}`);
+  const workdir = await mkdtemp(join(tmpdir(), 'video-os-finish-'));
   await mkdir(workdir, { recursive: true });
   const input = join(workdir, 'source.mp4');
   const output = join(workdir, 'final.mp4');
@@ -61,6 +64,7 @@ export async function finishMediaWithRemotion(job, sourceUrl, dependencies = {})
 
   try {
     const sourceBytes = await download(sourceUrl, input);
+    const sourceDurationMs = (await inspectMedia(input)).durationMs;
     const startedAt = Date.now();
     const vf = buildRemotionFilterGraph(width, height, {
       presenterTitle: job.input?.avatar?.name || job.title,
@@ -87,11 +91,12 @@ export async function finishMediaWithRemotion(job, sourceUrl, dependencies = {})
       PRIVATE_BLOB_CLASSIFICATIONS.FINISHED_CUSTOMER_VIDEO,
       pathname,
       createReadStream(output),
-      { contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: true }
+      { contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: false }
     );
 
     return {
       privatePathname: blob.pathname,
+      sourceDurationMs,
       bytes: info.size,
       sha256,
       sourceBytes,

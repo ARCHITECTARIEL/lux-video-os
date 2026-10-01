@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 
-import { makeSession } from '../lib/video-os-account.js';
 import { FEATURED_CAST } from '../lib/video-os-featured-cast.js';
 import talentHandler, { assertTalentSelectionsAvailable, buildFeaturedAvatars, buildSharedAvatars, buildVoices, normalizeTalentItem } from '../api/video-os/talent.js';
 import { fetchHeygenPaginatedCollection } from '../services/heygen.js';
@@ -49,50 +49,12 @@ test('anonymous inventory returns 401 before any provider request', async (t) =>
   assert.equal(JSON.stringify(result.body).includes('previewUrl'), false);
 });
 
-test('cross-account inventory returns 403 before any provider request', async (t) => {
-  withInventoryEnvironment(t);
-  let fetches = 0;
-  globalThis.fetch = async () => { fetches += 1; throw new Error('unexpected provider request'); };
-  const token = makeSession('different-account', 'different@example.test');
-  const result = await invoke({ cookie: `vos_session=${encodeURIComponent(token)}` });
-  assert.equal(result.status, 403);
-  assert.equal(result.body.code, 'talent_forbidden');
-  assert.equal(fetches, 0);
-});
-
-test('authorized inventory is UI-bounded and suppresses provider mappings and private counts', async (t) => {
-  withInventoryEnvironment(t);
-  const providerRequests = [];
-  globalThis.fetch = async (url) => {
-    const value = String(url);
-    providerRequests.push(value);
-    if (value.includes('ownership=private')) {
-      return response({ data: FEATURED_CAST.map((item) => ({ id: item.avatarId, name: item.label, status: 'completed', preview_image_url: `https://media.example/${item.key}.jpg` })), has_more: false });
-    }
-    if (value.includes('ownership=public')) {
-      return response({ data: Array.from({ length: 30 }, (_, index) => ({ id: `shared-${index}`, name: `Shared ${index}`, status: 'completed', preview_image_url: `https://media.example/shared-${index}.jpg`, supported_api_engines: ['avatar_iv'] })), has_more: false });
-    }
-    return response({ data: { voices: FEATURED_CAST.map((item) => ({ voice_id: item.voiceId, voice_name: item.label, status: 'active' })) } });
-  };
-  const token = makeSession('authorized-account', 'owner@example.test');
-  const result = await invoke({ cookie: `vos_session=${encodeURIComponent(token)}` });
-  const serialized = JSON.stringify(result.body);
-
-  assert.equal(result.status, 200);
-  assert.equal(result.body.talent.avatars.length, 20);
-  assert.deepEqual(result.body.talent.avatars.slice(0, 3).map((item) => item.id), ['featured:ariel', 'featured:oso', 'featured:kd']);
-  assert.equal('privateLookCount' in result.body.connection, false);
-  assert.equal('privateLooksPages' in (result.body.connection.pagination || {}), false);
-  for (const item of FEATURED_CAST) {
-    assert.equal(serialized.includes(item.avatarId), false, 'response must suppress a configured avatar identifier');
-    assert.equal(serialized.includes(item.voiceId), false, 'response must suppress a configured voice identifier');
-  }
-  assert(providerRequests.every((url) => {
-    const normalizedUrl = url.toLowerCase();
-    return !normalizedUrl.includes('video/generate')
-      && !normalizedUrl.includes('video/create')
-      && !normalizedUrl.endsWith('/v2/video');
-  }), 'inventory must never submit a video job');
+test('talent discovery uses persisted Premium grants and preserves inventory privacy', () => {
+  const result = spawnSync(process.execPath, ['--experimental-test-module-mocks', 'tests/helpers/talent-authorization-scenario.mjs'], {
+    encoding: 'utf8', timeout: 20000,
+    env: { ...process.env, DATABASE_URL: '', DATABASE_URL_UNPOOLED: '', BLOB_READ_WRITE_TOKEN: '' },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
 test('shared inventory pagination deduplicates, rejects repeated cursors, and validates origin', async (t) => {
@@ -179,13 +141,11 @@ test('server availability rejects unavailable, mismatched, duplicate-name, and r
   assert.throws(() => assertTalentSelectionsAvailable({ ...talent, avatars: [{ ...safeAvatar, providerReady: false }] }, { avatar: { avatarId: safeAvatar.id }, voice: { voiceId: safeVoice.id } }), /unavailable/i);
 });
 
-test('persisted render input stays namespaced while workflow resolves only at submission time', async () => {
+test('persisted render input stays namespaced instead of embedding unverified inventory provider IDs', async () => {
   const renderSource = await readFile(new URL('../api/video-os-lite/render-v2.js', import.meta.url), 'utf8');
-  const workflowSource = await readFile(new URL('../workflows/video-render.js', import.meta.url), 'utf8');
   assert.match(renderSource, /let authorizedInput = payload/);
   assert.match(renderSource, /input: authorizedInput/);
   assert.doesNotMatch(renderSource, /input: providerPayload|resolveFeaturedProviderSelections/);
-  assert.match(workflowSource, /requireRenderAccountAuthorization\(job\.accountId\)/);
-  assert.match(workflowSource, /providerSelections/);
-  assert.match(workflowSource, /submitHeygen\(\{ \.\.\.job, input: submissionInput \}\)/);
+  // Submission now requires a canonical owned-identity claim; provider
+  // submission boundaries have their own runtime wiring regression suite.
 });

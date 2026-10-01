@@ -1,0 +1,16 @@
+{
+  "completedDate": "2026-09-30",
+  "status": "verified-local-and-isolated-integration",
+  "sourceSha256": "f64e77d220008d1c310eb16d8d2f45c2630feb20692251ca4da9f79cc1b0bd5e",
+  "node": { "passed": 555, "skipped": 46, "failed": 0 },
+  "vitest": { "passed": 4, "failed": 0 },
+  "browser": { "passed": 118, "skipped": 1, "failed": 0 },
+  "isolatedIntegration": { "passed": 4, "failed": 0 },
+  "cleanup": { "tables": 27, "remainingRows": 0, "remainingBlobs": 0 },
+  "migrations": 11,
+  "packaging": { "routes": 42, "steps": 29, "workflows": 6, "reviewOnly": true, "deployed": false },
+  "securityReview": "approved-local-execution-disabled",
+  "documentationLinksChecked": 75,
+  "providerExecutionEnabled": false,
+  "productionChanged": false
+}

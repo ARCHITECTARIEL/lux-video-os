@@ -1,0 +1,9 @@
+{
+  "oldVersion": "5.9.2",
+  "newVersion": "5.9.4",
+  "syntheticPlainWorkflowFixture": true,
+  "oldToNew": true,
+  "newToOld": true,
+  "liveRunReplay": false,
+  "observedAt": "2026-10-01T17:19:34.276Z"
+}

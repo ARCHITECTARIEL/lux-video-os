@@ -14,12 +14,12 @@ import test from 'node:test';
 import ffmpegPath from 'ffmpeg-static';
 import { eq } from 'drizzle-orm';
 import { assertDatabaseConfigured, database } from '../db/client.js';
-import { addUploadMediaAsset, claimWorkflowStart, createIdentityDraft, ensureAccount, getJob, listInFlightJobs, saveStandardProject, recordIdentityConsent } from '../db/repositories.js';
+import { addUploadMediaAsset, claimWorkflowStart, createIdentityDraft, ensureAccount, getJob, listInFlightJobs, transitionJob, saveStandardProject, recordIdentityConsent } from '../db/repositories.js';
 import { entitlements, mediaAssets, users } from '../db/schema.js';
 import { standardNarrationRepository } from '../db/standard-narration-repository.js';
 import { accountHash } from '../lib/video-os-security.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
-import { PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../lib/video-os-private-blob.js';
+import { PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob, getPrivateBlob, deletePrivateBlob } from '../lib/video-os-private-blob.js';
 import { STANDARD_CONTRACT_VERSION, STANDARD_NARRATION_CREDITS, STANDARD_NARRATION_POLICY_VERSION } from '../lib/standard-narration-contract.js';
 import { driveJob, driveJobSafely } from '../lib/video-os-render-driver.js';
 
@@ -117,7 +117,9 @@ test(
       assert.ok(inFlight.some((job) => job.id === jobId));
     });
 
-    await t.test('driveJob carries a sadtalker job all the way to ready', async () => {
+    await t.test('driveJob resumes a simulated job after provider_submitted and completes it once', async () => {
+      await transitionJob({ jobId, stageTo: 'provider_submitting', eventType: 'test.progress' });
+      await transitionJob({ jobId, stageTo: 'provider_submitted', eventType: 'test.progress' });
       const before = await database().query.creditAccounts.findFirst({ where: (table, { eq: equals }) => equals(table.accountId, accountId) });
       const job = await getJob(jobId);
       await driveJob(job);
@@ -135,27 +137,11 @@ test(
   },
 );
 
-// Real, explicitly-acknowledged gap closed: tests/video-os-watchdog.test.mjs's
-// own header comment says driveJobSafely's actual failure-handling path
-// (as opposed to the pure DB-query layer around it) is "NOT covered here"
-// because it would need real provider credentials or new mocking
-// infrastructure. This test finds a genuine, credential-free way to
-// exercise it for real: delete a job's narration-audio source asset after
-// reserving and claiming it but before driving it -- the exact real-world
-// race of a customer's upload expiring/being deleted between submission
-// and the worker actually picking the job up. driveStandardJob's
-// resolveAndRender() catches ANY failure during source resolution (it runs
-// after the job is already transitioned to provider_submitting, so the
-// system can no longer prove no provider was contacted) and deliberately,
-// conservatively classifies it as PROVIDER_SUBMIT_UNKNOWN -- held for
-// reconciliation, not auto-failed, so credits are correctly NOT released
-// back (matching this project's own "never risk enabling a duplicate
-// charge" design already established for the watchdog's ambiguous bucket).
-// This proves driveJobSafely's real error path -- classify, hold instead
-// of retry-looping, no credit refund -- actually behaves this way, not
-// just that the code reads as if it should.
+// Missing private source bytes are a deterministic local simulation failure.
+// Keep the FK-protected metadata/consent intact; delete only this test's Blob.
+// No external provider was contacted, so the reservation must be released.
 test(
-  'render-worker: driveJobSafely holds (does not fail-and-refund) a job whose source audio asset disappears before it is driven',
+  'render-worker: missing private narration bytes fail a local simulation and release its reservation',
   { skip: !dbAvailable && 'DATABASE_URL / BLOB_READ_WRITE_TOKEN not configured; skipping live integration test' },
   async (t) => {
     process.env.VIDEO_OS_STANDARD_NARRATION_SCHEMA_READY = 'true';
@@ -226,23 +212,24 @@ test(
     const beforeDeletion = await database().query.creditAccounts.findFirst({ where: (table, { eq: equals }) => equals(table.accountId, accountId) });
     assert.equal(beforeDeletion.reserved, STANDARD_NARRATION_CREDITS, 'sanity check: credits are really reserved before the failure');
 
-    // Simulate the real-world race: the customer's upload (or an admin
-    // acting on a deletion/expiry request) removes the source audio asset
-    // between reservation and the worker actually picking the job up.
-    await database().delete(mediaAssets).where(eq(mediaAssets.id, narrationAssetId));
+    const [source] = await database().select().from(mediaAssets).where(eq(mediaAssets.id, narrationAssetId));
+    const stored = await getPrivateBlob(source.privatePathname);
+    assert.ok(stored?.blob?.etag);
+    await new Response(stored.stream).arrayBuffer();
+    await deletePrivateBlob(PRIVATE_BLOB_CLASSIFICATIONS.CUSTOMER_UPLOAD, source.privatePathname, { ifMatch: stored.blob.etag });
 
     const job = await getJob(jobId);
     await driveJobSafely(job);
 
     const after = await getJob(jobId);
-    assert.equal(after.status, 'provider_submit_unknown', 'a failure during source resolution (after the job is already marked provider_submitting) must be held for reconciliation, not silently lost or auto-failed');
-    assert.equal(after.failureCategory, 'PROVIDER_SUBMIT_UNKNOWN');
+    assert.equal(after.status, 'failed');
+    assert.equal(after.failureCategory, 'PERSISTENCE');
 
     const afterCredits = await database().query.creditAccounts.findFirst({ where: (table, { eq: equals }) => equals(table.accountId, accountId) });
-    assert.equal(afterCredits.reserved, STANDARD_NARRATION_CREDITS, 'credits must remain reserved, not refunded -- the system cannot prove a provider was never contacted once past provider_submitting, so auto-releasing here would risk a real double-charge if it turns out the provider actually got the request');
+    assert.equal(afterCredits.reserved, 0, 'deterministic local failure releases the reservation');
     assert.equal(afterCredits.balance, beforeDeletion.balance, 'balance must be unchanged -- neither charged further nor refunded');
 
     const stillInFlight = await listInFlightJobs(200);
-    assert.ok(!stillInFlight.some((j) => j.id === jobId), 'a held/ambiguous job must not be picked up again by the ordinary poll loop -- it needs the watchdog\'s alert-only path or manual admin resolution, matching this project\'s already-established ambiguous-bucket design');
+    assert.ok(!stillInFlight.some((j) => j.id === jobId), 'a failed local job must not re-enter the ordinary poll loop');
   },
 );

@@ -208,7 +208,7 @@ test('sanitized output takes precedence and rejected output safely falls back to
   assertSerializedExcludes(rejectedOutput, [PRIVATE_PREVIEW_URL, FEATURED_CAST[0].voiceId]);
 });
 
-test('completed MP4 playback and owner download metadata survive identity sanitization', () => {
+test('legacy MP4 metadata survives sanitization but cannot authorize unvalidated playback', () => {
   const dto = jobDto(baseJob({
     input: {
       avatar: FEATURED_CAST[0].avatarId,
@@ -222,8 +222,9 @@ test('completed MP4 playback and owner download metadata survive identity saniti
   assert.equal(dto.avatar, null);
   assert.equal(dto.voice, null);
   assert.equal(dto.filename, 'legacy-completed-video.mp4');
-  assert.equal(dto.url, '/api/video-os-lite/download?jobId=job-legacy-proof');
-  assert.equal(dto.message, 'Final MP4 ready.');
+  assert.equal(dto.url, null);
+  assert.equal(dto.outputAccepted, false);
+  assert.equal(dto.message, 'Output acceptance pending.');
   assert.deepEqual(dto.effects, {
     music: { name: 'Crystal Clear.wav' },
     lut: { name: 'Studio Contrast.cube' },
@@ -286,9 +287,9 @@ test('all externally reachable persisted identity responses use the common DTO b
 
   assert.match(results, /\.map\(jobDto\)/);
   assert.match(finalize, /const dto = jobDto\(job\)/);
-  // 4, not 2: Standard and Premium each have their own success + uncertain-
-  // dispatch response, both going through the same jobDto boundary.
-  assert.equal((render.match(/job: jobDto\(reservedJob\)/g) || []).length, 4);
+  // Legacy Standard, legacy Premium, and scripted-photo each have success and
+  // uncertain-dispatch responses, all using the same privacy boundary.
+  assert.equal((render.match(/job: jobDto\(reservedJob\)/g) || []).length, 6);
   assert.doesNotMatch(download, /avatar|voice|jobDto/);
   assert.match(projects, /\.map\(projectDto\)/);
   assert.match(projects, /project: projectDto\(project\)/);

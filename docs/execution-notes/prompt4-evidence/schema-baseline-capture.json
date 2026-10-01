@@ -1,0 +1,29 @@
+{
+  "verified": false,
+  "scope": "schema-baseline-capture",
+  "journalVerified": true,
+  "environment": "verification",
+  "identity": {
+    "database": "mvp_verification_20260930",
+    "role": "neondb_owner"
+  },
+  "providerBinding": {
+    "source": "reviewed-target-manifest",
+    "projectId": "dawn-scene-51988854",
+    "branchId": "br-wandering-violet-ai1egt3g"
+  },
+  "migrationSetSha256": "93894fb152fef13da71fdba603a0c2e169a80dde0c8608d29a6a5d4d737edd9d",
+  "migrationCount": 7,
+  "appliedHashes": [
+    "bf6c6f5c417273ca7b5ca87cab4842926413f3b5388429ff0c249b66e346a6a5",
+    "b813751c8b744f88ff4bc77077f10571af0362176d4acc8bfa7d7428d9cb2d05",
+    "ae51ba7e987631a2a09a6890df94f88587d3926733b5e3ceab3a21bfbe08ad71",
+    "25722392f309704f32d6cedfbb9fd2ef09e876d6c5ba5c3325b732978741ef54",
+    "cc4ed40a79e5fb6708886e8e5b36671340385f3f66e956414e65f4399abc5c54",
+    "3b469d3b473386830568b2e2586468d4f1e325648169283cb65d571b868e7b15",
+    "7dcf1dc67a24960beef21c3d6326db901af60ad3f96554d116ff80faaf02c7b8"
+  ],
+  "schemaSha256": "2afd2d636531a5ace887d841d60a51443ed0f79572904b76108a534e06210f77",
+  "tableCount": 16,
+  "verifiedAt": "2026-09-30T14:31:35.639Z"
+}

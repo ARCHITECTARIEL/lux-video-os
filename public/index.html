@@ -37,15 +37,37 @@
     <div id="app-notice" class="notice" role="status" aria-live="polite" hidden><span id="app-notice-text"></span><button id="workspace-retry" class="button secondary compact" type="button" hidden>Try loading workspace again</button></div>
 
     <section id="create-view" class="view" aria-labelledby="create-title">
-      <div class="page-heading"><div><p class="eyebrow">CREATION STUDIO</p><h1 id="create-title">Create a video</h1><p>Choose the image and recording that belong together. Review everything before a render can begin.</p></div><span id="connection-pill" class="status-chip" data-state="loading">Checking workspace</span></div>
+      <div class="page-heading"><div><p class="eyebrow">CREATION STUDIO</p><h1 id="create-title">Create a video</h1><p>Choose your enrolled presenter, enter the exact script, and review the price before rendering.</p></div><span id="connection-pill" class="status-chip" data-state="loading">Checking workspace</span></div>
 
       <div class="tier-switcher">
-        <div class="tier-tabs" role="tablist" aria-label="Video tier"><button id="standard-tab" type="button" role="tab" aria-selected="true" aria-controls="standard-panel" tabindex="0"><span>Standard</span><small>Portrait + uploaded audio</small></button><button id="premium-tab" type="button" role="tab" aria-selected="false" aria-controls="premium-panel" tabindex="-1"><span>Premium</span><small>Presenter + voice + script</small></button></div>
+        <div class="tier-tabs" role="tablist" aria-label="Video tier"><button id="standard-tab" type="button" role="tab" aria-selected="true" aria-controls="standard-panel" tabindex="0"><span>Standard</span><small>Ready identity + script</small></button><button id="premium-tab" type="button" role="tab" aria-selected="false" aria-controls="premium-panel" tabindex="-1"><span>Premium</span><small>Ready identity + script</small></button></div>
         <button id="premium-info" class="tier-help" type="button">Compare tiers</button>
       </div>
 
       <section id="standard-panel" class="tier-panel" role="tabpanel" aria-labelledby="standard-tab">
-        <div class="workspace-grid">
+        <form id="scripted-standard-form" class="premium-form scripted-tier-form" novalidate>
+          <section class="premium-section" aria-labelledby="standard-script-heading">
+            <div class="section-heading"><span class="step-number" aria-hidden="true">01</span><div><h2 id="standard-script-heading">Title and script</h2><p>Enter the exact words for your enrolled presenter. No new portrait, video, or voice upload is needed.</p></div></div>
+            <label class="field-label" for="standard-scripted-title">Video title</label><input id="standard-scripted-title" type="text" maxlength="120" autocomplete="off" aria-describedby="standard-scripted-title-error" placeholder="A personal introduction"><p id="standard-scripted-title-error" class="field-error" role="alert" hidden></p>
+            <label class="field-label" for="standard-scripted-script">Script</label><textarea id="standard-scripted-script" maxlength="900" rows="9" aria-describedby="standard-scripted-script-help standard-scripted-script-error" placeholder="Enter the exact words for your Standard presenter."></textarea>
+            <div class="field-meta"><span id="standard-scripted-script-help">Required. Your saved reusable voice speaks this script.</span><span id="standard-scripted-count">0 / 900</span></div><p id="standard-scripted-script-error" class="field-error" role="alert" hidden></p>
+          </section>
+          <section class="premium-section" aria-labelledby="standard-scripted-identity-heading">
+            <div class="section-heading"><span class="step-number" aria-hidden="true">02</span><div><h2 id="standard-scripted-identity-heading">Choose your presenter</h2><p>Choose a ready presenter from your private studio. Enrollment supplies the approved appearance and reusable voice.</p></div></div>
+            <div id="scripted-standard-identity-list" class="identity-choice-list compact-list" aria-live="polite"></div>
+            <p id="standard-scripted-identity-error" class="field-error" role="alert" hidden></p>
+            <a class="text-link" href="/identity">Create or manage an identity</a>
+          </section>
+          <section class="premium-section" aria-labelledby="standard-scripted-review-heading">
+            <div class="section-heading"><span class="step-number" aria-hidden="true">03</span><div><h2 id="standard-scripted-review-heading">Review price and submit</h2><p>See the current price before your render starts.</p></div></div>
+            <div class="premium-review-row"><label for="standard-scripted-format">Format<select id="standard-scripted-format"><option value="vertical">Vertical 9:16</option><option value="landscape">Landscape 16:9</option><option value="square">Square 1:1</option></select></label><div><span>Current price</span><strong id="standard-scripted-price">Checking availability</strong></div></div>
+            <div class="output-note"><strong>Your enrolled presenter</strong><span>Standard uses the approved appearance and reusable voice you already prepared.</span></div>
+            <div class="premium-submit-actions"><button id="standard-scripted-submit" class="button primary" type="submit" disabled>Review Standard price</button><button id="standard-scripted-new-draft" class="button secondary" type="button" hidden>Prepare another Standard video</button></div>
+            <p id="standard-scripted-status" class="field-help" role="status" aria-live="polite">Sign in and wait for availability checks.</p>
+            <div id="standard-scripted-recovery" class="uncertain-recovery" hidden><p class="field-error" role="alert">We could not confirm whether this render was accepted. Check the same request before retrying.</p><div class="uncertain-actions"><button id="standard-scripted-check" class="button secondary" type="button">Check existing request</button><button id="standard-scripted-retry" class="button quiet" type="button" disabled>Retry same request</button></div></div>
+          </section>
+        </form>
+        <div id="legacy-standard-workspace" class="workspace-grid" hidden>
           <div class="input-stack">
             <section class="input-section" aria-labelledby="portrait-heading">
               <div class="section-heading"><span class="step-number" aria-hidden="true">01</span><div><h2 id="portrait-heading">Choose your portrait</h2><p>Use a saved identity or inspect a portrait locally.</p></div><span id="portrait-state" class="section-state">Not selected</span></div>
@@ -104,19 +126,20 @@
       </section>
 
       <section id="premium-panel" class="tier-panel premium-panel" role="tabpanel" aria-labelledby="premium-tab" hidden>
-        <div class="premium-intro"><div><p class="eyebrow">SEPARATE WORKFLOW</p><h2>Premium presenter video</h2><p>Choose a presenter and voice, enter the exact script, then review the available cost before creating a video.</p></div><span id="provider-status" class="availability-state">Checking availability</span></div>
+        <div class="premium-intro"><div><p class="eyebrow">PREMIUM VIDEO</p><h2>Premium presenter video</h2><p>Choose a ready presenter, enter the exact script, then confirm the current Premium price.</p></div><span id="provider-status" class="availability-state">Checking availability</span></div>
         <form id="video-form" class="premium-form" novalidate>
           <section class="premium-section" aria-labelledby="premium-script-heading">
-            <div class="section-heading"><span class="step-number" aria-hidden="true">01</span><div><h3 id="premium-script-heading">Title and script</h3><p>This script belongs only to Premium.</p></div></div>
+            <div class="section-heading"><span class="step-number" aria-hidden="true">01</span><div><h3 id="premium-script-heading">Title and script</h3><p>This Premium draft stays separate from your Standard draft.</p></div></div>
             <label class="field-label" for="premium-title">Video title</label><input id="premium-title" name="title" maxlength="120" autocomplete="off" aria-describedby="premium-title-error" placeholder="Premium customer welcome"><p id="premium-title-error" class="field-error" role="alert" hidden></p>
             <label class="field-label" for="script-input">Script</label><textarea id="script-input" name="script" maxlength="900" rows="9" aria-describedby="premium-script-help premium-script-error" placeholder="Enter the exact words for the Premium presenter."></textarea>
             <div class="field-meta"><span id="premium-script-help">Required for Premium. No AI writing is included.</span><span id="script-count">0 / 900</span></div><p id="premium-script-error" class="field-error" role="alert" hidden></p>
           </section>
 
           <section class="premium-section" aria-labelledby="premium-cast-heading">
-            <div class="section-heading"><span class="step-number" aria-hidden="true">02</span><div><h3 id="premium-cast-heading">Presenter and voice</h3><p>Choose an available presenter and voice from your workspace.</p></div></div>
+            <div class="section-heading"><span class="step-number" aria-hidden="true">02</span><div><h3 id="premium-cast-heading">Choose your presenter</h3><p>Choose a ready presenter from your private studio.</p></div></div>
             <div id="premium-identity-list" class="identity-choice-list compact-list" aria-live="polite"></div>
-            <div class="cast-columns">
+            <p class="contract-limit-note">This version uses your enrolled presenter. Additional presenter and voice choices are coming later.</p>
+            <div class="cast-columns" hidden>
               <div><h4>Presenters</h4><label class="library-search" for="avatar-search">Search presenters<input id="avatar-search" type="search" autocomplete="off" aria-describedby="premium-cast-error"></label><div id="featured-cast-list" class="featured-cast-list"></div><div id="avatar-list" class="option-list" aria-live="polite"></div><div class="library-footer"><span id="avatar-count"></span><button id="avatar-more" class="button quiet compact" type="button" hidden>Show more presenters</button></div></div>
               <div><h4>Voices</h4><label class="library-search" for="voice-search">Search voices<input id="voice-search" type="search" autocomplete="off" aria-describedby="premium-cast-error"></label><div id="voice-list" class="option-list" aria-live="polite"></div><div class="library-footer"><span id="voice-count"></span><button id="voice-more" class="button quiet compact" type="button" hidden>Show more voices</button></div></div>
             </div>
@@ -125,15 +148,16 @@
 
           <section class="premium-section" aria-labelledby="premium-review-heading">
             <div class="section-heading"><span class="step-number" aria-hidden="true">03</span><div><h3 id="premium-review-heading">Finish and submit</h3><p>Your account, inputs, and available credits are checked again before anything starts.</p></div></div>
-            <div class="output-note premium-output-note"><strong>Premium MP4</strong><span>Choose a supported frame below. Captions, music, and color controls are not available in this version.</span></div>
-            <div class="premium-review-row"><label for="export-format">Format<select id="export-format" name="format"><option value="vertical">Vertical 9:16</option><option value="landscape">Landscape 16:9</option><option value="square">Square 1:1</option></select></label><label for="provider-select">Quality<select id="provider-select" name="provider"><option value="heygen">Premium</option></select></label><div><span>Quoted cost</span><strong id="finish-render-cost">Not available</strong></div></div>
-            <label class="permission-check" for="premium-composition-enabled"><input id="premium-composition-enabled" type="checkbox" aria-describedby="premium-composition-help"><span><strong>Use a background and layout</strong><small id="premium-composition-help">Landscape only. Places the presenter video in a designed frame; does not remove its original background.</small></span></label>
+            <div class="output-note premium-output-note"><strong>Premium presenter video</strong><span>Choose a format, then review the current price before rendering.</span></div>
+            <div class="premium-review-row"><label for="export-format">Format<select id="export-format" name="format"><option value="vertical">Vertical 9:16</option><option value="landscape">Landscape 16:9</option><option value="square">Square 1:1</option></select></label><label for="provider-select" hidden>Legacy provider<select id="provider-select" name="provider" disabled><option value="heygen">Managed</option></select></label><div><span>Current price</span><strong id="finish-render-cost">Checking availability</strong></div></div>
+            <p class="contract-limit-note">This version includes your presenter and script. Backgrounds, layouts, and music are coming later.</p>
+            <label class="permission-check" for="premium-composition-enabled" hidden><input id="premium-composition-enabled" type="checkbox" aria-describedby="premium-composition-help" disabled><span><strong>Use a background and layout</strong><small id="premium-composition-help">Coming later.</small></span></label>
             <div id="premium-composition-options" hidden>
               <div class="premium-review-row"><label for="premium-background">Background<select id="premium-background"></select></label><label for="premium-layout">Layout<select id="premium-layout"></select></label></div>
               <figure class="premium-composition-figure"><div id="premium-composition-preview" role="img" aria-describedby="premium-composition-caption" aria-label="Selected background and presenter layout illustration"><div id="premium-composition-presenter">Presenter video</div><strong id="premium-composition-copy">Your message</strong></div><figcaption id="premium-composition-caption"></figcaption></figure>
             </div>
 
-            <div class="studio-preview-card" id="studio-preview-card" aria-label="Studio Live Preview Player">
+            <div class="studio-preview-card" id="studio-preview-card" aria-label="Studio Live Preview Player" hidden>
                 <div class="studio-preview-header">
                   <div class="studio-preview-title-group">
                     <span class="preview-live-indicator"><span class="pulse-dot"></span> LIVE PREVIEW</span>
@@ -191,7 +215,8 @@
                 </div>
               </div>
 
-              <div class="premium-submit-actions"><button id="generate-video" class="button primary" type="submit" disabled>Create Premium video</button><button id="premium-new-draft" class="button secondary" type="button" hidden>Prepare another Premium video</button></div><p id="premium-status" class="field-help" role="status" aria-live="polite">Sign in and wait for availability checks.</p>
+              <div class="premium-submit-actions"><button id="generate-video" class="button primary" type="submit" disabled>Review Premium price</button><button id="premium-new-draft" class="button secondary" type="button" hidden>Prepare another Premium video</button></div><p id="premium-status" class="field-help" role="status" aria-live="polite">Sign in and wait for availability checks.</p>
+              <div id="premium-scripted-recovery" class="uncertain-recovery" hidden><p class="field-error" role="alert">We could not confirm whether this render was accepted. Check the same request before retrying.</p><div class="uncertain-actions"><button id="premium-scripted-check" class="button secondary" type="button">Check existing request</button><button id="premium-scripted-retry" class="button quiet" type="button" disabled>Retry same request</button></div></div>
           </section>
         </form>
         <div class="future-note"><strong>Digital Twin</strong><span>Coming later. It is not part of this workflow.</span></div>
@@ -200,7 +225,7 @@
 
     <section id="copywriter-view" class="view" aria-labelledby="copywriter-title" hidden>
       <div class="page-heading">
-        <div><p class="eyebrow">OPTIONAL WRITING TOOL</p><h1 id="copywriter-title">AI Copywriter</h1><p>Draft or refine the words first. You decide whether they move into Premium or become a recording script.</p></div>
+        <div><p class="eyebrow">OPTIONAL WRITING TOOL</p><h1 id="copywriter-title">AI Copywriter</h1><p>Draft or refine the words first, then move them into the active Standard or Premium editor.</p></div>
         <span id="copywriter-availability" class="status-chip" data-state="checking">Checking availability</span>
       </div>
 
@@ -259,9 +284,9 @@
 
           <div class="copywriter-output-actions">
             <button id="copywriter-copy" class="button secondary" type="button" disabled>Copy for recording</button>
-            <button id="copywriter-use-premium" class="button primary" type="button" disabled>Use in Premium</button>
+            <button id="copywriter-use-premium" class="button primary" type="button" disabled>Use in active tier</button>
           </div>
-          <p id="copywriter-premium-note" class="field-help" hidden>Premium is locked while its current render or recovery state is being resolved.</p>
+          <p id="copywriter-premium-note" class="field-help" hidden>The active tier is locked while its current render or recovery state is being resolved.</p>
           <p id="copywriter-recording-note" class="field-help">For Standard, record the approved words yourself and upload the authorized WAV. Copywriter does not create speech.</p>
           <div class="copywriter-status-row"><p id="copywriter-status" class="copywriter-status" data-state="idle" role="status" aria-live="polite">No AI request has been made.</p><button id="copywriter-review-candidate" class="button quiet compact" type="button" aria-controls="copywriter-candidate-panel" hidden>Review candidate</button></div>
         </section>
@@ -299,7 +324,9 @@
 
   <dialog id="standard-quote-dialog" class="review-dialog" aria-labelledby="standard-quote-title" aria-describedby="standard-quote-detail"><div class="dialog-heading"><div><p class="eyebrow">CONFIRM RENDER</p><h2 id="standard-quote-title">Start this Standard render?</h2></div><button class="icon-button" type="button" data-dialog-close aria-label="Cancel render">×</button></div><p id="standard-quote-detail">This will use <strong id="standard-quote-credits">0 credits</strong> from your account. The quote is held for <span id="standard-quote-expiry">5 minutes</span>.</p><p id="standard-quote-expired-notice" class="field-error" role="alert" hidden>This quote expired before you confirmed. Request a new one to continue.</p><div class="dialog-actions"><button class="button quiet" type="button" data-dialog-close>Cancel</button><button id="standard-quote-requote" class="button secondary" type="button" hidden>Get a new quote</button><button id="standard-quote-confirm" class="button primary" type="button">Confirm and start render</button></div></dialog>
 
-  <dialog id="premium-handoff-dialog" class="review-dialog" aria-labelledby="premium-handoff-title"><div class="dialog-heading"><div><p class="eyebrow">CONFIRM HANDOFF</p><h2 id="premium-handoff-title">Replace the Premium script?</h2></div><button class="icon-button" type="button" data-handoff-cancel aria-label="Close Premium handoff">×</button></div><p>The Premium editor already contains text. Replace it with your current Copywriter draft?</p><div class="dialog-actions"><button class="button quiet" type="button" data-handoff-cancel>Keep Premium script</button><button id="premium-handoff-confirm" class="button primary" type="button">Replace and open Premium</button></div></dialog>
+  <dialog id="scripted-photo-quote-dialog" class="review-dialog" aria-labelledby="scripted-photo-quote-title" aria-describedby="scripted-photo-quote-detail"><div class="dialog-heading"><div><p class="eyebrow">CONFIRM RENDER</p><h2 id="scripted-photo-quote-title">Review current price</h2></div><button class="icon-button" type="button" data-scripted-quote-close aria-label="Cancel render">×</button></div><div id="scripted-photo-quote-summary" class="review-summary"></div><p id="scripted-photo-quote-detail">This confirmation uses the exact title, script, identity, tier, and format shown above.</p><p id="scripted-photo-quote-error" class="field-error" role="alert" hidden></p><div class="dialog-actions"><button class="button quiet" type="button" data-scripted-quote-close>Cancel</button><button id="scripted-photo-requote" class="button secondary" type="button" hidden>Get a new quote</button><button id="scripted-photo-quote-confirm" class="button primary" type="button">Confirm and start render</button></div></dialog>
+
+  <dialog id="premium-handoff-dialog" class="review-dialog" aria-labelledby="premium-handoff-title"><div class="dialog-heading"><div><p class="eyebrow">CONFIRM HANDOFF</p><h2 id="premium-handoff-title">Replace this tier's script?</h2></div><button class="icon-button" type="button" data-handoff-cancel aria-label="Close script handoff">×</button></div><p>The active tier already contains text. Replace it with your current Copywriter draft?</p><div class="dialog-actions"><button class="button quiet" type="button" data-handoff-cancel>Keep current script</button><button id="premium-handoff-confirm" class="button primary" type="button">Replace and open editor</button></div></dialog>
 
   <dialog id="studio-preview-modal" class="studio-preview-modal" aria-labelledby="preview-modal-title" aria-modal="true">
     <div class="preview-modal-header">

@@ -1,0 +1,29 @@
+{
+  "at": "2026-09-30T15:12:26.765511+00:00",
+  "node": {
+    "passed": 375,
+    "failed": 0,
+    "skipped": 42
+  },
+  "vitest": {
+    "passed": 4,
+    "failed": 0
+  },
+  "isolatedMigrationFaultTest": {
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "dataRemaining": 0
+  },
+  "previewBuild": {
+    "exit": 0,
+    "routes": 39,
+    "steps": 93,
+    "workflows": 2,
+    "releaseAuthorized": false
+  },
+  "logs": {
+    "lux-prompt4-final-unit.log": "4d6b1c409e7900763917ffe10bc4adde730d88e91b950f35e854c585f51fa319",
+    "lux-prompt4-final-build.log": "cc2b347eac6e718d17d83f5ddeb811b217d5be2fc805713cfedd4a30184eaa59"
+  }
+}

@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { database } from './client.js';
+import { acquireProviderLifecycleLock } from './provider-lifecycle-lock.js';
+import { renderAuthorization, assertJobAuthorizationBinding, stableJson } from '../lib/video-os-render-authorization.js';
 import {
   creditAccounts,
   entitlements,
@@ -137,7 +139,7 @@ async function requireCurrentEntitlement(tx, accountId, now) {
   if (!grants.some(grant => ENTITLEMENTS.has(grant.entitlementKey) && (!grant.expiresAt || new Date(grant.expiresAt) > now))) {
     throw failure(STANDARD_NARRATION_REASON_CODES.ACCOUNT_NOT_AUTHORIZED, 403, 'ENTITLEMENT');
   }
-  return true;
+  return renderAuthorization(accountId, 'standard', grants, now);
 }
 
 async function loadBaseSources(tx, accountId, { projectId, identityId, audioAssetId }) {
@@ -236,18 +238,14 @@ function canonicalJobInput(binding, sources) {
   };
 }
 
-function stableJson(value) {
-  if (Array.isArray(value)) return value.map(stableJson);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableJson(value[key])]));
-}
-
 function sameCanonicalBinding(job, expected, quote) {
+  assertJobAuthorizationBinding(job, 'standard');
+  const { renderAuthorization: authorization, ...sourceInput } = job.input || {};
   return job?.provider === 'sadtalker'
     && job?.projectId === expected.projectId
     && job?.format === quote.format
     && job?.costCredits === STANDARD_NARRATION_CREDITS
-    && JSON.stringify(stableJson(job.input || {})) === JSON.stringify(stableJson(expected));
+    && JSON.stringify(stableJson(sourceInput)) === JSON.stringify(stableJson(expected));
 }
 
 function stageInput(accountId, binding, sources, jobId, correlationId, narrationConsent) {
@@ -378,6 +376,7 @@ export function createStandardNarrationRepository({
       if (consent !== true || policyVersion !== STANDARD_NARRATION_POLICY_VERSION) throw failure(STANDARD_NARRATION_REASON_CODES.NARRATION_CONSENT, 400, 'CONSENT');
       const db = getDatabase();
       return db.transaction(async tx => {
+        await acquireProviderLifecycleLock(tx, accountId);
         // Grant-only serialization avoids taking account/project row locks in the
         // reverse order of render completion (sources -> credit account).
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${accountId}:standard-narration-consent`}, 0))`);
@@ -410,6 +409,7 @@ export function createStandardNarrationRepository({
       if (activationResult(schemaReadiness, accountId).ready !== true) throw failure(STANDARD_NARRATION_REASON_CODES.MIGRATION_UNAPPROVED, 503, 'CONFIG_MISSING');
       const db = getDatabase();
       return db.transaction(async tx => {
+        await acquireProviderLifecycleLock(tx, accountId);
         const [existing] = await tx.select().from(standardNarrationConsents)
           .where(and(eq(standardNarrationConsents.id, consentId), eq(standardNarrationConsents.accountId, accountId), eq(standardNarrationConsents.actorId, actorId))).for('update').limit(1);
         if (!existing) throw failure(STANDARD_NARRATION_REASON_CODES.OWNERSHIP, 404, 'OWNERSHIP');
@@ -461,6 +461,8 @@ export function createStandardNarrationRepository({
       const [job] = await tx.select().from(videoJobs)
         .where(and(eq(videoJobs.id, submission.jobId), eq(videoJobs.accountId, accountId))).limit(1);
       if (!job) throw failure(STANDARD_NARRATION_REASON_CODES.OWNERSHIP, 404, 'OWNERSHIP');
+      assertJobAuthorizationBinding(job, 'standard');
+      await requireCurrentEntitlement(tx, accountId, await databaseNow(tx, clock));
       const [quote] = await tx.select().from(standardNarrationQuotes)
         .where(and(eq(standardNarrationQuotes.id, binding.quoteId), eq(standardNarrationQuotes.accountId, accountId))).for('share').limit(1);
       const sources = await loadBaseSources(tx, accountId, binding);
@@ -500,6 +502,7 @@ export function createStandardNarrationRepository({
       if (replay) return replay;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const result = await db.transaction(async tx => {
+          await acquireProviderLifecycleLock(tx, accountId);
           const [account] = await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId)).for('update').limit(1);
           if (!account) throw failure(STANDARD_NARRATION_REASON_CODES.ACCOUNT_NOT_AUTHORIZED, 404, 'OWNERSHIP');
           const [racedJob] = await tx.select().from(videoJobs)
@@ -517,7 +520,7 @@ export function createStandardNarrationRepository({
             throw failure(knownQuote?.consumedJobId ? STANDARD_NARRATION_REASON_CODES.QUOTE_CONSUMED : STANDARD_NARRATION_REASON_CODES.QUOTE_MISMATCH, 409, 'RECONCILIATION');
           }
           const now = await databaseNow(tx, clock);
-          await requireCurrentEntitlement(tx, accountId, now);
+          const authorization = await requireCurrentEntitlement(tx, accountId, now);
           const quoteCreatedAt = new Date(quote.createdAt);
           const quoteExpiresAt = new Date(quote.expiresAt);
           if (!Number.isFinite(quoteCreatedAt.getTime()) || !Number.isFinite(quoteExpiresAt.getTime())
@@ -538,7 +541,7 @@ export function createStandardNarrationRepository({
           const [job] = await tx.insert(videoJobs).values({
             id: jobId, accountId, projectId: binding.projectId, idempotencyKey, correlationId,
             provider: 'sadtalker', status: 'reserved', title, format,
-            costCredits: STANDARD_NARRATION_CREDITS, input: canonical,
+            costCredits: STANDARD_NARRATION_CREDITS, input: { ...canonical, renderAuthorization: { ...authorization, jobId } },
             createdAt: now, updatedAt: now,
           }).returning();
           const consumed = await tx.update(standardNarrationQuotes).set({ consumedJobId: jobId })

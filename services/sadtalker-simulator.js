@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { mkdtemp } from 'node:fs/promises';
 // Local SIMULATION-mode Standard renderer (MASTER_SPEC.md 0.2: SIMULATION -> CANARY
 // -> PRODUCTION). This is NOT SadTalker and performs no lip-sync inference -- it
 // composes the account's own authorized portrait and narration audio into a real,
@@ -51,7 +53,7 @@ async function fetchOwnedAssetBytes(pathname) {
 export async function renderStandardSimulation(input, assets, { format = 'vertical', title = 'video-os' } = {}) {
   if (!ffmpegPath) throw Object.assign(new Error('FFmpeg is unavailable.'), { failureCategory: 'CONFIG_MISSING' });
   const [width, height] = dimensions(format);
-  const workdir = join('/tmp', `standard-render-${safeName(input.jobId)}`);
+  const workdir = await mkdtemp(join(tmpdir(), 'video-os-finish-'));
   await mkdir(workdir, { recursive: true });
   const portraitExt = assets.portrait.contentType === 'image/png' ? '.png' : '.jpg';
   const audioExt = assets.drivenAudio.contentType === 'audio/wav' || assets.drivenAudio.contentType === 'audio/x-wav' ? '.wav' : '.audio';
@@ -69,7 +71,7 @@ export async function renderStandardSimulation(input, assets, { format = 'vertic
     await runFfmpeg(['-y', '-loop', '1', '-i', portraitPath, '-i', audioPath, '-vf', vf, '-c:v', 'libx264', '-tune', 'stillimage', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-b:a', '160k', '-pix_fmt', 'yuv420p', '-shortest', '-movflags', '+faststart', output]);
     const [info, sha256] = await Promise.all([stat(output), hashFile(output)]);
     const pathname = `video-os/finals/${safeName(input.accountId)}/${safeName(input.jobId)}-${sha256}.mp4`;
-    const blob = await putPrivateBlob(PRIVATE_BLOB_CLASSIFICATIONS.FINISHED_CUSTOMER_VIDEO, pathname, createReadStream(output), { contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: true });
+    const blob = await putPrivateBlob(PRIVATE_BLOB_CLASSIFICATIONS.FINISHED_CUSTOMER_VIDEO, pathname, createReadStream(output), { contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: false });
     return {
       privatePathname: blob.pathname, bytes: info.size, sha256, ffmpegMs: Date.now() - startedAt, width, height,
       filename: `${safeName(title)}-${format}.mp4`,

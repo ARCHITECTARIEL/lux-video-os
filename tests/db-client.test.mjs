@@ -54,6 +54,28 @@ test('a healthy pool is reused across calls, not rebuilt every time', () => {
   assert.equal(secondPool, firstPool, 'database() should cache the pool across calls when nothing has failed');
 });
 
+test('a changed canonical connection replaces the cached client and drains the old pool', async () => {
+  const firstClient = database();
+  const firstPool = currentPoolForTests();
+  const replacementUrl = 'postgres://other:newpass@127.0.0.1:59998/other_unreachable';
+  process.env.DATABASE_URL = replacementUrl;
+  const secondClient = database();
+  const secondPool = currentPoolForTests();
+  assert.notEqual(secondClient, firstClient);
+  assert.notEqual(secondPool, firstPool);
+  assert.equal(secondPool.options.connectionString, replacementUrl);
+  assert.equal(firstPool.ending, true);
+  firstPool.emit('error', new Error('late error after target replacement'));
+  assert.equal(currentPoolForTests(), secondPool);
+  await secondPool.end();
+});
+
+test('a missing canonical URL cannot silently fall back to the cached database', () => {
+  database();
+  delete process.env.DATABASE_URL;
+  assert.throws(() => database(), { failureCategory: 'CONFIG_MISSING' });
+});
+
 test('an error on a pool that has already been evicted does not disturb the pool that replaced it', () => {
   database();
   const firstPool = currentPoolForTests();

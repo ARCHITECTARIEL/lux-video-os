@@ -3,6 +3,7 @@ import { FEATURED_CAST, curateDefaultCast, matchedVoiceId, prioritizeVoices } fr
 import { createCopywriterController } from './copywriter.js';
 import { createStandardController } from './standard-contract.js';
 import { createStudioPreviewController } from './studio-preview-player.js';
+import { createScriptedPhotoClient } from './scripted-photo-client.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -51,6 +52,7 @@ const state = {
     terminal: false,
   },
   standard: {
+    identityId: null,
     portrait: null,
     audio: null,
     permission: false,
@@ -58,6 +60,14 @@ const state = {
     running: false,
     objectUrls: new Set(),
     timers: [],
+  },
+  scripted: {
+    capabilities: null,
+    quoteTier: null,
+    tiers: {
+      STANDARD: { busy: false, job: null, pollingTimer: null, pollingAttempts: 0 },
+      PREMIUM: { busy: false, job: null, pollingTimer: null, pollingAttempts: 0 },
+    },
   },
   fixtureResults: [],
   resultLimit: 6,
@@ -69,6 +79,7 @@ let copywriterController = null;
 let standardContractController = null;
 let standardContractJob = null;
 let studioPreviewController = null;
+let scriptedPhotoClient = null;
 
 const node = (tag, className, text) => {
   const element = document.createElement(tag);
@@ -144,6 +155,401 @@ async function getJson(url, options = {}) {
   }
 }
 
+let scriptedSessionStorage = null;
+try { scriptedSessionStorage = window.sessionStorage; } catch {}
+scriptedPhotoClient = createScriptedPhotoClient({
+  request: (url, options = {}) => getJson(url, {
+    ...options,
+    ...(options.body !== undefined ? { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } } : {}),
+  }),
+  storage: scriptedSessionStorage,
+});
+
+function scriptedTierState(tier) {
+  return state.scripted.tiers[tier];
+}
+
+function activeScriptedTier() {
+  return $('#premium-tab').getAttribute('aria-selected') === 'true' ? 'PREMIUM' : 'STANDARD';
+}
+
+function scriptedTierLocked(tier) {
+  const normalized = tier.toLowerCase();
+  const activeResult = state.results.some(item => String(item.tier || '').toLowerCase() === normalized && liveStates.has(presentedJobStatus(item)));
+  return scriptedTierState(tier).busy || scriptedPhotoClient.publicState(tier).uncertain || activeResult;
+}
+
+function scriptedElements(tier) {
+  if (tier === 'STANDARD') return {
+    form: $('#scripted-standard-form'),
+    title: $('#standard-scripted-title'),
+    script: $('#standard-scripted-script'),
+    count: $('#standard-scripted-count'),
+    titleError: $('#standard-scripted-title-error'),
+    scriptError: $('#standard-scripted-script-error'),
+    identityError: $('#standard-scripted-identity-error'),
+    identityList: $('#scripted-standard-identity-list'),
+    format: $('#standard-scripted-format'),
+    price: $('#standard-scripted-price'),
+    submit: $('#standard-scripted-submit'),
+    newDraft: $('#standard-scripted-new-draft'),
+    status: $('#standard-scripted-status'),
+    recovery: $('#standard-scripted-recovery'),
+    check: $('#standard-scripted-check'),
+    retry: $('#standard-scripted-retry'),
+  };
+  return {
+    form: $('#video-form'),
+    title: $('#premium-title'),
+    script: $('#script-input'),
+    count: $('#script-count'),
+    titleError: $('#premium-title-error'),
+    scriptError: $('#premium-script-error'),
+    identityError: $('#premium-cast-error'),
+    identityList: $('#premium-identity-list'),
+    format: $('#export-format'),
+    price: $('#finish-render-cost'),
+    submit: $('#generate-video'),
+    newDraft: $('#premium-new-draft'),
+    status: $('#premium-status'),
+    recovery: $('#premium-scripted-recovery'),
+    check: $('#premium-scripted-check'),
+    retry: $('#premium-scripted-retry'),
+  };
+}
+
+function scriptedIdentityId(tier) {
+  return tier === 'STANDARD' ? state.standard.identityId : state.premium.identityId;
+}
+
+function scriptedDraft(tier) {
+  const elements = scriptedElements(tier);
+  return {
+    title: elements.title.value,
+    script: elements.script.value,
+    identityId: scriptedIdentityId(tier),
+    format: elements.format.value,
+  };
+}
+
+function scriptedReason(reasons = []) {
+  if (reasons.includes('feature_disabled')) return 'Video creation is not enabled yet. Your draft stays available.';
+  if (reasons.includes('standard_price_unconfigured')) return 'Standard pricing is not configured yet. Your draft stays available.';
+  return 'This tier is not currently available. Your draft stays available.';
+}
+
+function scriptedIntentChanged(tier) {
+  const changed = scriptedPhotoClient.bindIntent(tier, scriptedDraft(tier));
+  if (changed && state.scripted.quoteTier === tier) closeDialog($('#scripted-photo-quote-dialog'));
+  if (changed) {
+    $('#scripted-photo-quote-error').hidden = true;
+    $('#scripted-photo-requote').hidden = true;
+  }
+  renderScriptedAvailability(tier);
+}
+
+function scriptedIdentityChoice(identity, tier) {
+  const button = node('button', 'identity-choice');
+  button.type = 'button';
+  button.dataset[tier === 'STANDARD' ? 'scriptedStandardIdentityId' : 'premiumIdentityId'] = identity.id;
+  button.setAttribute('aria-pressed', String(scriptedIdentityId(tier) === identity.id));
+  if (identity.portraitUrl) {
+    const image = node('img');
+    safeImage(image, identity.portraitUrl, (identity.displayName || 'Saved identity') + ' portrait');
+    button.append(image);
+  } else {
+    button.append(node('span', 'identity-fallback', initials(identity.displayName)));
+  }
+  const copy = node('span');
+  copy.append(node('strong', null, identity.displayName || 'Saved identity'), node('small', null, identity.ready === true ? 'Ready to use' : identityStatus(identity)));
+  button.append(copy);
+  const locked = scriptedTierState(tier).busy || Boolean(scriptedTierState(tier).job && liveStates.has(presentedJobStatus(scriptedTierState(tier).job)));
+  if (identity.ready !== true || identity.archivedAt || locked) {
+    button.disabled = true;
+    button.title = locked ? 'This tier is locked while its current request is resolved.' : 'This presenter is not ready to use.';
+  } else {
+    button.addEventListener('click', () => {
+      if (tier === 'STANDARD') state.standard.identityId = identity.id;
+      else choosePremiumIdentity(identity);
+      setFieldError(scriptedElements(tier).identityList, scriptedElements(tier).identityError);
+      scriptedIntentChanged(tier);
+      renderScriptedIdentityLists();
+      announce((identity.displayName || 'Private identity') + ` selected for ${tier === 'STANDARD' ? 'Standard' : 'Premium'}.`);
+    });
+  }
+  return button;
+}
+
+function renderScriptedIdentityLists() {
+  if (standardFixtureMode) return;
+  const identities = state.identities.filter(identity => !identity.archivedAt);
+  for (const tier of ['STANDARD', 'PREMIUM']) {
+    const target = scriptedElements(tier).identityList;
+    if (!state.signedIn) {
+      target.replaceChildren(node('p', 'inline-empty', 'Sign in to choose a ready private identity.'));
+      continue;
+    }
+    if (!identities.length) {
+      target.replaceChildren(node('p', 'inline-empty', 'No private identities are available. Open Identity Studio to enroll once.'));
+      continue;
+    }
+    target.replaceChildren(...identities.map(identity => scriptedIdentityChoice(identity, tier)));
+  }
+}
+
+function scriptedDraftValid(tier, { focus = false } = {}) {
+  const elements = scriptedElements(tier);
+  const identity = state.identities.find(item => item.id === scriptedIdentityId(tier) && item.ready === true && !item.archivedAt);
+  const checks = [
+    [Boolean(elements.title.value.trim()), elements.title, elements.titleError, 'Enter a video title.'],
+    [Boolean(elements.script.value.trim()), elements.script, elements.scriptError, 'Enter the exact script.'],
+    [Boolean(identity), elements.identityList, elements.identityError, 'Choose a ready private identity.'],
+  ];
+  for (const [valid, control, error, message] of checks) setFieldError(control, error, valid ? '' : message);
+  const first = checks.find(([valid]) => !valid);
+  if (focus && first) {
+    if (first[1] === elements.identityList) (elements.identityList.querySelector('button:not([disabled])') || elements.identityList.querySelector('a') || elements.identityList).focus?.();
+    else first[1].focus();
+  }
+  return !first;
+}
+
+function setScriptedLocked(tier, locked) {
+  const elements = scriptedElements(tier);
+  for (const control of [elements.title, elements.script, elements.format]) control.disabled = locked;
+  scriptedTierState(tier).busy = locked;
+  renderScriptedIdentityLists();
+}
+
+function renderScriptedAvailability(tier) {
+  if (standardFixtureMode) return;
+  const elements = scriptedElements(tier);
+  const tierState = scriptedTierState(tier);
+  const capability = scriptedPhotoClient.tierCapability(tier);
+  const identity = state.identities.find(item => item.id === scriptedIdentityId(tier) && item.ready === true && !item.archivedAt);
+  const inputsReady = Boolean(elements.title.value.trim() && elements.script.value.trim() && identity);
+  const available = Boolean(state.signedIn && capability?.available);
+  const hasJob = Boolean(tierState.job);
+  const jobLive = hasJob && liveStates.has(presentedJobStatus(tierState.job));
+  elements.price.textContent = capability?.available && capability.credits ? capability.credits.toLocaleString() + ' credits' : 'Not available';
+  elements.submit.hidden = hasJob;
+  elements.newDraft.hidden = !hasJob || jobLive;
+  elements.submit.disabled = tierState.busy || hasJob || !available || !inputsReady;
+  elements.submit.textContent = tierState.busy ? 'Working…' : `Review ${tier === 'STANDARD' ? 'Standard' : 'Premium'} price`;
+  if (!state.signedIn) elements.status.textContent = 'Sign in to use an enrolled identity and request a price.';
+  else if (!capability?.available) elements.status.textContent = scriptedReason(capability?.reasons);
+  else if (!inputsReady) elements.status.textContent = 'Add a title and script, then choose a ready private identity.';
+  else if (!hasJob && !scriptedPhotoClient.publicState(tier).uncertain) elements.status.textContent = 'Ready to save this draft and review the current price.';
+  if (tier === 'PREMIUM') {
+    $('#provider-status').dataset.state = available ? 'eligible' : 'unavailable';
+    $('#provider-status').textContent = available ? 'Premium available' : 'Premium unavailable';
+  }
+}
+
+function renderScriptedStudio() {
+  $('#scripted-standard-form').hidden = standardFixtureMode;
+  $('#legacy-standard-workspace').hidden = !standardFixtureMode;
+  if (standardFixtureMode) return;
+  renderScriptedIdentityLists();
+  for (const tier of ['STANDARD', 'PREMIUM']) {
+    const uncertain = scriptedPhotoClient.publicState(tier).uncertain;
+    scriptedElements(tier).recovery.hidden = !uncertain;
+    if (uncertain) {
+      scriptedElements(tier).retry.disabled = true;
+      setScriptedLocked(tier, true);
+    }
+  }
+  renderScriptedAvailability('STANDARD');
+  renderScriptedAvailability('PREMIUM');
+}
+
+function hydrateScriptedDrafts(restored) {
+  for (const tier of ['STANDARD', 'PREMIUM']) {
+    const draft = restored?.[tier]?.draft;
+    if (!draft) continue;
+    const elements = scriptedElements(tier);
+    elements.title.value = draft.title || '';
+    elements.script.value = draft.script || '';
+    elements.count.textContent = elements.script.value.length + ' / 900';
+    if (['vertical', 'landscape', 'square'].includes(draft.format)) elements.format.value = draft.format;
+    if (tier === 'STANDARD') state.standard.identityId = draft.identityId || null;
+    else state.premium.identityId = draft.identityId || null;
+  }
+}
+
+async function loadScriptedCapabilities() {
+  state.scripted.capabilities = await scriptedPhotoClient.loadCapabilities();
+  return state.scripted.capabilities;
+}
+
+function showScriptedQuote(tier, prepared) {
+  state.scripted.quoteTier = tier;
+  const draft = scriptedDraft(tier);
+  const identity = state.identities.find(item => item.id === draft.identityId);
+  $('#scripted-photo-quote-title').textContent = `Start this ${tier === 'STANDARD' ? 'Standard' : 'Premium'} render?`;
+  const summary = $('#scripted-photo-quote-summary');
+  summary.replaceChildren(...[
+    ['Title', draft.title.trim()],
+    ['Script', draft.script.trim()],
+    ['Presenter', identity?.displayName || 'Private identity'],
+    ['Format', draft.format],
+    ['Current price', `${Number(prepared.quote.credits).toLocaleString()} credits`],
+    ['Quote expires', new Date(prepared.quote.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })],
+  ].map(([label, value]) => { const row = node('div'); row.append(node('span', null, label), node('strong', null, value)); return row; }));
+  $('#scripted-photo-quote-error').hidden = true;
+  $('#scripted-photo-requote').hidden = true;
+  $('#scripted-photo-quote-confirm').disabled = false;
+  openDialog($('#scripted-photo-quote-dialog'), $('#scripted-photo-quote-confirm'));
+}
+
+async function requestScriptedQuote(tier) {
+  if (!scriptedDraftValid(tier, { focus: true })) return;
+  const tierState = scriptedTierState(tier);
+  const elements = scriptedElements(tier);
+  setScriptedLocked(tier, true);
+  elements.status.textContent = 'Saving this exact draft and requesting the current price.';
+  try {
+    const prepared = await scriptedPhotoClient.prepareQuote(tier, scriptedDraft(tier));
+    if (prepared.recovered && prepared.existingJob) {
+      mergeScriptedJob(tier, prepared.existingJob, { recovered: true });
+      return;
+    }
+    showScriptedQuote(tier, prepared);
+    elements.status.textContent = 'Price ready. Confirm the exact inputs in the dialog.';
+  } catch (error) {
+    elements.status.textContent = error.message;
+    showToast(error.message);
+  } finally {
+    const held = scriptedPhotoClient.publicState(tier).uncertain
+      || Boolean(scriptedTierState(tier).job && liveStates.has(presentedJobStatus(scriptedTierState(tier).job)));
+    setScriptedLocked(tier, held);
+    renderScriptedAvailability(tier);
+  }
+}
+
+function mergeScriptedJob(tier, job, { recovered = false } = {}) {
+  if (!job?.id) throw new Error('The render response did not include a recoverable job.');
+  const tierState = scriptedTierState(tier);
+  tierState.job = job;
+  tierState.pollingAttempts = 0;
+  state.results = [job, ...state.results.filter(item => item.id !== job.id)];
+  state.resultsState = 'ready';
+  renderResults();
+  const status = presentedJobStatus(job);
+  scriptedElements(tier).status.textContent = recovered ? 'Existing render found. Check My Videos for its current state.' : `${tier === 'STANDARD' ? 'Standard' : 'Premium'} render accepted. Check My Videos for progress.`;
+  setScriptedLocked(tier, liveStates.has(status));
+  scriptedElements(tier).recovery.hidden = true;
+  if (liveStates.has(status)) scheduleScriptedPolling(tier, job.id);
+  renderScriptedAvailability(tier);
+}
+
+function stopScriptedPolling(tier) {
+  const tierState = scriptedTierState(tier);
+  clearTimeout(tierState.pollingTimer);
+  tierState.pollingTimer = null;
+}
+
+function scheduleScriptedPolling(tier, jobId) {
+  const tierState = scriptedTierState(tier);
+  if (tierState.pollingTimer || tierState.pollingAttempts >= 45) return;
+  tierState.pollingTimer = window.setTimeout(async () => {
+    tierState.pollingTimer = null;
+    tierState.pollingAttempts += 1;
+    try {
+      await loadResults();
+      const job = state.results.find(item => item.id === jobId);
+      if (job) tierState.job = job;
+      if (job && liveStates.has(presentedJobStatus(job))) scheduleScriptedPolling(tier, jobId);
+      else {
+        setScriptedLocked(tier, false);
+        scriptedElements(tier).status.textContent = job ? statusCopy(presentedJobStatus(job), job) : 'The saved render remains available in My Videos.';
+        renderScriptedAvailability(tier);
+      }
+    } catch {
+      scriptedElements(tier).status.textContent = 'Status checks paused. The saved request remains available in My Videos.';
+      setScriptedLocked(tier, false);
+    }
+  }, Math.min(30_000, 5_000 + tierState.pollingAttempts * 1_000));
+}
+
+function prepareAnotherScriptedDraft(tier) {
+  stopScriptedPolling(tier);
+  scriptedTierState(tier).job = null;
+  scriptedPhotoClient.resetCompletedIntent(tier);
+  scriptedPhotoClient.bindIntent(tier, scriptedDraft(tier));
+  setScriptedLocked(tier, false);
+  scriptedElements(tier).status.textContent = 'Draft preserved. Review a new price when you are ready.';
+  renderScriptedAvailability(tier);
+  scriptedElements(tier).title.focus();
+}
+
+async function confirmScriptedQuote({ recoveryFirst = false } = {}) {
+  const tier = state.scripted.quoteTier;
+  if (!tier) return;
+  const elements = scriptedElements(tier);
+  const quoteStatus = scriptedPhotoClient.quoteStatus(tier, scriptedDraft(tier));
+  if (!quoteStatus.valid) {
+    $('#scripted-photo-quote-error').textContent = quoteStatus.code === 'quote_expired' ? 'This quote expired. Get a new quote; the same request key will be preserved.' : 'These inputs changed. Review a new quote before submitting.';
+    $('#scripted-photo-quote-error').hidden = false;
+    $('#scripted-photo-requote').hidden = false;
+    $('#scripted-photo-quote-confirm').disabled = true;
+    return;
+  }
+  setScriptedLocked(tier, true);
+  $('#scripted-photo-quote-confirm').disabled = true;
+  elements.status.textContent = recoveryFirst ? 'Checking the existing request before retrying.' : 'Submitting this quoted render.';
+  try {
+    const result = await scriptedPhotoClient.submit(tier, scriptedDraft(tier), { recoveryFirst });
+    closeDialog($('#scripted-photo-quote-dialog'));
+    mergeScriptedJob(tier, result.job, { recovered: result.recovered });
+  } catch (error) {
+    if (error.code === 'submission_uncertain') {
+      closeDialog($('#scripted-photo-quote-dialog'));
+      elements.recovery.hidden = false;
+      elements.check.disabled = false;
+      elements.retry.disabled = true;
+      elements.status.textContent = error.message;
+    } else if (error.quoteRejected || ['quote_expired', 'quote_missing'].includes(error.code)) {
+      $('#scripted-photo-quote-error').textContent = error.message;
+      $('#scripted-photo-quote-error').hidden = false;
+      $('#scripted-photo-requote').hidden = false;
+    } else {
+      elements.status.textContent = error.message;
+      showToast(error.message);
+    }
+  } finally {
+    const uncertain = scriptedPhotoClient.publicState(tier).uncertain;
+    if (!uncertain && !scriptedTierState(tier).job) setScriptedLocked(tier, false);
+    $('#scripted-photo-quote-confirm').disabled = false;
+    renderScriptedAvailability(tier);
+  }
+}
+
+async function checkScriptedRecovery(tier) {
+  const elements = scriptedElements(tier);
+  elements.check.disabled = true;
+  elements.status.textContent = 'Checking the same request without creating new work.';
+  try {
+    const job = await scriptedPhotoClient.recover(tier);
+    if (job) mergeScriptedJob(tier, job, { recovered: true });
+    else {
+      elements.status.textContent = 'No existing render was found. You may retry the same request and request key.';
+      elements.retry.disabled = false;
+    }
+  } catch (error) {
+    elements.status.textContent = error.message;
+  } finally {
+    elements.check.disabled = false;
+  }
+}
+
+async function retryScriptedRequest(tier) {
+  const quote = scriptedPhotoClient.quoteStatus(tier, scriptedDraft(tier));
+  if (!quote.valid) return requestScriptedQuote(tier);
+  state.scripted.quoteTier = tier;
+  return confirmScriptedQuote({ recoveryFirst: true });
+}
+
 function rawJobStatus(item = {}) {
   const raw = String(item.status || item.stage || '').trim().toUpperCase();
   const legacy = {
@@ -180,7 +586,7 @@ function resultAccepted(item = {}) {
 
 function presentedJobStatus(item = {}) {
   const status = rawJobStatus(item);
-  return status === 'SUCCEEDED' && !resultAccepted(item) ? 'PROCESSING' : status;
+  return status === 'SUCCEEDED' && item.outputAccepted !== true ? 'PROCESSING' : status;
 }
 
 function statusCopy(status, item = {}) {
@@ -189,7 +595,7 @@ function statusCopy(status, item = {}) {
   if (status === 'QUEUED') return 'Queued';
   if (status === 'SUBMITTING') return 'Starting render';
   if (status === 'PROCESSING') return rawJobStatus(item) === 'SUCCEEDED' ? 'Output acceptance pending' : 'Processing';
-  if (status === 'SUCCEEDED') return 'Accepted output';
+  if (status === 'SUCCEEDED') return safeOwnedOutputUrl(item) ? 'Accepted output' : 'Output unavailable';
   if (status === 'FAILED_RETRYABLE') return 'Retry needs review';
   if (status === 'FAILED_FINAL') return 'Failed';
   if (status === 'CANCELLED') return 'Cancelled';
@@ -236,7 +642,7 @@ function closeDialog(dialog, { restore = true } = {}) {
   dialog.close();
 }
 
-for (const dialog of [$('#mobile-menu'), $('#review-dialog'), $('#premium-handoff-dialog'), $('#auth-modal'), $('#standard-quote-dialog')]) {
+for (const dialog of [$('#mobile-menu'), $('#review-dialog'), $('#premium-handoff-dialog'), $('#auth-modal'), $('#standard-quote-dialog'), $('#scripted-photo-quote-dialog')]) {
   dialog.addEventListener('close', () => {
     if (dialog === $('#mobile-menu')) $('#open-menu').setAttribute('aria-expanded', 'false');
     if (dialog === $('#auth-modal')) $$('[aria-controls="auth-modal"]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
@@ -290,6 +696,7 @@ function setTier(tier, { focus = false } = {}) {
   $('#premium-tab').tabIndex = standard ? -1 : 0;
   $('#standard-panel').hidden = !standard;
   $('#premium-panel').hidden = standard;
+  if (!standardFixtureMode) renderScriptedStudio();
   if (focus) (standard ? $('#standard-tab') : $('#premium-tab')).focus();
 }
 
@@ -306,11 +713,10 @@ function reviewRows(rows, warning) {
 function showTierComparison() {
   $('#review-dialog-title').textContent = 'Standard and Premium';
   reviewRows([
-    ['Standard', 'Authorized portrait + uploaded WAV'],
-    ['Standard script', 'Not required'],
-    ['Premium', 'Presenter + voice + exact script'],
+    ['Standard', 'Ready private identity + exact script'],
+    ['Premium', 'Ready private identity + exact script'],
     ['Live availability', 'Checked separately for each tier'],
-  ], 'Both tiers are live. Availability is checked again for the signed-in account when you submit.');
+  ], 'Availability, access, and price are checked separately for each tier before a render can start.');
   openDialog($('#review-dialog'), $('[data-dialog-close]', $('#review-dialog')));
 }
 
@@ -337,7 +743,7 @@ function renderAccount() {
     label.textContent = 'Account';
     detail.textContent = 'Signed out';
     avatar.textContent = 'A';
-    target.replaceChildren(node('p', null, 'Sign in to see account-owned identities, jobs, and videos.'));
+    target.replaceChildren(node('p', null, 'Sign in to see your private identities, jobs, and videos.'));
     signedOutControls.forEach((button) => {
       button.hidden = false;
       button.textContent = 'Sign in';
@@ -376,9 +782,7 @@ function identityStatus(identity) {
 function identityChoice(identity, mode) {
   const button = node('button', 'identity-choice');
   button.type = 'button';
-  const selected = mode === 'standard'
-    ? state.standard.portrait?.kind === 'identity' && state.standard.portrait.identityId === identity.id
-    : state.premium.identityId === identity.id;
+  const selected = mode === 'standard' ? state.standard.identityId === identity.id : state.premium.identityId === identity.id;
   button.setAttribute('aria-pressed', String(selected));
   button.dataset[mode === 'standard' ? 'standardIdentityId' : 'premiumIdentityId'] = identity.id;
   if (identity.portraitUrl) {
@@ -389,9 +793,9 @@ function identityChoice(identity, mode) {
     button.append(node('span', 'identity-fallback', initials(identity.displayName)));
   }
   const copy = node('span');
-  copy.append(node('strong', null, identity.displayName || 'Saved identity'), node('small', null, mode === 'standard' ? 'Saved portrait · local preparation only' : identityStatus(identity)));
+  copy.append(node('strong', null, identity.displayName || 'Saved identity'), node('small', null, identity.ready === true ? 'Ready to use' : identityStatus(identity)));
   button.append(copy);
-  if (mode === 'premium' && (identity.ready !== true || state.premium.controlsLocked)) {
+  if (identity.ready !== true || (mode === 'premium' && state.premium.controlsLocked)) {
     button.disabled = true;
     button.title = state.premium.controlsLocked ? 'This Premium submission is locked while its outcome is pending.' : 'This identity is not ready for Premium.';
   } else {
@@ -432,7 +836,7 @@ function renderIdentityLibrary() {
   }
   if (state.identitiesState === 'loading') {
     const loading = node('div', 'empty-state');
-    loading.append(node('span', 'empty-mark', 'L'), node('h2', null, 'Checking your identities'), node('p', null, 'Loading account-owned identity records.'));
+    loading.append(node('span', 'empty-mark', 'L'), node('h2', null, 'Checking your identities'), node('p', null, 'Loading your private identity records.'));
     target.replaceChildren(loading);
     return;
   }
@@ -464,12 +868,13 @@ function renderIdentityLibrary() {
     const body = node('div', 'identity-library-body');
     const badge = node('span', 'identity-status' + (identity.ready ? ' ready' : ''), identityStatus(identity));
     const title = node('h2', null, identity.displayName || 'Saved identity');
-    const copy = node('p', null, identity.ready ? 'Available to the separate Premium workflow. Standard still needs its own recording.' : 'The identity workspace shows its current setup state.');
+    const copy = node('p', null, identity.ready ? 'Available in Standard and Premium, subject to your access and current pricing.' : 'The identity workspace shows its current setup state.');
     const actions = node('div', 'result-actions');
-    const use = node('button', 'button secondary compact', 'Use for Standard prep');
+    const use = node('button', 'button secondary compact', 'Use in Studio');
     use.type = 'button';
     use.addEventListener('click', () => {
       selectStandardIdentity(identity);
+      choosePremiumIdentity(identity);
       location.hash = 'create';
       setTier('standard');
     });
@@ -483,6 +888,14 @@ function renderIdentityLibrary() {
 }
 
 function selectStandardIdentity(identity) {
+  if (!identity?.id || identity.ready !== true) return;
+  state.standard.identityId = identity.id;
+  if (!standardFixtureMode) {
+    setFieldError($('#scripted-standard-identity-list'), $('#standard-scripted-identity-error'));
+    scriptedIntentChanged('STANDARD');
+    renderScriptedIdentityLists();
+    return;
+  }
   replaceStandardPortrait({
     kind: 'identity',
     identityId: identity.id,
@@ -1135,6 +1548,10 @@ function choosePremiumIdentity(identity) {
   setFieldError($('#avatar-search'), $('#premium-cast-error'));
   renderPremiumCast();
   renderPremiumAvailability();
+  if (!fixtureMode) {
+    scriptedIntentChanged('PREMIUM');
+    renderScriptedIdentityLists();
+  }
   studioPreviewController?.updatePresenter(state.premium.avatar);
 }
 
@@ -1299,6 +1716,22 @@ function prepareAnotherPremiumDraft() {
   state.premium.activeJobId = null;
   state.premium.controlsLocked = false;
   state.premium.terminal = false;
+  state.standard.identityId = null;
+  state.scripted.capabilities = null;
+  state.scripted.quoteTier = null;
+  scriptedPhotoClient.clearScope();
+  for (const tier of ['STANDARD', 'PREMIUM']) {
+    stopScriptedPolling(tier);
+    state.scripted.tiers[tier] = { busy: false, job: null, pollingTimer: null, pollingAttempts: 0 };
+  }
+  state.standard.identityId = null;
+  state.scripted.capabilities = null;
+  state.scripted.quoteTier = null;
+  for (const tier of ['STANDARD', 'PREMIUM']) {
+    stopScriptedPolling(tier);
+    state.scripted.tiers[tier] = { busy: false, job: null, pollingTimer: null, pollingAttempts: 0 };
+    scriptedPhotoClient.resetCompletedIntent(tier);
+  }
   state.premium.identityId = null;
   state.premium.avatar = null;
   state.premium.voice = null;
@@ -1314,6 +1747,18 @@ function prepareAnotherPremiumDraft() {
   setFieldError($('#premium-title'), $('#premium-title-error'));
   setFieldError($('#script-input'), $('#premium-script-error'));
   setFieldError($('#avatar-search'), $('#premium-cast-error'));
+  $('#standard-scripted-title').value = '';
+  $('#standard-scripted-script').value = '';
+  $('#standard-scripted-count').textContent = '0 / 900';
+  setFieldError($('#standard-scripted-title'), $('#standard-scripted-title-error'));
+  setFieldError($('#standard-scripted-script'), $('#standard-scripted-script-error'));
+  setFieldError($('#scripted-standard-identity-list'), $('#standard-scripted-identity-error'));
+  $('#standard-scripted-title').value = '';
+  $('#standard-scripted-script').value = '';
+  $('#standard-scripted-count').textContent = '0 / 900';
+  setFieldError($('#standard-scripted-title'), $('#standard-scripted-title-error'));
+  setFieldError($('#standard-scripted-script'), $('#standard-scripted-script-error'));
+  setFieldError($('#scripted-standard-identity-list'), $('#standard-scripted-identity-error'));
   $('#premium-new-draft').hidden = true;
   $('#generate-video').hidden = false;
   syncPremiumControlLock();
@@ -1325,6 +1770,10 @@ function prepareAnotherPremiumDraft() {
 }
 
 function renderPremiumAvailability() {
+  if (!fixtureMode) {
+    renderScriptedAvailability('PREMIUM');
+    return;
+  }
   const provider = premiumProvider();
   const status = $('#provider-status');
   const cost = $('#finish-render-cost');
@@ -1353,7 +1802,7 @@ function renderPremiumAvailability() {
     status.textContent = 'Sign in to check Premium';
     cost.textContent = 'Not available';
     button.disabled = true;
-    $('#premium-status').textContent = 'Sign in to use account-owned Premium inputs.';
+    $('#premium-status').textContent = 'Sign in to use your private Premium inputs.';
     return;
   }
   if (!entitlementAllowsPremium()) {
@@ -1808,6 +2257,7 @@ async function loadResults(generation = state.workspaceGeneration) {
 }
 
 function restoreLatestProject() {
+  if (!fixtureMode && scriptedPhotoClient.publicState('PREMIUM').draft) return;
   const project = state.project;
   if (!project) return;
   $('#premium-title').value = project.title || '';
@@ -1846,6 +2296,7 @@ function restoreLatestProject() {
 }
 
 function selectDefaultPremiumCast() {
+  if (!fixtureMode) return;
   if (state.premium.avatar || state.premium.identityId) return;
   const candidates = curateDefaultCast(state.libraries.avatar, [], 20);
   const first = candidates.find((item) => item.providerReady !== false);
@@ -1941,6 +2392,7 @@ function renderWorkspace() {
   renderIdentityLibrary();
   renderPremiumCast();
   renderPremiumAvailability();
+  renderScriptedStudio();
   renderResults();
   configureStandardSubmit();
   copywriterController?.syncSession();
@@ -1980,14 +2432,15 @@ async function refreshWorkspace() {
       consumeAuthReturn();
       return;
     }
+    hydrateScriptedDrafts(scriptedPhotoClient.setScope(nextAccountId));
     renderConnection('signed-in', fixtureMode ? 'Local fixture workspace' : 'Signed-in workspace');
     const operations = [
-      ['Premium availability', loadProviders(generation)],
       ['identities', loadIdentities(generation)],
-      ['presenters and voices', loadTalent(generation)],
       ['saved projects', loadProjects(generation)],
       ['videos', loadResults(generation)],
     ];
+    if (fixtureMode) operations.push(['Premium availability', loadProviders(generation)], ['presenters and voices', loadTalent(generation)]);
+    else operations.push(['scripted rendering availability', loadScriptedCapabilities()]);
     if (!fixtureMode) operations.push(['AI Copywriter', copywriterController.loadAvailability()]);
     const outcomes = await Promise.allSettled(operations.map((entry) => entry[1]));
     if (generation !== state.workspaceGeneration) return;
@@ -2135,16 +2588,26 @@ copywriterController = createCopywriterController({
   getJson,
   isSignedIn: () => state.signedIn,
   isFixtureMode: () => copywriterFixtureMode,
-  isPremiumLocked: () => Boolean(state.premium.submitting || state.premium.controlsLocked || state.premium.activeJobId || state.premium.submissionUncertain || state.premium.terminal),
-  getPremiumScript: () => $('#script-input').value,
+  isPremiumLocked: () => scriptedTierLocked(activeScriptedTier()),
+  getPremiumScript: () => scriptedElements(activeScriptedTier()).script.value,
   applyPremiumScript: (text) => {
-    if (state.premium.submitting || state.premium.controlsLocked || state.premium.activeJobId || state.premium.submissionUncertain || state.premium.terminal) return false;
-    $('#script-input').value = text;
-    $('#script-input').dispatchEvent(new Event('input', { bubbles: true }));
-    setTier('premium');
+    const tier = activeScriptedTier();
+    const tierLabel = tier === 'PREMIUM' ? 'Premium' : 'Standard';
+    if (scriptedTierLocked(tier)) {
+      window.setTimeout(() => { $('#copywriter-status').textContent = `${tierLabel} is locked while its current render or recovery is being resolved.`; }, 0);
+      return false;
+    }
+    const input = scriptedElements(tier).script;
+    input.value = text;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    setTier(tier === 'PREMIUM' ? 'premium' : 'standard');
     if (location.hash !== '#create') location.hash = 'create';
     else navigate({ focus: false });
-    window.setTimeout(() => $('#script-input').focus(), 0);
+    window.setTimeout(() => input.focus(), 0);
+    window.setTimeout(() => {
+      $('#copywriter-status').textContent = `Working draft moved to ${tierLabel}. Nothing was saved or rendered.`;
+      announce(`Working draft moved to the ${tierLabel} editor.`);
+    }, 0);
     return true;
   },
   onSessionInvalid: () => {
@@ -2255,8 +2718,29 @@ $('#standard-quote-confirm').addEventListener('click', confirmStandardQuote);
 $('#standard-quote-requote').addEventListener('click', requoteStandard);
 $('#standard-check-existing').addEventListener('click', checkStandardExisting);
 $('#standard-retry-anyway').addEventListener('click', retryStandardAnyway);
+$('#scripted-standard-form').addEventListener('submit', (event) => { event.preventDefault(); void requestScriptedQuote('STANDARD'); });
+$('#standard-scripted-title').addEventListener('input', () => {
+  if ($('#standard-scripted-title').value.trim()) setFieldError($('#standard-scripted-title'), $('#standard-scripted-title-error'));
+  scriptedIntentChanged('STANDARD');
+});
+$('#standard-scripted-script').addEventListener('input', () => {
+  $('#standard-scripted-count').textContent = $('#standard-scripted-script').value.length + ' / 900';
+  if ($('#standard-scripted-script').value.trim()) setFieldError($('#standard-scripted-script'), $('#standard-scripted-script-error'));
+  scriptedIntentChanged('STANDARD');
+});
+$('#standard-scripted-format').addEventListener('change', () => scriptedIntentChanged('STANDARD'));
+$('#standard-scripted-check').addEventListener('click', () => void checkScriptedRecovery('STANDARD'));
+$('#standard-scripted-retry').addEventListener('click', () => void retryScriptedRequest('STANDARD'));
+$('#standard-scripted-new-draft').addEventListener('click', () => prepareAnotherScriptedDraft('STANDARD'));
 
 $$('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => closeDialog(button.closest('dialog'))));
+$$('[data-scripted-quote-close]').forEach((button) => button.addEventListener('click', () => closeDialog($('#scripted-photo-quote-dialog'))));
+$('#scripted-photo-quote-confirm').addEventListener('click', () => void confirmScriptedQuote());
+$('#scripted-photo-requote').addEventListener('click', () => {
+  const tier = state.scripted.quoteTier;
+  closeDialog($('#scripted-photo-quote-dialog'));
+  if (tier) void requestScriptedQuote(tier);
+});
 $('#close-login').addEventListener('click', () => closeDialog($('#auth-modal')));
 $$('[data-open-login]').forEach((button) => button.addEventListener('click', openAuthModal));
 $('#password-login-form').addEventListener('submit', passwordLogin);
@@ -2279,17 +2763,28 @@ $('#script-input').addEventListener('input', () => {
   $('#script-count').textContent = $('#script-input').value.length + ' / 900';
   if ($('#script-input').value.trim()) setFieldError($('#script-input'), $('#premium-script-error'));
   renderPremiumAvailability();
+  if (!fixtureMode) scriptedIntentChanged('PREMIUM');
 });
 $('#premium-title').addEventListener('input', () => {
   if ($('#premium-title').value.trim()) setFieldError($('#premium-title'), $('#premium-title-error'));
   renderPremiumAvailability();
+  if (!fixtureMode) scriptedIntentChanged('PREMIUM');
 });
 $('#avatar-search').addEventListener('input', renderPremiumCast);
 $('#voice-search').addEventListener('input', () => { state.visible.voice = 20; renderPremiumCast(); });
 $('#voice-more').addEventListener('click', () => { state.visible.voice += 20; renderPremiumCast(); });
-$('#video-form').addEventListener('submit', submitPremium);
-$('#premium-new-draft').addEventListener('click', prepareAnotherPremiumDraft);
-$$('#voice-more, #export-format, #provider-select').forEach((control) => control.addEventListener('change', renderPremiumAvailability));
+$('#video-form').addEventListener('submit', (event) => {
+  if (fixtureMode) return submitPremium(event);
+  event.preventDefault();
+  void requestScriptedQuote('PREMIUM');
+});
+$('#premium-new-draft').addEventListener('click', () => fixtureMode ? prepareAnotherPremiumDraft() : prepareAnotherScriptedDraft('PREMIUM'));
+$$('#voice-more, #export-format, #provider-select').forEach((control) => control.addEventListener('change', () => {
+  renderPremiumAvailability();
+  if (!fixtureMode && control.id === 'export-format') scriptedIntentChanged('PREMIUM');
+}));
+$('#premium-scripted-check').addEventListener('click', () => void checkScriptedRecovery('PREMIUM'));
+$('#premium-scripted-retry').addEventListener('click', () => void retryScriptedRequest('PREMIUM'));
 $('#premium-composition-enabled').addEventListener('change', () => {
   if ($('#premium-composition-enabled').checked) $('#export-format').value = 'landscape';
   renderCompositionPreview(); renderPremiumAvailability();
@@ -2303,6 +2798,8 @@ $('#result-gallery-toggle').addEventListener('click', () => {
 
 window.addEventListener('beforeunload', () => {
   stopPremiumPolling();
+  stopScriptedPolling('STANDARD');
+  stopScriptedPolling('PREMIUM');
   state.standard.timers.forEach(window.clearTimeout);
   state.standard.objectUrls.forEach((url) => URL.revokeObjectURL(url));
 });

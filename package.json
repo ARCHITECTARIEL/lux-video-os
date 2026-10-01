@@ -35,7 +35,7 @@
         "drizzle-orm": "^0.45.2",
         "ffmpeg-static": "latest",
         "stripe": "^22.6.2",
-        "workflow": "^4.6.0",
+        "workflow": "^4.8.9",
         "ws": "^8.21.1",
         "zod": "^4.4.3"
     },
@@ -45,5 +45,24 @@
         "hyperframes": "0.7.64",
         "vercel": "^56.2.0",
         "vitest": "^4.1.10"
+    },
+    "overrides": {
+        "@vercel/blob": {
+            "undici": "6.28.1"
+        },
+        "@vercel/sandbox": {
+            "undici": "7.29.1"
+        },
+        "@workflow/core": {
+            "nanoid": "5.1.16",
+            "devalue": "5.9.4"
+        },
+        "@workflow/world-local": {
+            "undici": "7.29.1"
+        },
+        "@workflow/world-vercel": {
+            "undici": "7.29.1"
+        },
+        "tar": "7.5.22"
     }
 }

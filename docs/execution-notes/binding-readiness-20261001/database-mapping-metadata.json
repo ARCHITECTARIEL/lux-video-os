@@ -1,0 +1,117 @@
+{
+  "schemaVersion": "video-os-production-database-mapping/v1",
+  "observedAt": "2026-10-01T15:01:42.530Z",
+  "scope": {
+    "readOnly": true,
+    "productionSqlQueried": false,
+    "environmentWritten": false,
+    "deploymentCreatedOrPromoted": false,
+    "connectionStringPrintedOrPersisted": false
+  },
+  "vercel": {
+    "teamId": "team_rTOCyHyMxhhdoLk4LtT2kD9X",
+    "projectId": "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+    "projectName": "lux-video-os",
+    "deployment": {
+      "id": "dpl_AEUWrAaSPEyvNjkkZxCbDAg427WP",
+      "target": "production",
+      "state": "READY",
+      "createdAt": "2026-09-24T21:02:50.666Z",
+      "recordedSourceSha": "a04e59513e7cbd5684bf56790311d2ab14676499",
+      "runtimeEnvironmentContains": [
+        "DATABASE_URL",
+        "DATABASE_URL_UNPOOLED"
+      ]
+    },
+    "canonicalVariables": {
+      "DATABASE_URL": {
+        "id": "nlfgLVfhocWPBGLS",
+        "type": "sensitive",
+        "target": ["production"],
+        "createdAt": "2026-09-21T19:40:03.369Z",
+        "updatedAt": "2026-09-21T19:41:26.416Z",
+        "integrationContentHint": null,
+        "authenticatedValuePresent": false
+      },
+      "DATABASE_URL_UNPOOLED": {
+        "id": "zYDyWgiph1aETQ9x",
+        "type": "sensitive",
+        "target": ["production"],
+        "createdAt": "2026-09-21T19:40:06.528Z",
+        "updatedAt": "2026-09-21T19:41:29.706Z",
+        "integrationContentHint": null,
+        "authenticatedValuePresent": false
+      }
+    },
+    "runtimeObservation": {
+      "observedAt": "2026-10-01T14:43:21Z",
+      "method": "POST",
+      "requestPath": "/api/video-os-lite/admin",
+      "status": 200,
+      "deploymentId": "dpl_AEUWrAaSPEyvNjkkZxCbDAg427WP",
+      "databaseUseRequiredByDeployedHandler": true,
+      "sharedNeonRequestCorrelationIdAvailable": false,
+      "deployedDatabaseVariable": "DATABASE_URL"
+    }
+  },
+  "neon": {
+    "organizationId": "org-flat-brook-27763213",
+    "visibleProjectCount": 3,
+    "onlyEndpointWithLastActiveOnObservationDate": true,
+    "lastActiveFieldPerQuerySemanticsAttested": false,
+    "matchedTarget": {
+      "projectId": "still-voice-83326863",
+      "projectName": "neon-byzantium-drum",
+      "region": "aws-us-east-1",
+      "postgresVersion": 18,
+      "branchId": "br-broad-sunset-awrsmiwa",
+      "branchName": "main",
+      "branchDefault": true,
+      "branchPrimary": true,
+      "endpointId": "ep-autumn-morning-awa4hmb6",
+      "directHost": "ep-autumn-morning-awa4hmb6.c-12.us-east-1.aws.neon.tech",
+      "pooledHost": "ep-autumn-morning-awa4hmb6-pooler.c-12.us-east-1.aws.neon.tech",
+      "endpointType": "read_write",
+      "lastActive": "2026-10-01T14:43:23Z",
+      "database": "neondb",
+      "databaseCountOnBranch": 1,
+      "role": "neondb_owner",
+      "roleCountOnBranch": 1,
+      "databaseAndRoleAreControlPlaneCandidatesNotCanonicalUrlAttestation": true
+    },
+    "runtimeToEndpointLastActiveLagSeconds": 2,
+    "temporalCorrelationIsIdentityProof": false
+  },
+  "localHistoricalTarget": {
+    "source": ".env.local",
+    "sourceModifiedAt": "2026-09-21T18:27:43.178Z",
+    "projectId": "dawn-scene-51988854",
+    "projectName": "lux-video-os-db",
+    "branchId": "br-young-base-ai9mgkgd",
+    "branchName": "main",
+    "endpointId": "ep-broad-sunset-aiua1fld",
+    "directHost": "ep-broad-sunset-aiua1fld.c-4.us-east-1.aws.neon.tech",
+    "pooledHost": "ep-broad-sunset-aiua1fld-pooler.c-4.us-east-1.aws.neon.tech",
+    "database": "neondb",
+    "role": "neondb_owner",
+    "lastActive": "2026-09-29T13:59:15Z",
+    "productionSubstituteAllowed": false,
+    "exclusionAsActualProductionTargetProven": false
+  },
+  "comparison": {
+    "runtimeProviderTargetMapping": "HIGH_CONFIDENCE_CANDIDATE_UNVERIFIED",
+    "canonicalSecretValueAttestation": "UNAVAILABLE",
+    "canonicalPooledVersusDirectHostname": "NOT_DIRECTLY_ATTESTED",
+    "integrationPrefixedSubstitutionAllowed": false,
+    "localHistoricalSubstitutionAllowed": false,
+    "productionSqlAuthorizedByThisEvidence": false
+  },
+  "decision": {
+    "targetProjectId": "still-voice-83326863",
+    "targetBranchId": "br-broad-sunset-awrsmiwa",
+    "targetDatabase": "neondb",
+    "targetRole": "neondb_owner",
+    "status": "CANDIDATE_TARGET_CORRELATED_CANONICAL_MAPPING_HELD",
+    "nextAction": "Use an owner-retained protected copy of the existing canonical values for strict read-only verification; otherwise separately authorize re-saving the canonical production variables from this verified Neon target, then deploy and run the strict read-only identity/schema check."
+  }
+}

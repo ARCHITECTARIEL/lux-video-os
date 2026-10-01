@@ -14,6 +14,7 @@ export default async function handler(req, res) {
     const dto = jobDto(job);
     if (job.status === 'failed' || job.status === 'cancelled') return send(res, 409, { ok: false, code: `render_${job.status}`, error: dto.message, ...dto });
     if (job.status === 'finish_contained') return send(res, 409, { ok: false, code: 'hosted_finishing_disabled', error: 'Provider render is complete, but hosted finishing remains disabled.', ...dto });
-    return send(res, job.status === 'ready' ? 200 : 202, { ok: true, ready: job.status === 'ready', ...dto });
+    if (job.videoDeletedAt) return send(res, 410, { ok: false, ready: false, code: 'output_unavailable', ...dto });
+    return send(res, dto.outputAccepted ? 200 : 202, { ok: true, ready: dto.outputAccepted, ...dto });
   } catch (error) { return send(res, error.statusCode || 400, { ok: false, error: error.message || 'Render status failed.' }); }
 }

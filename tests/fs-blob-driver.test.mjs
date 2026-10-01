@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -75,6 +75,31 @@ test('fs blob driver: put/get/delete round-trip with real files', async (t) => {
     await assert.rejects(
       put('video-os/uploads/acc/locked.bin', Buffer.from('second'), { allowOverwrite: false }),
       (error) => error.statusCode === 409,
+    );
+  });
+
+  await t.test('allowOverwrite: false publishes exactly one of two racing writers', async () => {
+    const pathname = 'video-os/uploads/acc/raced.bin';
+    const attempts = [
+      put(pathname, Buffer.from('racing first bytes'), { allowOverwrite: false }),
+      put(pathname, Buffer.from('racing second bytes'), { allowOverwrite: false }),
+    ];
+    const results = await Promise.allSettled(attempts);
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+    assert.equal(results.find((result) => result.status === 'rejected').reason.statusCode, 409);
+
+    const winner = results.findIndex((result) => result.status === 'fulfilled');
+    const stored = await get(pathname);
+    const chunks = [];
+    for await (const chunk of stored.stream) chunks.push(chunk);
+    assert.equal(
+      Buffer.concat(chunks).toString(),
+      winner === 0 ? 'racing first bytes' : 'racing second bytes',
+    );
+    assert.deepEqual(
+      readdirSync(join(root, 'video-os', 'uploads', 'acc')).filter((name) => name.endsWith('.tmp')),
+      [],
     );
   });
 

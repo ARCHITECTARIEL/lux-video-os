@@ -1,0 +1,91 @@
+{
+  "head": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+  "status": "local-media-verified-release-gate-blocked",
+  "focusedTests": {
+    "pass": 42,
+    "fail": 0,
+    "skip": 0
+  },
+  "lastFullNodeSuite": {
+    "pass": 334,
+    "fail": 1,
+    "skip": 40,
+    "note": "before additional codec regression; sole failure live npm-audit"
+  },
+  "vitestPass": 4,
+  "files": [
+    {
+      "path": "services/final-media-validation.js",
+      "sha256": "063072a39342bb772bf64c5684f6420f3b9a947655f7eba2500e76500708dca4"
+    },
+    {
+      "path": "services/accept-stored-final-output.js",
+      "sha256": "a1aecfcf4c4f65db97f73100aa8dcf2c7ae9fccb51b2fc2c556e34959c25ea67"
+    },
+    {
+      "path": "lib/video-os-final-bytes.js",
+      "sha256": "16b1193091cbac17af3996e653e09d61b2b0fe8b2aebce807a0d6291df67755b"
+    },
+    {
+      "path": "lib/video-os-private-blob.js",
+      "sha256": "b11618979b6f52d7670107911c60fbafa84458c4675276f94049ccdff84e5b36"
+    },
+    {
+      "path": "lib/storage-drivers/fs-blob-driver.js",
+      "sha256": "3b2e1e1118329b497176c4d21077f52f8c625359e9c19255f4b592cf0f65ab59"
+    },
+    {
+      "path": "db/repositories.js",
+      "sha256": "e09a308ce259f900127a07a85521fb35281c03ae44a883200a103a341f77e66b"
+    },
+    {
+      "path": "lib/video-os-operations.js",
+      "sha256": "513bac8d7f236e64af08154d8450a5b7b25009bfcbb3a0ab5a12dcf4e1051e02"
+    },
+    {
+      "path": "api/video-os-lite/download-v2.js",
+      "sha256": "a2ee5278ba66a21c72c0f5ed013e8c229bdeed211c39d0f1561d7b87b7db9972"
+    },
+    {
+      "path": "workflows/standard-render.js",
+      "sha256": "0016ad0c263c4c61d33ef0ea47fd73f1669ac4782c0903b394e83641d8deb425"
+    },
+    {
+      "path": "workflows/video-render.js",
+      "sha256": "aa935df62bc2d0d976b26dcee054ca52f4aa5cac6145dec3125dc0dc7dbfc9aa"
+    },
+    {
+      "path": "services/media-finisher.js",
+      "sha256": "894dce71078b555ae7d1525e5448ea4eb67f80d416f6bdf36cb5108cc8cae0ba"
+    },
+    {
+      "path": "services/remotion-finisher.js",
+      "sha256": "bbbad38da10f279baaf54caf43e02f560131548ea10133e37215417f13f0855e"
+    },
+    {
+      "path": "services/hyperframes-finisher.js",
+      "sha256": "04c043c3f6ee17a82cc6e8cd896ed8ed160c955eb578f0436c33ffd2a75e981f"
+    },
+    {
+      "path": "services/sadtalker-simulator.js",
+      "sha256": "1cf7ae97697e732e50ec33d997d7211a4fccf499528103cbdd539733e7394ba4"
+    },
+    {
+      "path": "services/sadtalker-runpod.js",
+      "sha256": "56bc108da9d8923752e985ef87c0979a294c644c89ab97c40817e54af5b530e7"
+    }
+  ],
+  "auditBlockers": [
+    "GHSA-hrh2-vp3x-79xf",
+    "GHSA-6j4f-fj2g-mc7p",
+    "GHSA-qhr7-859c-m2p7",
+    "GHSA-rfgv-xxqx-mfg5",
+    "GHSA-w293-vg96-wgc3"
+  ],
+  "limitations": [
+    "SQL mocked in local finalization tests",
+    "Vercel Blob not exercised",
+    "production capacity not proven",
+    "no deployment or paid inference"
+  ]
+}

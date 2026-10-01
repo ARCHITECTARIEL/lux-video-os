@@ -12,6 +12,7 @@ import { ensureAccount } from '../db/repositories.js';
 import { users } from '../db/schema.js';
 import { sendRenderReadyEmail } from '../lib/video-os-notifications.js';
 import { notifyRenderReady } from '../lib/video-os-render-notify.js';
+import { acceptedJob } from './helpers/output-acceptance-fixture.mjs';
 
 const originalFetch = globalThis.fetch;
 const originalEnv = { RESEND_API_KEY: process.env.RESEND_API_KEY, AUTH_FROM_EMAIL: process.env.AUTH_FROM_EMAIL };
@@ -104,7 +105,7 @@ test(
     };
 
     const job = { id: 'job-notify-1', accountId, title: 'My Launch Video', correlationId: 'corr-1' };
-    await notifyRenderReady(job, { status: 'ready', justCompleted: true });
+    await notifyRenderReady(job, { ...acceptedJob('heygen', { id: job.id, accountId }), justCompleted: true });
     assert.equal(calls, 1);
     assert.deepEqual(lastTo, ['owner-proof@example.com']);
 
@@ -130,6 +131,6 @@ test(
 
     globalThis.fetch = async () => new Response('{}', { status: 500 });
     const job = { id: 'job-notify-2', accountId, title: 'My Launch Video', correlationId: 'corr-2' };
-    await assert.doesNotReject(notifyRenderReady(job, { status: 'ready', justCompleted: true }));
+    await assert.doesNotReject(notifyRenderReady(job, { ...acceptedJob('heygen', { id: job.id, accountId }), justCompleted: true }));
   },
 );

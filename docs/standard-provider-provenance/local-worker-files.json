@@ -1,0 +1,295 @@
+{
+  "scope": "Actual local worker source/config/reference/demo files only; not model weights or deployed image",
+  "files": [
+    {
+      "path": "workers/latentsync-runpod/Dockerfile",
+      "bytes": 1917,
+      "sha256": "8c1f9a4e04d9027fe50947872a7d83911bdc2d235b29b00f6c9e91dee9b1ae98"
+    },
+    {
+      "path": "workers/latentsync-runpod/face_detector_mediapipe.py",
+      "bytes": 9079,
+      "sha256": "d243c1291d463db6193dd01c6aa58d0c7871d9fba50febba6d29c6bba2631503"
+    },
+    {
+      "path": "workers/latentsync-runpod/handler.py",
+      "bytes": 7313,
+      "sha256": "543a3ad91762004f37740d17103a7453538ebc4ddad9cc2d9e8985dc5786e667"
+    },
+    {
+      "path": "workers/latentsync-runpod/model-manifest.json",
+      "bytes": 3811,
+      "sha256": "e4ca1cccf397e924691194a2e199fd6b15a77927c6866a0a5db1f3c85f8c9264"
+    },
+    {
+      "path": "workers/latentsync-runpod/requirements.txt",
+      "bytes": 1932,
+      "sha256": "64ec83e60147f8e22ce7c6c6a9ce4e892a801f9bc6695b5e615f7fac9d9eb15d"
+    },
+    {
+      "path": "workers/latentsync-runpod/runner.py",
+      "bytes": 7346,
+      "sha256": "1e0931c0cc95832fb1d1e30260138c0bd15f585ba0435e33f675ef4a8574cf7c"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/configs/scheduler_config.json",
+      "bytes": 287,
+      "sha256": "83971157b1e6f6189584ac930fd92d25e78fcf84e9aa87399aad8de967149fe3"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/configs/unet/stage1.yaml",
+      "bytes": 2581,
+      "sha256": "48c8ff6d9a23bd1b559ba3b07104afd617b5891432977fa4f5819f3a7f101eab"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/configs/unet/stage1_512.yaml",
+      "bytes": 2580,
+      "sha256": "62c8ef41364aa474d6852c507827446d5ca21e9374cca499e2aa8262b4dbc86c"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/configs/unet/stage2.yaml",
+      "bytes": 2641,
+      "sha256": "85139822014345283fe57789c62ed6c9778ad8cbe62373a33e933a6e3a4aede5"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/configs/unet/stage2_512.yaml",
+      "bytes": 2641,
+      "sha256": "4df030cdb5bef53c85f5b5194cbbf402b351d2813caf5ef8fe213d2ad48f43df"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/configs/unet/stage2_efficient.yaml",
+      "bytes": 2634,
+      "sha256": "72e263b0adb072935a08d5cc3ce304ce5c471fab9f7e233b7304e5902bba24ce"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/models/attention.py",
+      "bytes": 10848,
+      "sha256": "020a85b9590ec0a0f2b32d932d8217e99e13581522d7e8a6b1f4b0e8f69fd3ca"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/models/motion_module.py",
+      "bytes": 12042,
+      "sha256": "2118ac695eb7fa2042087f9396e41698754a5c00c9a7167e9f0ee840454c4ba6"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/models/resnet.py",
+      "bytes": 8434,
+      "sha256": "3b5ca3e25b03a41e08d2ca0661460ac2fa2d97be9f961849362676afaa2dd7e0"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/models/unet.py",
+      "bytes": 22585,
+      "sha256": "30205f1fd97a73091a4ef240f55190af59078d2a18c7a0b93df60f754978dbc7"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/models/unet_blocks.py",
+      "bytes": 29669,
+      "sha256": "b8d174593ec36e307ca271224ee8d878392dcbefaebcae2e23bf391721b5fd89"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/models/utils.py",
+      "bytes": 785,
+      "sha256": "749cc7f2384174f0a065f58adf14cffe7c42af889223ed3d37f095b5608fc70c"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/pipelines/lipsync_pipeline.py",
+      "bytes": 23386,
+      "sha256": "8265f7655049538ec0bcf8f1cb677323cc1a30bbd8cb28bb80faafad4226db51"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/utils/affine_transform.py",
+      "bytes": 6202,
+      "sha256": "f102be60f694d443444f2934a8f3eee188270382ab48a7f53a4e2bd801ed5221"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/utils/av_reader.py",
+      "bytes": 7543,
+      "sha256": "6991122a982901e312fb03e92a2cb5ec5a49709397a41cad439552d4d9863efc"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/utils/face_detector.insightface-original.py",
+      "bytes": 2922,
+      "sha256": "5c4c56d540e8e0598573caee69f6968a7c555fc5876b777120b2a0d86aae73b5"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/utils/face_detector.py",
+      "bytes": 9079,
+      "sha256": "d243c1291d463db6193dd01c6aa58d0c7871d9fba50febba6d29c6bba2631503"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/utils/image_processor.py",
+      "bytes": 5389,
+      "sha256": "fc0a991832975e4d6226fee78c8aba8eb4b080632a5b01b54effaac2d9db3312"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/utils/mask.png",
+      "bytes": 1871,
+      "sha256": "aa233251b9ff5691a1565a4108f0910ab1e5e7ad79a7bb2b741ab4d92c81053c"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/utils/util.py",
+      "bytes": 8965,
+      "sha256": "970fa6382f67c81bda226d1a46b7ea9e113333acfebf220abb496115fae3a500"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/audio2feature.py",
+      "bytes": 6763,
+      "sha256": "ae06754b88c237f36bcc54cc7ce388bdd76f2c0d8215713cc39d7d13c8f94a8a"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/__init__.py",
+      "bytes": 5645,
+      "sha256": "92b9e13733323f8dfda86307e29bf1259e1f23f409d2989c72cb34438d890ac4"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/__main__.py",
+      "bytes": 40,
+      "sha256": "b87a72b8e9d4332bf971061878d507ce22f0d4a2f18b7c7a0bfa91895ff057ca"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/assets/gpt2/merges.txt",
+      "bytes": 506357,
+      "sha256": "94a5e314440323f4284d0a826cafdd404c2245738b44ea5ecaead4b825f7e73c"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/assets/gpt2/special_tokens_map.json",
+      "bytes": 90,
+      "sha256": "c0b3c279b6ecdb71996a86ffb4d4ab94dfdb5df95f00bac9515688faef2ff5dd"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/assets/gpt2/tokenizer_config.json",
+      "bytes": 236,
+      "sha256": "1e664fe1a5bc404dcb204a76c76bc4100c91bd12c66098d8a8090b11b6ee6f0d"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/assets/gpt2/vocab.json",
+      "bytes": 798156,
+      "sha256": "3ba3c3109ff33976c4bd966589c11ee14fcaa1f4c9e5e154c2ed7f99d80709e7"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/assets/mel_filters.npz",
+      "bytes": 2048,
+      "sha256": "dd2cc75e70e36fcbdd8ffbc2499062f30094093e6bf2cbafa9859f59972b420b"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/assets/multilingual/added_tokens.json",
+      "bytes": 26,
+      "sha256": "6fb149565e20295be82cffa4e89e3f5c1dd03d42ec72c7d3f06732a4d2c115bf"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/assets/multilingual/merges.txt",
+      "bytes": 543855,
+      "sha256": "5198f4a2e441dd08670d689576567588e79275ed89a541d105946afc6d534a96"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/assets/multilingual/special_tokens_map.json",
+      "bytes": 90,
+      "sha256": "c0b3c279b6ecdb71996a86ffb4d4ab94dfdb5df95f00bac9515688faef2ff5dd"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/assets/multilingual/tokenizer_config.json",
+      "bytes": 604,
+      "sha256": "b4594fd40712d072d4d637a42a8fb92abdb65c094dd5cb8d1da8d5cebb7b3473"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/assets/multilingual/vocab.json",
+      "bytes": 936041,
+      "sha256": "4e8036c8f80442384c12c2eaceb2f1c25d3ee38b8b07584bae6e74fe75ba4de4"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/audio.py",
+      "bytes": 4196,
+      "sha256": "66b17aa7219011510497716fe90716909413b7582ec5081d553ac472c97a4927"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/decoding.py",
+      "bytes": 31659,
+      "sha256": "3bead4cddea9c73a611dba5643d17b4b8f416ccf56814e47e3d29aa9fa1a8a7b"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/model.py",
+      "bytes": 10881,
+      "sha256": "639645dbd27dc5b35241689c9801aa55c81a5a18c7b125a457628e5f7060814a"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/normalizers/__init__.py",
+      "bytes": 84,
+      "sha256": "4bcaad9592f7f7309022e9ae832862c271a23305d3996b34ec0a752fe2f34ae6"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/normalizers/basic.py",
+      "bytes": 1953,
+      "sha256": "c10d93c1a14c66ae36375720f028fe8f900f3e58374fe79c8d24e2e5e4a7ec6d"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/normalizers/english.json",
+      "bytes": 57886,
+      "sha256": "352d0e5c8049154505fe28066283126b531fbdf4736883cf9e5ca0659c48e2cf"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/normalizers/english.py",
+      "bytes": 21336,
+      "sha256": "ea87f4bf963266e3c5244214adcd73f476a5ee94b78d0d0935e47b1a9d608269"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/tokenizer.py",
+      "bytes": 10168,
+      "sha256": "cb7d45abdee67d309629268618a7bb1b11093a8b4101913dcd9c45ce832e7720"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/transcribe.py",
+      "bytes": 10787,
+      "sha256": "20206969d16b183f2aac401540d6ba04528a8c01dd674a17482ab89a0febe355"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/latentsync/whisper/whisper/utils.py",
+      "bytes": 2747,
+      "sha256": "292ba9d51a7f819ea17658855145e577aa3b5cdb1e9d5be634fab8383cc228a1"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/LICENSE",
+      "bytes": 11556,
+      "sha256": "5ad8c213095c573921d7388edf93f6a9f54490b8ebf3b165ae8ef1947cf70846"
+    },
+    {
+      "path": "workers/latentsync-runpod/source/PROVENANCE.md",
+      "bytes": 5412,
+      "sha256": "092f04061712171bf6aa034ff65233ef0e189ae661e2b921c725d5b2f8d13569"
+    },
+    {
+      "path": "workers/latentsync-runpod/tools/verify-output/demo1_video_frame0.png",
+      "bytes": 2414941,
+      "sha256": "cf205a4614a175ba0382de7b568b8b531ee7cc3bf7291d34a29eeb35783fea95"
+    },
+    {
+      "path": "workers/latentsync-runpod/tools/verify-output/demo1_video_frame1.png",
+      "bytes": 2410677,
+      "sha256": "6dea70b3fd34c9338ceb1c537899f4e7af0512fe189ac2f7655e21f87bea0ad6"
+    },
+    {
+      "path": "workers/latentsync-runpod/tools/verify-output/demo1_video_frame2.png",
+      "bytes": 2429773,
+      "sha256": "ba6ae3d8a47e4585acac86592e623d7328e07f03f91945488ac79b7d5a92014f"
+    },
+    {
+      "path": "workers/latentsync-runpod/tools/verify-output/demo2_video_frame0.png",
+      "bytes": 1358897,
+      "sha256": "0c79d712cf4d9c2a722475e7047e91044bdb58f287720b1788f22c076639f79d"
+    },
+    {
+      "path": "workers/latentsync-runpod/tools/verify-output/demo2_video_frame1.png",
+      "bytes": 1288534,
+      "sha256": "938b88458ab1ff274ae8ec63904888acc982db4141ae01a86ac429da687c4493"
+    },
+    {
+      "path": "workers/latentsync-runpod/tools/verify-output/demo2_video_frame2.png",
+      "bytes": 1348339,
+      "sha256": "dc264661006769b866a166f8dfbd0904a6089837a27651f1d40dcebecea75cca"
+    },
+    {
+      "path": "workers/latentsync-runpod/tools/verify_face_detector.py",
+      "bytes": 4726,
+      "sha256": "af538e42a3093aee17350d2e9c1c0e2b19f56806196d2e1097257bc31342c0db"
+    }
+  ]
+}

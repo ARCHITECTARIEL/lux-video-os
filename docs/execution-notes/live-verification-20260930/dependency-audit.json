@@ -1,0 +1,26 @@
+﻿{
+    "at":  "2026-09-30T14:07:43.4790880Z",
+    "runtimeExit":  0,
+    "runtime":  {
+                    "info":  0,
+                    "low":  0,
+                    "moderate":  0,
+                    "high":  0,
+                    "critical":  0,
+                    "total":  0
+                },
+    "fullAuditExit":  1,
+    "fullDevelopmentInclusive":  {
+                                     "info":  0,
+                                     "low":  1,
+                                     "moderate":  18,
+                                     "high":  24,
+                                     "critical":  0,
+                                     "total":  43
+                                 },
+    "requestedAdvisoryMatches":  [
+
+                                 ],
+    "packageSha256":  "6FD466A9136D368BB3465AB1E5B6C9389D5B1D687D1300B453D13AF6AF02B0ED",
+    "lockSha256":  "1E222C9EF89A8610610D09ECCBE54B468CDB4225C8E930DAC092A0F00910F092"
+}

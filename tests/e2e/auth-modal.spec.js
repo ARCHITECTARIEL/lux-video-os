@@ -34,6 +34,7 @@ async function stubShell(page, initialSession = signedOut) {
   } }));
   await page.route('**/api/video-os-lite/results*', (route) => route.fulfill({ json: { ok: true, results: [] } }));
   await page.route('**/api/video-os-lite/identities*', (route) => route.fulfill({ json: { ok: true, identities: [], providerSubmissionEnabled: false } }));
+  await page.route('**/api/video-os-lite/scripted-photo*', (route) => route.fulfill({ json: { ok: true, contractVersion: 'scripted-photo-v1', pricingVersion: 'scripted-photo-pricing-v1', quoteTtlSeconds: 300, capabilities: { enabled: true, tiers: { STANDARD: { available: true, credits: 37, reasons: [] }, PREMIUM: { available: true, credits: 90, reasons: [] } } }, existingJob: null } }));
   await page.route('**/api/video-os-lite/projects', (route) => route.fulfill({ json: { ok: true, projects: [] } }));
   await page.route('**/api/video-os/talent', (route) => route.fulfill({ json: { ok: true, talent: { avatars: [], voices: [] }, connection: { connected: false } } }));
   return { setSession(value) { session = value; } };
@@ -113,7 +114,7 @@ test('email form submits with Enter and exposes delivery failure without closing
   await expect(page.locator('#auth-modal')).toBeVisible();
 });
 
-test('sign-in loads authorized talent and sign-out clears it without a provider submission', async ({ page }) => {
+test('sign-in loads a ready private identity and sign-out clears it without a render submission', async ({ page }) => {
   const shell = await stubShell(page);
   let talentRequests = 0;
   let renderRequests = 0;
@@ -136,6 +137,12 @@ test('sign-in loads authorized talent and sign-out clears it without a provider 
     renderRequests += 1;
     return route.abort('blockedbyclient');
   });
+  await page.route('**/api/video-os-lite/render-v2', (route) => {
+    renderRequests += 1;
+    return route.abort('blockedbyclient');
+  });
+  const identityId = '11111111-1111-4111-8111-111111111111';
+  await page.route('**/api/video-os-lite/identities*', (route) => route.fulfill({ json: { ok: true, identities: [{ id: identityId, displayName: 'Private presenter', overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY', ready: true, archivedAt: null }] } }));
   await page.route('**/api/video-os-lite/password-login', (route) => {
     const active = signedInSession();
     shell.setSession(active);
@@ -150,18 +157,18 @@ test('sign-in loads authorized talent and sign-out clears it without a provider 
   await page.locator('#password-login').click();
   await page.locator('[data-nav="create"]:visible').first().click();
   await page.locator('#premium-tab').click();
-  await expect(page.locator('[data-avatar-id="featured:ariel"]')).toHaveCount(1);
-  expect(talentRequests).toBe(1);
+  await expect(page.locator(`[data-premium-identity-id="${identityId}"]`)).toHaveCount(1);
+  expect(talentRequests).toBe(0);
 
   await page.locator('[data-nav="account"]:visible').first().click();
   await expect(page.locator('#open-login')).toHaveText('Manage session');
   await page.locator('#open-login').click();
   await page.locator('#sign-out').click();
-  await expect(page.locator('#featured-cast-list [data-avatar-id]')).toHaveCount(0);
+  await expect(page.locator('#premium-identity-list [data-premium-identity-id]')).toHaveCount(0);
   await expect(page.locator('#connection-pill')).toHaveAttribute('data-state', 'signed-out');
   await expect(page.locator('#download-link')).toBeHidden();
   await expect(page.locator('#download-link')).not.toHaveAttribute('href');
   await expect(page.locator('#accepted-video')).toBeHidden();
-  expect(talentRequests).toBe(1);
+  expect(talentRequests).toBe(0);
   expect(renderRequests).toBe(0);
 });

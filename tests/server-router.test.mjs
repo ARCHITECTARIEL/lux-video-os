@@ -100,6 +100,19 @@ test('server router: a POST body is readable via readJson() after transport-leve
   });
 });
 
+test('server router: enrollment and scripted APIs dispatch through the shared workspace function', async () => {
+  await withServer(async (base) => {
+    for (const route of ['enrollments', 'scripted-photo']) {
+      const res = await request(`${base}/api/video-os-lite/${route}`);
+      assert.equal(res.status, 401, route);
+      assert.equal(JSON.parse(res.body).ok, false);
+    }
+    const upload = await request(`${base}/api/video-os-lite/enrollment-upload`);
+    assert.equal(upload.status, 405);
+    assert.match(JSON.parse(upload.body).error, /POST/);
+  });
+});
+
 test('server router: a matched static route whose file is missing on disk 404s cleanly', async () => {
   await withServer(async (base) => {
     // vercel.json's file-extension rule matches this path (it ends in

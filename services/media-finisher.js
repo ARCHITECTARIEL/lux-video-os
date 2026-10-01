@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os';
+import { mkdtemp } from 'node:fs/promises';
+import { inspectMedia } from './final-media-validation.js';
 import ffmpegPath from 'ffmpeg-static';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -133,28 +136,33 @@ export function cinematicFinishingFilterGraph(width, height, env = process.env) 
 export async function finishMedia(job, sourceUrl, dependencies = {}) {
   if (!ffmpegPath) throw Object.assign(new Error('FFmpeg is unavailable.'), { failureCategory: 'CONFIG_MISSING' });
   const [width, height] = dimensions(job.format);
-  const workdir = join('/tmp', `video-os-${safeName(job.id)}`);
+  const workdir = await mkdtemp(join(tmpdir(), 'video-os-finish-'));
   await mkdir(workdir, { recursive: true });
   const input = join(workdir, 'source.mp4');
   const output = join(workdir, 'final.mp4');
-  const download = dependencies.downloadProviderMedia || downloadProviderMedia;
-  const putBlob = dependencies.putPrivateBlob || putPrivateBlob;
-  const runner = dependencies.runFfmpeg || runFfmpeg;
-  const sourceBytes = await download(sourceUrl, input);
-  const startedAt = Date.now();
-  const vf = cinematicFinishingFilterGraph(width, height);
-  await runner(['-y', '-i', input, '-f', 'lavfi', '-i', 'sine=frequency=196:sample_rate=48000', '-filter_complex', `${vf}[vout];[1:a]volume=0.025[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=1[aout]`, '-map', '[vout]', '-map', '[aout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', output]);
-  const [info, sha256] = await Promise.all([stat(output), hashFile(output)]);
-  // A zero-exit-code FFmpeg process is not proof of a usable result -- a
-  // disk-full write, a killed-after-open process, or a degenerate filter
-  // graph can all leave `output` present but empty. Confirmed reproducible:
-  // `ffmpeg ... -vframes 0 ...` prints "Output file is empty, nothing was
-  // encoded" and still exits 0. Without this check that empty file would be
-  // hashed, uploaded, and the job marked 'ready' -- delivering a broken
-  // video to the customer instead of failing (and releasing credits) like
-  // services/hyperframes-finisher.js already guards against.
-  if (!info.size) throw Object.assign(new Error('FFmpeg produced an empty output file.'), { failureCategory: 'FINISH_FFMPEG' });
-  const pathname = `video-os/finals/${safeName(job.accountId)}/${safeName(job.id)}-${sha256}.mp4`;
-  const blob = await putBlob(PRIVATE_BLOB_CLASSIFICATIONS.FINISHED_CUSTOMER_VIDEO, pathname, createReadStream(output), { contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: true });
-  return { privatePathname: blob.pathname, bytes: info.size, sha256, sourceBytes, ffmpegMs: Date.now() - startedAt, width, height, filename: `${safeName(job.title)}-${job.format}.mp4` };
+  try {
+    const download = dependencies.downloadProviderMedia || downloadProviderMedia;
+    const putBlob = dependencies.putPrivateBlob || putPrivateBlob;
+    const runner = dependencies.runFfmpeg || runFfmpeg;
+    const sourceBytes = await download(sourceUrl, input);
+      const sourceDurationMs = (await inspectMedia(input)).durationMs;
+    const startedAt = Date.now();
+    const vf = cinematicFinishingFilterGraph(width, height);
+    await runner(['-y', '-i', input, '-f', 'lavfi', '-i', 'sine=frequency=196:sample_rate=48000', '-filter_complex', `${vf}[vout];[1:a]volume=0.025[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=1[aout]`, '-map', '[vout]', '-map', '[aout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', output]);
+    const [info, sha256] = await Promise.all([stat(output), hashFile(output)]);
+    // A zero-exit-code FFmpeg process is not proof of a usable result -- a
+    // disk-full write, a killed-after-open process, or a degenerate filter
+    // graph can all leave `output` present but empty. Confirmed reproducible:
+    // `ffmpeg ... -vframes 0 ...` prints "Output file is empty, nothing was
+    // encoded" and still exits 0. Without this check that empty file would be
+    // hashed, uploaded, and the job marked 'ready' -- delivering a broken
+    // video to the customer instead of failing (and releasing credits) like
+    // services/hyperframes-finisher.js already guards against.
+    if (!info.size) throw Object.assign(new Error('FFmpeg produced an empty output file.'), { failureCategory: 'FINISH_FFMPEG' });
+    const pathname = `video-os/finals/${safeName(job.accountId)}/${safeName(job.id)}-${sha256}.mp4`;
+    const blob = await putBlob(PRIVATE_BLOB_CLASSIFICATIONS.FINISHED_CUSTOMER_VIDEO, pathname, createReadStream(output), { contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: false });
+    return { privatePathname: blob.pathname, sourceDurationMs, bytes: info.size, sha256, sourceBytes, ffmpegMs: Date.now() - startedAt, width, height, filename: `${safeName(job.title)}-${job.format}.mp4` };
+  } finally {
+    await rm(workdir, { recursive: true, force: true }).catch(() => {});
+  }
 }

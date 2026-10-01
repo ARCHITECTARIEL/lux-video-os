@@ -1,5 +1,7 @@
 # Video OS P0 release gate
 
+> September 30, 2026: `tools/verify-p0-release-gate.mjs` is disabled and exits 2 for verification requests. Its historical generated approvals did not verify observations and cannot satisfy this gate. An authenticated evidence collector and independently reviewed real observations are still required. See [release preparation](RELEASE-PREFLIGHT.md) and [Prompt 4 evidence](execution-notes/20260930-prompt4.md).
+
 Billing, paid-credit activation, hosted finishing, pilot enrollment, and launch remain blocked until one new production job produces the complete receipt below. Existing or manually repaired artifacts are invalid proof.
 
 ## Required configuration gates

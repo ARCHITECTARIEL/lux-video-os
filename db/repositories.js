@@ -1,15 +1,28 @@
+import { createHash } from 'node:crypto';
 import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { database } from './client.js';
-import { registerTesterAccountId, revokeTesterAccountId } from '../lib/video-os-testers.js';
+import { acceptedJobOutput } from '../lib/video-os-output-acceptance.js';
+import { acceptStoredFinalOutput } from '../services/accept-stored-final-output.js';
+import { configuredPremiumIdentity, renderAuthorization, assertJobAuthorizationBinding, stableJson } from '../lib/video-os-render-authorization.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
-import { authSessions, creditAccounts, creditTransactions, entitlements, identityConsents, jobEvents, mediaAssets, projects, rateLimits, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
+import { ENROLLMENT_CONSENT_POLICY_VERSION } from '../lib/enrollment-policy.js';
+import { SCRIPTED_PHOTO_CONTRACT_VERSION, assertScriptedPhotoJobActivation, isScriptedPhotoRequest, renderTierForJob, renderTierForReservation, scriptedPhotoActivation } from '../lib/scripted-photo-contract.js';
+import { digestScriptedPhotoSourceBinding, safeScriptedPhotoQuoteProof, verifyScriptedPhotoQuote } from '../lib/scripted-photo-quote.js';
+import { assertEnrollmentConsentRecord } from './enrollment-repository.js';
+import { acquireProviderLifecycleLock } from './provider-lifecycle-lock.js';
+import { assertHeygenProviderReceiptTx, withFreshHeygenSpaceBindingTransaction, withHeygenSpaceBindingReceiptTransaction } from './heygen-space-binding-repository.js';
+import { assertProviderIdentityReferencesActiveTx, assertProviderJobReferencesActiveTx, attachProviderConsumerReferenceTx, getExactProviderResourceTx, markProviderResourceReadyTx, markProviderVideoReadyTx, providerOperationRequestDigest, recordProviderJobSubmissionUnknownTx, recordProviderVideoResourceTx, releaseProviderVideoConsumerTx, reserveProviderOperationTx } from './provider-reconciliation-repository.js';
+import { authSessions, creditAccounts, creditTransactions, entitlements, identityConsents, identityEnrollmentEvents, identityVideoEnrollments, jobEvents, mediaAssets, projects, providerLifecycleEvents, rateLimits, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
 
 export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING', 'PROCESSING', 'READY', 'FAILED']);
 export const IDENTITY_OVERALL_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING', 'READY', 'PARTIAL_FAILURE', 'FAILED', 'ARCHIVED']);
 const AUTH_ENTITLEMENT_SOURCE = 'validated_auth';
 
 export function reconcileAuthenticatedEntitlements(existingGrants = [], entitlementKeys = []) {
-  const desiredKeys = [...new Set(entitlementKeys)];
+  // Explicit admin revocation wins over every later sign-in, including workspace
+  // password login. Only a new admin grant restores a revoked tier.
+  const independent = new Set(existingGrants.filter(grant => grant.sourceType === 'admin_tester_grant').map(grant => grant.entitlementKey));
+  const desiredKeys = [...new Set(entitlementKeys)].filter(key => !independent.has(key));
   const desired = new Set(desiredKeys);
   const collision = existingGrants.find((grant) => desired.has(grant.entitlementKey) && grant.sourceType !== AUTH_ENTITLEMENT_SOURCE);
   if (collision) throw Object.assign(new Error('Authenticated entitlement conflicts with another authority.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
@@ -47,23 +60,8 @@ export async function updateAuthenticatedAccount({ accountId, email, name, role 
     const now = new Date();
     await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account', role })
       .onConflictDoUpdate({ target: users.id, set: { email: email || null, name: name || 'Video OS Account', role, updatedAt: now } });
-    // Deliberately decoupled from `role`: role is also set to 'tester' for a
-    // pure domain match (extra starting credits + admin-console visibility,
-    // both intentionally broad -- see lib/video-os-testers.js), but
-    // registerTesterAccountId() feeds REGISTERED_TESTER_ACCOUNTS, which
-    // isTesterAccountId() then treats as equivalent to an exact,
-    // individually-designated tester -- full liveRendering, not just
-    // Standard. Gating this on `role === 'tester'` used to mean EVERY
-    // domain-matched sign-in (magic-link or Google) silently registered
-    // itself into that bypass set, reopening the exact liveRendering leak
-    // fixed in containedRenderingEntitlementKeys() through yet another path
-    // (the third instance found so far was the admin console merely
-    // listing testers; this is a fourth, and fires on ordinary sign-in
-    // itself). Callers must now pass registerAsTester explicitly, computed
-    // from the same narrow isTesterEmailExact()/isTesterAccountId() check
-    // used everywhere else this distinction already matters.
+    // Credit floor for explicitly configured testers; never an authorization grant.
     if (registerAsTester && initialCredits > 0) {
-      registerTesterAccountId(accountId);
       await tx.insert(creditAccounts).values({ accountId, balance: initialCredits })
         .onConflictDoUpdate({
           target: creditAccounts.accountId,
@@ -76,6 +74,10 @@ export async function updateAuthenticatedAccount({ accountId, email, name, role 
       await tx.insert(creditAccounts).values({ accountId, balance: initialCredits }).onConflictDoNothing();
     }
     const existingGrants = await tx.select().from(entitlements).where(eq(entitlements.accountId, accountId));
+    if (existingGrants.some(grant => grant.sourceType === 'admin_tester_grant' && grant.entitlementKey === 'tester'
+      && grant.enabled && (!grant.expiresAt || new Date(grant.expiresAt) > now))) {
+      await tx.update(users).set({ role: 'tester' }).where(eq(users.id, accountId));
+    }
     const { desiredKeys } = reconcileAuthenticatedEntitlements(existingGrants, entitlementKeys);
     await tx.update(entitlements).set({ enabled: false, updatedAt: now }).where(and(eq(entitlements.accountId, accountId), eq(entitlements.sourceType, AUTH_ENTITLEMENT_SOURCE), eq(entitlements.enabled, true)));
     for (const entitlementKey of desiredKeys) await tx.insert(entitlements).values({ accountId, entitlementKey, enabled: true, sourceType: AUTH_ENTITLEMENT_SOURCE, sourceId })
@@ -124,23 +126,137 @@ export async function getAccount(accountId, executor = database()) {
   return rows[0] || null;
 }
 
+// Identity lookup alone grants no access. Session issuance still requires verified
+// credentials. Preserve legacy admin IDs across link requests and verified sign-in.
+export async function authenticatedAccountId(preferredId, email) {
+  const matches = await database().select().from(users).where(sql`lower(${users.email}) = ${String(email).trim().toLowerCase()}`).limit(2);
+  if (matches.length > 1) throw Object.assign(new Error('Account identity requires reconciliation.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  const [existing] = matches;
+  return existing?.id || preferredId;
+}
+
 export async function getAccountContext(accountId, executor = database()) {
   const account = await getAccount(accountId, executor);
   if (!account) return null;
   const grants = await executor.select().from(entitlements).where(and(eq(entitlements.accountId, accountId), eq(entitlements.enabled, true)));
-  return { ...account, entitlements: Object.fromEntries(grants.map((grant) => [grant.entitlementKey, true])) };
+  return { ...account, entitlements: Object.fromEntries(usableAccountGrants(accountId, account.user.email, grants).map((grant) => [grant.entitlementKey, true])) };
 }
 
-export async function reserveRender({ jobId, accountId, idempotencyKey, correlationId, provider, title, format, costCredits, input }) {
+function usableAccountGrants(accountId, email, grants, now = new Date()) {
+  return grants.filter(grant => grant.enabled === true && (!grant.expiresAt || new Date(grant.expiresAt) > now)
+    && (!['liveRendering', 'fullAccess', 'ownerAccess'].includes(grant.entitlementKey)
+      || grant.sourceType !== AUTH_ENTITLEMENT_SOURCE || grant.sourceId === 'workspace_password'
+      || configuredPremiumIdentity(accountId, email)));
+}
+
+export async function requirePersistedRenderAuthorization(accountId, tier, executor = database()) {
+  const grants = await executor.select().from(entitlements).where(eq(entitlements.accountId, accountId)).for('share');
+  const [user] = await executor.select().from(users).where(eq(users.id, accountId)).limit(1);
+  // Reject historical auth-derived Premium overgrants from the domain/registry leak.
+  const eligible = user ? usableAccountGrants(accountId, user.email, grants) : [];
+  return renderAuthorization(accountId, tier, eligible);
+}
+
+export async function requireJobRenderAuthorization(job, tier) {
+  assertJobAuthorizationBinding(job, tier);
+  return requirePersistedRenderAuthorization(job.accountId, tier);
+}
+
+const sha256Text = value => createHash('sha256').update(String(value || '')).digest('hex');
+
+function withoutServerRenderProof(input = {}) {
+  const { renderAuthorization: _authorization, quoteProof: _quoteProof, ...intent } = input;
+  return intent;
+}
+
+function scriptedClientIntent(input = {}) {
+  return Object.fromEntries(['contractVersion', 'tier', 'projectId', 'identityId', 'script'].map(key => [key, input[key]]));
+}
+
+function assertPersistedScriptedQuoteProof(job, intent) {
+  const proof = safeScriptedPhotoQuoteProof(job.input?.quoteProof);
+  if (proof.accountSha256 !== sha256Text(job.accountId) || proof.projectId !== intent.projectId || proof.identityId !== intent.identityId
+    || proof.idempotencyKeySha256 !== sha256Text(job.idempotencyKey) || proof.titleSha256 !== sha256Text(job.title)
+    || proof.scriptSha256 !== sha256Text(intent.script) || proof.format !== job.format || proof.tier !== intent.tier
+    || proof.sourceBindingSha256 !== digestScriptedPhotoSourceBinding(intent.sourceBinding) || proof.credits !== job.costCredits) {
+    throw Object.assign(new Error('Persisted scripted-photo quote proof does not match the reserved job.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  }
+  return proof;
+}
+
+export async function reserveRender({ jobId, accountId, idempotencyKey, correlationId, provider, tier, title, format, costCredits, input, quoteToken }) {
+  const authorizationTier = renderTierForReservation({ provider, tier, input });
+  const scripted = isScriptedPhotoRequest(input);
   return database().transaction(async (tx) => {
-    const accounts = await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId)).for('update').limit(1);
-    const account = accounts[0];
-    if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
-    const existing = await tx.select().from(videoJobs).where(and(eq(videoJobs.accountId, accountId), eq(videoJobs.idempotencyKey, idempotencyKey))).limit(1);
-    if (existing[0]) return { job: existing[0], replayed: true };
+    await acquireProviderLifecycleLock(tx, accountId);
+    if (scripted) await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${accountId}:${idempotencyKey}:scripted-photo-reserve`}, 0))`);
+    let account;
+    if (!scripted) {
+      account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId)).for('update').limit(1))[0];
+      if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
+    }
+    let existingQuery = tx.select().from(videoJobs).where(and(eq(videoJobs.accountId, accountId), eq(videoJobs.idempotencyKey, idempotencyKey)));
+    if (scripted) existingQuery = existingQuery.for('update');
+    const existing = await existingQuery.limit(1);
+    if (existing[0]) {
+      const job = existing[0];
+      const savedInput = withoutServerRenderProof(job.input);
+      const requestedInput = withoutServerRenderProof(input);
+      if (job.provider !== provider || job.title !== title || job.format !== format || job.costCredits !== costCredits
+        || JSON.stringify(stableJson(scripted ? scriptedClientIntent(savedInput) : savedInput)) !== JSON.stringify(stableJson(scripted ? scriptedClientIntent(requestedInput) : requestedInput))) {
+        throw Object.assign(new Error('Idempotency key belongs to a different render request.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+      }
+      if (renderTierForJob(job) !== authorizationTier) throw Object.assign(new Error('Idempotency key belongs to a different render tier.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+      assertJobAuthorizationBinding(job, authorizationTier);
+      if (scripted) assertPersistedScriptedQuoteProof(job, savedInput);
+      return { job, replayed: true };
+    }
+    let reservedInput = input;
+    let quoteProof;
+    if (scripted) {
+      const activation = scriptedPhotoActivation(input.tier);
+      if (activation.tier !== authorizationTier || activation.provider !== provider || activation.costCredits !== costCredits) {
+        throw Object.assign(new Error('Scripted-photo reservation does not match configured provider or cost.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+      }
+      account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId)).for('update').limit(1))[0];
+      if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
+      const resolved = await resolveScriptedPhotoContext(tx, {
+        accountId, projectId: input.projectId, identityId: input.identityId, title, script: input.script, tier: input.tier,
+      }, { lock: true });
+      if (resolved.project.settings?.format !== format) throw Object.assign(new Error('Scripted-photo format no longer matches its saved project.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+      reservedInput = resolved.input;
+    }
+    const authorization = await requirePersistedRenderAuthorization(accountId, authorizationTier, tx);
+    if (scripted) {
+      const activation = scriptedPhotoActivation(reservedInput.tier);
+      if (activation.tier !== authorizationTier || activation.provider !== provider || activation.costCredits !== costCredits) {
+        throw Object.assign(new Error('Scripted-photo reservation configuration changed while acquiring its locks.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+      }
+      const claims = verifyScriptedPhotoQuote(quoteToken, {
+        accountId, projectId: reservedInput.projectId, identityId: reservedInput.identityId, idempotencyKey,
+        title, script: reservedInput.script, format, tier: reservedInput.tier, sourceBinding: reservedInput.sourceBinding, credits: costCredits,
+      });
+      quoteProof = safeScriptedPhotoQuoteProof(claims);
+    }
+    let providerResourcesForJob = [];
+    if (provider === 'heygen' && reservedInput?.identityId) {
+      const lookId = reservedInput?.sourceBinding?.providerRenderableAvatarId || reservedInput?.avatar?.avatarId;
+      const voiceId = reservedInput?.sourceBinding?.providerVoiceId || reservedInput?.voice?.voiceId;
+      if (!lookId || !voiceId) throw Object.assign(new Error('Identity provider resources are missing.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_UNVERIFIED' });
+      providerResourcesForJob = [
+        await getExactProviderResourceTx(tx, { accountId, kind: 'avatar_look', providerResourceId: lookId, lock: true }),
+        await getExactProviderResourceTx(tx, { accountId, kind: 'voice', providerResourceId: voiceId, lock: true }),
+      ];
+      if (providerResourcesForJob[0].verifiedAccountScopeId !== providerResourcesForJob[1].verifiedAccountScopeId) {
+        throw Object.assign(new Error('Identity provider resources are bound to different provider accounts.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_UNVERIFIED' });
+      }
+    }
     if (account.balance - account.reserved < costCredits) throw Object.assign(new Error('Insufficient credits.'), { statusCode: 402, failureCategory: 'ENTITLEMENT' });
     await tx.update(creditAccounts).set({ reserved: account.reserved + costCredits, updatedAt: new Date() }).where(eq(creditAccounts.accountId, accountId));
-    const [job] = await tx.insert(videoJobs).values({ id: jobId, accountId, projectId: input.projectId, idempotencyKey, correlationId, provider, status: 'reserved', title, format, costCredits, input }).returning();
+    const [job] = await tx.insert(videoJobs).values({ id: jobId, accountId, projectId: reservedInput.projectId, idempotencyKey, correlationId, provider, status: 'reserved', title, format, costCredits, input: { ...reservedInput, ...(quoteProof ? { quoteProof } : {}), renderAuthorization: { ...authorization, jobId } } }).returning();
+    for (const resource of providerResourcesForJob) await attachProviderConsumerReferenceTx(tx, {
+      accountId, resourceId: resource.id, consumerKind: 'job', consumerId: job.id, originOperationId: resource.originOperationId,
+    });
     await tx.insert(jobEvents).values({ jobId, correlationId, eventType: 'render.reserved', stageTo: 'reserved', details: { costCredits } });
     return { job, replayed: false };
   });
@@ -159,6 +275,7 @@ const ALLOWED_JOB_TRANSITIONS = Object.freeze({
   finishing: ['ready', 'failed'],
   ready: [], failed: [], cancelled: [],
 });
+const PROVIDER_SUBMISSION_CLAIMED_STATUSES = new Set(['provider_submitting', 'provider_submit_unknown', 'provider_submitted', 'provider_rendering', 'provider_ready', 'finish_contained', 'finishing', 'ready']);
 
 export function assertJobTransition(stageFrom, stageTo) {
   if (!(ALLOWED_JOB_TRANSITIONS[stageFrom] || []).includes(stageTo)) throw Object.assign(new Error(`Invalid job transition: ${stageFrom} -> ${stageTo}.`), { statusCode: 409, failureCategory: 'RECONCILIATION' });
@@ -192,6 +309,62 @@ export async function getJob(jobId) {
   return (await database().select().from(videoJobs).where(eq(videoJobs.id, jobId)).limit(1))[0] || null;
 }
 
+function deepFreezeProviderProof(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const nested of Object.values(value)) deepFreezeProviderProof(nested);
+  return Object.freeze(value);
+}
+
+export async function prepareProviderVideoRead({ jobId, providerJobId = null, providerBinding }) {
+  const accountId = providerBinding?.applicationAccountId;
+  return withFreshHeygenSpaceBindingTransaction({ accountId, providerBinding }, async tx => {
+    const [job] = await tx.select().from(videoJobs).where(and(
+      eq(videoJobs.id, jobId), eq(videoJobs.accountId, accountId),
+    )).for('share').limit(1);
+    if (!job || job.provider !== 'heygen' || !['provider_submitted', 'provider_rendering', 'provider_ready', 'finishing'].includes(job.status)
+      || !job.providerJobId || (providerJobId && providerJobId !== job.providerJobId)) {
+      throw Object.assign(new Error('Provider video read does not match the canonical claimed job.'), { statusCode: 409, failureCategory: 'PROVIDER_OPERATION_CONFLICT' });
+    }
+    await assertProviderJobReferencesActiveTx(tx, {
+      accountId,
+      jobId: job.id,
+      providerBinding,
+      expectedResources: [{ kind: 'video', providerResourceId: job.providerJobId }],
+    });
+    const resource = await getExactProviderResourceTx(tx, {
+      accountId, kind: 'video', providerResourceId: job.providerJobId, lock: true,
+    });
+    let sourceUrlDigest = null;
+    if (['provider_ready', 'finishing'].includes(job.status)) {
+      const evidence = await tx.select().from(providerLifecycleEvents).where(and(
+        eq(providerLifecycleEvents.resourceId, resource.id),
+        eq(providerLifecycleEvents.eventType, 'provider.resource_ready'),
+      )).orderBy(desc(providerLifecycleEvents.observedAt)).limit(2);
+      sourceUrlDigest = evidence.length === 1 ? evidence[0]?.details?.sourceUrlDigest : null;
+      if (!/^[a-f0-9]{64}$/.test(String(sourceUrlDigest || ''))) {
+        throw Object.assign(new Error('Provider video ready evidence is missing or ambiguous.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_CONFLICT' });
+      }
+    }
+    return deepFreezeProviderProof({
+      version: 'heygen-video-read-claim/v1',
+      job: structuredClone(job),
+      providerJobId: job.providerJobId,
+      operationId: resource.originOperationId,
+      resourceId: resource.id,
+      sourceUrlDigest,
+    });
+  });
+}
+
+export async function prepareProviderVideoFinish({ jobId, providerBinding }) {
+  const prepared = await prepareProviderVideoRead({ jobId, providerBinding });
+  if (!['provider_ready', 'finishing'].includes(prepared.job.status)
+    || !/^[a-f0-9]{64}$/.test(String(prepared.sourceUrlDigest || ''))) {
+    throw Object.assign(new Error('Provider video is not ready for canonical finishing.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_CONFLICT' });
+  }
+  return prepared;
+}
+
 export function assertFailedRenderRecoveryEligibility(job, { charged = false } = {}) {
   if (!job) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
   if (job.status !== 'failed' || !job.providerJobId) throw Object.assign(new Error('Only a failed job with an existing provider result can be recovered.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
@@ -203,7 +376,10 @@ export function assertFailedRenderRecoveryEligibility(job, { charged = false } =
 }
 
 export async function reserveFailedRenderRecovery(jobId) {
+  const snapshot = await getJob(jobId);
+  if (!snapshot) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
   return database().transaction(async (tx) => {
+    await acquireProviderLifecycleLock(tx, snapshot.accountId);
     const job = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
     const sourceId = `render:${jobId}`;
     const charged = await tx.select().from(creditTransactions).where(and(eq(creditTransactions.sourceType, 'render'), eq(creditTransactions.sourceId, sourceId))).limit(1);
@@ -219,32 +395,165 @@ export async function reserveFailedRenderRecovery(jobId) {
   });
 }
 
-export async function transitionJob({ jobId, stageTo, eventType, providerJobId, output, failureCategory, details = {} }) {
-  return database().transaction(async (tx) => {
+export async function transitionJob({ jobId, stageTo, eventType, providerJobId, providerBinding, providerSourceUrlDigest, output, failureCategory, details = {} }) {
+  if (stageTo === 'ready') throw Object.assign(new Error('Ready requires accepted finalization.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  const bindingClaim = stageTo === 'provider_submitting' && providerBinding != null;
+  const bindingReceipt = ['provider_submitted', 'provider_submit_unknown', 'provider_rendering', 'provider_ready', 'finishing', 'finish_contained'].includes(stageTo) && providerBinding != null;
+  const bindingTransaction = bindingClaim || bindingReceipt;
+  const snapshot = bindingTransaction ? null : await getJob(jobId);
+  if (!bindingTransaction && !snapshot) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
+  const runTransaction = bindingClaim
+    ? callback => withFreshHeygenSpaceBindingTransaction({ accountId: providerBinding.applicationAccountId, providerBinding }, callback)
+    : bindingReceipt
+    ? callback => withHeygenSpaceBindingReceiptTransaction({ accountId: providerBinding.applicationAccountId, providerBinding }, callback)
+    : callback => database().transaction(async tx => {
+      await acquireProviderLifecycleLock(tx, snapshot.accountId);
+      return callback(tx);
+    });
+  const result = await runTransaction(async (tx) => {
+    let providerClaimProof = null;
     const current = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
     if (!current) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
+    const expectedAccountId = bindingTransaction ? providerBinding.applicationAccountId : snapshot.accountId;
+    if (current.accountId !== expectedAccountId) throw Object.assign(new Error('Video job ownership changed.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    if (bindingTransaction && current.provider !== 'heygen') throw Object.assign(new Error('HeyGen binding cannot authorize a different provider.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    if (current.provider === 'heygen' && ['provider_submitting', 'provider_submitted', 'provider_submit_unknown', 'provider_rendering', 'provider_ready', 'finishing', 'finish_contained'].includes(stageTo)
+      && providerBinding == null) {
+      throw Object.assign(new Error('Verified HeyGen binding is required for provider state persistence.'), { statusCode: 503, failureCategory: 'MISSING_PROVIDER_ACCOUNT_BINDING' });
+    }
+    if (stageTo === 'provider_submitting' && PROVIDER_SUBMISSION_CLAIMED_STATUSES.has(current.status)) {
+      throw Object.assign(new Error('Provider submission is already claimed and requires reconciliation.'), { statusCode: 409, failureCategory: 'PROVIDER_SUBMIT_UNKNOWN', providerSubmissionPossible: true });
+    }
+    // Finishing retries may overlap; each uses its own temporary files and the
+    // final transaction arbitrates one artifact/debit. Do not fail the live job.
+    if (['finishing', 'finish_contained'].includes(stageTo) && current.status === stageTo) return { job: current };
+    // A slower poll must not regress or fail a job advanced by another poller.
+    if (stageTo === 'provider_ready' && current.provider === 'heygen'
+      && ['provider_ready', 'finish_contained', 'finishing', 'ready'].includes(current.status)) {
+      await markProviderVideoReadyTx(tx, {
+        accountId: current.accountId,
+        jobId: current.id,
+        providerJobId: providerJobId || current.providerJobId,
+        providerBinding,
+        sourceUrlDigest: providerSourceUrlDigest,
+      });
+      return { job: current, ledgerConflict: false, providerClaimProof: null };
+    }
+    if (['provider_rendering', 'provider_ready'].includes(stageTo)
+      && ['provider_ready', 'finish_contained', 'finishing', 'ready'].includes(current.status)) return { job: current };
     assertJobTransition(current.status, stageTo);
+    if (stageTo === 'provider_submitting') {
+      const tier = renderTierForJob(current);
+      assertScriptedPhotoJobActivation(current);
+      assertJobAuthorizationBinding(current, tier);
+      if (current.provider === 'heygen' && !current.input?.identityId) {
+        throw Object.assign(new Error('HeyGen stock talent is not bound to the verified provider-space ledger.'), {
+          statusCode: 409,
+          failureCategory: 'PROVIDER_RESOURCE_UNVERIFIED',
+        });
+      }
+      // This transaction is the submission authorization boundary. The share
+      // lock serializes the claim with grant revocation; already claimed work
+      // may finish, but a revocation committed first blocks a new claim.
+      await requirePersistedRenderAuthorization(current.accountId, tier, tx);
+      if (isScriptedPhotoRequest(current.input)) await assertScriptedPhotoClaimBinding(tx, current);
+      else if (current.input?.identityId) {
+        const linked = await activeLinkedEnrollment(tx, current.accountId, current.input.identityId, { lock: true });
+        const [identity] = await tx.select().from(userIdentities).where(and(
+          eq(userIdentities.accountId, current.accountId), eq(userIdentities.id, current.input.identityId), isNull(userIdentities.archivedAt),
+        )).for('share').limit(1);
+        if (!identity || identity.provider !== 'heygen') throw Object.assign(new Error('Identity is unavailable at provider claim.'), { statusCode: 409, failureCategory: 'CONSENT' });
+        const { consent } = await assertActiveIdentityConsent(tx, identity, linked?.consentPolicyVersion || IDENTITY_CONSENT_POLICY_VERSION, { lock: true });
+        if (current.input.avatar?.avatarId !== identity.providerRenderableAvatarId
+          || current.input.voice?.voiceId !== identity.providerVoiceId
+          || consent.photoSha256 !== linked?.photoSha256 || consent.voiceSha256 !== linked?.derivedAudioSha256) {
+          throw Object.assign(new Error('Identity provider binding changed before submission.'), { statusCode: 409, failureCategory: 'CONSENT' });
+        }
+      }
+      if (current.input?.identityId) await assertProviderJobReferencesActiveTx(tx, {
+        accountId: current.accountId,
+        jobId: current.id,
+        providerBinding,
+        expectedResources: [
+          { kind: 'avatar_look', providerResourceId: current.input.avatar?.avatarId },
+          { kind: 'voice', providerResourceId: current.input.voice?.voiceId },
+        ],
+      });
+      if (current.provider === 'heygen') {
+        const requestDigest = providerOperationRequestDigest({
+          version: 'provider-video-request/v1', jobId: current.id, accountId: current.accountId,
+          projectId: current.projectId, title: current.title, format: current.format,
+          identityId: current.input?.identityId || null, script: current.input?.script || null,
+          avatarId: current.input?.avatar?.avatarId || null, voiceId: current.input?.voice?.voiceId || null,
+        });
+        const ledger = await reserveProviderOperationTx(tx, {
+          accountId: current.accountId,
+          providerBinding,
+          kind: 'video_create',
+          originOperationKey: current.id,
+          correlationId: current.correlationId,
+          enrollmentId: null,
+          identityId: current.input?.identityId || null,
+          jobId: current.id,
+          requestDigest,
+        });
+        details = { ...details, providerLifecycleOperationId: ledger.operation.id };
+        providerClaimProof = Object.freeze({
+          version: 'heygen-render-provider-claim/v1',
+          operationId: ledger.operation.id,
+          operationState: ledger.operation.state,
+          requestDigest,
+          bindingId: ledger.binding.id,
+          originScopeKey: ledger.binding.originScopeKey,
+          accountId: current.accountId,
+          jobId: current.id,
+        });
+      }
+    }
+    let ledgerConflict = false;
+    if (stageTo === 'provider_submitted' && current.provider === 'heygen') {
+      const receipt = await recordProviderVideoResourceTx(tx, {
+        accountId: current.accountId, jobId: current.id, providerJobId, providerBinding,
+      });
+      ledgerConflict = receipt.conflicts.length > 0;
+    }
+    if (stageTo === 'provider_submit_unknown' && current.provider === 'heygen') {
+      await recordProviderJobSubmissionUnknownTx(tx, {
+        accountId: current.accountId, jobId: current.id, providerBinding,
+      });
+    }
+    if (stageTo === 'provider_ready' && current.provider === 'heygen') {
+      await markProviderVideoReadyTx(tx, {
+        accountId: current.accountId,
+        jobId: current.id,
+        providerJobId: providerJobId || current.providerJobId,
+        providerBinding,
+        sourceUrlDigest: providerSourceUrlDigest,
+      });
+    }
     const terminal = ['ready', 'failed', 'cancelled'];
-    const [job] = await tx.update(videoJobs).set({ status: stageTo, providerJobId: providerJobId || current.providerJobId, output: output || current.output, failureCategory: failureCategory || null, updatedAt: new Date(), completedAt: terminal.includes(stageTo) ? new Date() : null }).where(eq(videoJobs.id, jobId)).returning();
-    await tx.insert(jobEvents).values({ jobId, correlationId: current.correlationId, eventType, stageFrom: current.status, stageTo, failureCategory, details });
-    return job;
+    const actualStage = ledgerConflict ? 'provider_submit_unknown' : stageTo;
+    const actualFailure = ledgerConflict ? 'PROVIDER_SUBMIT_UNKNOWN' : failureCategory || null;
+    const [job] = await tx.update(videoJobs).set({ status: actualStage, providerJobId: providerJobId || current.providerJobId, output: output || current.output, failureCategory: actualFailure, updatedAt: new Date(), completedAt: terminal.includes(actualStage) ? new Date() : null }).where(eq(videoJobs.id, jobId)).returning();
+    await tx.insert(jobEvents).values({ jobId, correlationId: current.correlationId, eventType: ledgerConflict ? 'provider.receipt_conflict' : eventType, stageFrom: current.status, stageTo: actualStage, failureCategory: actualFailure, details });
+    return { job, ledgerConflict, providerClaimProof };
   });
+  if (result.ledgerConflict) throw Object.assign(new Error('Provider result requires lifecycle reconciliation.'), { statusCode: 409, failureCategory: 'PROVIDER_SUBMIT_UNKNOWN', providerSubmissionPossible: true });
+  return result.providerClaimProof
+    ? Object.freeze({ ...result.job, providerClaimProof: result.providerClaimProof })
+    : result.job;
 }
 
+// Compatibility readback only. New debits belong exclusively to finalizeReadyJob.
 export async function finalizeRenderCredit(jobId) {
-  return database().transaction(async (tx) => {
-    const job = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
-    if (!job) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
-    const sourceId = `render:${job.id}`;
-    const existing = await tx.select().from(creditTransactions).where(and(eq(creditTransactions.sourceType, 'render'), eq(creditTransactions.sourceId, sourceId))).limit(1);
-    if (existing[0]) return { transaction: existing[0], replayed: true };
-    const account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, job.accountId)).for('update').limit(1))[0];
-    if (!account || account.reserved < job.costCredits || account.balance < job.costCredits) throw Object.assign(new Error('Credit reservation mismatch.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
-    const balanceAfter = account.balance - job.costCredits;
-    await tx.update(creditAccounts).set({ balance: balanceAfter, reserved: account.reserved - job.costCredits, spent: account.spent + job.costCredits, updatedAt: new Date() }).where(eq(creditAccounts.accountId, job.accountId));
-    const [transaction] = await tx.insert(creditTransactions).values({ accountId: job.accountId, sourceType: 'render', sourceId, amount: -job.costCredits, balanceAfter, metadata: { jobId } }).returning();
-    return { transaction, replayed: false };
-  });
+  const job = await getJob(jobId);
+  if (!acceptedJobOutput(job)) throw Object.assign(new Error('Accepted final output is required for settlement.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  const [transaction] = await database().select().from(creditTransactions).where(and(eq(creditTransactions.sourceType, 'render'), eq(creditTransactions.sourceId, `render:${jobId}`))).limit(1);
+  if (!transaction) throw Object.assign(new Error('Render settlement is missing.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  if (transaction.accountId !== job.accountId || transaction.amount !== -job.costCredits || transaction.metadata?.jobId !== jobId) {
+    throw Object.assign(new Error('Render settlement identity conflicts with the job.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  }
+  return { transaction, replayed: true };
 }
 
 export async function issueStripeCredit({ stripeEventId, eventType, livemode, payloadSha256, accountId, sessionId, credits }) {
@@ -338,14 +647,44 @@ export async function addUploadMediaAsset(asset) {
   }
 }
 
-export async function attachProviderMediaAsset({ accountId, assetId, provider, providerAssetId }) {
-  const [updated] = await database().update(mediaAssets).set({ provider, providerAssetId, providerUploadedAt: new Date() })
-    .where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, assetId), isNull(mediaAssets.providerAssetId))).returning();
-  if (updated) return { asset: updated, replayed: false };
-  const existing = await getOwnedMediaAsset(accountId, assetId);
-  if (!existing) throw Object.assign(new Error('Asset not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
-  if (existing.provider === provider && existing.providerAssetId === providerAssetId) return { asset: existing, replayed: true };
-  throw Object.assign(new Error('Asset provider identity is already reserved.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+export async function attachProviderMediaAsset({ accountId, assetId, provider, providerAssetId, consumerIdentityId, providerBinding }) {
+  return withHeygenSpaceBindingReceiptTransaction({ accountId, providerBinding }, async tx => {
+    const bindingAuthority = assertHeygenProviderReceiptTx(tx, { accountId, providerBinding });
+    if (provider !== 'heygen' || !consumerIdentityId) throw Object.assign(new Error('Provider media attachment requires an exact identity ledger binding.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_UNVERIFIED' });
+    const [identity] = await tx.select().from(userIdentities).where(and(
+      eq(userIdentities.accountId, accountId), eq(userIdentities.id, consumerIdentityId), isNull(userIdentities.archivedAt),
+    )).for('share').limit(1);
+    if (!identity || ![identity.sourcePhotoAssetId, identity.sourceVoiceAssetId].includes(assetId)) {
+      throw Object.assign(new Error('Provider media identity source binding is invalid.'), { statusCode: 409, failureCategory: 'CONSENT' });
+    }
+    const [asset] = await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, assetId))).for('update').limit(1);
+    if (!asset) throw Object.assign(new Error('Asset not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    const resource = await getExactProviderResourceTx(tx, { accountId, kind: 'asset', providerResourceId: providerAssetId, lock: true });
+    if (resource.bindingId !== bindingAuthority.bindingId || resource.originScopeKey !== bindingAuthority.originScopeKey
+      || resource.verifiedAccountScopeId !== bindingAuthority.verifiedAccountScopeId) {
+      throw Object.assign(new Error('Provider media asset belongs to a different provider space.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_SCOPE_CONFLICT' });
+    }
+    const photoSource = identity.sourcePhotoAssetId === asset.id;
+    const sourceValid = !asset.quarantinedAt
+      && asset.kind === (photoSource ? 'identity-photo-source' : 'identity-voice-source')
+      && String(asset.privatePathname || '').startsWith(photoSource ? 'video-os/uploads/' : 'video-os/enrollment-sources/')
+      && String(asset.contentType || '').startsWith(photoSource ? 'image/' : 'audio/')
+      && resource.sourceSha256 === asset.sha256 && resource.sourceBytes === asset.bytes;
+    if (!sourceValid) throw Object.assign(new Error('Provider asset no longer matches its consented private source.'), { statusCode: 409, failureCategory: 'CONSENT' });
+    let updated = asset;
+    let replayed = true;
+    if (!asset.providerAssetId) {
+      [updated] = await tx.update(mediaAssets).set({ provider, providerAssetId, providerUploadedAt: new Date() })
+        .where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, assetId), isNull(mediaAssets.providerAssetId))).returning();
+      replayed = false;
+    } else if (asset.provider !== provider || asset.providerAssetId !== providerAssetId) {
+      throw Object.assign(new Error('Asset provider identity is already reserved.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    }
+    await attachProviderConsumerReferenceTx(tx, {
+      accountId, resourceId: resource.id, consumerKind: 'identity', consumerId: consumerIdentityId, originOperationId: resource.originOperationId,
+    });
+    return { asset: updated, replayed };
+  });
 }
 
 async function ownedIdentityForUpdate(tx, accountId, identityId) {
@@ -354,20 +693,34 @@ async function ownedIdentityForUpdate(tx, accountId, identityId) {
 
 export function assertIdentitySourceAssets(photo, voice) {
   if (!photo || !voice) throw Object.assign(new Error('Identity source asset not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
-  if (photo.kind !== 'identity-photo-source' || !photo.contentType.startsWith('image/')) {
+  if (photo.quarantinedAt || photo.kind !== 'identity-photo-source' || !photo.contentType.startsWith('image/')) {
     throw Object.assign(new Error('Identity photo source is invalid.'), { statusCode: 400, failureCategory: 'VALIDATION' });
   }
-  if (voice.kind !== 'identity-voice-source' || !voice.contentType.startsWith('audio/')) {
+  if (voice.quarantinedAt || voice.kind !== 'identity-voice-source' || !voice.contentType.startsWith('audio/')) {
     throw Object.assign(new Error('Identity voice source is invalid.'), { statusCode: 400, failureCategory: 'VALIDATION' });
   }
   return true;
 }
 
+async function assertIdentityVoiceEnrollmentProvenance(tx, identity, voice, { lock = false, creating = false } = {}) {
+  let query = tx.select().from(identityVideoEnrollments).where(eq(identityVideoEnrollments.derivedVoiceAssetId, voice.id));
+  if (lock) query = query.for('share');
+  const enrollment = (await query.limit(1))[0];
+  if (!enrollment) return null;
+  if (creating || enrollment.identityId !== identity.id || enrollment.accountId !== identity.accountId || enrollment.status !== 'IDENTITY_READY') {
+    throw Object.assign(new Error('Enrollment-derived voice media cannot be rebound to another identity.'), { statusCode: 409, failureCategory: 'CONSENT' });
+  }
+  assertEnrollmentConsentRecord(enrollment);
+  return enrollment;
+}
+
 export async function createIdentityDraft({ accountId, displayName, sourcePhotoAssetId, sourceVoiceAssetId, provider = 'heygen' }) {
   return database().transaction(async (tx) => {
+    await acquireProviderLifecycleLock(tx, accountId);
     const photo = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, sourcePhotoAssetId))).limit(1))[0];
     const voice = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, sourceVoiceAssetId))).limit(1))[0];
     assertIdentitySourceAssets(photo, voice);
+    await assertIdentityVoiceEnrollmentProvenance(tx, { id: null, accountId }, voice, { lock: true, creating: true });
     const name = String(displayName || '').trim();
     if (!name) throw Object.assign(new Error('Identity name is required.'), { statusCode: 400, failureCategory: 'VALIDATION' });
     const [identity] = await tx.insert(userIdentities).values({
@@ -385,11 +738,44 @@ export async function getOwnedIdentity(accountId, identityId) {
   return (await database().select().from(userIdentities).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).limit(1))[0] || null;
 }
 
+export async function getOwnedScriptedPhotoJobByIdempotency({ accountId, idempotencyKey, projectId, tier, identityId, title, script, format }) {
+  const job = (await database().select().from(videoJobs).where(and(eq(videoJobs.accountId, accountId), eq(videoJobs.idempotencyKey, idempotencyKey))).limit(1))[0] || null;
+  if (!job) return null;
+  if (job.provider !== 'heygen' || !isScriptedPhotoRequest(job.input) || job.input.projectId !== projectId || job.input.tier !== tier
+    || (identityId !== undefined && job.input.identityId !== identityId)
+    || (title !== undefined && job.title !== title)
+    || (script !== undefined && job.input.script !== script)
+    || (format !== undefined && job.format !== format)) {
+    throw Object.assign(new Error('Idempotency key belongs to a different scripted-photo request.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  }
+  assertPersistedScriptedQuoteProof(job, withoutServerRenderProof(job.input));
+  return job;
+}
+
+async function activeLinkedEnrollment(tx, accountId, identityId, { lock = true } = {}) {
+  let query = tx.select().from(identityVideoEnrollments).where(and(eq(identityVideoEnrollments.accountId, accountId), eq(identityVideoEnrollments.identityId, identityId)));
+  if (lock) query = query.for('share');
+  const linked = (await query.limit(1))[0];
+  if (!linked) return null;
+  if (linked.status !== 'IDENTITY_READY' || linked.revokedAt || !linked.consentedAt || linked.consentedSourceSha256 !== linked.sourceSha256) {
+    throw Object.assign(new Error('Linked enrollment consent is not active.'), { statusCode: 409, failureCategory: 'CONSENT' });
+  }
+  assertEnrollmentConsentRecord(linked, { requireProviderExposure: true });
+  const [source] = await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, linked.sourceVideoAssetId))).for('share').limit(1);
+  const [voice] = await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, linked.derivedVoiceAssetId))).for('share').limit(1);
+  if (!source || source.quarantinedAt || source.kind !== 'identity-phone-video-source' || source.sha256 !== linked.sourceSha256
+    || !voice || voice.quarantinedAt || voice.kind !== 'identity-voice-source' || voice.sha256 !== linked.derivedAudioSha256) {
+    throw Object.assign(new Error('Linked enrollment media is unavailable.'), { statusCode: 409, failureCategory: 'CONSENT' });
+  }
+  return linked;
+}
+
 export async function getRenderAuthorizedIdentity(accountId, identityId, policyVersion = IDENTITY_CONSENT_POLICY_VERSION) {
   return database().transaction(async (tx) => {
+    const linkedEnrollment = await activeLinkedEnrollment(tx, accountId, identityId);
     const identity = (await tx.select().from(userIdentities).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).limit(1))[0] || null;
     if (!identity) return null;
-    await assertActiveIdentityConsent(tx, identity, policyVersion);
+    await assertActiveIdentityConsent(tx, identity, linkedEnrollment?.consentPolicyVersion || policyVersion);
     return identity;
   });
 }
@@ -413,11 +799,14 @@ export async function recordIdentityConsent({ accountId, identityId, policyVersi
     throw Object.assign(new Error('All identity authorizations are required.'), { statusCode: 400, failureCategory: 'CONSENT' });
   }
   return database().transaction(async (tx) => {
+    await acquireProviderLifecycleLock(tx, accountId);
+    await activeLinkedEnrollment(tx, accountId, identityId);
     const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
     if (!identity || identity.archivedAt) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
     const photo = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, identity.sourcePhotoAssetId))).limit(1))[0];
     const voice = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, identity.sourceVoiceAssetId))).limit(1))[0];
-    if (!photo || !voice) throw Object.assign(new Error('Identity source asset not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
+    assertIdentitySourceAssets(photo, voice);
+    await assertIdentityVoiceEnrollmentProvenance(tx, identity, voice, { lock: true });
     const existing = (await tx.select().from(identityConsents).where(and(
       eq(identityConsents.accountId, accountId),
       eq(identityConsents.identityId, identityId),
@@ -443,20 +832,75 @@ export async function recordIdentityConsent({ accountId, identityId, policyVersi
   });
 }
 
-async function assertActiveIdentityConsent(tx, identity, policyVersion = IDENTITY_CONSENT_POLICY_VERSION) {
-  const consent = (await tx.select().from(identityConsents).where(and(
+function withShareLock(query, lock) {
+  return lock ? query.for('share') : query;
+}
+
+export async function prepareIdentityProviderRead({ accountId, identityId, component, providerBinding }) {
+  const fields = componentFields(component);
+  return withFreshHeygenSpaceBindingTransaction({ accountId, providerBinding }, async tx => {
+    const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
+    if (!identity || identity.archivedAt || !['CREATING', 'PROCESSING', 'READY'].includes(identity[fields.status])) {
+      throw Object.assign(new Error('Identity provider read is unavailable.'), { statusCode: 409, failureCategory: 'PROVIDER_OPERATION_CONFLICT' });
+    }
+    const expectedResources = component === 'avatar'
+      ? [
+        { kind: 'avatar_group', providerResourceId: identity.providerAvatarGroupId },
+        { kind: 'avatar_look', providerResourceId: identity.providerRenderableAvatarId },
+      ]
+      : [{ kind: 'voice', providerResourceId: identity.providerVoiceId }];
+    if (expectedResources.some(resource => !resource.providerResourceId)) {
+      throw Object.assign(new Error('Identity provider resource is unavailable.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_UNVERIFIED' });
+    }
+    const resources = await assertProviderIdentityReferencesActiveTx(tx, {
+      accountId, identityId, providerBinding, expectedResources,
+    });
+    return deepFreezeProviderProof({
+      version: 'heygen-identity-read-claim/v1',
+      accountId,
+      identityId,
+      component,
+      operationKey: identity[fields.operation],
+      providerAvatarGroupId: component === 'avatar' ? identity.providerAvatarGroupId : null,
+      providerRenderableAvatarId: component === 'avatar' ? identity.providerRenderableAvatarId : null,
+      providerVoiceId: component === 'voice' ? identity.providerVoiceId : null,
+      resourceIds: resources.map(resource => resource.id),
+    });
+  });
+}
+
+export async function requireAnyPersistedRenderAuthorization(accountId) {
+  try { return await requirePersistedRenderAuthorization(accountId, 'standard'); } catch (standardError) {
+    try { return await requirePersistedRenderAuthorization(accountId, 'premium'); } catch {
+      throw standardError;
+    }
+  }
+}
+
+async function assertActiveIdentityConsent(tx, identity, policyVersion = IDENTITY_CONSENT_POLICY_VERSION, { lock = false } = {}) {
+  const consent = (await withShareLock(tx.select().from(identityConsents).where(and(
     eq(identityConsents.accountId, identity.accountId),
     eq(identityConsents.identityId, identity.id),
     eq(identityConsents.policyVersion, policyVersion),
     isNull(identityConsents.revokedAt),
-  )).orderBy(desc(identityConsents.acceptedAt)).limit(1))[0];
+  )).orderBy(desc(identityConsents.acceptedAt)), lock).limit(1))[0];
   if (!consent) throw Object.assign(new Error('Identity consent is required.'), { statusCode: 409, failureCategory: 'CONSENT' });
-  const photo = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, identity.accountId), eq(mediaAssets.id, identity.sourcePhotoAssetId))).limit(1))[0];
-  const voice = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, identity.accountId), eq(mediaAssets.id, identity.sourceVoiceAssetId))).limit(1))[0];
+  if (policyVersion === ENROLLMENT_CONSENT_POLICY_VERSION
+    && (consent.audioExtractionAuthorization !== true || consent.temporaryPublicProviderExposureAuthorization !== true
+      || !/^[a-f0-9]{64}$/.test(consent.sourceVideoSha256 || '') || consent.consentPurpose !== 'identity-voice-enrollment')) {
+    throw Object.assign(new Error('Provider bridge exposure consent is required.'), { statusCode: 409, failureCategory: 'CONSENT' });
+  }
+  const photo = (await withShareLock(tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, identity.accountId), eq(mediaAssets.id, identity.sourcePhotoAssetId))), lock).limit(1))[0];
+  const voice = (await withShareLock(tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, identity.accountId), eq(mediaAssets.id, identity.sourceVoiceAssetId))), lock).limit(1))[0];
+  assertIdentitySourceAssets(photo, voice);
+  const linkedEnrollment = await assertIdentityVoiceEnrollmentProvenance(tx, identity, voice, { lock });
+  if (policyVersion === ENROLLMENT_CONSENT_POLICY_VERSION && consent.sourceVideoSha256 !== linkedEnrollment?.sourceSha256) {
+    throw Object.assign(new Error('Provider bridge consent no longer matches its enrollment video source.'), { statusCode: 409, failureCategory: 'CONSENT' });
+  }
   if (!photo || !voice || photo.sha256 !== consent.photoSha256 || voice.sha256 !== consent.voiceSha256) {
     throw Object.assign(new Error('Identity consent no longer matches its source assets.'), { statusCode: 409, failureCategory: 'CONSENT' });
   }
-  return consent;
+  return { consent, photo, voice };
 }
 
 function componentFields(component) {
@@ -484,16 +928,18 @@ export function redactIdentityFailure(code, message) {
   return { code: safeCode, message: safeMessage };
 }
 
-export async function reserveIdentityComponentCreation({ accountId, identityId, component, operationKey }) {
+export async function reserveIdentityComponentCreation({ accountId, identityId, component, operationKey, providerBinding }) {
+  if (!providerBinding) throw Object.assign(new Error('Verified provider-space binding is required.'), { statusCode: 503, failureCategory: 'MISSING_PROVIDER_ACCOUNT_BINDING', code: 'MISSING_PROVIDER_ACCOUNT_BINDING' });
   const fields = componentFields(component);
-  return database().transaction(async (tx) => {
+  return withFreshHeygenSpaceBindingTransaction({ accountId, providerBinding }, async tx => {
+    const linkedEnrollment = await activeLinkedEnrollment(tx, accountId, identityId);
     const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
     if (!identity || identity.archivedAt) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
     if (identity[fields.operation] === operationKey) return { identity, replayed: true };
     if (ACTIVE_COMPONENT_STATUSES.has(identity[fields.status])) throw Object.assign(new Error('Identity component creation is already in progress.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
     if (identity[fields.status] === 'READY') throw Object.assign(new Error('Identity component is already ready.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
     if (!['DRAFT', 'FAILED'].includes(identity[fields.status])) throw Object.assign(new Error('Identity component cannot be submitted from its current state.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
-    await assertActiveIdentityConsent(tx, identity);
+    await assertActiveIdentityConsent(tx, identity, linkedEnrollment?.consentPolicyVersion || IDENTITY_CONSENT_POLICY_VERSION);
     const retryReset = identity[fields.status] !== 'FAILED'
       ? {}
       : component === 'avatar'
@@ -514,9 +960,10 @@ export async function reserveIdentityComponentCreation({ accountId, identityId, 
   });
 }
 
-export async function recordIdentityProviderSubmission({ accountId, identityId, component, operationKey, providerRequestId, providerAvatarGroupId, providerRenderableAvatarId, providerVoiceId }) {
+export async function recordIdentityProviderSubmission({ accountId, identityId, component, operationKey, providerRequestId, providerAvatarGroupId, providerRenderableAvatarId, providerVoiceId, providerBinding }) {
   const fields = componentFields(component);
-  return database().transaction(async (tx) => {
+  return withHeygenSpaceBindingReceiptTransaction({ accountId, providerBinding }, async tx => {
+    const bindingAuthority = assertHeygenProviderReceiptTx(tx, { accountId, providerBinding });
     const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
     if (!identity || identity.archivedAt) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
     if (identity[fields.operation] !== operationKey) throw Object.assign(new Error('Identity operation does not match the reserved submission.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
@@ -524,6 +971,22 @@ export async function recordIdentityProviderSubmission({ accountId, identityId, 
     if (component === 'avatar' && !providerRequestId && !identity.providerAvatarRequestId) throw Object.assign(new Error('Provider avatar request identity is required.'), { statusCode: 400, failureCategory: 'VALIDATION' });
     if (component === 'voice' && !providerVoiceId && !identity.providerVoiceId) throw Object.assign(new Error('Provider voice identity is required.'), { statusCode: 400, failureCategory: 'VALIDATION' });
     assertProviderResourceConsistency(identity, { providerAvatarRequestId: providerRequestId, providerAvatarGroupId, providerRenderableAvatarId, providerVoiceId });
+    const groupId = providerAvatarGroupId || identity.providerAvatarGroupId;
+    const lookId = providerRenderableAvatarId || identity.providerRenderableAvatarId;
+    const voiceResourceId = providerVoiceId || identity.providerVoiceId;
+    if (component === 'avatar' && (!groupId || !lookId)) throw Object.assign(new Error('Provider avatar resource identities are required.'), { statusCode: 409, failureCategory: 'PROVIDER_RESPONSE' });
+    const lifecycleResources = component === 'avatar'
+      ? [
+        await getExactProviderResourceTx(tx, { accountId, kind: 'avatar_group', providerResourceId: groupId, lock: true }),
+        await getExactProviderResourceTx(tx, { accountId, kind: 'avatar_look', providerResourceId: lookId, lock: true }),
+      ]
+      : [await getExactProviderResourceTx(tx, { accountId, kind: 'voice', providerResourceId: voiceResourceId, lock: true })];
+    if (new Set(lifecycleResources.map(resource => resource.verifiedAccountScopeId)).size !== 1
+      || lifecycleResources.some(resource => resource.bindingId !== bindingAuthority.bindingId
+        || resource.originScopeKey !== bindingAuthority.originScopeKey
+        || resource.verifiedAccountScopeId !== bindingAuthority.verifiedAccountScopeId)) {
+      throw Object.assign(new Error('Provider identity resources do not share one verified provider account.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_UNVERIFIED' });
+    }
     const avatarStatus = component === 'avatar' ? 'PROCESSING' : identity.avatarStatus;
     const voiceStatus = component === 'voice' ? 'PROCESSING' : identity.voiceStatus;
     const [updated] = await tx.update(userIdentities).set({
@@ -535,13 +998,17 @@ export async function recordIdentityProviderSubmission({ accountId, identityId, 
       overallStatus: deriveIdentityStatus({ avatarStatus, voiceStatus }),
       updatedAt: new Date(),
     }).where(and(eq(userIdentities.accountId, accountId), eq(userIdentities.id, identityId))).returning();
+    for (const resource of lifecycleResources) await attachProviderConsumerReferenceTx(tx, {
+      accountId, resourceId: resource.id, consumerKind: 'identity', consumerId: identityId, originOperationId: resource.originOperationId,
+    });
     return updated;
   });
 }
 
-export async function markIdentityComponentReady({ accountId, identityId, component, operationKey, providerAvatarGroupId, providerRenderableAvatarId, providerVoiceId }) {
+export async function markIdentityComponentReady({ accountId, identityId, component, operationKey, providerAvatarGroupId, providerRenderableAvatarId, providerVoiceId, providerBinding }) {
   const fields = componentFields(component);
-  return database().transaction(async (tx) => {
+  return withHeygenSpaceBindingReceiptTransaction({ accountId, providerBinding }, async tx => {
+    const bindingAuthority = assertHeygenProviderReceiptTx(tx, { accountId, providerBinding });
     const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
     if (!identity || identity.archivedAt) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
     if (identity[fields.operation] !== operationKey) throw Object.assign(new Error('Identity operation does not match the reserved submission.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
@@ -553,6 +1020,18 @@ export async function markIdentityComponentReady({ accountId, identityId, compon
     const voiceId = providerVoiceId || identity.providerVoiceId;
     if (component === 'avatar' && (!avatarGroupId || !renderableAvatarId)) throw Object.assign(new Error('A renderable provider avatar is required.'), { statusCode: 409, failureCategory: 'PROVIDER_RESPONSE' });
     if (component === 'voice' && !voiceId) throw Object.assign(new Error('A completed provider voice is required.'), { statusCode: 409, failureCategory: 'PROVIDER_RESPONSE' });
+    const readyResources = component === 'avatar'
+      ? [
+        await getExactProviderResourceTx(tx, { accountId, kind: 'avatar_group', providerResourceId: avatarGroupId, lock: true }),
+        await getExactProviderResourceTx(tx, { accountId, kind: 'avatar_look', providerResourceId: renderableAvatarId, lock: true }),
+      ]
+      : [await getExactProviderResourceTx(tx, { accountId, kind: 'voice', providerResourceId: voiceId, lock: true })];
+    if (readyResources.some(resource => resource.bindingId !== bindingAuthority.bindingId
+      || resource.originScopeKey !== bindingAuthority.originScopeKey
+      || resource.verifiedAccountScopeId !== bindingAuthority.verifiedAccountScopeId)) {
+      throw Object.assign(new Error('Provider ready resource belongs to a different provider space.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_SCOPE_CONFLICT' });
+    }
+    for (const resource of readyResources) await markProviderResourceReadyTx(tx, { accountId, resourceId: resource.id });
     const avatarStatus = component === 'avatar' ? 'READY' : identity.avatarStatus;
     const voiceStatus = component === 'voice' ? 'READY' : identity.voiceStatus;
     const [updated] = await tx.update(userIdentities).set({
@@ -569,10 +1048,11 @@ export async function markIdentityComponentReady({ accountId, identityId, compon
   });
 }
 
-export async function markIdentityComponentFailed({ accountId, identityId, component, operationKey, failureCode, failureMessage }) {
+export async function markIdentityComponentFailed({ accountId, identityId, component, operationKey, failureCode, failureMessage, providerBinding }) {
   const fields = componentFields(component);
   const failure = redactIdentityFailure(failureCode, failureMessage);
-  return database().transaction(async (tx) => {
+  return withHeygenSpaceBindingReceiptTransaction({ accountId, providerBinding }, async tx => {
+    assertHeygenProviderReceiptTx(tx, { accountId, providerBinding });
     const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
     if (!identity || identity.archivedAt) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
     if (identity[fields.operation] !== operationKey) throw Object.assign(new Error('Identity operation does not match the reserved submission.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
@@ -593,10 +1073,21 @@ export async function markIdentityComponentFailed({ accountId, identityId, compo
 
 export async function archiveOwnedIdentity(accountId, identityId) {
   return database().transaction(async (tx) => {
+    await acquireProviderLifecycleLock(tx, accountId);
+    const linked = (await tx.select().from(identityVideoEnrollments).where(and(eq(identityVideoEnrollments.accountId, accountId), eq(identityVideoEnrollments.identityId, identityId))).for('update').limit(1))[0];
     const identity = await ownedIdentityForUpdate(tx, accountId, identityId);
     if (!identity) throw Object.assign(new Error('Identity not found.'), { statusCode: 404, failureCategory: 'OWNERSHIP' });
     if (identity.archivedAt) return identity;
     const archivedAt = new Date();
+    if (linked && linked.status !== 'REVOKED') {
+      const providerPending = Object.values(linked.providerReceipts || {}).some(receipt => ['SUBMITTING', 'ACCEPTED', 'COMPLETE', 'PENDING'].includes(receipt?.status));
+      await tx.update(identityVideoEnrollments).set({ status: 'REVOKED', stateVersion: linked.stateVersion + 1, revokedAt: archivedAt, workflowOperationKey: null, leaseExpiresAt: null, cleanupStatus: 'PENDING', providerReconciliationStatus: providerPending ? 'PENDING' : linked.providerReconciliationStatus, updatedAt: archivedAt })
+        .where(and(eq(identityVideoEnrollments.id, linked.id), eq(identityVideoEnrollments.stateVersion, linked.stateVersion)));
+      for (const assetId of [linked.sourceVideoAssetId, linked.derivedVoiceAssetId].filter(Boolean)) {
+        await tx.update(mediaAssets).set({ quarantinedAt: archivedAt }).where(and(eq(mediaAssets.id, assetId), eq(mediaAssets.accountId, accountId)));
+      }
+      await tx.insert(identityEnrollmentEvents).values({ enrollmentId: linked.id, correlationId: linked.correlationId, eventType: 'enrollment.revoked_by_identity_archive', stateFrom: linked.status, stateTo: 'REVOKED', details: { linkedIdentity: true } });
+    }
     await tx.update(identityConsents).set({ revokedAt: archivedAt }).where(and(
       eq(identityConsents.accountId, accountId),
       eq(identityConsents.identityId, identityId),
@@ -628,6 +1119,7 @@ export async function saveProject({ id, accountId, identityId, title, script, av
     updatedAt: new Date(),
   };
   return database().transaction(async (tx) => {
+    await acquireProviderLifecycleLock(tx, accountId);
     if (identityId) {
       const ownedIdentity = (await tx.select({ id: userIdentities.id }).from(userIdentities).where(and(
         eq(userIdentities.accountId, accountId),
@@ -647,6 +1139,7 @@ export async function saveProject({ id, accountId, identityId, title, script, av
 
 export async function saveStandardProject({ accountId, title, identityId, narrationAudioAssetId }) {
   return database().transaction(async (tx) => {
+    await acquireProviderLifecycleLock(tx, accountId);
     const ownedIdentity = (await tx.select({ id: userIdentities.id }).from(userIdentities).where(and(
       eq(userIdentities.accountId, accountId),
       eq(userIdentities.id, identityId),
@@ -681,24 +1174,180 @@ export async function getOwnedProject(accountId, projectId) {
   return (await database().select().from(projects).where(and(eq(projects.id, projectId), eq(projects.accountId, accountId))).limit(1))[0] || null;
 }
 
-export async function finalizeReadyJob(jobId, artifact) {
-  return database().transaction(async (tx) => {
+function scriptedPhotoBindingError(message, statusCode = 409, failureCategory = 'RECONCILIATION') {
+  return Object.assign(new Error(message), { statusCode, failureCategory });
+}
+
+function assertScriptedPhotoSourceAssets(photo, voice, linkedEnrollment) {
+  try { assertIdentitySourceAssets(photo, voice); } catch { throw scriptedPhotoBindingError('Scripted-photo identity source classification is invalid.', 409, 'CONSENT'); }
+  const photoTypes = new Set(['image/jpeg', 'image/png']);
+  const voiceTypes = new Set(['audio/mpeg', 'audio/wav', 'audio/x-wav']);
+  const enrollmentVoice = linkedEnrollment && voice.id === linkedEnrollment.derivedVoiceAssetId
+    && String(voice.privatePathname || '').startsWith('video-os/enrollment-sources/');
+  if (photo.quarantinedAt || voice.quarantinedAt || !photoTypes.has(photo.contentType) || !voiceTypes.has(voice.contentType)
+    || !String(photo.privatePathname || '').startsWith('video-os/uploads/')
+    || (!String(voice.privatePathname || '').startsWith('video-os/uploads/') && !enrollmentVoice)) {
+    throw scriptedPhotoBindingError('Scripted-photo identity source is unavailable.', 409, 'CONSENT');
+  }
+}
+
+async function resolveScriptedPhotoContext(tx, { accountId, projectId, identityId, title, script, tier }, { lock = false } = {}) {
+  const project = (await withShareLock(tx.select().from(projects).where(and(eq(projects.id, projectId), eq(projects.accountId, accountId))), lock).limit(1))[0];
+  if (!project) throw scriptedPhotoBindingError('Project not found.', 404, 'OWNERSHIP');
+  if (project.settings?.contractVersion !== SCRIPTED_PHOTO_CONTRACT_VERSION || project.settings?.tier !== tier
+    || project.identityId !== identityId || project.title !== title || project.script !== script) {
+    throw scriptedPhotoBindingError('Scripted-photo request no longer matches its saved project.');
+  }
+
+  const linkedEnrollment = await activeLinkedEnrollment(tx, accountId, identityId, { lock });
+
+  const identity = (await withShareLock(tx.select().from(userIdentities).where(and(
+    eq(userIdentities.accountId, accountId),
+    eq(userIdentities.id, identityId),
+  )), lock).limit(1))[0];
+  if (!identity) throw scriptedPhotoBindingError('Video identity not found.', 404, 'OWNERSHIP');
+  if (identity.archivedAt || identity.provider !== 'heygen'
+    || ![identity.overallStatus, identity.avatarStatus, identity.voiceStatus].every(status => status === 'READY')
+    || !identity.providerRenderableAvatarId || !identity.providerVoiceId) {
+    throw scriptedPhotoBindingError('Video identity is not ready for scripted rendering.', 409, 'CONSENT');
+  }
+  let consentResult;
+  try {
+    consentResult = await assertActiveIdentityConsent(
+      tx,
+      identity,
+      linkedEnrollment?.consentPolicyVersion || IDENTITY_CONSENT_POLICY_VERSION,
+      { lock },
+    );
+  } catch (error) {
+    if (error?.failureCategory === 'OWNERSHIP') throw error;
+    throw scriptedPhotoBindingError('Scripted-photo identity consent or source media is unavailable.', 409, 'CONSENT');
+  }
+  const { consent, photo, voice } = consentResult;
+  assertScriptedPhotoSourceAssets(photo, voice, linkedEnrollment);
+  const sourceBinding = {
+    policyVersion: consent.policyVersion,
+    consentId: consent.id,
+    sourcePhotoAssetId: identity.sourcePhotoAssetId,
+    sourceVoiceAssetId: identity.sourceVoiceAssetId,
+    photoSha256: photo.sha256,
+    voiceSha256: voice.sha256,
+    photoKind: photo.kind,
+    voiceKind: voice.kind,
+    photoContentType: photo.contentType,
+    voiceContentType: voice.contentType,
+    photoPrivatePathname: photo.privatePathname,
+    voicePrivatePathname: voice.privatePathname,
+    provider: 'heygen',
+    providerRenderableAvatarId: identity.providerRenderableAvatarId,
+    providerVoiceId: identity.providerVoiceId,
+  };
+  return {
+    project,
+    identity,
+    input: {
+      contractVersion: SCRIPTED_PHOTO_CONTRACT_VERSION,
+      tier,
+      projectId,
+      identityId,
+      script,
+      avatar: { avatarId: identity.providerRenderableAvatarId },
+      voice: { voiceId: identity.providerVoiceId },
+      sourceBinding,
+    },
+  };
+}
+
+export async function getScriptedPhotoReservationContext(request) {
+  return database().transaction(tx => resolveScriptedPhotoContext(tx, request));
+}
+
+async function assertScriptedPhotoClaimBinding(tx, job) {
+  if (job.projectId !== job.input?.projectId) throw scriptedPhotoBindingError('Scripted-photo project binding is invalid.');
+  const resolved = await resolveScriptedPhotoContext(tx, {
+    accountId: job.accountId,
+    projectId: job.input.projectId,
+    identityId: job.input.identityId,
+    title: job.title,
+    script: job.input.script,
+    tier: job.input.tier,
+  }, { lock: true });
+  const storedInput = withoutServerRenderProof(job.input);
+  if (JSON.stringify(stableJson(storedInput)) !== JSON.stringify(stableJson(resolved.input))) {
+    throw scriptedPhotoBindingError('Scripted-photo source binding changed before provider submission.', 409, 'CONSENT');
+  }
+  assertPersistedScriptedQuoteProof(job, storedInput);
+  return resolved;
+}
+
+export async function finalizeReadyJob(jobId, artifact, { providerBinding = null } = {}) {
+  const snapshot = providerBinding
+    ? await withHeygenSpaceBindingReceiptTransaction({
+      accountId: providerBinding.applicationAccountId, providerBinding,
+    }, async tx => (await tx.select().from(videoJobs).where(and(
+      eq(videoJobs.id, jobId), eq(videoJobs.accountId, providerBinding.applicationAccountId),
+    )).for('share').limit(1))[0] || null)
+    : await getJob(jobId);
+  if (!snapshot) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
+  if (snapshot.provider === 'heygen' && !providerBinding) throw Object.assign(new Error('Verified HeyGen binding is required for finalization.'), { statusCode: 503, failureCategory: 'MISSING_PROVIDER_ACCOUNT_BINDING' });
+  if (providerBinding && snapshot.provider !== 'heygen') throw Object.assign(new Error('HeyGen binding cannot finalize a different provider.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  if (!['finishing', 'ready'].includes(snapshot.status) || snapshot.videoDeletedAt) throw Object.assign(new Error('Job cannot accept final media in its current state.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  if (snapshot.status === 'ready' && !acceptedJobOutput(snapshot)) throw Object.assign(new Error('Legacy output requires separate revalidation.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  let expectedDurationMs = artifact?.sourceDurationMs;
+  if (snapshot.provider === 'sadtalker') {
+    const audio = await getOwnedMediaAsset(snapshot.accountId, snapshot.input?.audioReference?.assetId);
+    expectedDurationMs = audio?.durationMs;
+  }
+  const validated = await acceptStoredFinalOutput(snapshot, artifact, expectedDurationMs);
+  artifact = validated;
+  const runTransaction = providerBinding
+    ? callback => withHeygenSpaceBindingReceiptTransaction({ accountId: snapshot.accountId, providerBinding }, callback)
+    : callback => database().transaction(async tx => {
+      await acquireProviderLifecycleLock(tx, snapshot.accountId);
+      return callback(tx);
+    });
+  return runTransaction(async (tx) => {
     const job = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
     if (!job) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
-    if (job.status === 'ready') return job;
+    if (job.status === 'ready') {
+      if (!job.videoDeletedAt && acceptedJobOutput(job) && job.output.privatePathname === artifact.privatePathname && job.output.sha256 === artifact.sha256 && job.output.bytes === artifact.bytes) return job;
+      throw Object.assign(new Error('Final artifact conflicts with the completed job.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    }
+    assertJobTransition(job.status, 'ready');
+    if (job.accountId !== snapshot.accountId || job.provider !== snapshot.provider || job.format !== snapshot.format
+      || JSON.stringify(stableJson(job.input)) !== JSON.stringify(stableJson(snapshot.input))
+      || !acceptedJobOutput({ ...job, status: 'ready', output: artifact })) {
+      throw Object.assign(new Error('Final acceptance does not match the reserved job.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    }
+    const priorFinals = await tx.select().from(mediaAssets).where(and(eq(mediaAssets.jobId, jobId), eq(mediaAssets.kind, 'final')));
+    if (priorFinals.some(media => media.accountId !== job.accountId || media.privatePathname !== artifact.privatePathname || media.sha256 !== artifact.sha256 || media.bytes !== artifact.bytes)) {
+      throw Object.assign(new Error('Job already references a different final artifact.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    }
     const account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, job.accountId)).for('update').limit(1))[0];
     if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
     const sourceId = `render:${job.id}`;
     const charged = (await tx.select().from(creditTransactions).where(and(eq(creditTransactions.sourceType, 'render'), eq(creditTransactions.sourceId, sourceId))).limit(1))[0];
+    if (charged && (charged.accountId !== job.accountId || charged.amount !== -job.costCredits || charged.metadata?.jobId !== jobId)) {
+      throw Object.assign(new Error('Render settlement identity conflicts with the job.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    }
     if (!charged) {
       if (account.reserved < job.costCredits || account.balance < job.costCredits) throw Object.assign(new Error('Credit reservation mismatch.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
       const balanceAfter = account.balance - job.costCredits;
       await tx.update(creditAccounts).set({ balance: balanceAfter, reserved: account.reserved - job.costCredits, spent: account.spent + job.costCredits, updatedAt: new Date() }).where(eq(creditAccounts.accountId, job.accountId));
       await tx.insert(creditTransactions).values({ accountId: job.accountId, sourceType: 'render', sourceId, amount: -job.costCredits, balanceAfter, metadata: { jobId } });
     }
-    await tx.insert(mediaAssets).values({ accountId: job.accountId, jobId, kind: 'final', privatePathname: artifact.privatePathname, contentType: 'video/mp4', bytes: artifact.bytes, sha256: artifact.sha256 }).onConflictDoUpdate({ target: mediaAssets.privatePathname, set: { bytes: artifact.bytes, sha256: artifact.sha256, contentType: 'video/mp4' } });
+    await tx.insert(mediaAssets).values({ accountId: job.accountId, jobId, kind: 'final', privatePathname: artifact.privatePathname, contentType: 'video/mp4', bytes: artifact.bytes, sha256: artifact.sha256, widthPx: artifact.width, heightPx: artifact.height, durationMs: Math.round(artifact.durationMs) }).onConflictDoNothing({ target: mediaAssets.privatePathname });
+    const [media] = await tx.select().from(mediaAssets).where(eq(mediaAssets.privatePathname, artifact.privatePathname)).limit(1);
+    if (!media || media.accountId !== job.accountId || media.jobId !== jobId || media.kind !== 'final' || media.sha256 !== artifact.sha256 || media.bytes !== artifact.bytes) {
+      throw Object.assign(new Error('Final media ownership conflicts with acceptance.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    }
+    if (job.provider === 'heygen' && job.providerJobId) {
+      await releaseProviderVideoConsumerTx(tx, {
+        accountId: job.accountId, jobId: job.id, providerJobId: job.providerJobId, providerBinding,
+      });
+    }
     const [ready] = await tx.update(videoJobs).set({ status: 'ready', output: artifact, failureCategory: null, updatedAt: new Date(), completedAt: new Date() }).where(eq(videoJobs.id, jobId)).returning();
-    await tx.insert(jobEvents).values({ jobId, correlationId: job.correlationId, eventType: 'finish.completed', stageFrom: job.status, stageTo: 'ready', details: { bytes: artifact.bytes, sha256: artifact.sha256, ffmpegMs: artifact.ffmpegMs } });
+    await tx.insert(jobEvents).values({ jobId, correlationId: job.correlationId, eventType: 'finish.completed', stageFrom: job.status, stageTo: 'ready', details: { bytes: artifact.bytes, sha256: artifact.sha256, ffmpegMs: artifact.ffmpegMs, acceptancePolicy: artifact.acceptance.policy, validatorVersion: artifact.acceptance.validatorVersion, media: artifact.acceptance.media } });
     // Additive, non-enumerable-in-spirit marker: the early return above (job
     // already ready) omits this, so callers can tell "just now finalized"
     // apart from "idempotent replay of an already-ready job" -- e.g. to send
@@ -723,18 +1372,22 @@ export async function listRecentJobs(limit = 100) {
   return database().select().from(videoJobs).orderBy(desc(videoJobs.updatedAt)).limit(Math.min(100, limit));
 }
 
-export async function markJobFailedAndRelease(jobId, failureCategory, message) {
+export async function markJobFailedAndRelease(jobId, failureCategory, message, rejectedArtifact, { expectedStatuses, protectedStatuses } = {}) {
   return database().transaction(async (tx) => {
     const job = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
     if (!job) return null;
     if (['ready', 'failed', 'cancelled'].includes(job.status)) return job;
+    if (protectedStatuses?.includes(job.status)) return job;
+    if (expectedStatuses && !expectedStatuses.includes(job.status)) return job;
     const charged = await tx.select().from(creditTransactions).where(and(eq(creditTransactions.sourceType, 'render'), eq(creditTransactions.sourceId, `render:${job.id}`))).limit(1);
     if (!charged[0]) {
       const account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, job.accountId)).for('update').limit(1))[0];
       if (account) await tx.update(creditAccounts).set({ reserved: Math.max(0, account.reserved - job.costCredits), updatedAt: new Date() }).where(eq(creditAccounts.accountId, job.accountId));
     }
-    const [failed] = await tx.update(videoJobs).set({ status: 'failed', failureCategory, output: { message }, updatedAt: new Date(), completedAt: new Date() }).where(eq(videoJobs.id, jobId)).returning();
-    await tx.insert(jobEvents).values({ jobId, correlationId: job.correlationId, eventType: 'workflow.failed', stageFrom: job.status, stageTo: 'failed', failureCategory, details: { message } });
+    const rejected = /^[a-f0-9]{64}$/.test(rejectedArtifact?.sha256 || '') && Number.isSafeInteger(rejectedArtifact?.bytes)
+      ? { rejectedArtifact: { sha256: rejectedArtifact.sha256, bytes: rejectedArtifact.bytes } } : {};
+    const [failed] = await tx.update(videoJobs).set({ status: 'failed', failureCategory, output: { message, ...rejected }, updatedAt: new Date(), completedAt: new Date() }).where(eq(videoJobs.id, jobId)).returning();
+    await tx.insert(jobEvents).values({ jobId, correlationId: job.correlationId, eventType: 'workflow.failed', stageFrom: job.status, stageTo: 'failed', failureCategory, details: { message, ...rejected } });
     return failed;
   });
 }
@@ -996,12 +1649,16 @@ export async function registerAdminTester({ email, name, credits = 5000, note = 
   if (!email || !String(email).includes('@')) throw Object.assign(new Error('Valid email address is required.'), { statusCode: 400 });
   const normalizedEmail = String(email).trim().toLowerCase();
   const { createHash } = await import('node:crypto');
-  const accountId = 'acct-' + createHash('sha256').update(normalizedEmail).digest('hex').slice(0, 16);
   const initialCredits = Math.max(100, Number(credits) || 5000);
-  registerTesterAccountId(accountId);
 
   return database().transaction(async (tx) => {
     const now = new Date();
+    const matches = await tx.select().from(users).where(sql`lower(${users.email}) = ${normalizedEmail}`).for('update').limit(2);
+    if (matches.length > 1) throw Object.assign(new Error('Account identity requires reconciliation.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    const [existingUser] = matches;
+    // Same canonical identity as accountIdForEmail; avoid importing the HTTP/session
+    // module into the workflow bundle. Regression coverage binds both algorithms.
+    const accountId = existingUser?.id || 'user-' + createHash('sha256').update(normalizedEmail).digest('hex').slice(0, 24);
     await tx.insert(users).values({
       id: accountId,
       email: normalizedEmail,
@@ -1075,38 +1732,16 @@ export async function listAdminTesters() {
   ))
   .orderBy(desc(users.createdAt));
 
-  // Real bug fixed here (found via beta-test edge-casing, 2026-09-28): this
-  // used to call registerTesterAccountId() on EVERY row, including ones
-  // that only appear because of the broad domain-wildcard clause above, not
-  // just ones explicitly registered via registerAdminTester (role='tester').
-  // isTesterAccountId() -- which registerTesterAccountId() feeds -- is
-  // treated as full-access equivalent to an exact designated tester by
-  // lib/video-os-security.js's containedRenderingEntitlementKeys(), the
-  // exact function just fixed (see that file's own history) to stop a pure
-  // domain match from granting Premium (liveRendering). Simply loading the
-  // admin console's tester list (a routine GET, not even an explicit admin
-  // action) was silently re-registering every domain-matched account into
-  // the in-memory tester set, reopening the identical leak through a
-  // different trigger path: the account's NEXT sign-in would then grant
-  // full Premium via isTesterAccountId(), bypassing the domain-only
-  // restriction entirely. Only register accounts that were genuinely,
-  // explicitly designated testers (role === 'tester', the real output of
-  // registerAdminTester) -- a domain-matched row is still shown in this
-  // list for admin visibility, it just no longer mutates global state as a
-  // side effect of being displayed.
-  for (const r of rows) {
-    if (r.role === 'tester') registerTesterAccountId(r.accountId);
-  }
+  // Listing is read-only, including legacy domain accounts with role 'tester'.
   return rows;
 }
 
 export async function revokeAdminTester(accountId) {
   if (!accountId) throw Object.assign(new Error('accountId is required.'), { statusCode: 400 });
-  revokeTesterAccountId(accountId);
   return database().transaction(async (tx) => {
     const now = new Date();
     await tx.update(users).set({ role: 'customer', updatedAt: now }).where(eq(users.id, accountId));
-    await tx.update(entitlements).set({ enabled: false, updatedAt: now }).where(and(
+    await tx.update(entitlements).set({ enabled: false, sourceType: 'admin_tester_grant', sourceId: 'admin_console', updatedAt: now }).where(and(
       eq(entitlements.accountId, accountId),
       inArray(entitlements.entitlementKey, ['standardRendering', 'liveRendering', 'tester'])
     ));

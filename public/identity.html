@@ -63,8 +63,8 @@
     </section>
 
     <div class="workflow-note" role="note">
-      <strong>Premium identity workflow</strong>
-      <span>Create a presenter and cloned voice for Premium videos. Standard uses a portrait and an uploaded recording.</span>
+      <strong>One-time identity setup</strong>
+      <span>Add one photo and one phone video. After setup, the same authorized identity can speak new scripts in Standard and Premium.</span>
     </div>
 
     <div id="notice" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden></div>
@@ -106,30 +106,38 @@
 
       <section id="empty-state" class="empty-state" hidden>
         <div class="empty-portrait" aria-hidden="true"><span></span></div>
-        <div><p class="eyebrow">NO IDENTITIES YET</p><h2>Create your first Video Identity</h2><p>Use one clear portrait, 5-120 seconds of clean speech, and your explicit permission.</p></div>
+        <div><p class="eyebrow">NO IDENTITIES YET</p><h2>Create your first Video Identity</h2><p>Use one clear portrait, one 5-60 second phone video, and your explicit permission.</p></div>
         <button id="empty-create-button" class="button primary" type="button">Create your first identity</button>
       </section>
 
-      <section class="future-note" aria-labelledby="future-title">
-        <div><p class="eyebrow">COMING NEXT</p><h2 id="future-title">Digital Twin</h2><p>Video-trained movement and delivery remain outside this phase.</p></div>
-        <button class="button secondary" type="button" disabled>Not available in this phase</button>
+      <section id="enrollment-resume" class="future-note resume-enrollment" aria-labelledby="resume-title" hidden>
+        <div><p class="eyebrow">SETUP IN PROGRESS</p><h2 id="resume-title">Continue your identity</h2><p id="resume-copy">Your saved enrollment can continue without creating another one.</p></div>
+        <div class="resume-actions"><button id="resume-enrollment" class="button secondary" type="button">Continue setup</button><button id="revoke-enrollment" class="button ghost" type="button">Cancel setup</button></div>
+      </section>
+
+      <section class="future-note" aria-labelledby="one-setup-title">
+        <div><p class="eyebrow">ONE SETUP</p><h2 id="one-setup-title">Photo appearance. Reusable voice. New scripts.</h2><p>Your phone video supports enrollment; the uploaded photo remains the appearance used in finished videos.</p></div>
       </section>
     </div>
   </main>
 
   <dialog id="wizard" class="wizard" aria-labelledby="wizard-title" aria-describedby="wizard-description">
     <div class="wizard-header">
-      <div><p class="eyebrow">CREATE IDENTITY</p><h2 id="wizard-title">Build your private presenter</h2><p id="wizard-description">Add source media, then review every authorization before anything is saved.</p></div>
+      <div><p class="eyebrow">CREATE IDENTITY</p><h2 id="wizard-title">Build your private presenter</h2><p id="wizard-description">Add one photo and one phone video, then review every authorization before anything is saved.</p></div>
       <button id="close-wizard" class="icon-button" type="button" aria-label="Close identity creation">&times;</button>
     </div>
 
     <ol class="steps" aria-label="Identity creation progress">
       <li data-step="1" class="current" aria-current="step"><span>1</span>Your Photo</li>
-      <li data-step="2"><span>2</span>Your Voice</li>
+      <li data-step="2"><span>2</span>Your Video</li>
       <li data-step="3"><span>3</span>Consent</li>
       <li data-step="4"><span>4</span>Creating</li>
       <li data-step="5"><span>5</span>Ready</li>
     </ol>
+    <div class="compact-step-status" aria-live="polite">
+      <strong id="compact-step-label">1 of 5: Photo</strong>
+      <span class="compact-step-track" aria-hidden="true"><i data-segment="1" class="current"></i><i data-segment="2"></i><i data-segment="3"></i><i data-segment="4"></i><i data-segment="5"></i></span>
+    </div>
 
     <form id="identity-form" novalidate>
       <fieldset data-panel="1" tabindex="-1">
@@ -152,40 +160,78 @@
       </fieldset>
 
       <fieldset data-panel="2" tabindex="-1" hidden>
-        <legend>Your Voice</legend>
-        <p id="voice-requirements" class="field-intro">Use your voice or a recording you have documented permission to clone. MP3 or PCM WAV &middot; 5-120 seconds &middot; up to 3 MB.</p>
-        <div class="voice-actions">
-          <button id="record-button" class="button secondary" type="button" aria-describedby="voice-requirements voice-error">Record with microphone</button>
-          <span aria-hidden="true">or</span>
-          <label class="button secondary file-button">Upload MP3 or WAV<input id="voice-input" type="file" accept="audio/mpeg,audio/wav,audio/x-wav" aria-label="Upload an MP3 or WAV voice recording" aria-describedby="voice-requirements voice-error"></label>
+        <legend>Your Phone Video</legend>
+        <div class="permission-explainer" role="note" aria-labelledby="permission-title">
+          <div class="permission-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 7h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><path d="m16 10 5-3v10l-5-3"/></svg>
+          </div>
+          <div><h3 id="permission-title">Camera and microphone access happens only when you tap Record</h3><p>Your photo controls how you look. With your separate permission in the next step, audio from this video can create a reusable voice for future scripts.</p></div>
         </div>
-        <div id="recording-state" class="recording-state" role="status" aria-live="polite" hidden><span class="record-dot" aria-hidden="true"></span><strong id="recording-time">Recording 0:00</strong><button id="stop-recording" class="button danger" type="button">Stop</button></div>
-        <audio id="voice-preview" controls aria-label="Selected voice recording preview" hidden></audio>
-        <p id="voice-error" class="field-error" role="alert" hidden></p>
-        <div class="read-card"><p class="eyebrow">READ NATURALLY</p><p>"Welcome to my Video OS. I'm recording this sample in my natural speaking voice, with clear pacing and steady volume. This recording will be used only to create the identity I authorize."</p><small>Use a quiet room and listen back before continuing.</small></div>
+        <div class="split video-split">
+          <div>
+            <div id="video-stage" class="video-stage">
+              <video id="video-live" muted playsinline aria-label="Live camera preview" hidden></video>
+              <video id="video-preview" controls playsinline preload="metadata" aria-label="Selected enrollment video preview" hidden></video>
+              <div id="video-placeholder" class="video-placeholder"><span aria-hidden="true">L</span><strong>Record or choose your phone video</strong><small>MP4, MOV, or WebM &middot; 5-60 seconds &middot; up to 100 MiB</small></div>
+            </div>
+            <div id="video-recording-state" class="recording-state" hidden>
+              <span class="record-dot" aria-hidden="true"></span><strong id="recording-time" aria-hidden="true">Recording 0:00</strong><span id="video-recording-status" class="visually-hidden" role="status" aria-live="polite"></span><button id="stop-recording" class="button danger" type="button">Stop recording</button>
+            </div>
+            <div id="video-actions" class="video-actions">
+              <button id="record-button" class="button primary capture-action" type="button" aria-describedby="permission-title video-requirements video-error">Record video</button>
+              <span aria-hidden="true">or</span>
+              <label class="button secondary file-button capture-action">Choose existing video<input id="video-input" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" aria-label="Choose an existing phone video" aria-describedby="video-requirements video-error"></label>
+              <label id="native-capture-label" class="button secondary file-button capture-action" hidden>Use phone camera<input id="video-capture-input" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" capture="user" aria-label="Record a video with the phone camera" aria-describedby="video-requirements video-error"></label>
+            </div>
+            <div id="video-review-actions" class="video-review-actions" hidden><button id="use-video" class="button primary" type="button">Use this video</button><button id="retake-video" class="button ghost" type="button">Retake</button></div>
+            <p id="video-requirements" class="field-help">Face the camera, speak naturally, and keep your face visible. The uploaded photo—not this video—sets the finished appearance.</p>
+            <p id="video-metadata" class="video-metadata" aria-live="polite"></p>
+            <p id="video-error" class="field-error" role="alert" hidden></p>
+          </div>
+          <div class="guidance video-guidance"><h3>A strong enrollment video has</h3><ul><li>One authorized adult, facing the camera</li><li>Clear speech in a quiet room</li><li>Steady light with the full face visible</li><li>Between 5 and 60 seconds</li></ul><div class="read-card"><p class="eyebrow">SAY THIS NATURALLY</p><p>“Welcome to my Video OS. I’m recording this sample in my natural speaking voice, with clear pacing and steady volume.”</p><small>You will review separate extraction and voice permissions before upload.</small></div></div>
+        </div>
       </fieldset>
 
       <fieldset data-panel="3" tabindex="-1" hidden>
         <legend>Consent</legend>
+        <div id="provider-reconsent-note" class="provider-reconsent-note" role="note" hidden>
+          <strong>Use your existing identity sources</strong>
+          <span>Your account-owned photo, phone video, and prepared voice can be authorized under the updated provider policy without another recording.</span>
+        </div>
         <label class="field" for="identity-name"><span>Identity name</span><input id="identity-name" maxlength="80" autocomplete="off" placeholder="e.g. Kristian - Studio" required aria-describedby="identity-name-help identity-name-error"></label>
         <p id="identity-name-help" class="field-help">Use a name you will recognize in your private cast.</p>
         <p id="identity-name-error" class="field-error" role="alert" hidden></p>
+        <div class="consent-media-review" aria-label="Media selected for this consent">
+          <figure><img id="consent-photo-preview" alt="Selected appearance photo"><figcaption>Appearance photo</figcaption></figure>
+          <figure><video id="consent-video-preview" controls playsinline preload="metadata" aria-label="Phone video selected for enrollment"></video><figcaption id="consent-video-caption">Phone video</figcaption></figure>
+        </div>
+        <div class="provider-exposure-disclosure" role="note" aria-labelledby="provider-exposure-title">
+          <p class="eyebrow">BEFORE PROVIDER CREATION</p>
+          <h3 id="provider-exposure-title">Temporary provider files use public links</h3>
+          <p>The provider receives temporary copies of your approved photo and prepared voice file. Anyone with either link can access that temporary file while the link works.</p>
+          <ul>
+            <li>The reusable provider identity stays available for future scripts until you withdraw permission.</li>
+            <li>Removing a file through the provider API or blocking its link does not certify deletion from provider backups.</li>
+          </ul>
+        </div>
         <div class="consent-group" role="group" aria-labelledby="consent-heading" aria-describedby="consent-help consent-error">
-          <h3 id="consent-heading">Confirm all four authorizations</h3>
+          <h3 id="consent-heading">Confirm all six authorizations</h3>
           <div class="consent-list">
-            <label><input type="checkbox" id="consent-face" required><span>This photo is of me, or I have documented authorization from this person.</span></label>
-            <label><input type="checkbox" id="consent-voice" required><span>This is my voice, or I have documented authorization to clone it.</span></label>
-            <label><input type="checkbox" id="consent-process" required><span>I authorize Video OS and HeyGen to process these files to create this identity.</span></label>
+            <label><input type="checkbox" id="consent-face" required><span>I authorize Video OS to animate the likeness in this exact photo. The photo controls the presenter’s appearance.</span></label>
+            <label><input type="checkbox" id="consent-extraction" required><span>I authorize Video OS to process this exact phone video and extract its audio for identity setup.</span></label>
+            <label><input type="checkbox" id="consent-voice" required><span>I authorize the extracted audio to create a reusable version of this voice for scripts I submit.</span></label>
+            <label><input type="checkbox" id="consent-process" required><span>I authorize Video OS and the configured provider to process these authorized files to create this identity.</span></label>
             <label><input type="checkbox" id="consent-archive" required><span>I understand I can request that this identity be archived or deleted.</span></label>
+            <label class="provider-exposure-consent"><input type="checkbox" id="consent-provider-exposure" required><span><strong>I separately authorize temporary public provider exposure.</strong><small>I authorize temporary copies of my approved photo and prepared voice file at links that anyone with the link can access while provider creation is under way.</small></span></label>
           </div>
         </div>
         <p id="consent-error" class="field-error" role="alert" hidden></p>
-        <p id="consent-help" class="fine-print">Your account, identity, policy version, acceptance time, and source fingerprints are recorded. The authorization text is versioned rather than copied into every record.</p>
+        <p id="consent-help" class="fine-print">These permissions apply only to the selected photo, video, and the voice prepared from that video. Replacing either file requires new consent. Leaving any permission unchecked means Video OS will not upload these files to the provider.</p>
         <div id="commit-uncertain" class="uncertain-recovery" hidden>
-          <p class="field-error" role="alert">We could not confirm whether this identity was saved before the connection was lost. Do not try again yet.</p>
+          <p class="field-error" role="alert">We could not confirm the saved enrollment state. Keep these inputs unchanged while we check.</p>
           <div class="uncertain-actions">
-            <button id="check-my-identities" class="button secondary" type="button">Check My Identities</button>
-            <button id="commit-retry-anyway" class="button ghost" type="button">Try again (may create a duplicate)</button>
+            <button id="check-my-identities" class="button secondary" type="button">Check enrollment</button>
+            <button id="commit-retry-anyway" class="button ghost" type="button">Retry the same request</button>
           </div>
         </div>
       </fieldset>
@@ -193,17 +239,19 @@
       <fieldset data-panel="4" tabindex="-1" hidden>
         <legend>Creating</legend>
         <div class="processing-orbit" aria-hidden="true"><span></span></div>
-        <h3 class="center">Creating your Video Identity</h3>
+        <h3 class="center">Preparing your reusable identity</h3>
         <div id="component-progress" class="component-progress" aria-live="polite"></div>
-        <p class="fine-print center">You can close this window. Processing state is durable and resumes when you return.</p>
+        <p id="creating-detail" class="fine-print center">Your saved setup can resume when you return. Preparing the reusable voice does not start final presenter creation.</p>
+        <div id="enrollment-recovery" class="uncertain-recovery center" hidden><p id="enrollment-recovery-message" class="field-error" role="alert"></p><div class="uncertain-actions centered-actions"><button id="retry-enrollment" class="button secondary" type="button">Retry this stage</button><button id="check-enrollment" class="button ghost" type="button">Check status</button></div></div>
       </fieldset>
 
       <fieldset data-panel="5" tabindex="-1" hidden>
         <legend>Ready</legend>
         <div class="ready-mark" aria-hidden="true">&#10003;</div>
-        <h3 class="center">Your Video Identity is ready.</h3>
-        <p class="center ready-copy">It is available to the existing Premium composer. Standard compatibility is not implied.</p>
-        <div class="center"><a id="ready-use-link" class="button primary" href="/" aria-disabled="true">Use in Video OS</a></div>
+        <h3 class="center">Enrollment is ready.</h3>
+        <p id="ready-copy" class="center ready-copy">Your photo and reusable voice are prepared. Final presenter creation has not started.</p>
+        <p id="ready-provider-status" class="provider-lifecycle-status center" hidden></p>
+        <div class="center ready-actions"><button id="ready-done" class="button secondary" type="button">Back to My identities</button><a id="ready-use-link" class="button primary" href="/" aria-disabled="true">Use in Video OS</a></div>
       </fieldset>
 
       <div id="wizard-actions" class="wizard-actions">

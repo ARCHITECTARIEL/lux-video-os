@@ -1,0 +1,5 @@
+{
+  "generatedWith": "5.9.2",
+  "synthetic": true,
+  "wire": "[{\"date\":1,\"count\":2,\"map\":3,\"set\":7,\"bytes\":10,\"first\":5,\"second\":5,\"missing\":-1,\"self\":0},[\"Date\",\"2026-10-01T00:00:00.000Z\"],[\"BigInt\",\"12345678901234567890\"],[\"Map\",4,5],\"item\",{\"text\":6},\"workflow fixture\",[\"Set\",8,9],\"a\",\"b\",[\"Uint8Array\",11],[\"ArrayBuffer\",\"AID/\"]]"
+}

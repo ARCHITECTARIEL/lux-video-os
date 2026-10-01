@@ -7,6 +7,7 @@ __pycache__/
 *.pyc
 .env
 .env.local
+.env.*
 
 /public/exports/
 /public/uploads/
@@ -26,4 +27,5 @@ node_modules/
 pyproject.toml
 uv.lock
 .lazyweb/
+.design/
 archive/

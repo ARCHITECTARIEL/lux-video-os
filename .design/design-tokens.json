@@ -1,0 +1,7 @@
+{
+  "typography": { "family": "Geist LUX, system-ui, sans-serif", "body": "14px/1.55", "heading": "clamp(29px, 3vw, 36px)" },
+  "colors": { "background": "#f5f7fb", "surface": "#ffffff", "ink": "#111827", "muted": "#566377", "primary": "#2458d3", "line": "#d9e0ea", "danger": "#b42318" },
+  "spacing": { "controlMinimum": "44px", "radius": "10px", "desktopSidebar": "232px" },
+  "motion": { "policy": "Respect prefers-reduced-motion; no invented progress" },
+  "breakpoints": { "minimumSupported": "320px", "verifiedMobile": "390px", "verifiedDesktop": "1440px" }
+}

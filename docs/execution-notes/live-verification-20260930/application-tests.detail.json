@@ -1,0 +1,52 @@
+{
+  "at": "2026-09-30T14:04:57.148Z",
+  "accountHash": "a99cb355a360274ccae93c3cb76b6238b723ae21a9017ec511226a7643243ed7",
+  "jobId": "6e4220c3-394c-42d5-ba9f-4bef889058b8",
+  "artifact": {
+    "sha256": "59ae892737b42779926d07b57c8fb201d93c779cdd5ac9c20edf1375fe0a24ad",
+    "bytes": 17599,
+    "media": {
+      "width": 1920,
+      "height": 1080,
+      "audioCodec": "aac",
+      "durationMs": 998,
+      "fullDecode": true,
+      "videoCodec": "h264",
+      "audioStreams": 1,
+      "videoStreams": 1,
+      "expectedDurationMs": 1000,
+      "durationToleranceMs": 500
+    }
+  },
+  "accepted": true,
+  "settlements": 1,
+  "finalAssets": 1,
+  "completionEvents": 1,
+  "newlyCompletedResults": 1,
+  "finalBalance": 410,
+  "finalReserved": 0,
+  "finalSpent": 90,
+  "blobReuseVerified": true,
+  "anonymousBlobStatus": 403,
+  "downloads": [
+    {
+      "actor": "owner",
+      "status": 200,
+      "sha256": "59ae892737b42779926d07b57c8fb201d93c779cdd5ac9c20edf1375fe0a24ad"
+    },
+    {
+      "actor": "anonymous",
+      "status": 401,
+      "sha256": null
+    },
+    {
+      "actor": "wrong-account",
+      "status": 404,
+      "sha256": null
+    }
+  ],
+  "corruptOutputRejected": "FINAL_MEDIA_VALIDATION",
+  "revocationBlockedClaim": "ENTITLEMENT",
+  "postgresLockWaitObserved": true,
+  "paidProviderCalls": 0
+}

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "video-os-storage-deployment-readback/v1",
+  "observedAt": "2026-09-30T18:59:34.8849942Z",
+  "vercelProject": {
+    "id": "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+    "teamId": "team_rTOCyHyMxhhdoLk4LtT2kD9X",
+    "teamSlug": "lux-3035s-projects",
+    "name": "lux-video-os"
+  },
+  "localCandidate": {
+    "gitHead": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+    "sourceSha256": "4ed666e9b465596427e7c7b20fe36df2364362310e6104f5dc06407624bd262b",
+    "sourceFiles": 383,
+    "deployed": false,
+    "qualification": "The source digest covers the inherited dirty candidate; it is not a Git commit or Vercel deployment identity."
+  },
+  "stableAlias": {
+    "alias": "lux-video-os.vercel.app",
+    "deploymentId": "dpl_AEUWrAaSPEyvNjkkZxCbDAg427WP",
+    "deploymentUrl": "lux-video-nztminlu3-lux-3035s-projects.vercel.app",
+    "target": "production",
+    "readyState": "READY",
+    "readySubstate": "PROMOTED",
+    "createdAt": "2026-09-24T21:02:50.666Z",
+    "source": "cli",
+    "gitRef": "main",
+    "gitSha": "a04e59513e7cbd5684bf56790311d2ab14676499",
+    "environmentClaim": "production",
+    "environmentNamesObserved": {
+      "DATABASE_URL": true,
+      "DATABASE_URL_UNPOOLED": true,
+      "videoos_DATABASE_URL": true,
+      "BLOB_READ_WRITE_TOKEN": true
+    }
+  },
+  "latestMainPreview": {
+    "deploymentId": "dpl_DLi3r7gP11RoanJLpVeTVW6k86wy",
+    "deploymentUrl": "lux-video-aypocwqwi-lux-3035s-projects.vercel.app",
+    "alias": "lux-video-os-git-main-lux-3035s-projects.vercel.app",
+    "target": "preview",
+    "readyState": "READY",
+    "readySubstate": "STAGED",
+    "createdAt": "2026-09-29T14:04:20.766Z",
+    "source": "git",
+    "gitRef": "main",
+    "gitSha": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+    "environmentClaim": "preview",
+    "environmentNamesObserved": {
+      "DATABASE_URL": true,
+      "DATABASE_URL_UNPOOLED": true,
+      "videoos_DATABASE_URL": true,
+      "BLOB_READ_WRITE_TOKEN": true
+    }
+  },
+  "readyDeploymentEnvironmentReadback": {
+    "supported": false,
+    "observedErrorClass": "VERCEL_ENV_PULL_REQUIRES_INITIALIZING_DEPLOYMENT",
+    "qualification": "Deployment metadata proves environment variable names, not their resolved values or target identities."
+  }
+}

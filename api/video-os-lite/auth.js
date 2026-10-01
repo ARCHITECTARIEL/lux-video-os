@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { accountDto } from '../../db/dto.js';
-import { consumeRateLimit, ensureAccount, getAccountContext, recordSignIn, updateAuthenticatedAccount } from '../../db/repositories.js';
+import { authenticatedAccountId, consumeRateLimit, ensureAccount, getAccountContext, recordSignIn, updateAuthenticatedAccount } from '../../db/repositories.js';
 import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, DEFAULT_TRIAL_CREDITS, handleOptions, makeSession, normalizeEmail, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
@@ -89,7 +89,7 @@ function adminCookie(token) {
 async function loadWorkspaceAccount() {
   const email = String(process.env.VIDEO_OS_WORKSPACE_EMAIL || 'workspace@luxvideoos.local').trim().toLowerCase();
   const credits = Math.max(500, Number(process.env.VIDEO_OS_WORKSPACE_CREDITS || 5000));
-  const accountId = accountIdForEmail(email);
+  const accountId = await authenticatedAccountId(accountIdForEmail(email), email);
   return updateAuthenticatedAccount({
     accountId, email,
     name: process.env.VIDEO_OS_WORKSPACE_NAME || 'LUX Workspace',
@@ -189,7 +189,7 @@ export default async function handler(req, res) {
       // a person who requests a link but never clicks it now has a bare
       // account row (0 credits, no entitlements) rather than nothing.
       const requestedEmail = normalizeEmail(payload.email);
-      const requestedAccountId = accountIdForEmail(requestedEmail);
+      const requestedAccountId = await authenticatedAccountId(accountIdForEmail(requestedEmail), requestedEmail);
       await ensureAccount({ accountId: requestedAccountId, email: requestedEmail, name: requestedEmail });
       const allowed = await consumeRateLimit({ accountId: requestedAccountId, key: `magic-link:hourly:${requestedEmail}`, limit: magicLinkHourlyLimit(), windowMs: 60 * 60 * 1000 });
       if (!allowed) return send(res, 429, { ok: false, code: 'rate_limited', error: 'Sign-in link requests limit reached. Try again in a while.' });
@@ -202,9 +202,10 @@ export default async function handler(req, res) {
     if (action === 'auth-verify') {
       const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
       const token = url.searchParams.get('token');
-      const { accountId, email } = await validateMagicToken(token);
+      const { accountId: tokenAccountId, email } = await validateMagicToken(token);
+      const accountId = await authenticatedAccountId(tokenAccountId, email);
       const isTester = isTesterEmailDomain(email) || isTesterAccountId(accountId);
-      const role = isTester ? 'tester' : 'customer';
+      const role = (isTesterEmailExact(email) || isTesterAccountId(accountId)) ? 'tester' : 'customer';
       const initialCredits = isTester ? 5000 : DEFAULT_TRIAL_CREDITS;
       const entitlementKeys = ['magicLinkAccess', ...containedRenderingEntitlementKeys(accountId, email)];
       // Narrow, not the broad `isTester` above: a pure domain match must
@@ -248,9 +249,9 @@ export default async function handler(req, res) {
       const redirectUri = `${publicOrigin(req)}/api/video-os-lite/google-callback`;
       const tokens = await exchangeGoogleCode({ code, redirectUri });
       const profile = await fetchGoogleProfile(tokens.access_token);
-      const accountId = accountIdForEmail(profile.email);
+      const accountId = await authenticatedAccountId(accountIdForEmail(profile.email), profile.email);
       const isTester = isTesterEmailDomain(profile.email) || isTesterAccountId(accountId);
-      const role = isTester ? 'tester' : 'customer';
+      const role = (isTesterEmailExact(profile.email) || isTesterAccountId(accountId)) ? 'tester' : 'customer';
       const initialCredits = isTester ? 5000 : DEFAULT_TRIAL_CREDITS;
       const entitlementKeys = ['googleAccess', ...containedRenderingEntitlementKeys(accountId, profile.email)];
       // Narrow, not the broad `isTester` above -- see the magic-link path

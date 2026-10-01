@@ -1,4 +1,6 @@
 import { FEATURED_CAST } from '../lib/video-os-featured-cast.js';
+import { acceptedJobOutput } from '../lib/video-os-output-acceptance.js';
+import { renderTierForJob } from '../lib/scripted-photo-contract.js';
 
 const featuredByKey = new Map(FEATURED_CAST.map((item) => [item.key, item]));
 const sharedTalentPattern = /^shared:(avatar|voice):([A-Za-z0-9_-]{32})$/;
@@ -124,6 +126,7 @@ export function projectDto(project, options = {}) {
 
 export function jobDto(job, options = {}) {
   const output = job.output || {};
+  const outputAccepted = acceptedJobOutput(job);
   const outputAvatar = sanitizePersistedIdentity(output.avatar, 'avatar', options);
   const inputAvatar = sanitizePersistedIdentity(job.input?.avatar, 'avatar', options);
   const outputVoice = sanitizePersistedIdentity(output.voice, 'voice', options);
@@ -132,6 +135,8 @@ export function jobDto(job, options = {}) {
     id: job.id,
     correlationId: job.correlationId,
     provider: { id: job.provider, name: job.provider === 'heygen' ? 'HeyGen' : job.provider },
+    tier: renderTierForJob(job, { unknownLegacy: 'null' }),
+    outputAccepted,
     title: job.title,
     format: job.format,
     projectId: job.projectId,
@@ -146,7 +151,7 @@ export function jobDto(job, options = {}) {
     effects: sanitizePresentationMetadata(output.effects),
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
-    message: job.videoDeletedAt ? 'This video is no longer available.' : job.status === 'ready' ? 'Final MP4 ready.' : job.status === 'failed' ? 'Render needs attention.' : 'Render workflow is running.',
-    url: job.status === 'ready' && !job.videoDeletedAt ? `/api/video-os-lite/download?jobId=${encodeURIComponent(job.id)}` : null,
+    message: job.videoDeletedAt ? 'This video is no longer available.' : outputAccepted ? 'Final MP4 ready.' : job.status === 'ready' ? 'Output acceptance pending.' : job.status === 'failed' ? 'Render needs attention.' : 'Render workflow is running.',
+    url: outputAccepted && !job.videoDeletedAt ? `/api/video-os-lite/download?jobId=${encodeURIComponent(job.id)}` : null,
   };
 }

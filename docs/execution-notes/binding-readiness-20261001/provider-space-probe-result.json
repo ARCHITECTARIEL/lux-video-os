@@ -1,0 +1,67 @@
+{
+  "version": "heygen-space-probe-result/v1",
+  "completedAt": "2026-10-01T15:18:03.929703+00:00",
+  "status": "verified-provider-space-api-cleanup",
+  "ownerApproval": "Explicit approval in the conversation for provider-space-probe-proposal.md",
+  "credentialKeyFingerprint": "6a51bc8c4ab4b77378fef1af714e376ff7188e167211369c3debb37f14bf551e",
+  "credentialScopeFingerprint": "b2e833e2f6eb5a5ebf2874e28f0a10f2657f5cbc53f04cbad2fffef0c7fbf2d8",
+  "fixture": {
+    "bytes": 95,
+    "width": 32,
+    "height": 32,
+    "sha256": "f96c86519d1502fd319cdb106ca2a5277a83e09ad4d6e85279756ce77f05563e"
+  },
+  "providerSpace": {
+    "verified": true,
+    "scopeType": "space",
+    "fingerprint": "1c1b9eac97b6e38e481d30ddf12e4332ecb04d08f727a4ff55997a733b3f584a",
+    "assetOwnerMatchedAuthenticatedUsername": true,
+    "globalAccountIdVerified": false
+  },
+  "calls": {
+    "qualificationGets": 2,
+    "assetUploads": 1,
+    "assetMetadataGets": 1,
+    "assetDeletes": 1,
+    "assetReadbacks": 1,
+    "mutationRetries": 0,
+    "generationCalls": 0
+  },
+  "results": {
+    "uploadStatus": 200,
+    "metadataStatus": 200,
+    "deleteStatus": 200,
+    "readbackStatus": 404,
+    "readbackCode": "asset_not_found",
+    "apiAbsenceObserved": true,
+    "cdnDenialObserved": false,
+    "backupPurgeVerified": false,
+    "chargeMeasured": false
+  },
+  "validationCorrection": "GET asset uses type, not file_type/mime_type. Content was verified from original upload MIME/size and fixture hash; identity from saved GET receipt. No extra request or retry.",
+  "privateEvidenceDirectory": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-heygen-space-probe-20261001",
+  "evidenceSha256": {
+    "preflight.json": "37746273300468cda9c533b086fda1311adbc1d9980e8f98a5577569bcf84ec1",
+    "upload.claim.json": "c22d1402ee22e6c3e1405131372c7a869d1810c501347e78b5bc6fdd3846bf16",
+    "upload-response.json": "64b013541a79014ccef5ebd23c2039c523f8a60936af1db402ff6aee661a3b73",
+    "asset.json": "9219bc5980794c222afc37694955e7c72d1877c39000e9009e97cae113798f1f",
+    "read.claim.json": "fd4c30b03b1052cbcbbca62bb1d3604daf3caf267f212cad2ff4ec726c981642",
+    "asset-read.json": "9ca6ba6d59ef848695c140ab9fbb076f59f58c0e6f76a206a7e29914d063ac7e",
+    "space-proof.json": "37dbd46039dde3c76c21317f2c67ca045896e62a8132a6cc08ae72b1d48eaa48",
+    "delete.claim.json": "7d4141b000b6d7d4564f77e8024d707eb7574c0e926e1da234bee25c138e6e06",
+    "delete-response.json": "8132cf301c4c786113389e7a1e45ecba9f36ffc902e3f2ee069e4362177e2400",
+    "readback.claim.json": "51e4da2f615764ff919a3d3ee3c9dd8f0736e977b73439c67fc39297ce4ecd21",
+    "readback.json": "dd756de12a7d1ac871343a89f9ef0b6c9d4af9381e4a2a8b7d690362a8b1187d",
+    "journal.jsonl": "ce143b04b3bdf7f939c0064e82d848668d0f2e67fb859aedc59979ef9bce0178",
+    "probe.mjs": "1f508adb86f84caef2ebe25116402c0548ef8b131eeddad70fad7d943413ca01"
+  },
+  "databaseBindingWritten": false,
+  "productionConfigurationChanged": false,
+  "deploymentPerformed": false,
+  "approval": {
+    "kind": "explicit-conversation-one-off",
+    "originalProposalSha256": "1f036e224568f5dac558ae3ffd2315b1baee61ac9aa65f6284cac6e932c578f3",
+    "reusableWorkerApproval": false,
+    "scopeExhausted": true
+  }
+}

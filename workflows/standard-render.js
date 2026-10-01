@@ -1,6 +1,6 @@
 import { FatalError, sleep } from 'workflow';
 import { database } from '../db/client.js';
-import { finalizeReadyJob, getJob, markJobFailedAndRelease, transitionJob } from '../db/repositories.js';
+import { finalizeReadyJob, getJob, requireJobRenderAuthorization, markJobFailedAndRelease, transitionJob } from '../db/repositories.js';
 import { standardNarrationRepository } from '../db/standard-narration-repository.js';
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
@@ -17,17 +17,36 @@ async function resolvedSources(job) {
   }));
 }
 
+const simulationStages = ['workflow_started', 'provider_submitting', 'provider_submitted', 'provider_rendering', 'provider_ready', 'finishing', 'ready'];
+
+async function advanceSimulation(jobId, from, to, eventType) {
+  let current = await getJob(jobId);
+  if (current?.status === from) {
+    try { return await transitionJob({ jobId, stageTo: to, eventType }); }
+    catch (error) {
+      if (error?.statusCode !== 409) throw error;
+      current = await getJob(jobId);
+    }
+  }
+  if (simulationStages.indexOf(current?.status) >= simulationStages.indexOf(to)) return current;
+  throw Object.assign(new FatalError('Simulation cannot resume from this job state.'), { failureCategory: 'RECONCILIATION' });
+}
+
 async function resolveAndRenderSimulation(job) {
-  await transitionJob({ jobId: job.id, stageTo: 'provider_submitting', eventType: 'provider.submit_started' });
+  const claimed = await advanceSimulation(job.id, 'workflow_started', 'provider_submitting', 'provider.submit_started');
+  if (claimed.status === 'ready') return claimed.output;
   const resolved = await resolvedSources(job);
-  await transitionJob({ jobId: job.id, stageTo: 'provider_submitted', eventType: 'provider.submitted' });
-  await transitionJob({ jobId: job.id, stageTo: 'provider_rendering', eventType: 'provider.polled' });
+  await advanceSimulation(job.id, 'provider_submitting', 'provider_submitted', 'provider.submitted');
+  await advanceSimulation(job.id, 'provider_submitted', 'provider_rendering', 'provider.polled');
+  // Recomputing a local simulation after restart has no remote provider spend.
+  // Unique temp directories and immutable storage make overlapping retries safe.
   const artifact = await renderStandardSimulation(resolved.input, resolved.assets, { format: job.format, title: job.title });
-  await transitionJob({ jobId: job.id, stageTo: 'provider_ready', eventType: 'provider.ready' });
-  await transitionJob({ jobId: job.id, stageTo: 'finishing', eventType: 'finish.started' });
+  const progressed = await advanceSimulation(job.id, 'provider_rendering', 'provider_ready', 'provider.ready');
+  if (progressed.status === 'ready') return progressed.output;
+  await advanceSimulation(job.id, 'provider_ready', 'finishing', 'finish.started');
   const finalized = await finalizeReadyJob(job.id, artifact);
   await notifyRenderReady(job, finalized);
-  return artifact;
+  return finalized.output;
 }
 
 // Kept for the local simulator and existing tests. RunPod mode uses the
@@ -39,14 +58,11 @@ export async function resolveAndRender(jobId) {
   if (!job) throw new FatalError('Video job not found.');
   if (job.status === 'ready') return job.output;
   if (standardProviderMode() !== 'simulation') return driveStandardJob(job);
-  if (job.status === 'provider_submitting' || job.status === 'provider_submit_unknown') throw Object.assign(new FatalError('Standard render requires reconciliation.'), { failureCategory: 'PROVIDER_SUBMIT_UNKNOWN' });
-  try {
-    return await resolveAndRenderSimulation(job);
-  } catch (error) {
-    captureJobError(error, { jobId, accountId: job.accountId, correlationId: job.correlationId, stage: 'standard_render', failureCategory: classifyFailure(error, 'PROVIDER_SUBMIT') });
-    await transitionJob({ jobId, stageTo: 'provider_submit_unknown', eventType: 'provider.submit_unknown', failureCategory: 'PROVIDER_SUBMIT_UNKNOWN' });
-    throw Object.assign(new FatalError('Standard render outcome is uncertain; automatic resubmission is blocked to prevent duplicate charges.'), { failureCategory: 'PROVIDER_SUBMIT_UNKNOWN' });
-  }
+  if (job.providerJobId || job.status === 'provider_submit_unknown') throw Object.assign(new FatalError('Standard render requires reconciliation.'), { failureCategory: 'PROVIDER_SUBMIT_UNKNOWN' });
+  if (job.status === 'workflow_started') await requireJobRenderAuthorization(job, 'standard');
+  // Simulation has no ambiguous external submission. Decode/storage/finalize
+  // rejection must reach failWorkflow so the reservation is released.
+  return resolveAndRenderSimulation(job);
 }
 
 export async function submitStandardProvider(jobId) {
@@ -55,13 +71,19 @@ export async function submitStandardProvider(jobId) {
   if (!job) throw new FatalError('Video job not found.');
   if (job.providerJobId) return { providerJobId: job.providerJobId };
   if (job.status === 'provider_submitting' || job.status === 'provider_submit_unknown') throw Object.assign(new FatalError('Standard provider submission requires reconciliation.'), { failureCategory: 'PROVIDER_SUBMIT_UNKNOWN' });
+  await requireJobRenderAuthorization(job, 'standard');
+  let submissionClaimed = false;
   try {
     await transitionJob({ jobId, stageTo: 'provider_submitting', eventType: 'provider.submit_started' });
+    submissionClaimed = true;
     const resolved = await resolvedSources(job);
     const submitted = await submitRunpodStandard(resolved, { format: job.format, title: job.title });
     await transitionJob({ jobId, stageTo: 'provider_submitted', eventType: 'provider.submitted', providerJobId: submitted.providerJobId });
     return submitted;
   } catch (error) {
+    if (!submissionClaimed && error?.failureCategory === 'ENTITLEMENT') {
+      throw Object.assign(new FatalError('Render permission was revoked before submission.'), { failureCategory: 'ENTITLEMENT' });
+    }
     // Every submission-time error -- not just ones classified
     // PROVIDER_SUBMIT_UNKNOWN -- routes to the safe held state, same as
     // workflows/video-render.js's submitProvider. A concurrent submit retry
@@ -104,6 +126,9 @@ export async function finishStandardProvider(jobId, output) {
 }
 
 export async function driveStandardJob(jobOrId) {
+  'use step';
+  // The VPS poller may call this directly, but its database read must never
+  // become part of the restricted durable-workflow bundle.
   const job = typeof jobOrId === 'string' ? await getJob(jobOrId) : jobOrId;
   if (!job) throw new FatalError('Video job not found.');
   if (job.status === 'ready') return job.output;
@@ -118,7 +143,7 @@ export async function failWorkflow(jobId, error) {
   'use step';
   const category = classifyFailure(error, 'INTERNAL');
   if (category === 'PROVIDER_SUBMIT_UNKNOWN') return;
-  await markJobFailedAndRelease(jobId, category, String(error?.message || 'Workflow failed.').slice(0, 300));
+  await markJobFailedAndRelease(jobId, category, String(error?.message || 'Workflow failed.').slice(0, 300), error?.rejectedArtifact);
 }
 
 export async function standardRenderWorkflow(jobId) {

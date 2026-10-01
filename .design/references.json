@@ -1,0 +1,27 @@
+{
+  "references": [
+    {
+      "company": "Sprig",
+      "source": "Lazyweb screenshot sprig_f39b90c4-9a8d-49dc-a759-03dd3d843750.png",
+      "localPath": "references/ref-1.png",
+      "pattern": "Explicitpermissionrequest andrecording/preview controls",
+      "copyingBoundary": "Interactionpatternonly;keepLUXbranding"
+    },
+    {
+      "company": "Edits",
+      "source": "Lazyweb mobile screenshot2025_05_18_16-31-24_96A973FB.png",
+      "localPath": "references/ref-2.png",
+      "pattern": "Explaincamera/microphone purposebeforepermissionprompt",
+      "copyingBoundary": "Informationhierarchyonly; no copiedtext/branding"
+    },
+    {
+      "company": "LUX localbaseline",
+      "localPaths": [
+        "screenshots/baseline-identity-desktop.png",
+        "screenshots/baseline-identity-mobile.png"
+      ],
+      "pattern": "ExistingGeist/blue/whitewizardtokens",
+      "source": "Currentpublic/identity.html withmockedAPI;beforechanges"
+    }
+  ]
+}

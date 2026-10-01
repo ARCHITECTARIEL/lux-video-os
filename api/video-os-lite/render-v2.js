@@ -1,17 +1,18 @@
 import crypto from 'node:crypto';
 import { start } from 'workflow/api';
 import { accountDto, jobDto } from '../../db/dto.js';
-import { claimWorkflowStart, consumeRateLimit, ensureAccount, getJob, getOwnedProject, getRenderAuthorizedIdentity, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
+import { claimWorkflowStart, consumeRateLimit, requirePersistedRenderAuthorization, ensureAccount, getJob, getOwnedProject, getOwnedScriptedPhotoJobByIdempotency, getRenderAuthorizedIdentity, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
 import { standardNarrationRepository } from '../../db/standard-narration-repository.js';
 import { assertTalentSelectionsAvailable, loadTalentInventory } from '../video-os/talent.js';
 import { captureJobError } from '../../lib/video-os-observability.js';
-import { featureEnabled, requestId, requireRenderAccountAuthorization } from '../../lib/video-os-security.js';
+import { featureEnabled, requestId } from '../../lib/video-os-security.js';
 import { DEFAULT_TRIAL_CREDITS, handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../../lib/video-os-identity-policy.js';
-import { parseOrThrow, renderRequestSchema } from '../../lib/video-os-validation.js';
+import { parseOrThrow, renderRequestSchema, scriptedPhotoRenderRequestSchema } from '../../lib/video-os-validation.js';
 import { videoRenderWorkflowMetadata } from '../../workflows/video-render-metadata.js';
 import { standardRenderWorkflowMetadata } from '../../workflows/standard-render-metadata.js';
 import { sanitizeStandardNarrationReason, STANDARD_CONTRACT_VERSION, standardNarrationActivation } from '../../lib/standard-narration-contract.js';
+import { hasScriptedPhotoContractMarker, isScriptedPhotoRequest, scriptedPhotoActivation, validateScriptedPhotoTransport } from '../../lib/scripted-photo-contract.js';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -169,7 +170,7 @@ async function handleStandardRender(req, res, session, body, correlationId) {
       message: reserved.replayed ? 'Existing render workflow recovered.' : 'Render workflow started.',
     });
   } catch (error) {
-    if (shouldReleaseWorkflowReservation({ job: reservedJob, workflowDispatchAttempted })) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.').catch(() => {});
+    if (shouldReleaseWorkflowReservation({ job: reservedJob, workflowDispatchAttempted })) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.', undefined, { expectedStatuses: ['reserved'] }).catch(() => {});
     captureJobError(error, { jobId: reservedJob?.id, accountId: reservedJob?.accountId, correlationId: reservedJob?.correlationId, route: 'render' });
     if (workflowDispatchAttempted) {
       return send(res, 202, {
@@ -186,22 +187,19 @@ export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
   if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST to render.' });
   let narrationRequest = false;
+  let scriptedPhotoRequest = false;
   try {
     const session = sessionFromRequest(req);
     if (!featureEnabled('VIDEO_OS_DURABLE_WORKFLOW_ENABLED')) return send(res, 503, { ok: false, code: 'durable_workflow_disabled', error: 'Live rendering is contained pending workflow verification.' });
-    // Pass email too, not just accountId: requireRenderAccountAuthorization's
-    // isTesterEmailExact() check only fires when email is provided. Without
-    // it, a designated individual tester's access depended on
-    // REGISTERED_TESTER_ACCOUNTS already having their accountId from a prior
-    // sign-in on this same warm serverless instance -- non-deterministic
-    // across cold starts. session.email is already available here (used two
-    // lines below for ensureAccount) and requireRenderAccountAuthorization's
-    // email path is narrow (isTesterEmailExact only, never a domain match),
-    // so this closes a real gap with no broadening of who gets authorized.
-    requireRenderAccountAuthorization(session.accountId, session.email);
     await assertRenderRateLimit(session.accountId);
     const body = await readJson(req);
+    scriptedPhotoRequest = hasScriptedPhotoContractMarker(body);
+    if (scriptedPhotoRequest && !isScriptedPhotoRequest(body)) {
+      throw Object.assign(new Error('Unsupported scripted-photo contract version.'), { statusCode: 400, failureCategory: 'VALIDATION' });
+    }
+    if (isScriptedPhotoRequest(body)) return await handleScriptedPhotoRender(req, res, session, body, requestId(req));
     narrationRequest = isNarrationRequest(body);
+    await requirePersistedRenderAuthorization(session.accountId, narrationRequest ? 'standard' : 'premium');
     const correlationId = requestId(req);
     if (narrationRequest) return await handleStandardRender(req, res, session, body, correlationId);
     return await handlePremiumRender(req, res, session, body, correlationId);
@@ -209,7 +207,99 @@ export default async function handler(req, res) {
     if (narrationRequest) {
       return send(res, [400, 401, 402, 403, 404, 409, 410, 422, 503].includes(error.statusCode) ? error.statusCode : 503, { ok: false, code: sanitizeStandardNarrationReason(error.code), error: 'Standard narration request could not be completed.' });
     }
+    if (scriptedPhotoRequest) {
+      return send(res, [400, 401, 402, 403, 404, 409, 410, 422, 503].includes(error.statusCode) ? error.statusCode : 400, {
+        ok: false,
+        code: error.code || (error.issues ? 'invalid_request' : 'scripted_photo_render_failed'),
+        error: 'Scripted-photo render request could not be completed.',
+        issues: error.issues,
+      });
+    }
     return send(res, error.statusCode || 400, { ok: false, error: error.message || 'Render failed.', issues: error.issues });
+  }
+}
+
+async function handleScriptedPhotoRender(req, res, session, body, correlationId) {
+  validateScriptedPhotoTransport(req);
+  const payload = parseOrThrow(scriptedPhotoRenderRequestSchema, body, 'Scripted-photo request validation failed.');
+  const existingJob = await getOwnedScriptedPhotoJobByIdempotency({
+    accountId: session.accountId,
+    idempotencyKey: payload.idempotencyKey,
+    projectId: payload.projectId,
+    tier: payload.tier,
+    identityId: payload.identityId,
+    title: payload.title,
+    script: payload.script,
+    format: payload.format,
+  });
+  let reservedJob;
+  let workflowDispatchAttempted = false;
+  let workflowAccepted = false;
+  try {
+    let account;
+    let reserved;
+    if (existingJob) {
+      reserved = { job: existingJob, replayed: true };
+    } else {
+      const activation = scriptedPhotoActivation(payload.tier);
+      await requirePersistedRenderAuthorization(session.accountId, activation.tier);
+      account = await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: DEFAULT_TRIAL_CREDITS });
+      reserved = await reserveRender({
+        jobId: `job-${crypto.randomUUID()}`,
+        accountId: session.accountId,
+        idempotencyKey: payload.idempotencyKey,
+        correlationId,
+        provider: activation.provider,
+        tier: activation.tier,
+        title: payload.title,
+        format: payload.format,
+        costCredits: activation.costCredits,
+        quoteToken: payload.quoteToken,
+        input: {
+          contractVersion: payload.contractVersion,
+          tier: payload.tier,
+          projectId: payload.projectId,
+          identityId: payload.identityId,
+          script: payload.script,
+        },
+      });
+    }
+    reservedJob = reserved.job;
+    const claimed = await claimWorkflowStart(reserved.job.id);
+    if (claimed) {
+      reservedJob = claimed;
+      workflowDispatchAttempted = true;
+      if (dispatchesViaVercelWorkflow()) {
+        const run = await start(videoRenderWorkflowMetadata, [reserved.job.id]);
+        workflowAccepted = true;
+        const trackedJob = await setWorkflowRun(reserved.job.id, run.runId);
+        if (!trackedJob) throw Object.assign(new Error('Accepted workflow run could not be attached to its job.'), { statusCode: 202, failureCategory: 'RECONCILIATION' });
+        reservedJob = trackedJob;
+      } else {
+        workflowAccepted = true;
+      }
+    } else {
+      reservedJob = await getJob(reserved.job.id);
+    }
+    return send(res, reserved.replayed && !claimed ? 200 : 202, {
+      ok: true,
+      ...(account ? accountDto(account) : {}),
+      recovered: reserved.replayed,
+      provider: { id: 'heygen', name: 'HeyGen', configured: true },
+      job: jobDto(reservedJob),
+      workflowRunId: reservedJob.workflowRunId,
+      correlationId: reservedJob.correlationId,
+      status: reservedJob.status,
+      stage: reservedJob.status,
+      message: reserved.replayed
+        ? (claimed ? 'Existing reserved render workflow resumed.' : 'Existing render workflow recovered.')
+        : 'Render workflow started.',
+    });
+  } catch (error) {
+    if (shouldReleaseWorkflowReservation({ job: reservedJob, workflowDispatchAttempted })) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.', undefined, { expectedStatuses: ['reserved'] }).catch(() => {});
+    captureJobError(error, { jobId: reservedJob?.id, accountId: reservedJob?.accountId, correlationId: reservedJob?.correlationId, route: 'render' });
+    if (workflowDispatchAttempted) return send(res, 202, { ok: true, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', job: jobDto(reservedJob), correlationId: reservedJob?.correlationId, status: reservedJob?.status, stage: reservedJob?.status, message: 'Workflow dispatch may have been accepted; reservation is preserved pending reconciliation.' });
+    throw error;
   }
 }
 
@@ -254,7 +344,7 @@ async function handlePremiumRender(req, res, session, body, correlationId) {
     }
     return send(res, reserved.replayed ? 200 : 202, { ok: true, ...accountDto(account), provider: { id: 'heygen', name: 'HeyGen', configured: true }, job: jobDto(reservedJob), workflowRunId: reservedJob.workflowRunId, correlationId: reservedJob.correlationId, status: reservedJob.status, stage: reservedJob.status, message: reserved.replayed ? 'Existing render workflow recovered.' : 'Render workflow started.' });
   } catch (error) {
-    if (shouldReleaseWorkflowReservation({ job: reservedJob, workflowDispatchAttempted })) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.').catch(() => {});
+    if (shouldReleaseWorkflowReservation({ job: reservedJob, workflowDispatchAttempted })) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.', undefined, { expectedStatuses: ['reserved'] }).catch(() => {});
     captureJobError(error, { jobId: reservedJob?.id, accountId: reservedJob?.accountId, correlationId: reservedJob?.correlationId, route: 'render' });
     if (workflowDispatchAttempted) return send(res, 202, { ok: true, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', job: jobDto(reservedJob), correlationId: reservedJob?.correlationId, status: reservedJob?.status, stage: reservedJob?.status, message: 'Workflow dispatch may have been accepted; reservation is preserved pending reconciliation.' });
     throw error;

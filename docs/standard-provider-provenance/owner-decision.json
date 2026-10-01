@@ -1,0 +1,105 @@
+{
+  "recordedAt": "2026-09-30T15:35:00.411809+00:00",
+  "owner": "Ariel",
+  "source": "Explicit user instruction in this thread on 2026-09-30",
+  "decision": "Animate the uploaded photo for both Standard and Premium, using a reusable voice extracted with consent from one phone video",
+  "supersedes": "Photo-as-thumbnail recommendation and provisional direct-video LatentSync option B",
+  "requiredInputs": [
+    "photo",
+    "phoneVideo",
+    "script"
+  ],
+  "narrationBasis": "Speech generated from each script using an authorized selected voice; no third mandatory user media upload",
+  "lipSyncInput": "Server-owned photo-avatar, reusable voice and each new script through HeyGen",
+  "photoAloneSupportedByLatentSync": false,
+  "photoRole": "visual source and appearance of the finished animated presenter",
+  "photoRoleStatus": "confirmed by owner: show the picture uploaded",
+  "schemaVersionDecision": "scripted-photo-v1",
+  "runtimeImplemented": true,
+  "deploymentAuthorized": false,
+  "paidInferenceAuthorized": false,
+  "mobileCaptureExpectation": {
+    "recordedAt": "2026-09-30T15:38:17.038485+00:00",
+    "photo": "Upload a photo from the phone",
+    "video": "Record a video from the phone",
+    "ownerConfirmed": true
+  },
+  "requiredUserMediaSubmissions": [
+    "photo",
+    "phoneVideo"
+  ],
+  "requiredInputsBasis": "Photo and phone video are one-time enrollment inputs; script is per-generation for both tiers. No per-generation audio/video upload.",
+  "updatedAt": "2026-09-30T19:31:31.120031+00:00",
+  "videoRole": "One-time enrollment recording; consented internal audio extraction creates the reusable voice source",
+  "outputAppearanceSource": "photo",
+  "existingLatentSyncRequiredInput": "sourceVideo plus audio",
+  "engineSelection": "HeyGen photo-avatar/script APIs; select only engines supported by the enrolled photo look",
+  "engineRequirement": "Actual photo-animation/avatar engine or deliberately designed multi-stage pipeline; LatentSync alone is insufficient",
+  "acceptanceExample": "Suit in photo and T-shirt in phone video -> use suit/photo appearance in final output",
+  "generationMode": "record once during enrollment, then create videos from scripts",
+  "generationModeOwnerConfirmed": true,
+  "scriptBasedTiers": [
+    "STANDARD",
+    "PREMIUM"
+  ],
+  "videoRoleAuthority": "Owner explicitly requested one-time phone-video enrollment, consented voice extraction and a script interface; upload alone never grants authority",
+  "scriptEntryPerGeneration": true,
+  "repeatRecordingPerGeneration": false,
+  "providerBackendChoice": "heygen_for_standard_and_premium_mvp",
+  "providerBackendChoiceStatus": "Owner explicitly selected HeyGen for both tiers for MVP",
+  "lowerCostResearch": {
+    "requested": true,
+    "scope": "Continue free/open-source and self-hosted alternatives to improve ROI",
+    "blocksMvp": false,
+    "customerFreePlanAuthorized": false,
+    "paidBenchmarksAuthorized": false
+  },
+  "backendFoundation": {
+    "implementedLocally": true,
+    "contractVersion": "scripted-photo-v1",
+    "enabledByDefault": false,
+    "bothTiersUse": "heygen",
+    "tierAuthorizationIndependentFromProvider": true,
+    "remaining": [
+      "Verify HeyGen account capabilities, pricing and privacy/retention terms",
+      "Verify provider orphan deletion and reconciliation before mutation activation",
+      "Complete hosted real-device/provider canary and production release gates"
+    ]
+  },
+  "enrollmentContractVersion": "identity-phone-video-v1",
+  "runtimeImplementationScope": "Local implementation verified with isolated DB/Blob/FFmpeg and browser fixtures; not deployed or real-provider accepted",
+  "providerExecutionVerified": false,
+  "enrollmentImplementation": {
+    "implementedLocally": true,
+    "enabledByDefault": false,
+    "separateConsentScopes": 6,
+    "requiredMediaInputs": [
+      "photo",
+      "phoneVideo"
+    ],
+    "thirdVoiceUploadRequired": false,
+    "perGenerationMediaUploadRequired": false,
+    "evidence": "docs/execution-notes/20260930-bridge-foundation.md",
+    "consentPolicyVersion": "identity-provider-bridge-v2"
+  },
+  "providerBridgeDecision": {
+    "source": "Owner: prep a temp upload design; MVP should be a bridge to provider",
+    "temporaryPublicProviderUploadsSelectedForDesign": true,
+    "designPath": "docs/HEYGEN-BRIDGE-TEMP-UPLOAD-DESIGN.md",
+    "deletionImplementationComplete": false,
+    "liveDeletionVerified": false,
+    "customerUploadAuthorizedByThisDecision": false,
+    "reusableIdentityRetainedUntilWithdrawal": true,
+    "providerOutputCleanupRequiresAcceptedPrivateFinal": true,
+    "foundationImplementedLocally": true,
+    "foundationEvidence": "docs/execution-notes/20260930-bridge-foundation.md",
+    "deletionExecutionEnabled": false,
+    "qualifiedRuntimeBindingEnabled": false,
+    "providerSpaceProbeVerified": true,
+    "assetApiAbsenceObserved": true,
+    "cdnOrBackupPurgeVerified": false,
+    "localSpaceBindingImplemented": true,
+    "localSpaceBindingEvidence": "docs/execution-notes/20261001-local-space-binding.md",
+    "productionBindingEnabled": false
+  }
+}

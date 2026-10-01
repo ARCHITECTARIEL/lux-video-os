@@ -1,0 +1,6 @@
+ALTER TABLE "identity_video_enrollments" ADD COLUMN "workflow_run_id" text;--> statement-breakpoint
+ALTER TABLE "identity_video_enrollments" ADD COLUMN "provider_receipts" jsonb DEFAULT '{}'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "identity_video_enrollments" ADD COLUMN "provider_reconciliation_status" text DEFAULT 'NONE' NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "identity_video_enrollments_source_asset_uq" ON "identity_video_enrollments" USING btree ("source_video_asset_id") WHERE "identity_video_enrollments"."source_video_asset_id" is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX "identity_video_enrollments_voice_asset_uq" ON "identity_video_enrollments" USING btree ("derived_voice_asset_id") WHERE "identity_video_enrollments"."derived_voice_asset_id" is not null;--> statement-breakpoint
+ALTER TABLE "identity_video_enrollments" ADD CONSTRAINT "identity_video_enrollments_provider_reconciliation_ck" CHECK ("identity_video_enrollments"."provider_reconciliation_status" in ('NONE', 'SUBMITTING', 'PENDING', 'COMPLETE', 'FAILED'));

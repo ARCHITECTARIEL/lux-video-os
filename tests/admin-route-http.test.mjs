@@ -4,10 +4,16 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import ffmpegPath from 'ffmpeg-static';
+import { finalOutputPath } from '../lib/video-os-output-acceptance.js';
 import { eq } from 'drizzle-orm';
 import { assertDatabaseConfigured, database } from '../db/client.js';
 import { addUploadMediaAsset, claimWorkflowStart, ensureAccount, finalizeReadyJob, getJob, markJobFailedAndRelease, reserveRender, transitionJob } from '../db/repositories.js';
-import { users } from '../db/schema.js';
+import { entitlements, users } from '../db/schema.js';
 import adminHandler from '../routes/video-os-lite/admin.js';
 import { makeSession } from '../lib/video-os-account.js';
 import { getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../lib/video-os-private-blob.js';
@@ -169,6 +175,7 @@ test(
       if (originalSecret === undefined) delete process.env.VIDEO_OS_SESSION_SECRET;
     });
     await ensureAccount({ accountId, email: null, name: 'Admin Route Test', initialCredits: 100 });
+    await database().insert(entitlements).values(['standardRendering', 'liveRendering'].map(entitlementKey => ({ accountId, entitlementKey, enabled: true, sourceType: 'test_fixture' })));
     const jobId = `job-admin-route-test-${crypto.randomUUID()}`;
     await reserveRender({ jobId, accountId, idempotencyKey: crypto.randomUUID(), correlationId: 'corr-admin-route-test', provider: 'sadtalker', title: 'Admin Route Test', format: 'vertical', costCredits: 10, input: {} });
     await claimWorkflowStart(jobId);
@@ -401,7 +408,7 @@ test(
       testerAccountId = res.body.tester.user.id;
       t.after(async () => { await database().delete(users).where(eq(users.id, testerAccountId)).catch(() => {}); });
 
-      assert.equal(isTesterAccountId(testerAccountId), true, 'registerAdminTester must actually register the account in the in-memory tester set, not just the database');
+      assert.equal(isTesterAccountId(testerAccountId), false, 'admin grants are persisted without process-memory authority');
 
       const listRes = response();
       await adminHandler(request({ url: '/api/video-os-lite/admin?operation=testers', cookie: adminCookie }), listRes);
@@ -489,19 +496,29 @@ test(
     const adminCookie = makeSession('admin', 'owner@example.invalid', 60 * 60);
 
     const accountId = `test-admin-video-${crypto.randomUUID()}`;
-    const pathname = `video-os/finals/${accountId}/${crypto.randomUUID()}.mp4`;
+    let pathname;
     t.after(async () => {
       await database().delete(users).where(eq(users.id, accountId)).catch(() => {});
       if (originalSecret === undefined) delete process.env.VIDEO_OS_SESSION_SECRET;
     });
     await ensureAccount({ accountId, email: null, name: 'Admin Video Test', initialCredits: 200 });
+    await database().insert(entitlements).values(['standardRendering', 'liveRendering'].map(entitlementKey => ({ accountId, entitlementKey, enabled: true, sourceType: 'test_fixture' })));
 
     const heygenJobId = `job-admin-video-test-${crypto.randomUUID()}`;
     await reserveRender({ jobId: heygenJobId, accountId, idempotencyKey: crypto.randomUUID(), correlationId: 'corr-admin-video-test', provider: 'heygen', title: 'Admin Video Test', format: 'landscape', costCredits: 40, input: {} });
     await claimWorkflowStart(heygenJobId);
-    const videoBytes = Buffer.from('fake-mp4-bytes');
+    const mediaDirectory = await mkdtemp(join(tmpdir(), 'admin-final-media-'));
+    t.after(() => rm(mediaDirectory, { recursive: true, force: true }));
+    const source = join(mediaDirectory, 'final.mp4');
+    const generated = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=1920x1080:r=5:d=1', '-f', 'lavfi', '-i', 'sine=frequency=400:duration=1', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-shortest', source], { timeout: 30000, encoding: 'utf8', windowsHide: true });
+    assert.equal(generated.status, 0, generated.stderr);
+    const videoBytes = await readFile(source);
+    pathname = finalOutputPath(accountId, heygenJobId, crypto.createHash('sha256').update(videoBytes).digest('hex'));
+    for (const stageTo of ['provider_submitting', 'provider_submitted', 'provider_ready', 'finishing']) {
+      await transitionJob({ jobId: heygenJobId, stageTo, eventType: 'test.progress', ...(stageTo === 'provider_submitted' ? { providerJobId: 'synthetic-test-provider' } : {}) });
+    }
     await putPrivateBlob(PRIVATE_BLOB_CLASSIFICATIONS.FINISHED_CUSTOMER_VIDEO, pathname, videoBytes, { contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: true });
-    await finalizeReadyJob(heygenJobId, { privatePathname: pathname, filename: 'final.mp4', bytes: videoBytes.length, sha256: crypto.createHash('sha256').update(videoBytes).digest('hex') });
+    await finalizeReadyJob(heygenJobId, { privatePathname: pathname, filename: 'final.mp4', sourceDurationMs: 1000, bytes: videoBytes.length, sha256: crypto.createHash('sha256').update(videoBytes).digest('hex') });
 
     await t.test('operation=video streams the real blob bytes for a ready job', async () => {
       const res = response();

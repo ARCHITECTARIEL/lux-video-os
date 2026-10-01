@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "environment": "production",
+  "projectId": "still-voice-83326863",
+  "branchId": "br-broad-sunset-awrsmiwa",
+  "isDefault": true,
+  "hosts": [
+    "ep-autumn-morning-awa4hmb6.c-12.us-east-1.aws.neon.tech",
+    "ep-autumn-morning-awa4hmb6-pooler.c-12.us-east-1.aws.neon.tech"
+  ],
+  "database": "neondb",
+  "roles": ["neondb_owner"],
+  "port": 5432,
+  "schemaLock": "database-schema.lock.json",
+  "note": "Owner-designated production target. Populated from independent Neon control-plane metadata and the redacted canonical-variable provenance audit; contains no credential."
+}

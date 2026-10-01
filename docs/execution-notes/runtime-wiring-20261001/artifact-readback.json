@@ -1,0 +1,18 @@
+{
+  "verified": true,
+  "artifactFiles": 15972,
+  "artifactBytes": 1037892582,
+  "forbiddenRuntimeFiles": 0,
+  "stagedFilesPerRuntime": 19,
+  "runtimesVerified": 2,
+  "applicationProjectId": "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+  "projectLinkSha256": "12fd6ef128686d8ed4918a6f214780ca46ba87a9397892f46ec55356f75054f2",
+  "sourceKeys": [
+    "head",
+    "dirty",
+    "sha256",
+    "files",
+    "projectLinkSha256",
+    "project"
+  ]
+}

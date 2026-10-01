@@ -1,0 +1,94 @@
+{
+  "version": "heygen-space-anchor-manifest/v1",
+  "provider": "heygen",
+  "providerNativeScopeType": "space",
+  "globalAccountIdVerified": false,
+  "probeResult": {
+    "path": "docs/execution-notes/binding-readiness-20261001/provider-space-probe-result.json",
+    "reviewedSourceSha256": "526f2e63e7a2e61e45c4a79f117a7e4d8bdaddfe694ab77f5be852501aa202e6",
+    "canonicalJsonSha256": "f036e9b6cb742438f9b81bcaae6ca25c593fec922d8466938d98c30d5e515ddb"
+  },
+  "fixture": {
+    "path": "docs/execution-notes/binding-readiness-20261001/provider-space-probe.png",
+    "bytes": 95,
+    "sha256": "f96c86519d1502fd319cdb106ca2a5277a83e09ad4d6e85279756ce77f05563e"
+  },
+  "privateEvidence": {
+    "fileCount": 13,
+    "files": {
+      "asset-read.json": {
+        "bytes": 332,
+        "sha256": "9ca6ba6d59ef848695c140ab9fbb076f59f58c0e6f76a206a7e29914d063ac7e"
+      },
+      "asset.json": {
+        "bytes": 140,
+        "sha256": "9219bc5980794c222afc37694955e7c72d1877c39000e9009e97cae113798f1f"
+      },
+      "delete-response.json": {
+        "bytes": 146,
+        "sha256": "8132cf301c4c786113389e7a1e45ecba9f36ffc902e3f2ee069e4362177e2400"
+      },
+      "delete.claim.json": {
+        "bytes": 125,
+        "sha256": "7d4141b000b6d7d4564f77e8024d707eb7574c0e926e1da234bee25c138e6e06"
+      },
+      "journal.jsonl": {
+        "bytes": 356,
+        "sha256": "ce143b04b3bdf7f939c0064e82d848668d0f2e67fb859aedc59979ef9bce0178"
+      },
+      "preflight.json": {
+        "bytes": 2136,
+        "sha256": "37746273300468cda9c533b086fda1311adbc1d9980e8f98a5577569bcf84ec1"
+      },
+      "probe.mjs": {
+        "bytes": 9507,
+        "sha256": "1f508adb86f84caef2ebe25116402c0548ef8b131eeddad70fad7d943413ca01"
+      },
+      "read.claim.json": {
+        "bytes": 125,
+        "sha256": "fd4c30b03b1052cbcbbca62bb1d3604daf3caf267f212cad2ff4ec726c981642"
+      },
+      "readback.claim.json": {
+        "bytes": 125,
+        "sha256": "51e4da2f615764ff919a3d3ee3c9dd8f0736e977b73439c67fc39297ce4ecd21"
+      },
+      "readback.json": {
+        "bytes": 97,
+        "sha256": "dd756de12a7d1ac871343a89f9ef0b6c9d4af9381e4a2a8b7d690362a8b1187d"
+      },
+      "space-proof.json": {
+        "bytes": 609,
+        "sha256": "37dbd46039dde3c76c21317f2c67ca045896e62a8132a6cc08ae72b1d48eaa48"
+      },
+      "upload-response.json": {
+        "bytes": 289,
+        "sha256": "64b013541a79014ccef5ebd23c2039c523f8a60936af1db402ff6aee661a3b73"
+      },
+      "upload.claim.json": {
+        "bytes": 125,
+        "sha256": "c22d1402ee22e6c3e1405131372c7a869d1810c501347e78b5bc6fdd3846bf16"
+      }
+    },
+    "bundleDigest": "237d2a53b5d53a25243b7a54b14101e9d51109136ac8e07887c6d1ec49e5f743"
+  },
+  "projection": {
+    "credentialKeyFingerprint": "6a51bc8c4ab4b77378fef1af714e376ff7188e167211369c3debb37f14bf551e",
+    "credentialScopeFingerprint": "b2e833e2f6eb5a5ebf2874e28f0a10f2657f5cbc53f04cbad2fffef0c7fbf2d8",
+    "keyIdDigest": "59f92a84e66dcc179e9a01114d694510e3dbcb92fb844a33df2403006d901118",
+    "keyCreatedAt": "2026-10-01T14:35:48.000Z",
+    "usernameDigest": "3cf3d4f247dbe1540d7854f4dab202cab1862950a25204a38e15c1dac3398a3e",
+    "providerSpaceFingerprint": "1c1b9eac97b6e38e481d30ddf12e4332ecb04d08f727a4ff55997a733b3f584a",
+    "preflightEvidenceSha256": "37746273300468cda9c533b086fda1311adbc1d9980e8f98a5577569bcf84ec1",
+    "spaceProofSha256": "37dbd46039dde3c76c21317f2c67ca045896e62a8132a6cc08ae72b1d48eaa48",
+    "canonicalScopeKey": "c0d1badbcbd71c0b1d2815336a0a173ed87b5c59381fb7eedc6adcbb3ae75d0c",
+    "bindingIdentityDigest": "87f750424f61b502b0a7afd9340d131e5937f702ba979590f4600fbb5b504891",
+    "spaceObservedAt": "2026-10-01T15:11:53.953Z"
+  },
+  "policy": {
+    "anchorMaxAgeSeconds": 86400,
+    "freshQualificationMaxAgeSeconds": 60,
+    "productionReprobePolicy": "UNSET",
+    "productionReprobeMaxAgeSeconds": null
+  },
+  "evidenceRefVersion": "heygen-space-anchor-evidence/v1"
+}

@@ -1,0 +1,43 @@
+{
+  "verifiedAt": "2026-09-30T18:47:18.778067+00:00",
+  "scope": "local implementation plus pinned isolated integration; not production acceptance",
+  "head": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+  "sourceSha256": "4ed666e9b465596427e7c7b20fe36df2364362310e6104f5dc06407624bd262b",
+  "outputSha256": "215abfba2f5000e4247092ffeb0de4818f7f20a450955d32d459e5e4730456b0",
+  "node": {
+    "passed": 449,
+    "skipped": 44,
+    "failed": 0
+  },
+  "vitest": {
+    "passed": 4,
+    "failed": 0
+  },
+  "browser": {
+    "passed": 110,
+    "skipped": 1,
+    "failed": 0
+  },
+  "python": {
+    "passed": 48,
+    "skipped": 1,
+    "skipReason": "Windows symlink creation unavailable"
+  },
+  "isolatedIntegration": {
+    "passed": 2,
+    "failed": 0,
+    "tablesEmpty": 18,
+    "blobObjects": 0
+  },
+  "runtimeAuditVulnerabilities": 0,
+  "build": {
+    "exit": 0,
+    "routes": 42,
+    "workflows": 6,
+    "steps": 98,
+    "reviewOnly": true,
+    "defaultOutputAbsent": true
+  },
+  "localSecurityReview": "PASS; real provider deletion/reconciliation activation proof remains",
+  "visualVerdict": 92
+}

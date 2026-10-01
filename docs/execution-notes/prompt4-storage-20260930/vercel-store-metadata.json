@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "video-os-vercel-store-metadata/v1",
+  "observedAt": "2026-09-30T14:31:36.8499756Z",
+  "source": {
+    "method": "authenticated read-only Vercel API",
+    "listEndpoint": "/v1/storage/stores",
+    "detailEndpoint": "/v1/storage/stores/{id}",
+    "scope": "lux-3035s-projects"
+  },
+  "teamBlobStoreSummary": {
+    "observed": 4,
+    "private": 4,
+    "public": 0,
+    "qualification": "Current stores visible to the authenticated team only; this does not prove that deleted, external-team, or database-referenced legacy stores do not exist."
+  },
+  "stores": [
+    {
+      "id": "store_0OoP7sznVEvMzwQu",
+      "type": "blob",
+      "status": "available",
+      "access": "private",
+      "region": "iad1",
+      "objects": 77,
+      "bytes": 69417975,
+      "connectedProjects": 1,
+      "connections": [
+        {
+          "projectId": "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+          "environments": ["production"],
+          "environmentVariables": ["BLOB_READ_WRITE_TOKEN"]
+        }
+      ]
+    },
+    {
+      "id": "store_LC1XGHwpUvan4WD3",
+      "type": "blob",
+      "status": "available",
+      "access": "private",
+      "region": "iad1",
+      "objects": 92,
+      "bytes": 19075901,
+      "connectedProjects": 1,
+      "connections": [
+        {
+          "projectId": "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+          "environments": ["preview"],
+          "environmentVariables": ["BLOB_READ_WRITE_TOKEN"]
+        }
+      ]
+    },
+    {
+      "id": "store_8uyr0JDWkUyha8sy",
+      "type": "blob",
+      "status": "available",
+      "access": "private",
+      "region": "iad1",
+      "objects": 0,
+      "bytes": 0,
+      "connectedProjects": 1,
+      "connections": [
+        {
+          "projectId": "prj_vbZKWodyUtKSJMhgLUiTSjoVnlQB",
+          "environments": ["development"],
+          "environmentVariables": ["BLOB_READ_WRITE_TOKEN"]
+        }
+      ]
+    }
+  ]
+}

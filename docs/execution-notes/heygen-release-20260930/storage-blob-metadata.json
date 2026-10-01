@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "video-os-storage-blob-metadata/v1",
+  "observedAt": "2026-09-30T18:59:34.8849942Z",
+  "teamScope": "lux-3035s-projects",
+  "visibleBlobStores": {
+    "total": 4,
+    "private": 4,
+    "public": 0,
+    "qualification": "Current authenticated team inventory only; it does not settle deleted, external-scope or database-referenced legacy stores."
+  },
+  "production": {
+    "storeId": "store_0OoP7sznVEvMzwQu",
+    "access": "private",
+    "status": "available",
+    "region": "iad1",
+    "objects": 77,
+    "bytes": 69417975,
+    "projectId": "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+    "environments": ["production"],
+    "credentialType": "encrypted",
+    "credentialContentHintStoreId": "store_0OoP7sznVEvMzwQu",
+    "credentialBinding": "VERIFIED",
+    "objectInventory": {
+      "complete": true,
+      "countAndBytesMatchControlPlane": true,
+      "manifestSha256": "b55bb0044fb7fc9f92acc55f66d490276f6b22888d3cbf1eded9a2f01f9caf6b",
+      "rawManifestSha256": "7fce6b4cfa820c66d8cf922ce6d897eca61530b57b24b17599faaa80cc737440",
+      "unclassifiedObjects": 26,
+      "unclassifiedBytes": 20180632
+    }
+  },
+  "preview": {
+    "storeId": "store_LC1XGHwpUvan4WD3",
+    "access": "private",
+    "status": "available",
+    "region": "iad1",
+    "objects": 92,
+    "bytes": 19075901,
+    "projectId": "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+    "environments": ["preview"],
+    "latestDeployment": "dpl_DLi3r7gP11RoanJLpVeTVW6k86wy",
+    "credentialType": "sensitive",
+    "credentialValueAvailableThroughAuthenticatedRead": false,
+    "credentialContentHintStoreId": null,
+    "genericPreviewMainPullIncludesCredential": false,
+    "credentialBinding": "UNVERIFIED",
+    "objectInventory": {
+      "complete": false,
+      "reason": "No securely retrievable credential or read-only object-list surface was available."
+    },
+    "qualification": "The control plane proves the private store connection, count and access. It does not prove that the hidden runtime token resolves to this store."
+  },
+  "isolatedVerification": {
+    "storeId": "store_8uyr0JDWkUyha8sy",
+    "access": "private",
+    "objects": 0,
+    "bytes": 0,
+    "projectId": "prj_vbZKWodyUtKSJMhgLUiTSjoVnlQB",
+    "environments": ["development"],
+    "qualification": "Isolated evidence only; never a production or Preview substitute."
+  },
+  "referenceInventory": {
+    "productionDatabaseReferencesInventoried": false,
+    "reason": "Canonical production database identity remains unverified, so no production SQL query was allowed."
+  }
+}

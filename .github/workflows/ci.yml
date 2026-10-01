@@ -30,8 +30,9 @@ jobs:
         run: |
           mkdir -p .vercel
           printf '%s' '{"projectId":"prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW","orgId":"team_rTOCyHyMxhhdoLk4LtT2kD9X","projectName":"lux-video-os","settings":{"framework":null,"devCommand":null,"installCommand":null,"buildCommand":null,"outputDirectory":null,"rootDirectory":null,"directoryListing":false,"nodeVersion":"24.x"}}' > .vercel/project.json
-          : > .vercel/.env.production.local
-      - run: npm run build:production
+          : > .vercel/.env.preview.local
+      - name: Package preview artifacts (not production verification)
+        run: npm run build:preview
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
         env:

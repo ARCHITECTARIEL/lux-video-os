@@ -1,0 +1,15 @@
+# RA-002 — LatentSync checkpoint license evidence
+
+Recorded September 30, 2026. **Evidence collected; owner/commercial-use review pending. Not a release clearance.** This record resolves the documentation lookup for the basename in the runtime manifest; no runtime license enforcement was added.
+
+The local worker declares ByteDance source commit `a229c3948406bc2cf6eaf4873e662e70c6a04746`. Its code LICENSE matches the pinned upstream Git blob `f49a4e16e68b128803cc2dcea614603632b04eac` after normalizing Windows line endings. That is Apache-2.0 evidence for the vendored code, not the model checkpoint. [Pinned code license](https://github.com/bytedance/LatentSync/blob/a229c3948406bc2cf6eaf4873e662e70c6a04746/LICENSE).
+
+The LatentSync-1.6 publisher metadata labels the weights `openrail++`. A maintainer response in the older LatentSync model discussion identifies OpenRAIL++ and points to the SDXL license text. This provides a terms reference; applicability to the exact 1.6 artifact and the service's obligations still need review. [Model metadata](https://huggingface.co/api/models/ByteDance/LatentSync-1.6?blobs=true), [maintainer clarification](https://huggingface.co/ByteDance/LatentSync/discussions/3).
+
+The referenced document is **CreativeML Open RAIL++-M, July 26, 2023**. Its conditions address remote/hosted access, redistribution, notices and downstream use restrictions. Do not describe it as Apache-2.0 or infer that the license name alone clears commercial hosting. Review the actual conditions against the product's terms and controls. [Pinned referenced license](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/d5d78e469acad6b8f0534f137610fbee74099480/LICENSE.md).
+
+An exact copy is archived at [upstream/OpenRAILpp-M-2023-07-26.LICENSE.txt](upstream/OpenRAILpp-M-2023-07-26.LICENSE.txt): 14,109 bytes; Git blob SHA-1 `af7e355e31c0d976933aa0d06759611151ad8c39`; SHA-256 `19b6998b569b53ac1fc2158a8a3202c8699a9a4605b47075715d9c96be7fb6d0`. Transport text encoding was corrected only after reproducing the exact publisher Git-blob identity and byte count. [Publisher tree](https://huggingface.co/api/models/stabilityai/stable-diffusion-xl-base-1.0/tree/d5d78e469acad6b8f0534f137610fbee74099480).
+
+Checkpoint candidate: model repository revision `c42c7e6c8e9c213626389fa7d9a3c444b8536353`, `latentsync_unet.pt`, 5,072,222,488 bytes, SHA-256 `0a478e89eb660f82da4c35dbdde8a5adfb27f99d1b4e50edd03729e1e98316d3`. This is publisher LFS metadata matching the existing local declaration; no checkpoint was downloaded or deployed in this audit. [Pinned pointer](https://huggingface.co/ByteDance/LatentSync-1.6/raw/c42c7e6c8e9c213626389fa7d9a3c444b8536353/latentsync_unet.pt).
+
+Before activation: record reviewer/date and exact artifact scope; resolve hosted-use/downstream obligations and required notices; verify the selected image and mounted checkpoint bytes; enforce immutable identities at worker startup. Keep the consent/privacy/subject-rights review separate from the model license.

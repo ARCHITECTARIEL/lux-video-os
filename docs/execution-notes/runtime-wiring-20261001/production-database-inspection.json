@@ -1,0 +1,125 @@
+{
+  "schemaVersion": "video-os-production-database-inspection/v1",
+  "inspectedAt": "2026-10-01T16:31:30.229Z",
+  "readOnlyTransaction": true,
+  "target": {
+    "projectId": "still-voice-83326863",
+    "branchId": "br-broad-sunset-awrsmiwa",
+    "database": "neondb",
+    "allowedRoles": [
+      "neondb_owner"
+    ],
+    "connectionHostClass": "pooled"
+  },
+  "identity": {
+    "database": "neondb",
+    "role": "neondb_owner"
+  },
+  "identityMatchesTarget": true,
+  "migrationJournalPresent": true,
+  "expectedMigrationCount": 11,
+  "appliedMigrationCount": 7,
+  "matchingPrefixCount": 7,
+  "migrationMatches": [
+    {
+      "tag": "0000_clear_blackheart",
+      "applied": true,
+      "timestampMatches": true,
+      "hashMatches": true
+    },
+    {
+      "tag": "0001_breezy_mikhail_rasputin",
+      "applied": true,
+      "timestampMatches": true,
+      "hashMatches": true
+    },
+    {
+      "tag": "0002_icy_white_queen",
+      "applied": true,
+      "timestampMatches": true,
+      "hashMatches": true
+    },
+    {
+      "tag": "0003_long_flatman",
+      "applied": true,
+      "timestampMatches": true,
+      "hashMatches": true
+    },
+    {
+      "tag": "0004_identity_studio_mvp",
+      "applied": true,
+      "timestampMatches": true,
+      "hashMatches": true
+    },
+    {
+      "tag": "0005_blue_terror",
+      "applied": true,
+      "timestampMatches": true,
+      "hashMatches": true
+    },
+    {
+      "tag": "0006_aromatic_leader",
+      "applied": true,
+      "timestampMatches": true,
+      "hashMatches": true
+    },
+    {
+      "tag": "0007_exotic_bruce_banner",
+      "applied": false,
+      "timestampMatches": false,
+      "hashMatches": false
+    },
+    {
+      "tag": "0008_ambiguous_scalphunter",
+      "applied": false,
+      "timestampMatches": false,
+      "hashMatches": false
+    },
+    {
+      "tag": "0009_absurd_meteorite",
+      "applied": false,
+      "timestampMatches": false,
+      "hashMatches": false
+    },
+    {
+      "tag": "0010_provider_source_binding",
+      "applied": false,
+      "timestampMatches": false,
+      "hashMatches": false
+    }
+  ],
+  "missingMigrations": [
+    "0007_exotic_bruce_banner",
+    "0008_ambiguous_scalphunter",
+    "0009_absurd_meteorite",
+    "0010_provider_source_binding"
+  ],
+  "unexpectedAppliedRows": 0,
+  "schema": {
+    "expectedSha256": "2338bdba6521ebf6e6de6226218671ec92eeff34eff910b3f1f5424fb4de8bd0",
+    "observedSha256": "3a0221951ef2f0819c6da97e866a0de6bd013b9518e625a96cc2986605d281fa",
+    "matchesReviewedLock": false,
+    "expectedTableCount": 27,
+    "observedTableCount": 16,
+    "observedTables": [
+      "auth_challenges",
+      "auth_sessions",
+      "credit_accounts",
+      "credit_transactions",
+      "entitlements",
+      "identity_consents",
+      "job_events",
+      "media_assets",
+      "projects",
+      "rate_limits",
+      "standard_narration_consents",
+      "standard_narration_quotes",
+      "stripe_events",
+      "user_identities",
+      "users",
+      "video_jobs"
+    ]
+  },
+  "customerRowsRead": false,
+  "schemaWritesPerformed": false
+}

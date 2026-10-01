@@ -1,4 +1,6 @@
-﻿# Video OS Lite
+> **Current developer entry point (2026-09-29):** Read [HANDOFF.md](HANDOFF.md), then [docs/CURRENT-MVP-HANDOFF.md](docs/CURRENT-MVP-HANDOFF.md). Descriptions below are historical and do not establish current MVP readiness.
+
+# Video OS Lite
 
 Consumer-ready MVP for creating a short AI presenter video from a guided brief.
 

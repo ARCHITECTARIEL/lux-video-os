@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "provenance": "isolated database initialized from exact repository migrations; review before production use",
+  "capturedAt": "2026-09-30T20:48:31.112Z",
+  "migrationSetSha256": "4fd5ed310bd07fb23e4c67b48f0c50a8cbd5087d6cc55b51c5f5dee1a6cc961d",
+  "sourceHashes": {
+    "db/schema.js": "7c8b91750d894910ee15b4dc6d2fb82ea6b2df5eeac46f99e0d46f0c174e18d9",
+    "db/standard-narration-schema.js": "be1b5caa8040685ddae706b0e3c7d7357deb8753d917528d3defb88af11b0efd",
+    "db/provider-lifecycle-guards.sql": "dbbfe7a06b596283e62f58d3cb050a30d42e489dcd781d1523547aacc897c3df"
+  },
+  "schemaSha256": "2338bdba6521ebf6e6de6226218671ec92eeff34eff910b3f1f5424fb4de8bd0",
+  "tableCount": 27
+}

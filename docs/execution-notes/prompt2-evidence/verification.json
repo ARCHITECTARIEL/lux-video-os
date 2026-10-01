@@ -1,0 +1,76 @@
+{
+  "head": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+  "scope": "Prompt2 local only",
+  "files": [
+    {
+      "path": "lib/video-os-output-acceptance.js",
+      "sha256": "07997423ffca2bba29e9c31013e81c89ceac67db28420bf2f4224fbe333891ba"
+    },
+    {
+      "path": "db/dto.js",
+      "sha256": "a818374e54f9b63d8341bea68fe3b16d0c0cde50260cf43f69787ffddce9498c"
+    },
+    {
+      "path": "api/video-os-lite/finalize-v2.js",
+      "sha256": "b5b3e51c1252c301768b34367f609326df8fa8407b36c31b5fb0f43f12418963"
+    },
+    {
+      "path": "api/video-os-lite/download-v2.js",
+      "sha256": "fc56a398a378bc379b95b14b992d0ca3a5bad015927741eeac976d0bd8492899"
+    },
+    {
+      "path": "lib/video-os-render-notify.js",
+      "sha256": "357e2e64eadbe85caed8afa2cdcbe65bad11e6e10440734ef697090067a21e13"
+    },
+    {
+      "path": "public/studio.js",
+      "sha256": "ce778648bd9a57353a726e58b48b41e6a96698043e1d89b49144e148c7a7ef36"
+    },
+    {
+      "path": "tests/job-output-acceptance.test.mjs",
+      "sha256": "e1fea23e15e8573380a0290750d1159ab490b55333da96f0be842fbce2cd8a04"
+    },
+    {
+      "path": "tests/output-acceptance-routes.test.mjs",
+      "sha256": "6668904176c10f5cdc1ee9c9154d1e54f1d257409f3deebd11723564353c3f5a"
+    },
+    {
+      "path": "tests/helpers/output-acceptance-fixture.mjs",
+      "sha256": "0fa868f65fe5a859649fcea7c7eae527c1464297447cfb42eb4394fec990df3f"
+    },
+    {
+      "path": "tests/helpers/output-acceptance-routes.mjs",
+      "sha256": "c561e9534ef5d779774125d0d67b9891cd7494e54320492c0a4a1d70b4ddc9ad"
+    },
+    {
+      "path": "tests/job-dto-privacy.test.mjs",
+      "sha256": "b95fc13a8a601541faeba3143878e47ed06cc365e7f3e46feeb9db49d399ba3b"
+    },
+    {
+      "path": "tests/render-ready-notification.test.mjs",
+      "sha256": "cc7a15d12417724bca92d023ad427b60b21924ab9547fe7fdcaef01cbe2d0a50"
+    },
+    {
+      "path": "tests/e2e/studio-standard-mvp.spec.js",
+      "sha256": "a789373610013f6745e429d78d90ddb3e9495eee4f04143c15adef946772d7c8"
+    }
+  ],
+  "tests": {
+    "node": {
+      "pass": 315,
+      "fail": 0,
+      "skip": 40
+    },
+    "vitest": {
+      "pass": 4
+    },
+    "browser": {
+      "pass": 31
+    }
+  },
+  "limitations": [
+    "synthetic persistence and media fixtures",
+    "no live DB/Blob/provider proof",
+    "Prompt3 validator and atomic debit gate required"
+  ]
+}

@@ -41,19 +41,22 @@ async function installAppRoutes(page, { results = [], project = null, identities
   const avatars = [...FEATURED.map((item) => avatar(item)), ...shared, avatar({ avatarId: 'private-user', label: 'Private User' }, { shared: false })];
   const voices = [...FEATURED.map((item) => voice(item)), { id: 'duplicate-kd-name', name: 'KD voice', source: 'heygen', providerReady: true }, { id: 'other-voice', name: 'Other voice', source: 'heygen', providerReady: true }, ...Array.from({ length: 25 }, (_, index) => ({ id: `late-${index}`, name: `Late ${index}`, source: 'heygen', providerReady: true }))].filter((item) => item.id !== omitVoiceId);
   let renderRequests = 0;
+  let talentRequests = 0;
 
   await page.route('https://images.example/**', (route) => route.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100"><rect width="160" height="100" fill="#d9c8a9"/></svg>' }));
-  await page.route('**/api/video-os/talent', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, talent: { avatars, voices }, connection: { connected: true } }) }));
+  await page.route('**/api/video-os/talent', (route) => { talentRequests += 1; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, talent: { avatars, voices }, connection: { connected: true } }) }); });
   await page.route('**/api/video-os-lite/session', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, signedIn: true, email: 'proof@example.test', account: { accountId: 'acct-proof', name: 'CEO Proof' }, credits: { accountId: 'acct-proof', balance: 180, reserved: 0 }, entitlements: { fullAccess: true } }) }));
   await page.route('**/api/video-os-lite/providers', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, providers: [{ id: 'heygen', name: 'HeyGen', configured: true, cost: 90 }], credits: { accountId: 'acct-proof', balance: 180, reserved: 0 }, entitlements: { fullAccess: true } }) }));
   await page.route('**/api/video-os-lite/results*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, results }) }));
   await page.route('**/api/video-os-lite/identities*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, identities }) }));
   await page.route('**/api/video-os-lite/projects', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, projects: project ? [project] : [] }) }));
+  await page.route('**/api/video-os-lite/scripted-photo*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, contractVersion: 'scripted-photo-v1', pricingVersion: 'scripted-photo-pricing-v1', quoteTtlSeconds: 300, capabilities: { enabled: true, tiers: { STANDARD: { available: true, credits: 37, reasons: [] }, PREMIUM: { available: true, credits: 90, reasons: [] } } }, existingJob: null }) }));
   await page.route('**/api/video-os-lite/render', (route) => { renderRequests += 1; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'Render forbidden in CEO UX test' }) }); });
-  return { renderRequests: () => renderRequests };
+  await page.route('**/api/video-os-lite/render-v2', (route) => { renderRequests += 1; return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'Render forbidden in CEO UX test' }) }); });
+  return { renderRequests: () => renderRequests, talentRequests: () => talentRequests };
 }
 
-test('ready private identity appears before shared Cast and restores its recommended cloned voice', async ({ page }) => {
+test('ready private identity restores as the presenter without loading provider talent', async ({ page }) => {
   const identity = { id: '4c2f26b6-cdd4-4d53-8e37-17e7858c679c', displayName: 'CEO Identity', overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY', portraitUrl: '/api/video-os-lite/asset?assetId=portrait-proof', ready: true };
   const project = {
     id: 'project-identity',
@@ -74,7 +77,8 @@ test('ready private identity appears before shared Cast and restores its recomme
   await expect(page.locator('#premium-title')).toHaveValue(project.title);
   await expect(page.locator('#script-input')).toHaveValue(project.script);
   await expect(page.locator('#generate-video')).toBeEnabled();
-  expect(await page.evaluate(() => Boolean(document.querySelector('#my-cast-list')?.compareDocumentPosition(document.querySelector('#avatar-list')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await expect(page.locator('.contract-limit-note').filter({ hasText: 'Additional presenter' })).toBeVisible();
+  expect(guard.talentRequests()).toBe(0);
 
   await page.reload();
   await page.locator('#premium-tab').click();
@@ -82,7 +86,7 @@ test('ready private identity appears before shared Cast and restores its recomme
   expect(guard.renderRequests()).toBe(0);
 });
 
-test('featured cast, curated list, voice priority, persistence, and completed Final Cut are connected', async ({ page }) => {
+test('ready presenter selection, draft persistence, and completed Final Cut stay connected', async ({ page }) => {
   const ready = {
     id: 'job-existing',
     status: 'SUCCEEDED',
@@ -94,45 +98,20 @@ test('featured cast, curated list, voice priority, persistence, and completed Fi
     voice: { id: KD.voiceId, voiceId: KD.voiceId, name: 'KD voice' },
     updatedAt: '2026-07-16T18:00:00Z',
   };
-  const project = { id: 'project-existing', title: 'Existing CEO proof', script: 'No provider submission is permitted.', avatar: avatar(KD), voice: voice(KD) };
-  const guard = await installAppRoutes(page, { results: [ready], project });
+  const identity = { id: '33333333-3333-4333-8333-333333333333', displayName: 'KD private presenter', overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY', ready: true, archivedAt: null };
+  const project = { id: 'project-existing', identityId: identity.id, title: 'Existing CEO proof', script: 'No provider submission is permitted.', avatar: {}, voice: {} };
+  const guard = await installAppRoutes(page, { results: [ready], project, identities: [identity] });
   await page.goto('/');
   await page.locator('#premium-tab').click();
 
-  const cover = page.locator('#featured-cast-list [data-featured-key]');
-  await expect(cover).toHaveCount(3);
-  expect(await cover.evaluateAll((nodes) => nodes.map((node) => node.dataset.featuredKey))).toEqual(FEATURED.map((item) => item.key));
-
-  // studio.js's cast-curation change (public/studio.js:1226) always empties
-  // #avatar-list of raw HeyGen avatar cards now -- only #featured-cast-list
-  // (asserted above) is ever populated, regardless of how many shared
-  // avatars the API returns. This used to assert a raw 17-avatar list from
-  // before that change; updated to match the now-intentional behavior.
-  const cast = page.locator('#avatar-list [data-avatar-id]');
-  await expect(cast).toHaveCount(0);
-
-  await expect(page.locator(`[data-voice-id="${KD.voiceId}"]`)).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator(`[data-voice-id="${KD.voiceId}"]`)).toContainText('Matched voice');
-  expect(await page.locator('#voice-list [data-voice-id]').first().getAttribute('data-voice-id')).toBe(KD.voiceId);
-
-  // "other-voice" (no featuredKey) used to be searchable here before the
-  // cast-curation change (public/studio.js:1230-1232 now filters #voice-list
-  // to only featuredKey-carrying voices unless it's the voice already
-  // selected -- see the "explicit valid voice ... survives restoration"
-  // test below for that still-valid, still-tested exception). Manually
-  // selecting a *newly desired, still-curated* voice remains a real,
-  // intentional feature -- switched to OSO's matched voice to keep testing
-  // that a manual voice choice takes priority over avatar-driven
-  // auto-matching, even across a subsequent avatar switch.
-  await page.locator('#voice-search').fill(`${OSO.label} voice`);
-  await page.locator(`[data-voice-id="${OSO.voiceId}"]`).click();
-  await page.locator(`[data-featured-key="${ARIEL.key}"]`).click();
-  await expect(page.locator(`[data-voice-id="${OSO.voiceId}"]`)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(`[data-premium-identity-id="${identity.id}"]`)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#script-input')).toHaveValue(project.script);
+  await expect(page.locator('.cast-columns')).toBeHidden();
 
   await page.reload();
   await page.locator('#premium-tab').click();
-  await expect(page.locator(`[data-featured-key="${KD.key}"]`)).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator(`[data-voice-id="${KD.voiceId}"]`)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(`[data-premium-identity-id="${identity.id}"]`)).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#script-input')).toHaveValue(project.script);
 
   await page.locator('[data-nav="videos"]:visible').first().click();
   await expect(page.locator('#download-link')).toHaveAttribute('href', /jobId=job-existing/);
@@ -140,30 +119,25 @@ test('featured cast, curated list, voice priority, persistence, and completed Fi
 });
 
 
-test('an explicit valid voice beyond the first 20 survives restoration and avatar changes', async ({ page }) => {
-  const lateVoice = { id: 'late-24', name: 'Late 24', source: 'heygen', providerReady: true };
-  const project = { id: 'project-late-voice', title: 'Explicit voice proof', script: 'Preserve the selected voice.', avatar: avatar(ARIEL), voice: lateVoice };
-  const guard = await installAppRoutes(page, { project });
+test('a processing identity is visible but disabled while a ready identity stays selectable', async ({ page }) => {
+  const waiting = { id: '44444444-4444-4444-8444-444444444444', displayName: 'Still processing', overallStatus: 'PROCESSING', avatarStatus: 'READY', voiceStatus: 'PROCESSING', ready: false, archivedAt: null };
+  const ready = { id: '55555555-5555-4555-8555-555555555555', displayName: 'Ready presenter', overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY', ready: true, archivedAt: null };
+  const guard = await installAppRoutes(page, { identities: [waiting, ready] });
   await page.goto('/');
   await page.locator('#premium-tab').click();
-  await page.locator(`[data-featured-key="${KD.key}"]`).click();
-  await page.locator('#voice-search').fill('Late 24');
-  await page.locator('[data-voice-id="late-24"]').click();
-  await expect(page.locator('[data-voice-id="late-24"]')).toHaveAttribute('aria-pressed', 'true');
-  await page.locator('#avatar-search').fill('Ariel');
-  await page.locator(`[data-featured-key="${ARIEL.key}"]`).click();
-  await expect(page.locator('[data-voice-id="late-24"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(`[data-premium-identity-id="${waiting.id}"]`)).toBeDisabled();
+  await page.locator(`[data-premium-identity-id="${ready.id}"]`).click();
+  await expect(page.locator(`[data-premium-identity-id="${ready.id}"]`)).toHaveAttribute('aria-pressed', 'true');
   expect(guard.renderRequests()).toBe(0);
 });
 
-test('a featured presenter fails visibly when its exact matched voice is unavailable', async ({ page }) => {
-  await installAppRoutes(page, { omitVoiceId: KD.voiceId });
+test('scripted Studio does not request or expose separate provider talent inventory', async ({ page }) => {
+  const guard = await installAppRoutes(page);
   await page.goto('/');
   await page.locator('#premium-tab').click();
-  const kd = page.locator(`[data-featured-key="${KD.key}"]`);
-  await expect(kd).toBeDisabled();
-  await expect(kd).toHaveAttribute('title', /matched voice.*unavailable/i);
-  await expect(kd).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('.cast-columns')).toBeHidden();
+  await expect(page.locator('#featured-cast-list [data-featured-key]')).toHaveCount(0);
+  expect(guard.talentRequests()).toBe(0);
 });
 
 test('the newest in-progress job is not masked by an older completed video', async ({ page }) => {
@@ -177,15 +151,15 @@ test('the newest in-progress job is not masked by an older completed video', asy
   await expect(page.locator('#accepted-video')).toBeHidden();
 });
 
-test('mobile keeps Ariel, OSO, and KD visible and ordered', async ({ page }) => {
+test('mobile keeps ready private presenters ordered without horizontal overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await installAppRoutes(page);
+  const identities = [ARIEL, OSO, KD].map((item, index) => ({ id: `66666666-6666-4666-8666-66666666666${index}`, displayName: item.label, overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY', ready: true, archivedAt: null }));
+  await installAppRoutes(page, { identities });
   await page.goto('/');
   await page.locator('#premium-tab').click();
-  const cover = page.locator('#featured-cast-list [data-featured-key]');
+  const cover = page.locator('#premium-identity-list [data-premium-identity-id]');
   await expect(cover).toHaveCount(3);
-  expect(await cover.evaluateAll((nodes) => nodes.map((node) => node.dataset.featuredKey))).toEqual(FEATURED.map((item) => item.key));
-  for (const item of FEATURED) await expect(page.locator(`[data-featured-key="${item.key}"]`)).toBeVisible();
+  expect(await cover.locator('strong').allTextContents()).toEqual(['Ariel', 'OSO', 'KD']);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
@@ -227,7 +201,7 @@ test('Identity Studio handoff overrides a restored public voice with the ready p
   await page.goto('/?identityId=' + identity.id);
 
   await expect(page).toHaveURL('/');
-  await expect(page.locator('[data-standard-identity-id="' + identity.id + '"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-scripted-standard-identity-id="' + identity.id + '"]')).toHaveAttribute('aria-pressed', 'true');
   await page.locator('#premium-tab').click();
   await expect(page.locator('[data-premium-identity-id="' + identity.id + '"]')).toHaveAttribute('aria-pressed', 'true');
   expect(guard.renderRequests()).toBe(0);
@@ -239,12 +213,12 @@ test('unavailable Identity Studio handoff is consumed without selecting private 
 
   await expect(page).toHaveURL('/');
   await expect(page.locator('#toast')).toContainText('unavailable for this account');
-  await expect(page.locator('#my-cast-list [aria-pressed="true"]')).toHaveCount(0);
-  await expect(page.locator('#voice-list [data-voice-id^="identity-voice:"]')).toHaveCount(0);
+  await expect(page.locator('#scripted-standard-identity-list [aria-pressed="true"]')).toHaveCount(0);
+  await expect(page.locator('#premium-identity-list [aria-pressed="true"]')).toHaveCount(0);
   expect(guard.renderRequests()).toBe(0);
 });
 
-test('a stale saved private identity fails closed to the authorized shared Cast', async ({ page }) => {
+test('a stale saved private identity fails closed without a presenter fallback', async ({ page }) => {
   const staleId = '6e5c233e-f798-4b74-8605-9e45e06fe877';
   const project = {
     id: 'project-stale-identity',
@@ -258,10 +232,10 @@ test('a stale saved private identity fails closed to the authorized shared Cast'
 
   await page.goto('/');
 
-  await expect(page.locator('#my-cast-list [aria-pressed="true"]')).toHaveCount(0);
+  await expect(page.locator('#scripted-standard-identity-list [aria-pressed="true"]')).toHaveCount(0);
   await page.locator('#premium-tab').click();
-  await expect(page.locator('#avatar-list [data-avatar-id^="identity-avatar:"]')).toHaveCount(0);
-  await expect(page.locator('#voice-list [data-voice-id^="identity-voice:"]')).toHaveCount(0);
-  await expect(page.locator('[data-featured-key="' + ARIEL.key + '"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#premium-identity-list [data-premium-identity-id]')).toHaveCount(0);
+  await expect(page.locator('#generate-video')).toBeDisabled();
+  await expect(page.locator('#premium-status')).toContainText(/ready private identity|ready presenter/i);
   expect(guard.renderRequests()).toBe(0);
 });

@@ -50,6 +50,34 @@
       "when": 1789848743784,
       "tag": "0006_aromatic_leader",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790790035591,
+      "tag": "0007_exotic_bruce_banner",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790790845354,
+      "tag": "0008_ambiguous_scalphunter",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790800466941,
+      "tag": "0009_absurd_meteorite",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790801244183,
+      "tag": "0010_provider_source_binding",
+      "breakpoints": true
     }
   ]
 }

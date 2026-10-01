@@ -1,0 +1,13 @@
+{
+  "local_links_checked": 22,
+  "missing_links": [],
+  "copy_ready_checks": {
+    "common baseline": true,
+    "talent in prompt 1": true,
+    "media tools in prompt 3": true,
+    "P0 and storage in prompt 4": true,
+    "decision in prompt 5": true,
+    "approval in prompt 8": true
+  },
+  "json_parse": "pass"
+}

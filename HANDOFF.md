@@ -1,3 +1,9 @@
+> **2026-09-29 supersession:** Read [docs/CURRENT-MVP-HANDOFF.md](docs/CURRENT-MVP-HANDOFF.md) for current source, deployment, blockers and next action. Content below is historical. Main is now 1c6121f; PRs #43-46 are resolved; this checkout links to the production Vercel project; additional authorization repairs are uncommitted. Prompt 4 (September 30) disables the fabricated P0 receipt generator and adds fail-closed release checks; production remains blocked. See the current handoff and docs/RELEASE-PREFLIGHT.md.
+
+> **2026-09-30 bridge checkpoint:** Consent-v2, immutable provider ledger and read-only reconciliation are verified locally and on the isolated test database. Review packaging passed; no deployment occurred. Read [the latest execution note](docs/execution-notes/20260930-bridge-foundation.md) and [next qualification prompt](docs/MVP-EXECUTION-PROMPTS-2026-09-29.md). Runtime provider binding and deletion execution remain disabled; do not replay the foundation implementation.
+
+> **2026-10-01 latest checkpoint:** Canonical production DB provenance is confirmed, and local enrollment/render/continuation wiring is verified. Production has only 7 of 11 migrations; activation remains held. Read [the runtime receipt](docs/execution-notes/20261001-runtime-wiring.md) and current handoff. Tests: 722 Node plus four Vitest, four isolated DB/Blob suites; runtime audit zero; review packaging passed. No deployment, production schema change or paid generation occurred.
+
 > [!IMPORTANT]
 > **COMPREHENSIVE DEVELOPER HANDOFF PACKET**: A complete, deep-dive architectural atlas covering every page, every button, every effect, every function, and all sustainability/anti-brittleness audits is now available at [`docs/DEVELOPER_HANDOFF.md`](docs/DEVELOPER_HANDOFF.md).
 > 

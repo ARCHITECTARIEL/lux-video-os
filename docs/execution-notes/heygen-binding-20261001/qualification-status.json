@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-01",
+  "status": "credential-and-space-qualified-local-binding-verified-production-held",
+  "selectedCredential": {
+    "ownerConfirmedNewKey": true,
+    "maskedSuffix": "C2b1",
+    "keyAuthenticated": true,
+    "profileMatchesExpectedOwner": true,
+    "credentialStatus": "active",
+    "scopeMode": "full",
+    "permissions": {
+      "account": {
+        "read": true
+      },
+      "assets": {
+        "read": true,
+        "write": true
+      },
+      "avatars": {
+        "read": true,
+        "write": true
+      },
+      "voices": {
+        "read": true,
+        "write": true
+      },
+      "videos": {
+        "read": true,
+        "write": true
+      }
+    },
+    "credentialKeyFingerprint": "6a51bc8c4ab4b77378fef1af714e376ff7188e167211369c3debb37f14bf551e",
+    "credentialScopeFingerprint": "b2e833e2f6eb5a5ebf2874e28f0a10f2657f5cbc53f04cbad2fffef0c7fbf2d8",
+    "createdAt": "2026-10-01T14:35:48.000Z",
+    "expiryObservation": {
+      "expiresAt": null,
+      "expiresInSeconds": null
+    }
+  },
+  "binding": {
+    "providerAccountScopeVerified": false,
+    "databaseBindingWritten": false,
+    "runtimeEnabled": false,
+    "holds": [
+      {
+        "code": "CREDENTIAL_EXPIRY_FORMAT_UNVERIFIED"
+      },
+      {
+        "code": "CANONICAL_APPLICATION_DATABASE_TARGET_UNVERIFIED"
+      },
+      {
+        "code": "PRODUCTION_BINDING_POLICY_UNSET"
+      },
+      {
+        "code": "RUNTIME_CALLSITE_WIRING_DISABLED"
+      }
+    ],
+    "providerSpaceVerified": true,
+    "providerSpaceFingerprint": "1c1b9eac97b6e38e481d30ddf12e4332ecb04d08f727a4ff55997a733b3f584a",
+    "providerSpaceEvidence": "docs/execution-notes/binding-readiness-20261001/provider-space-probe-result.json",
+    "verificationBindingImplemented": true,
+    "verificationBindingTested": true,
+    "verificationFixturesCleaned": true,
+    "productionBindingWritten": false,
+    "implementationEvidence": "docs/execution-notes/20261001-local-space-binding.md"
+  },
+  "privateEvidence": {
+    "path": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-heygen-qualification-20261001\\key-C2b1-20261001-103835.json",
+    "sha256": "dde4e55091f558897d5c9a9c6f50794b708a2ca1b3eeb177dc68f2539fee9a50"
+  },
+  "verification": {
+    "focusedTestsPassed": 52,
+    "liveQualificationCompleted": true,
+    "providerMutationPerformed": true,
+    "deploymentPerformed": false,
+    "providerMutationScope": "One owner-approved disposable asset upload and deletion; no generation"
+  },
+  "sourceSha256": "f488d6bfb58905f08c84a72126df9adde798b178c6745f5df7c8c7dc9597e351"
+}

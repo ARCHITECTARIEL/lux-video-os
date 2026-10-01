@@ -1,0 +1,100 @@
+{
+  "schemaVersion": "video-os-storage-database-identity/v1",
+  "observedAt": "2026-09-30T18:59:34.8849942Z",
+  "canonicalApplicationConfiguration": {
+    "production": {
+      "DATABASE_URL": {
+        "type": "sensitive",
+        "target": ["production"],
+        "createdAt": "2026-09-21T19:40:03.369Z",
+        "updatedAt": "2026-09-21T19:41:26.416Z",
+        "valueAvailableThroughAuthenticatedRead": false,
+        "integrationContentHint": false
+      },
+      "DATABASE_URL_UNPOOLED": {
+        "type": "sensitive",
+        "target": ["production"],
+        "valueAvailableThroughAuthenticatedRead": false,
+        "integrationContentHint": false
+      }
+    },
+    "preview": {
+      "DATABASE_URL": {
+        "type": "sensitive",
+        "target": ["preview"],
+        "valueAvailableThroughAuthenticatedRead": false,
+        "integrationContentHint": false
+      },
+      "DATABASE_URL_UNPOOLED": {
+        "type": "sensitive",
+        "target": ["preview"],
+        "valueAvailableThroughAuthenticatedRead": false,
+        "integrationContentHint": false
+      }
+    },
+    "productionMappingStatus": "UNVERIFIED",
+    "previewMappingStatus": "UNVERIFIED",
+    "decision": "Do not query production or Preview through a canonical URL until its host, database, role, project and branch are independently matched to an approved target manifest."
+  },
+  "vercelNeonIntegration": {
+    "storeId": "store_iz6hgCg4fbRQkg3Y",
+    "externalResourceId": "still-voice-83326863",
+    "status": "ready",
+    "projectConnection": "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+    "environments": ["development", "preview", "production"],
+    "envPrefix": "videoos",
+    "pooled": {
+      "host": "ep-autumn-morning-awa4hmb6-pooler.c-12.us-east-1.aws.neon.tech",
+      "database": "neondb",
+      "role": "neondb_owner"
+    },
+    "direct": {
+      "host": "ep-autumn-morning-awa4hmb6.c-12.us-east-1.aws.neon.tech",
+      "database": "neondb",
+      "role": "neondb_owner"
+    }
+  },
+  "neonProviderReadback": {
+    "project": {
+      "id": "still-voice-83326863",
+      "name": "neon-byzantium-drum",
+      "region": "aws-us-east-1",
+      "postgresVersion": 18
+    },
+    "branch": {
+      "id": "br-broad-sunset-awrsmiwa",
+      "name": "main",
+      "default": true,
+      "primary": true,
+      "state": "ready"
+    },
+    "endpoint": {
+      "id": "ep-autumn-morning-awa4hmb6",
+      "branchId": "br-broad-sunset-awrsmiwa",
+      "directHost": "ep-autumn-morning-awa4hmb6.c-12.us-east-1.aws.neon.tech",
+      "pooledHost": "ep-autumn-morning-awa4hmb6-pooler.c-12.us-east-1.aws.neon.tech",
+      "type": "read_write",
+      "region": "aws-us-east-1"
+    },
+    "database": "neondb",
+    "role": "neondb_owner"
+  },
+  "comparison": {
+    "integrationPrefixedValuesMatchProvider": true,
+    "canonicalProductionMatchesIntegration": null,
+    "canonicalPreviewMatchesIntegration": null,
+    "productionSqlQueried": false
+  },
+  "proposedProductionTargetManifest": {
+    "projectId": "still-voice-83326863",
+    "branchId": "br-broad-sunset-awrsmiwa",
+    "hosts": [
+      "ep-autumn-morning-awa4hmb6-pooler.c-12.us-east-1.aws.neon.tech",
+      "ep-autumn-morning-awa4hmb6.c-12.us-east-1.aws.neon.tech"
+    ],
+    "database": "neondb",
+    "roles": ["neondb_owner"],
+    "port": 5432,
+    "qualification": "Proposal only. Root may materialize config/database-target.production.json after the canonical application secret is independently confirmed."
+  }
+}

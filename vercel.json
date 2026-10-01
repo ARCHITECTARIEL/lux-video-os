@@ -1,159 +1,176 @@
 {
-    "routes":  [
-                   {
-                       "src":  "/api/video-os/talent",
-                       "dest":  "/api/video-os/talent.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/providers",
-                       "dest":  "/api/video-os-lite/workspace.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/copywriter",
-                       "dest":  "/api/video-os-lite/workspace.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/identities",
-                       "dest":  "/api/video-os-lite/workspace.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/render",
-                       "dest":  "/api/video-os-lite/render-v2.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/finalize",
-                       "dest":  "/api/video-os-lite/finalize-v2.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/uploads",
-                       "dest":  "/api/video-os-lite/uploads.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/asset",
-                       "dest":  "/api/video-os-lite/workspace.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/projects",
-                       "dest":  "/api/video-os-lite/workspace.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/standard",
-                       "dest":  "/api/video-os-lite/workspace.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/checkout",
-                       "dest":  "/api/video-os-lite/checkout-v2.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/stripe-webhook",
-                       "dest":  "/api/video-os-lite/stripe-webhook-v2.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/password-login",
-                       "dest":  "/api/video-os-lite/auth.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/admin-login",
-                       "dest":  "/api/video-os-lite/auth.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/auth-request",
-                       "dest":  "/api/video-os-lite/auth.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/auth-verify",
-                       "dest":  "/api/video-os-lite/auth.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/google-login",
-                       "dest":  "/api/video-os-lite/auth.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/google-callback",
-                       "dest":  "/api/video-os-lite/auth.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/ceo-access",
-                       "dest":  "/api/video-os-lite/auth.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/session",
-                       "dest":  "/api/video-os-lite/auth.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/results",
-                       "dest":  "/api/video-os-lite/workspace.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/download",
-                       "dest":  "/api/video-os-lite/download-v2.js"
-                   },
-                   {
-                       "src":  "/api/video-os-lite/admin",
-                       "dest":  "/api/video-os-lite/workspace.js"
-                   },
-                   {
-                       "src":  "/admin-console",
-                       "dest":  "/admin-console.html",
-                       "headers":  {
-                                       "Cache-Control":  "no-store"
-                                   }
-                   },
-                   {
-                       "src":  "/identity",
-                       "dest":  "/identity.html",
-                       "headers":  {
-                                       "Cache-Control":  "no-store"
-                                   }
-                   },
-                   {
-                       "src":  "/welcome",
-                       "dest":  "/landing.html",
-                       "headers":  {
-                                       "Cache-Control":  "no-store"
-                                   }
-                   },
-                   {
-                       "src":  "/privacy",
-                       "dest":  "/privacy.html",
-                       "headers":  {
-                                       "Cache-Control":  "no-store"
-                                   }
-                   },
-                   {
-                       "src":  "/terms",
-                       "dest":  "/terms.html",
-                       "headers":  {
-                                       "Cache-Control":  "no-store"
-                                   }
-                   },
-                   {
-                       "src":  "/exports/(.*)",
-                       "dest":  "/exports/$1",
-                       "headers":  {
-                                       "Cache-Control":  "no-store"
-                                   }
-                   },
-                   {
-                       "src":  "/uploads/(.*)",
-                       "dest":  "/uploads/$1",
-                       "headers":  {
-                                       "Cache-Control":  "no-store"
-                                   }
-                   },
-                   {
-                       "src":  "/(.*\\.(?:js|css|png|jpg|jpeg|webp|gif|svg|ico|mp4|mov|wav|cube|woff|woff2|ttf|otf))",
-                       "dest":  "/$1",
-                       "headers":  {
-                                       "Cache-Control":  "no-store"
-                                   }
-                   },
-                   {
-                       "src":  "/(.*)",
-                       "dest":  "/index.html",
-                       "headers":  {
-                                       "Cache-Control":  "no-store"
-                                   }
-                   }
+    "functions": {
+        "api/**/*.js": {
+            "excludeFiles": "{.vercel**,.vercel/**,.git**,.git/**,.omx**,.omx/**,.codex**,.codex/**,.agents**,.agents/**,.aws**,.aws/**,.env,.env.*,docs**,docs/**,tests**,tests/**,archive**,archive/**,data**,data/**}"
+        }
+    },
+    "routes": [
+        {
+            "src": "/api/video-os-lite/enrollments",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/api/video-os-lite/enrollment-upload",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/api/video-os-lite/scripted-photo",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/api/video-os/talent",
+            "dest": "/api/video-os/talent.js"
+        },
+        {
+            "src": "/api/video-os-lite/providers",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/api/video-os-lite/copywriter",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/api/video-os-lite/identities",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/api/video-os-lite/render",
+            "dest": "/api/video-os-lite/render-v2.js"
+        },
+        {
+            "src": "/api/video-os-lite/finalize",
+            "dest": "/api/video-os-lite/finalize-v2.js"
+        },
+        {
+            "src": "/api/video-os-lite/uploads",
+            "dest": "/api/video-os-lite/uploads.js"
+        },
+        {
+            "src": "/api/video-os-lite/asset",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/api/video-os-lite/projects",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/api/video-os-lite/standard",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/api/video-os-lite/checkout",
+            "dest": "/api/video-os-lite/checkout-v2.js"
+        },
+        {
+            "src": "/api/video-os-lite/stripe-webhook",
+            "dest": "/api/video-os-lite/stripe-webhook-v2.js"
+        },
+        {
+            "src": "/api/video-os-lite/password-login",
+            "dest": "/api/video-os-lite/auth.js"
+        },
+        {
+            "src": "/api/video-os-lite/admin-login",
+            "dest": "/api/video-os-lite/auth.js"
+        },
+        {
+            "src": "/api/video-os-lite/auth-request",
+            "dest": "/api/video-os-lite/auth.js"
+        },
+        {
+            "src": "/api/video-os-lite/auth-verify",
+            "dest": "/api/video-os-lite/auth.js"
+        },
+        {
+            "src": "/api/video-os-lite/google-login",
+            "dest": "/api/video-os-lite/auth.js"
+        },
+        {
+            "src": "/api/video-os-lite/google-callback",
+            "dest": "/api/video-os-lite/auth.js"
+        },
+        {
+            "src": "/api/video-os-lite/ceo-access",
+            "dest": "/api/video-os-lite/auth.js"
+        },
+        {
+            "src": "/api/video-os-lite/session",
+            "dest": "/api/video-os-lite/auth.js"
+        },
+        {
+            "src": "/api/video-os-lite/results",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/api/video-os-lite/download",
+            "dest": "/api/video-os-lite/download-v2.js"
+        },
+        {
+            "src": "/api/video-os-lite/admin",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/admin-console",
+            "dest": "/admin-console.html",
+            "headers": {
+                "Cache-Control": "no-store"
+            }
+        },
+        {
+            "src": "/identity",
+            "dest": "/identity.html",
+            "headers": {
+                "Cache-Control": "no-store"
+            }
+        },
+        {
+            "src": "/welcome",
+            "dest": "/landing.html",
+            "headers": {
+                "Cache-Control": "no-store"
+            }
+        },
+        {
+            "src": "/privacy",
+            "dest": "/privacy.html",
+            "headers": {
+                "Cache-Control": "no-store"
+            }
+        },
+        {
+            "src": "/terms",
+            "dest": "/terms.html",
+            "headers": {
+                "Cache-Control": "no-store"
+            }
+        },
+        {
+            "src": "/exports/(.*)",
+            "dest": "/exports/$1",
+            "headers": {
+                "Cache-Control": "no-store"
+            }
+        },
+        {
+            "src": "/uploads/(.*)",
+            "dest": "/uploads/$1",
+            "headers": {
+                "Cache-Control": "no-store"
+            }
+        },
+        {
+            "src": "/(.*\\.(?:js|css|png|jpg|jpeg|webp|gif|svg|ico|mp4|mov|wav|cube|woff|woff2|ttf|otf))",
+            "dest": "/$1",
+            "headers": {
+                "Cache-Control": "no-store"
+            }
+        },
+        {
+            "src": "/(.*)",
+            "dest": "/index.html",
+            "headers": {
+                "Cache-Control": "no-store"
+            }
+        }
     ]
 }

@@ -1,7 +1,5 @@
 import Stripe from 'stripe';
 
-const DEFAULT_STRIPE_ACCOUNT = 'acct_1CW7vBJL3SekJtVV';
-
 const PACKAGES = [
   {
     packageId: 'credits_500',
@@ -31,7 +29,6 @@ const PACKAGES = [
 
 async function main() {
   const apiKey = String(process.env.STRIPE_SECRET_KEY || '').trim();
-  const accountId = String(process.env.STRIPE_ACCOUNT_ID || DEFAULT_STRIPE_ACCOUNT).trim();
 
   if (!apiKey) {
     console.error('----------------------------------------------------------------');
@@ -45,13 +42,10 @@ async function main() {
 
   const isLive = apiKey.startsWith('sk_live_') || apiKey.startsWith('rk_live_');
   console.log(`[stripe-setup] Initializing Stripe client (${isLive ? 'LIVE' : 'TEST'} mode)...`);
-  console.log(`[stripe-setup] Target account: ${accountId}`);
 
-  // Create Stripe client with optional stripeAccount header if operating via platform or direct
-  const stripeOptions = {};
-  // If the key is a platform key, stripeAccount routes it to the connected account.
-  // If the key is already specific to the account, stripeAccount is ignored or direct.
-  const stripe = new Stripe(apiKey, stripeOptions);
+  // The secret key determines the target Stripe account. Do not print account
+  // identifiers here: setup logs can be retained by CI or terminal capture.
+  const stripe = new Stripe(apiKey);
 
   const priceResults = {};
 

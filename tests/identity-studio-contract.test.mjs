@@ -1,45 +1,130 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import {
+  enrollmentResumeStorageKey,
+  readEnrollmentResume,
+  uploadEnrollmentVideo,
+  writeEnrollmentResume,
+} from '../public/enrollment-client.js';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('Identity Studio is a separate five-step authenticated experience', async () => {
+test('Identity Studio is a separate five-step photo and phone-video experience', async () => {
   const [html, client, routes] = await Promise.all([
     read('public/identity.html'),
     read('public/identity.js'),
     read('vercel.json'),
   ]);
   assert.match(routes, /"src"\s*:\s*"\/identity"[\s\S]*?"dest"\s*:\s*"\/identity\.html"/);
-  for (const label of ['Your Photo', 'Your Voice', 'Consent', 'Creating', 'Ready']) assert.match(html, new RegExp(label));
-  assert.match(html, /Digital Twin/);
-  assert.match(html, /disabled>Not available in this phase/);
+  for (const label of ['Your Photo', 'Your Video', 'Consent', 'Creating', 'Ready']) assert.match(html, new RegExp(label));
+  assert.match(html, /one photo and one phone video/i);
+  assert.match(html, /compact-step-label/);
+  assert.doesNotMatch(html, /id="voice-input"|Upload MP3 or WAV/);
   assert.match(client, /\/api\/video-os-lite\/session/);
   assert.match(client, /\/api\/video-os-lite\/identities/);
+  assert.match(client, /\/api\/video-os-lite\/enrollments/);
   assert.match(client, /pollCount >= 45/);
   assert.match(html, /ready-use-link/);
   assert.doesNotMatch(html, /useIdentity/);
   assert.match(client, /readyUseLink\.href[\s\S]*encodeURIComponent\(identity\.id\)/);
 });
 
-test('Digital Twin is explicitly unavailable and has no legacy submit path', async () => {
-  const [studio, root, client] = await Promise.all([read('public/identity.html'), read('public/index.html'), read('public/lite.js')]);
-  assert.match(studio, /Digital Twin/);
-  assert.match(studio, /COMING NEXT/);
-  assert.match(root, /Digital Twin/);
-  assert.match(root, /Coming later/);
-  assert.doesNotMatch(root, /Build digital twin|digital-twin-(?:name|file|url|consent)|create-digital-twin/);
-  assert.doesNotMatch(client, /digital_twin|digital-twin|create-digital-twin/);
+test('phone video is one enrollment input and never a third voice upload', async () => {
+  const [html, client, uploadClient] = await Promise.all([read('public/identity.html'), read('public/identity.js'), read('public/enrollment-client.js')]);
+  assert.match(html, /id="video-input"[^>]+video\/mp4,video\/quicktime,video\/webm/);
+  assert.match(html, /id="video-capture-input"[^>]+capture="user"/);
+  assert.match(html, /id="video-preview"[^>]+controls[^>]+playsinline[^>]+preload="metadata"/);
+  assert.match(client, /maximumSizeInBytes: 100 \* 1024 \* 1024/);
+  assert.match(client, /minimumDurationSeconds: 5/);
+  assert.match(client, /maximumDurationSeconds: 60/);
+  assert.match(client, /maximumDimensionPx: 4096/);
+  assert.doesNotMatch(client, /identity_voice|voiceFile|voice-input/);
+  assert.match(uploadClient, /import\('\/vendor\/vercel-blob-client\.js'\)/);
+  assert.match(uploadClient, /access: 'private'/);
+  assert.match(uploadClient, /multipart: true/);
+  assert.match(uploadClient, /handleUploadUrl: instruction\.handleUploadUrl/);
+  assert.match(uploadClient, /clientPayload: instruction\.clientPayload/);
+  assert.match(uploadClient, /abortSignal/);
 });
 
-test('consent UI contains every versioned authorization represented by the server', async () => {
-  const [html, route] = await Promise.all([read('public/identity.html'), read('routes/video-os-lite/identities.js')]);
-  assert.match(html, /This photo is of me, or I have documented authorization from this person\./);
-  assert.match(html, /This is my voice, or I have documented authorization to clone it\./);
-  assert.match(html, /I authorize Video OS and HeyGen to process these files/);
-  assert.match(html, /I understand I can request that this identity be archived or deleted\./);
-  assert.match(route, /IDENTITY_CONSENT_POLICY_VERSION/);
-  for (const field of ['faceAuthorization', 'voiceAuthorization', 'providerProcessingAuthorization', 'archiveDeleteAcknowledgment']) assert.match(route, new RegExp(`${field}: body\\.${field} === true`));
+test('six explicit permissions include temporary public provider exposure without auto-consent', async () => {
+  const [html, client] = await Promise.all([read('public/identity.html'), read('public/identity.js')]);
+  for (const id of ['consent-face', 'consent-extraction', 'consent-voice', 'consent-process', 'consent-archive', 'consent-provider-exposure']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.doesNotMatch(html, /id="consent-(?:face|extraction|voice|process|archive|provider-exposure)"[^>]+checked/);
+  assert.match(html, /Anyone with either link can access that temporary file while the link works\./);
+  assert.match(html, /stays available for future scripts until you withdraw permission/i);
+  assert.match(html, /does not certify deletion from provider backups/i);
+  assert.match(html, /Leaving any permission unchecked means Video OS will not upload these files to the provider\./);
+  for (const field of ['audioExtractionAuthorization', 'faceAuthorization', 'voiceAuthorization', 'providerProcessingAuthorization', 'archiveDeleteAcknowledgment', 'temporaryPublicProviderExposureAuthorization']) {
+    assert.match(client, new RegExp(`${field}: true`));
+  }
+  assert.match(client, /sourceVideoSha256: enrollment\.sourceVideo\.sha256/);
+  assert.match(client, /policyVersion: ENROLLMENT_POLICY_VERSION/);
+  assert.match(client, /purpose: ENROLLMENT_PURPOSE/);
+  assert.match(client, /All six authorizations are required\./);
+  assert.match(client, /clearConsentChecks\('The stored source video changed/);
+});
+
+test('resume storage excludes Blob instructions and media', async () => {
+  const client = await read('public/enrollment-client.js');
+  const persisted = client.slice(client.indexOf('export function writeEnrollmentResume'), client.indexOf('export function clearEnrollmentResume'));
+  for (const key of ['enrollmentId', 'createIdempotencyKey', 'consentIdempotencyKey', 'retryIdempotencyKey', 'revokeIdempotencyKey']) assert.match(persisted, new RegExp(key));
+  assert.doesNotMatch(persisted, /clientPayload|pathname|handleUploadUrl|File|Blob|videoFile|photoFile/);
+  assert.match(client, /ENROLLMENT_RESUME_KEY}:\$\{encodeURIComponent\(normalized\)}/);
+  assert.match(client, /authenticated account/);
+});
+
+test('resume metadata is scoped to the authenticated account', () => {
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+  const metadata = {
+    enrollmentId: '0d566634-5887-4b5d-b1a0-51f2137da97d',
+    createIdempotencyKey: '11111111-1111-4111-8111-111111111111',
+    consentIdempotencyKey: null,
+    retryIdempotencyKey: null,
+    revokeIdempotencyKey: null,
+  };
+  writeEnrollmentResume(metadata, 'account-a', storage);
+  assert.deepEqual(readEnrollmentResume('account-a', storage), metadata);
+  assert.equal(readEnrollmentResume('account-b', storage), null);
+  assert.notEqual(enrollmentResumeStorageKey('account-a'), enrollmentResumeStorageKey('account-b'));
+});
+
+test('private video upload forwards only the server instruction and abort/progress controls', async () => {
+  const instruction = {
+    pathname: 'video-os/enrollments/test/source.mp4',
+    handleUploadUrl: '/api/video-os-lite/enrollment-upload',
+    clientPayload: 'opaque',
+    access: 'private',
+    multipart: true,
+    maximumSizeInBytes: 10,
+    allowedContentTypes: ['video/mp4'],
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  };
+  const file = { size: 4, type: 'video/mp4' };
+  const controller = new AbortController();
+  const progress = [];
+  let observed;
+  await uploadEnrollmentVideo(instruction, file, {
+    abortSignal: controller.signal,
+    onUploadProgress: event => progress.push(event.percentage),
+    loadSdk: async () => ({ upload: async (pathname, body, options) => {
+      observed = { pathname, body, options };
+      options.onUploadProgress({ percentage: 50 });
+      return { pathname };
+    } }),
+  });
+  assert.equal(observed.pathname, instruction.pathname);
+  assert.equal(observed.body, file);
+  assert.equal(observed.options.access, 'private');
+  assert.equal(observed.options.multipart, true);
+  assert.equal(observed.options.handleUploadUrl, instruction.handleUploadUrl);
+  assert.equal(observed.options.clientPayload, instruction.clientPayload);
+  assert.equal(observed.options.abortSignal, controller.signal);
+  assert.deepEqual(progress, [50]);
 });
 
 test('identity provider submission is doubly gated and private DTOs hide provider IDs', async () => {

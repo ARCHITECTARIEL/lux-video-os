@@ -1,0 +1,31 @@
+{
+  "observedAt": "2026-10-01T17:27:50.377Z",
+  "sourceSha256": "77a5fd7de66f5ecbe8e2b6852bac882ad43da218a7dc285e53a31a05153e5ee4",
+  "outputSha256": "eff1e634df81ff03c270500dfa38bdd1699f2f63a27b5cf3e262dcf531089e03",
+  "nodePassed": 722,
+  "nodeSkipped": 47,
+  "vitestPassed": 4,
+  "isolatedDbBlobTestsPassed": 4,
+  "isolatedCleanup": {
+    "tablesEmpty": 27,
+    "blobObjects": 0
+  },
+  "runtimeAuditVulnerabilities": 0,
+  "reviewBuild": {
+    "routes": 42,
+    "steps": 29,
+    "workflows": 6,
+    "defaultOutputAbsent": true
+  },
+  "canonicalProductionTargetVerified": true,
+  "productionSchema": {
+    "appliedMigrations": 7,
+    "expectedMigrations": 11,
+    "ready": false
+  },
+  "productionWrites": false,
+  "providerMutationRequests": 0,
+  "deployed": false,
+  "releaseAuthorized": false,
+  "documentationLinksChecked": 7
+}

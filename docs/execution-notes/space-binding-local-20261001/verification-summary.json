@@ -1,0 +1,27 @@
+{
+  "status": "verified-local-binding-production-held",
+  "node": {
+    "passed": 676,
+    "skipped": 47,
+    "failed": 0
+  },
+  "vitestPassed": 4,
+  "liveBindingIntegrationPassed": true,
+  "standaloneCliBootstrapAndStatusPassed": true,
+  "cleanup": {
+    "emptyTables": 27,
+    "blobs": 0
+  },
+  "reviewBuild": {
+    "passed": true,
+    "routes": 42,
+    "steps": 29,
+    "workflows": 6,
+    "deployed": false
+  },
+  "sourceSha256": "0ae748b0f212b5da4d082808461106543db45e052c342fda79f736588a81bd5a",
+  "productionBindingCreated": false,
+  "runtimeActivation": false,
+  "localLinksChecked": 48,
+  "missingLinks": []
+}

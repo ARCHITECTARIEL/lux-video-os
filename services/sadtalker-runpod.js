@@ -173,11 +173,12 @@ export async function persistRunpodStandardOutput(job, output, dependencies = {}
   const bytes = Buffer.from(verified.videoBase64, 'base64');
   const pathname = `video-os/finals/${safeName(job.accountId)}/${safeName(job.id)}-${verified.sha256}.mp4`;
   const blob = await writer(PRIVATE_BLOB_CLASSIFICATIONS.FINISHED_CUSTOMER_VIDEO, pathname, bytes, {
-    contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: true,
+    contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: false,
   });
   if (blob?.pathname !== pathname) throw failure('Private output storage returned a mismatched pathname.', 'FINAL_STORE', 502);
   return {
     privatePathname: pathname,
+
     bytes: verified.bytes,
     sha256: verified.sha256,
     width: Number(verified.width) || null,
