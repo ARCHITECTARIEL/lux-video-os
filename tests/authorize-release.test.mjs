@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkCurrentCandidateCi, computeAuthorizationResult } from '../tools/authorize-release.mjs';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { checkCurrentCandidateCi, computeAuthorizationResult, outputInventory, fingerprint } from '../tools/authorize-release.mjs';
 
 const baseManifest = {
   source: { head: 'abc123', sha256: 'srchash', projectLinkSha256: 'linkhash' },
@@ -111,6 +114,28 @@ test('computeAuthorizationResult fails closed when current-candidate CI has not 
   assert.equal(result.automatableChecks.currentCandidateCiPassed, false);
   assert.equal(result.routineDeployAuthorized, false);
   assert.deepEqual(result.ciDetail, { verify: 'pending', analyze: null });
+});
+
+test('outputInventory records path/bytes/sha256 in that exact key order, matching release-build-manifest.mjs -- regression for a silent fingerprint mismatch', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'authorize-release-inventory-'));
+  try {
+    await writeFile(join(dir, 'a.txt'), 'hello');
+    const sub = join(dir, 'nested');
+    await import('node:fs/promises').then(fs => fs.mkdir(sub));
+    await writeFile(join(sub, 'b.txt'), 'world');
+    const records = await outputInventory(dir);
+    assert.equal(records.length, 2);
+    for (const record of records) {
+      assert.deepEqual(Object.keys(record), ['path', 'bytes', 'sha256'], 'record key order must match release-build-manifest.mjs exactly, or fingerprint() silently diverges even when every value is identical');
+    }
+    assert.equal(records[0].path, 'a.txt');
+    assert.equal(records[0].bytes, 5);
+    assert.equal(records[1].path, 'nested/b.txt');
+    // fingerprint() must be a pure function of the exact record shape.
+    assert.equal(fingerprint(records), fingerprint(await outputInventory(dir)));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('computeAuthorizationResult never reports releaseAuthorized true under any input', () => {

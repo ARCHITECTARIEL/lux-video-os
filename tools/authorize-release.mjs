@@ -23,12 +23,16 @@ export async function hashFile(path) {
   return hash.digest('hex');
 }
 
+// Record shape (key order included) must match release-build-manifest.mjs's
+// own outputInventory() exactly, or fingerprint() will differ even when
+// every path/byte-count/hash is identical -- JSON.stringify is key-order
+// sensitive per object.
 export async function outputInventory(directory, rootDir = directory) {
   const records = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) records.push(...await outputInventory(path, rootDir));
-    else if (entry.isFile()) records.push({ path: relative(rootDir, path).replaceAll('\\', '/'), sha256: await hashFile(path) });
+    else if (entry.isFile()) records.push({ path: relative(rootDir, path).replaceAll('\\', '/'), bytes: (await stat(path)).size, sha256: await hashFile(path) });
     else throw new Error('Unexpected non-file artifact in quarantined output.');
   }
   return records.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
