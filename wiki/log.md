@@ -1,5 +1,13 @@
 # Work Log
 
+## 2026-10-01 - [production-heygen-binding-bootstrap]
+
+- Refactored `db/heygen-space-binding-repository.js` and `tools/bind-heygen-space.mjs` to support a deliberate production path, which previously didn't exist by design ("There is deliberately no production override or general approval flag"). Generalized ~12 call sites that hardcoded the literal string 'verification' (pinned target path/hash, preflight, binding-identity validation), and added a new, separate `--owner-authorized` CLI flag required specifically for production -- requesting the environment alone is insufficient.
+- The existing hard block against this CLI ever running inside the real deployed Vercel production runtime is untouched and unconditional, regardless of target environment -- a different, still-valid concern.
+- New/updated tests cover both the negative (missing/wrong confirmation, live-runtime block) and positive (real unmocked preflight against actual production target content, full mocked bootstrap, CLI-level wiring) paths. Full suite 740/740 passing before and after. CI green on commit `e90f5c7` before touching real production.
+- Bootstrapped the real production HeyGen provider-space binding for the owner's account (`user-af738329999cec793560f0a4`), using the rotated key. Independently verified read-only afterward: scope/binding/promotion rows all present and correct; `status` resolver confirms the same binding resolves correctly.
+- Not changed: `providerCreationActivationStatus()` stays hardcoded disabled. That activation decision remains separate, later, and owner-gated.
+
 ## 2026-10-01 - [production-code-deploy]
 
 - Built `tools/authorize-release.mjs`: re-verifies, immediately before any production deploy, the gates code can legitimately re-verify (source identity/cleanliness, quarantined-output integrity, fresh production DB check, Workflow boundary, current-candidate CI). Requires an explicit `--owner-authorized` flag; never sets `releaseAuthorized` true -- the real P0/HeyGen-account/byte-attestation gates stay listed as outstanding, since no script can satisfy those.

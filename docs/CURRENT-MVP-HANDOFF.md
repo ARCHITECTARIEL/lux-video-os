@@ -4,11 +4,15 @@
 
 **Last audited: 2026-10-01. Start here after root HANDOFF.md.** This file supersedes older status, priority, branch and deployment claims in HANDOFF.md, DEVELOPER_HANDOFF.md, README.md and the September 29 ZIP. Historical architecture notes remain references, not release evidence.
 
-## Latest October 1 (evening) — production code deployed; HeyGen binding wiring next
+## Latest October 1 (late evening) — production HeyGen provider-space binding bootstrapped
 
-Commit `c424b82` (today's consolidated work, including production migrations 0007-0010) is now live in production, deployed via a new owner-approved release process (`npm run build:production` -> `tools/authorize-release.mjs --owner-authorized` -> `vercel deploy --prebuilt --prod --archive=tgz`). Smoke-tested healthy. See [the deploy note](execution-notes/20261001-production-deploy.md). This is a routine code deploy, not a launch: `providerCreationActivationStatus()` remains hardcoded disabled, so no HeyGen provider creation/render is possible yet. `config/release-baseline.json` now points at this deployment as the rollback target.
+A real, verified HeyGen provider-space binding now exists in production for the owner's account (`user-af738329999cec793560f0a4`), using the newly rotated `HEYGEN_API_KEY`. This required a genuine refactor of `db/heygen-space-binding-repository.js` and `tools/bind-heygen-space.mjs`, which previously hard-rejected any environment other than `verification` with no override, by design. The new production path requires its own separate, explicit `--owner-authorized` confirmation distinct from merely requesting the environment. See [the binding note](execution-notes/20261001-production-heygen-binding.md).
 
-**Exact next action:** bootstrap the real production HeyGen provider-space binding using the rotated `HEYGEN_API_KEY` (now live), then separately, explicitly decide on the `providerCreationActivationStatus()` activation switch -- that decision stays owner-gated and distinct from today's deploy.
+**Still true:** `providerCreationActivationStatus()` remains hardcoded `{ enabled: false }` -- no HeyGen provider creation or render submission is possible from production yet, regardless of this binding. That activation switch is the one remaining piece of the original Phase 2 goal, and is intentionally left for a separate, later, explicitly owner-gated decision -- ideally timed alongside the real P0 production-proof run and a billing/reconciliation plan, not flipped in isolation.
+
+## Earlier October 1 (evening) — production code deployed
+
+Commit `c424b82` (today's consolidated work, including production migrations 0007-0010) is now live in production, deployed via a new owner-approved release process (`npm run build:production` -> `tools/authorize-release.mjs --owner-authorized` -> `vercel deploy --prebuilt --prod --archive=tgz`). Smoke-tested healthy. See [the deploy note](execution-notes/20261001-production-deploy.md). This is a routine code deploy, not a launch. `config/release-baseline.json` now points at this deployment as the rollback target.
 
 ## Earlier October 1 (afternoon) — production migrations 0007-0010 applied; HeyGen binding wiring next
 
