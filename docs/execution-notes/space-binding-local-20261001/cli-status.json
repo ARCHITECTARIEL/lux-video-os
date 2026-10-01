@@ -1,0 +1,15 @@
+{
+  "command": "status",
+  "version": "heygen-space-binding/v1",
+  "provider": "heygen",
+  "scopeType": "space",
+  "environment": "verification",
+  "verified": true,
+  "runtimeActivation": false,
+  "providerSpaceFingerprint": "1c1b9eac97b6e38e481d30ddf12e4332ecb04d08f727a4ff55997a733b3f584a",
+  "credentialScopeFingerprint": "b2e833e2f6eb5a5ebf2874e28f0a10f2657f5cbc53f04cbad2fffef0c7fbf2d8",
+  "databaseBindingSha256": "57dd45cc520af64527644eac449c23837b34fa656a82d9779d2e656b679f3a9b",
+  "identityDigest": "87f750424f61b502b0a7afd9340d131e5937f702ba979590f4600fbb5b504891",
+  "freshUntil": "2026-10-01T16:02:54.608Z",
+  "globalAccountIdVerified": false
+}

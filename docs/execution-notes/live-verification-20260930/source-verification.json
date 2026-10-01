@@ -1,0 +1,39 @@
+{
+  "head": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+  "files": [
+    {
+      "path": "package.json",
+      "sha256": "6fd466a9136d368bb3465ab1e5b6c9389d5b1d687d1300b453d13af6af02b0ed"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "1e222c9ef89a8610610d09eccbe54b468cdb4225c8e930dac092a0f00910f092"
+    },
+    {
+      "path": "tools/verify-isolated-live.mjs",
+      "sha256": "06be530dac7ed50e128d3834e4f28d2651627f0423d56e82f6f069edc3f27a3f"
+    },
+    {
+      "path": "tests/live-final-acceptance.test.mjs",
+      "sha256": "7f6e583ba2c4f736d9bfb42ef960ae50b74792a82339a17c1a49525f1392dd41"
+    },
+    {
+      "path": "tests/render-worker.test.mjs",
+      "sha256": "2474128146185c54cf4bb05ace3fca429e436ae65ee2c275d842f2ac572d9953"
+    }
+  ],
+  "priorProductFilesPreserved": 15,
+  "localTests": {
+    "nodePass": 336,
+    "nodeFail": 0,
+    "nodeSkip": 41,
+    "vitestPass": 4
+  },
+  "liveTests": {
+    "pass": 102,
+    "fail": 0,
+    "skip": 0
+  },
+  "testCredentialsStoredOutsideRepository": true,
+  "newArtifactExactCredentialScanPassed": true
+}

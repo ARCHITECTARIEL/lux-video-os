@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "environment": "production",
+  "projectId": null,
+  "branchId": null,
+  "hosts": [],
+  "database": null,
+  "roles": [],
+  "port": 5432,
+  "schemaLock": "database-schema.lock.json",
+  "note": "Non-executable template. Populate only from independently verified production provider identity; never derive the expected identity from DATABASE_URL. Do not copy the verification target or weaken the schema lock. No credentials belong here."
+}

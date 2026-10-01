@@ -1,0 +1,61 @@
+{
+  "at": "2026-09-30T15:01:04.312Z",
+  "mode": "tests",
+  "database": {
+    "host": "ep-lingering-fire-aitvfm3y-pooler.c-4.us-east-1.aws.neon.tech",
+    "name": "mvp_verification_20260930",
+    "branch": "br-wandering-violet-ai1egt3g"
+  },
+  "blobStore": "store_8uyr0JDWkUyha8sy",
+  "identity": {
+    "database": "mvp_verification_20260930",
+    "role": "neondb_owner"
+  },
+  "before": {
+    "rows": {
+      "stripe_events": 0,
+      "video_jobs": 0,
+      "users": 0,
+      "credit_accounts": 0,
+      "credit_transactions": 0,
+      "entitlements": 0,
+      "auth_challenges": 0,
+      "auth_sessions": 0,
+      "projects": 0,
+      "identity_consents": 0,
+      "user_identities": 0,
+      "media_assets": 0,
+      "standard_narration_consents": 0,
+      "job_events": 0,
+      "rate_limits": 0,
+      "standard_narration_quotes": 0
+    },
+    "blobs": 0
+  },
+  "testFiles": [
+    "tests/live-migration-gate.test.mjs"
+  ],
+  "testExit": 0,
+  "after": {
+    "rows": {
+      "stripe_events": 0,
+      "video_jobs": 0,
+      "users": 0,
+      "credit_accounts": 0,
+      "credit_transactions": 0,
+      "entitlements": 0,
+      "auth_challenges": 0,
+      "auth_sessions": 0,
+      "projects": 0,
+      "identity_consents": 0,
+      "user_identities": 0,
+      "media_assets": 0,
+      "standard_narration_consents": 0,
+      "job_events": 0,
+      "rate_limits": 0,
+      "standard_narration_quotes": 0
+    },
+    "blobs": 0
+  },
+  "ok": true
+}

@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-29T20:22:29.5253973Z",
+  "archive": {
+    "path": "C:\\Users\\ariel\\OneDrive\\Documents\\Desktop\\lux-video-os-HANDOFF-2026-09-29.zip",
+    "bytes": 60364,
+    "sha256": "430E5886B1363DEA553E49E8F0E11F5B0FA54ED4003A112E0B13D87BAC2F22DE",
+    "entry_count": 15,
+    "uncompressed_bytes": 143077,
+    "compressed_entry_bytes": 58176
+  },
+  "safety": {
+    "unsafe_path_count": 0,
+    "case_insensitive_duplicate_count": 0,
+    "symlink_entry_count": 0,
+    "env_named_entry_count": 0,
+    "executable_extension_entry_count": 0,
+    "high_signal_secret_pattern_hit_count": 0,
+    "maximum_compression_ratio": 3.76,
+    "note": "High-signal scanning is not a general secret guarantee. No archive content was executed or extracted over the checkout."
+  },
+  "comparison_baseline": {
+    "phase": "initial pre-audit capture before concurrent documentation supersession edits",
+    "head": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+    "origin_main": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+    "branch": "main",
+    "ahead": 0,
+    "behind": 0,
+    "initial_modified_tracked_paths": 18,
+    "initial_untracked_paths_excluding_concurrent_audit_outputs": 8,
+    "tracked_insertions": 113,
+    "tracked_deletions": 123,
+    "note": "Initial worktree hashes and counts were captured before this audit wrote files and before the coordinating audit added supersession banners to repository documentation. Concurrent team edits and audit artifacts are excluded."
+  },
+  "comparison_meaning": {
+    "byte-identical": "Archive entry SHA-256 equals the canonical Git HEAD blob SHA-256.",
+    "eol-normalized": "UTF-8 text is identical after CRLF/LF normalization; raw hashes differ only because the ZIP copied the Windows worktree representation.",
+    "packet-only": "No intended repository counterpart."
+  },
+  "entries": [
+    {
+      "path": "00-START-HERE.md",
+      "length": 29961,
+      "compressed_length": 12470,
+      "sha256": "A98738DF86F56A2F941CEE4D3A8D7C7EC7FBC6235B10E50FBC7CB8554CADD62F",
+      "repo_path": null,
+      "worktree_sha256": null,
+      "head_blob_oid": null,
+      "head_blob_sha256": null,
+      "head_comparison": "packet-only",
+      "worktree_byte_equal": null
+    },
+    {
+      "path": "CREDENTIALS-AND-ACCESS-CHECKLIST.md",
+      "length": 2055,
+      "compressed_length": 1139,
+      "sha256": "840A426AE97E42CE46EED215CFAF077713D116FB8540EA4CA7523D76C8F00F68",
+      "repo_path": null,
+      "worktree_sha256": null,
+      "head_blob_oid": null,
+      "head_blob_sha256": null,
+      "head_comparison": "packet-only",
+      "worktree_byte_equal": null
+    },
+    {
+      "path": "reference-docs/AGENTS.md",
+      "length": 4257,
+      "compressed_length": 2193,
+      "sha256": "9829449F5F0994C1ED4243D08659131EF7B4770238590366E05883FBC72BB714",
+      "repo_path": "AGENTS.md",
+      "worktree_sha256": "9829449F5F0994C1ED4243D08659131EF7B4770238590366E05883FBC72BB714",
+      "head_blob_oid": "51645241923768bbee4b79b7d816732246754b57",
+      "head_blob_sha256": "CE244F16AE61182637C9396D6C9120C6C09703E1300C099C2865B2787228D50A",
+      "head_comparison": "eol-normalized",
+      "worktree_byte_equal": true
+    },
+    {
+      "path": "reference-docs/CHANGELOG-STALE-JULY-2026.md",
+      "length": 2198,
+      "compressed_length": 1105,
+      "sha256": "826F87569A6BDA35B04B50EC0737CF3B51DC842B2F6A3E81F47207B906BDDED8",
+      "repo_path": "CHANGELOG.md",
+      "worktree_sha256": "826F87569A6BDA35B04B50EC0737CF3B51DC842B2F6A3E81F47207B906BDDED8",
+      "head_blob_oid": "a814c949bd1978bc1e4c78e2de9438e0a2336849",
+      "head_blob_sha256": "A08FC544C503599E0869092DDBCE0D63CFB4947CBB7547DE28C65D6F80132378",
+      "head_comparison": "eol-normalized",
+      "worktree_byte_equal": true
+    },
+    {
+      "path": "reference-docs/DEVELOPER_HANDOFF.md",
+      "length": 23268,
+      "compressed_length": 9235,
+      "sha256": "92A795734DA8AA8C4B2A46905543D424672B80C41D15FFAC3B5FF1B53BB83605",
+      "repo_path": "docs/DEVELOPER_HANDOFF.md",
+      "worktree_sha256": "92A795734DA8AA8C4B2A46905543D424672B80C41D15FFAC3B5FF1B53BB83605",
+      "head_blob_oid": "91a93ee510e962b9bf1fda52b20be31f7bc1b4d9",
+      "head_blob_sha256": "92A795734DA8AA8C4B2A46905543D424672B80C41D15FFAC3B5FF1B53BB83605",
+      "head_comparison": "byte-identical",
+      "worktree_byte_equal": true
+    },
+    {
+      "path": "reference-docs/ENVIRONMENT.md",
+      "length": 6491,
+      "compressed_length": 2908,
+      "sha256": "B68373E82661D9D38CD5B258EBC0219D8FA0E816C1B73E018028900D1735B97E",
+      "repo_path": "ENVIRONMENT.md",
+      "worktree_sha256": "B68373E82661D9D38CD5B258EBC0219D8FA0E816C1B73E018028900D1735B97E",
+      "head_blob_oid": "3833081ff2b01e2d115bb20646656b6d2bc107a9",
+      "head_blob_sha256": "86FAA1AF42915BA60E0AE1C1DE10E757A4A79F6A33A324CD5E24C64014BCC796",
+      "head_comparison": "eol-normalized",
+      "worktree_byte_equal": true
+    },
+    {
+      "path": "reference-docs/HANDOFF-2026-09-23.md",
+      "length": 43267,
+      "compressed_length": 16687,
+      "sha256": "DCCB9EF2FA7F56DDFA3A53D90BF378CFA886FE0F8448BDA9CE8B097608175DF2",
+      "repo_path": "HANDOFF.md",
+      "worktree_sha256": "DCCB9EF2FA7F56DDFA3A53D90BF378CFA886FE0F8448BDA9CE8B097608175DF2",
+      "head_blob_oid": "39f8d20578c08cefd491b0fa066f7fa2b267e87f",
+      "head_blob_sha256": "903387002F9F326621B54167C899F9E9E0FBA400AEF513D6F4B9C362CEEF299C",
+      "head_comparison": "eol-normalized",
+      "worktree_byte_equal": true
+    },
+    {
+      "path": "reference-docs/merged-pr-history.json",
+      "length": 11836,
+      "compressed_length": 3148,
+      "sha256": "C718D3F6640B78BF5B76DB12AE06B2729ABA6CEF3553C95F631FF83F1FDA7938",
+      "repo_path": null,
+      "worktree_sha256": null,
+      "head_blob_oid": null,
+      "head_blob_sha256": null,
+      "head_comparison": "packet-only",
+      "worktree_byte_equal": null
+    },
+    {
+      "path": "reference-docs/P0-RELEASE-GATE.md",
+      "length": 3495,
+      "compressed_length": 1691,
+      "sha256": "81334EC93166A2FBA6684352B8455635A68810E5074C8B3656748A2275D13E9F",
+      "repo_path": "docs/P0-RELEASE-GATE.md",
+      "worktree_sha256": "81334EC93166A2FBA6684352B8455635A68810E5074C8B3656748A2275D13E9F",
+      "head_blob_oid": "b8a9d99b384a86bdc7146488a59dc8835b434738",
+      "head_blob_sha256": "17732CDAE4239DD482738CCEE9CBAA7E0C3F1ECBE22FD0F72E7CDBB31B2A7A09",
+      "head_comparison": "eol-normalized",
+      "worktree_byte_equal": true
+    },
+    {
+      "path": "reference-docs/package.json",
+      "length": 2002,
+      "compressed_length": 686,
+      "sha256": "D746A4EB87A42C22440800299D79A7C4E38A8F450E3FC5BE23AAFFD0A5E18833",
+      "repo_path": "package.json",
+      "worktree_sha256": "D746A4EB87A42C22440800299D79A7C4E38A8F450E3FC5BE23AAFFD0A5E18833",
+      "head_blob_oid": "e98d627f83b6ccef0c38169cc4804d910cf47431",
+      "head_blob_sha256": "1B00A3B41CA82315179AECD3748217DF26BF0CA46151ED9D21185EE95346CDE8",
+      "head_comparison": "eol-normalized",
+      "worktree_byte_equal": true
+    },
+    {
+      "path": "reference-docs/README-STALE-JULY-2026.md",
+      "length": 3028,
+      "compressed_length": 1482,
+      "sha256": "4A7F3DAA8E485DDB9B3D73B62044C4443B6730D75BA983EC4A1103C62D38F00E",
+      "repo_path": "README.md",
+      "worktree_sha256": "4A7F3DAA8E485DDB9B3D73B62044C4443B6730D75BA983EC4A1103C62D38F00E",
+      "head_blob_oid": "2ef104c492226aba14edfff1be6b6505f06aaa2b",
+      "head_blob_sha256": "B05C48373B9866FAFC907DAC3036E6EC91A1569198147DAE743294628383DF25",
+      "head_comparison": "eol-normalized",
+      "worktree_byte_equal": true
+    },
+    {
+      "path": "reference-docs/ROADMAP-STALE-JULY-2026.md",
+      "length": 1466,
+      "compressed_length": 805,
+      "sha256": "44A37C709DDC6DA4175D264F2051C8C166A88F7420906BCE78A2AD0500530BF3",
+      "repo_path": "ROADMAP.md",
+      "worktree_sha256": "44A37C709DDC6DA4175D264F2051C8C166A88F7420906BCE78A2AD0500530BF3",
+      "head_blob_oid": "b0e1b37a619c78c907923cb43a3f34f188c11d72",
+      "head_blob_sha256": "26208395189C8ED720E7BE534FE33E855F37D1CFBDAD676F8A0EF20D58D6E840",
+      "head_comparison": "eol-normalized",
+      "worktree_byte_equal": true
+    },
+    {
+      "path": "reference-docs/runpod-deployment-guide.md",
+      "length": 3810,
+      "compressed_length": 1756,
+      "sha256": "E2209D34E028AC19E63C3BB90FCE44289E152B4CD2C1756EDF6AD491F0131256",
+      "repo_path": "docs/runpod-deployment-guide.md",
+      "worktree_sha256": "E2209D34E028AC19E63C3BB90FCE44289E152B4CD2C1756EDF6AD491F0131256",
+      "head_blob_oid": "448746bf9b887947562277519343686688f11df2",
+      "head_blob_sha256": "34F011BF17E57F1788CB0DBF4BF281929D0037FC8E2F16E20CE7AB536DFD6B9C",
+      "head_comparison": "eol-normalized",
+      "worktree_byte_equal": true
+    },
+    {
+      "path": "reference-docs/runpod-standard-worker.md",
+      "length": 2941,
+      "compressed_length": 1430,
+      "sha256": "C87C374484FC9624272CABCE45012286A8F2625C9428C9696100EAF8EC71BD85",
+      "repo_path": "docs/runpod-standard-worker.md",
+      "worktree_sha256": "C87C374484FC9624272CABCE45012286A8F2625C9428C9696100EAF8EC71BD85",
+      "head_blob_oid": "cd67af38cf73d2757fc37f44bcfdedbe14ea3c85",
+      "head_blob_sha256": "DCD44CCBBF25A9E3EAAC706C5183AF1C347FB6EE551098DD9D3AFB19B2A6A335",
+      "head_comparison": "eol-normalized",
+      "worktree_byte_equal": true
+    },
+    {
+      "path": "reference-docs/stripe-setup-guide.md",
+      "length": 3002,
+      "compressed_length": 1441,
+      "sha256": "218AEADBD38FF2033106A856A79FD22067B457559C311064C14FE5166202B9C8",
+      "repo_path": "docs/stripe-setup-guide.md",
+      "worktree_sha256": "218AEADBD38FF2033106A856A79FD22067B457559C311064C14FE5166202B9C8",
+      "head_blob_oid": "4113fd72f0c2aba39a50da79a8f54bf6ac5c74ff",
+      "head_blob_sha256": "765AD0FF0D679B64CBC951899CC220D85B292B6A8BB34E677FDEFA08094088D6",
+      "head_comparison": "eol-normalized",
+      "worktree_byte_equal": true
+    }
+  ]
+}

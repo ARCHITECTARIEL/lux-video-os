@@ -23,7 +23,7 @@ import { eq } from 'drizzle-orm';
 import { assertDatabaseConfigured, database } from '../db/client.js';
 import { entitlements, users } from '../db/schema.js';
 import authHandler from '../api/video-os-lite/auth.js';
-import { getAccountContext } from '../db/repositories.js';
+import { ensureAccount, getAccountContext, listAdminTesters } from '../db/repositories.js';
 import { isTesterAccountId } from '../lib/video-os-security.js';
 import { accountIdForEmail, saveMagicToken } from '../lib/video-os-account.js';
 
@@ -214,10 +214,10 @@ test(
     // match. This deliberately bypasses the (now-fixed) real grant path --
     // the point is to prove a sign-in AFTER the fix corrects a row that was
     // already wrong BEFORE the fix, not to re-derive it fresh from scratch.
-    await database().insert(users).values({ id: accountId, email, name: 'Video OS Account' }).onConflictDoNothing();
+    await ensureAccount({ accountId, email, name: 'Video OS Account' });
     await database().insert(entitlements).values({ accountId, entitlementKey: 'liveRendering', enabled: true, sourceType: 'validated_auth', sourceId: 'pre-fix-stale-grant-simulation' });
     const beforeSignIn = await getAccountContext(accountId);
-    assert.equal(beforeSignIn.entitlements.liveRendering, true, 'setup sanity check: the stale over-grant is really there before sign-in');
+    assert.equal(beforeSignIn.entitlements.liveRendering, undefined, 'stale auth-derived Premium overgrants are denied even before another sign-in');
 
     await verifyMagicLink(email);
     const afterSignIn = await getAccountContext(accountId);
@@ -256,6 +256,8 @@ test(
     await verifyMagicLink(email);
     assert.equal(isTesterAccountId(accountId), false, 'a pure domain match must NEVER register into the global tester bypass set, even though role is set to \'tester\' for credit-amount purposes -- that is a deliberately separate signal');
     const afterFirstSignIn = await getAccountContext(accountId);
+    assert.equal(afterFirstSignIn.user.role, 'customer');
+    await listAdminTesters();
     assert.equal(afterFirstSignIn.entitlements.liveRendering, undefined, 'the first sign-in itself must not grant liveRendering for a pure domain match');
     assert.equal(afterFirstSignIn.entitlements.standardRendering, true, 'the first sign-in must still grant standardRendering');
 

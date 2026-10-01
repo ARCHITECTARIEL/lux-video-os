@@ -1,0 +1,80 @@
+{
+  "scope": "identity-provider-bridge-v2 consent UI",
+  "capturedAt": "2026-09-30T21:05:01.316034+00:00",
+  "fixture": "Authenticated mocked account with owned synthetic photo/video; no provider, production, billing, or deployment calls",
+  "command": "BRIDGE_CONSENT_VISUALS=1 npm run test:e2e -- --workers=2 --output=test-results-bridge-foundation-final",
+  "result": "118 passed / 1 production-proof skip; includes 4 bridge visual fixture cases",
+  "checks": {
+    "allSixPermissionsInitiallyUnchecked": true,
+    "providerMutations": 0,
+    "pageErrors": 0,
+    "horizontalOverflow": false,
+    "rawProviderEvidenceRendered": false,
+    "viewports": [
+      "1440x1000",
+      "390x844"
+    ]
+  },
+  "screenshots": [
+    {
+      "state": "fresh-consent-authorization",
+      "viewport": "1440x1000",
+      "path": ".design/bridge-consent-screenshots/fresh-consent-desktop-authorization.png",
+      "sha256": "7B2E6DB7D0FB69FCDCE0B0C37C6558CAD21854E560DF6ECC1A7B02A5DDB1D107"
+    },
+    {
+      "state": "fresh-consent-disclosure",
+      "viewport": "1440x1000",
+      "path": ".design/bridge-consent-screenshots/fresh-consent-desktop-disclosure.png",
+      "sha256": "9A1D709AE94F0456CD7BC75F3882F8D32DBB01FD3804F12B859B2CB8D2B2AC13"
+    },
+    {
+      "state": "fresh-consent-authorization",
+      "viewport": "390x844",
+      "path": ".design/bridge-consent-screenshots/fresh-consent-mobile-authorization.png",
+      "sha256": "DF1ACE5D3A581B56A1870F2E1F5C8AE4CB8C5BA8C9D61573901064BE4849506D"
+    },
+    {
+      "state": "fresh-consent-disclosure",
+      "viewport": "390x844",
+      "path": ".design/bridge-consent-screenshots/fresh-consent-mobile-disclosure.png",
+      "sha256": "E7B1B12449776B6C2BDB888782626657FC66ADB3FC156EF47DE691CDC937D188"
+    },
+    {
+      "state": "legacy-reconsent-authorization",
+      "viewport": "1440x1000",
+      "path": ".design/bridge-consent-screenshots/legacy-reconsent-desktop-authorization.png",
+      "sha256": "CED181F3B460725434FB230CF1D4A4DA416BCCCF5EECCEDF4DA029497F33104E"
+    },
+    {
+      "state": "legacy-reconsent-disclosure",
+      "viewport": "1440x1000",
+      "path": ".design/bridge-consent-screenshots/legacy-reconsent-desktop-disclosure.png",
+      "sha256": "7D0EF2B91C6D90CBC84C7DCA3AB783FFAAFACB604E26977DDDD9CB72431E51E9"
+    },
+    {
+      "state": "legacy-reconsent-owned-sources",
+      "viewport": "1440x1000",
+      "path": ".design/bridge-consent-screenshots/legacy-reconsent-desktop-owned-sources.png",
+      "sha256": "2CC57C45F28FCB1C58681747A6AE19AE2BF4BF1509B3A616BE90D97EFD1D5108"
+    },
+    {
+      "state": "legacy-reconsent-authorization",
+      "viewport": "390x844",
+      "path": ".design/bridge-consent-screenshots/legacy-reconsent-mobile-authorization.png",
+      "sha256": "BFDD009292D7BD093ADF57EE6629F62280D0A52223C204FB3F8BE68743F9413B"
+    },
+    {
+      "state": "legacy-reconsent-disclosure",
+      "viewport": "390x844",
+      "path": ".design/bridge-consent-screenshots/legacy-reconsent-mobile-disclosure.png",
+      "sha256": "5758D5CDDB47DCD216638B2A32AD7E95A3A140DB62EFF4AA66EAF6B5F99919EC"
+    },
+    {
+      "state": "legacy-reconsent-owned-sources",
+      "viewport": "390x844",
+      "path": ".design/bridge-consent-screenshots/legacy-reconsent-mobile-owned-sources.png",
+      "sha256": "A5EBB59313934DB2CEFE20FEFE582DBCFE3C687B6BA23D629497A22240305C87"
+    }
+  ]
+}

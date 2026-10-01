@@ -20,7 +20,7 @@ import test from 'node:test';
 import { eq } from 'drizzle-orm';
 import { assertDatabaseConfigured, database } from '../db/client.js';
 import { ensureAccount, getJob, reserveRender, transitionJob } from '../db/repositories.js';
-import { creditAccounts } from '../db/schema.js';
+import { entitlements, creditAccounts } from '../db/schema.js';
 import { classifyFailure, FAILURE_CATEGORIES } from '../lib/video-os-operations.js';
 import { driveJobSafely } from '../lib/video-os-render-driver.js';
 import { failWorkflow as failPremiumWorkflow } from '../workflows/video-render.js';
@@ -77,6 +77,7 @@ async function reserveJobAtProviderSubmitUnknown({ provider }) {
   const jobId = crypto.randomUUID();
   const costCredits = 25;
   await ensureAccount({ accountId, initialCredits: 100 });
+  await database().insert(entitlements).values(['standardRendering', 'liveRendering'].map(entitlementKey => ({ accountId, entitlementKey, enabled: true, sourceType: 'test_fixture' })));
   await reserveRender({
     jobId,
     accountId,
@@ -134,6 +135,7 @@ test(
     const jobId = crypto.randomUUID();
     const costCredits = 25;
     await ensureAccount({ accountId, initialCredits: 100 });
+    await database().insert(entitlements).values(['standardRendering', 'liveRendering'].map(entitlementKey => ({ accountId, entitlementKey, enabled: true, sourceType: 'test_fixture' })));
     await reserveRender({ jobId, accountId, idempotencyKey: crypto.randomUUID(), correlationId: crypto.randomUUID(), provider: 'heygen', title: 'INTERNAL control fixture', format: 'landscape', costCredits, input: {} });
     await transitionJob({ jobId, stageTo: 'workflow_started', eventType: 'workflow.prepared' });
     await transitionJob({ jobId, stageTo: 'provider_submitting', eventType: 'provider.submit_started' });
@@ -171,6 +173,7 @@ test(
     const jobId = crypto.randomUUID();
     const costCredits = 25;
     await ensureAccount({ accountId, initialCredits: 100 });
+    await database().insert(entitlements).values(['standardRendering', 'liveRendering'].map(entitlementKey => ({ accountId, entitlementKey, enabled: true, sourceType: 'test_fixture' })));
     await reserveRender({ jobId, accountId, idempotencyKey: crypto.randomUUID(), correlationId: crypto.randomUUID(), provider: 'sadtalker', title: 'crash-mid-flight fixture', format: 'landscape', costCredits, input: {} });
     await transitionJob({ jobId, stageTo: 'workflow_started', eventType: 'workflow.prepared' });
     await transitionJob({ jobId, stageTo: 'provider_submitting', eventType: 'provider.submit_started' });

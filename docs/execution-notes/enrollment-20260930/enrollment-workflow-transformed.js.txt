@@ -1,0 +1,50 @@
+import { FatalError, sleep } from 'workflow';
+/**__internal_workflows{"workflows":{"workflows/identity-enrollment.js":{"identityEnrollmentCleanupWorkflow":{"workflowId":"workflow//./workflows/identity-enrollment//identityEnrollmentCleanupWorkflow"},"identityEnrollmentExpiryWorkflow":{"workflowId":"workflow//./workflows/identity-enrollment//identityEnrollmentExpiryWorkflow"},"identityEnrollmentExtractionWorkflow":{"workflowId":"workflow//./workflows/identity-enrollment//identityEnrollmentExtractionWorkflow"},"identityEnrollmentHashWorkflow":{"workflowId":"workflow//./workflows/identity-enrollment//identityEnrollmentHashWorkflow"}}},"steps":{"workflows/identity-enrollment.js":{"cleanupEnrollmentStorage":{"stepId":"step//./workflows/identity-enrollment//cleanupEnrollmentStorage"},"expireEnrollmentStep":{"stepId":"step//./workflows/identity-enrollment//expireEnrollmentStep"},"extractEnrollmentIdentity":{"stepId":"step//./workflows/identity-enrollment//extractEnrollmentIdentity"},"hashEnrollmentSource":{"stepId":"step//./workflows/identity-enrollment//hashEnrollmentSource"}}}}*/;
+export var hashEnrollmentSource = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/identity-enrollment//hashEnrollmentSource");
+export var extractEnrollmentIdentity = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/identity-enrollment//extractEnrollmentIdentity");
+export async function identityEnrollmentHashWorkflow(enrollmentId, operationKey) {
+    return hashEnrollmentSource(enrollmentId, operationKey);
+}
+identityEnrollmentHashWorkflow.workflowId = "workflow//./workflows/identity-enrollment//identityEnrollmentHashWorkflow";
+globalThis.__private_workflows.set("workflow//./workflows/identity-enrollment//identityEnrollmentHashWorkflow", identityEnrollmentHashWorkflow);
+export async function identityEnrollmentExtractionWorkflow(enrollmentId, operationKey) {
+    return extractEnrollmentIdentity(enrollmentId, operationKey);
+}
+identityEnrollmentExtractionWorkflow.workflowId = "workflow//./workflows/identity-enrollment//identityEnrollmentExtractionWorkflow";
+globalThis.__private_workflows.set("workflow//./workflows/identity-enrollment//identityEnrollmentExtractionWorkflow", identityEnrollmentExtractionWorkflow);
+export var cleanupEnrollmentStorage = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/identity-enrollment//cleanupEnrollmentStorage");
+export async function identityEnrollmentCleanupWorkflow(enrollmentId) {
+    for(let attempt = 0; attempt < 3; attempt += 1){
+        try {
+            return await cleanupEnrollmentStorage(enrollmentId);
+        } catch (error) {
+            if (attempt === 2) throw new FatalError('ENROLLMENT_CLEANUP_FAILED_V1');
+            await sleep('30s');
+        }
+    }
+    return {
+        cleaned: false
+    };
+}
+identityEnrollmentCleanupWorkflow.workflowId = "workflow//./workflows/identity-enrollment//identityEnrollmentCleanupWorkflow";
+globalThis.__private_workflows.set("workflow//./workflows/identity-enrollment//identityEnrollmentCleanupWorkflow", identityEnrollmentCleanupWorkflow);
+export var expireEnrollmentStep = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/identity-enrollment//expireEnrollmentStep");
+export async function identityEnrollmentExpiryWorkflow(enrollmentId) {
+    await sleep('15m');
+    let enrollment = await expireEnrollmentStep(enrollmentId);
+    if (enrollment?.needsTerminalCleanup) return cleanupEnrollmentStorage(enrollmentId, true);
+    if (enrollment && ![
+        'IDENTITY_READY',
+        'REVOKED',
+        'EXPIRED'
+    ].includes(enrollment.status)) {
+        await sleep('24h');
+        enrollment = await expireEnrollmentStep(enrollmentId);
+    }
+    if (enrollment?.needsTerminalCleanup) return cleanupEnrollmentStorage(enrollmentId, true);
+    return {
+        cleaned: false
+    };
+}
+identityEnrollmentExpiryWorkflow.workflowId = "workflow//./workflows/identity-enrollment//identityEnrollmentExpiryWorkflow";
+globalThis.__private_workflows.set("workflow//./workflows/identity-enrollment//identityEnrollmentExpiryWorkflow", identityEnrollmentExpiryWorkflow);

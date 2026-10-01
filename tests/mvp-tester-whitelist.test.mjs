@@ -34,31 +34,29 @@ test('isTesterEmailDomain: automatically identifies @luxmarketingcompany.com and
 // to match the corrected, intended behavior: a domain match grants
 // standardRendering (its actual purpose -- testing Standard tier) and
 // never liveRendering or backend containment authorization.
-test('containedRenderingEntitlementKeys: a pure @luxmarketingcompany.com domain match grants Standard and Tester only, never liveRendering', () => {
+test('a domain member receives Standard only, never explicit tester or Premium authority', () => {
   const accountId = 'acct-lux-tester-1';
   const keys = containedRenderingEntitlementKeys(accountId, 'dev@luxmarketingcompany.com');
   assert.ok(!keys.includes('liveRendering'), 'a domain match must never grant liveRendering -- see the reasoning above');
   assert.ok(keys.includes('standardRendering'));
-  assert.ok(keys.includes('tester'));
+  assert.ok(!keys.includes('tester'));
   // A domain-only match does not register the account as a tester ID, and
   // (unlike the exact-match case) must not authorize Premium containment.
   assert.equal(isTesterAccountId(accountId), false);
   assert.throws(() => requireRenderAccountAuthorization(accountId), { statusCode: 503 });
 });
 
-test('tester account registry: in-memory whitelist grants rendering access without environment variables', () => {
+test('legacy in-memory registry cannot authorize renders or provision entitlements', () => {
   const externalId = 'acct-external-vip-tester';
   assert.equal(isTesterAccountId(externalId), false);
 
   registerTesterAccountId(externalId);
-  assert.equal(isTesterAccountId(externalId), true);
-  assert.equal(accountAllowedForContainedRendering(externalId), true);
-  assert.equal(requireRenderAccountAuthorization(externalId), true);
+  assert.equal(isTesterAccountId(externalId), false);
+  assert.equal(accountAllowedForContainedRendering(externalId), false);
+  assert.throws(() => requireRenderAccountAuthorization(externalId));
 
   const keys = containedRenderingEntitlementKeys(externalId, 'partner@external.com');
-  assert.ok(keys.includes('liveRendering'));
-  assert.ok(keys.includes('standardRendering'));
-  assert.ok(keys.includes('tester'));
+  assert.deepEqual(keys, []);
 
   revokeTesterAccountId(externalId);
   assert.equal(isTesterAccountId(externalId), false);

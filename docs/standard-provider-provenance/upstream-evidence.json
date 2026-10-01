@@ -1,0 +1,340 @@
+{
+  "capturedAt": "2026-09-30T15:24:32.312455+00:00",
+  "method": "DeepAPI primary-source reads; extracted response hashes are not model-byte hashes. Text rendering can normalize characters; exact byte claims below require matching upstream Git blob identity.",
+  "sources": [
+    {
+      "name": "blendshape-card",
+      "requestId": "e43c67ba-1fa3-4b2c-9175-213011a6abb9",
+      "status": "succeeded",
+      "rawResponseSha256": "e17d863aa75d48643556dd9d9ec7f28a6a918798fb75919b7cb3dc4120449b32",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\blendshape-card.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Blendshape%20V2.pdf",
+          "extractedContentSha256": "b3a0c7cbd14bffcfff7ce119820af1f26b8efd3d406e8c4855de7b9628f11927",
+          "truncated": false,
+          "pages": 6
+        }
+      ]
+    },
+    {
+      "name": "face-detector-card",
+      "requestId": "a4cc0ed1-b978-46cb-bc22-4ac87126c376",
+      "status": "succeeded",
+      "rawResponseSha256": "4e9f7d35854cd2f5ec4962b17dd10543726d87eeb7a92acb774e30a1c8578e98",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\face-detector-card.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://storage.googleapis.com/mediapipe-assets/MediaPipe%20BlazeFace%20Model%20Card%20(Short%20Range).pdf",
+          "extractedContentSha256": "a10e09f2a5c0b62600c89b210a32c19e61bcb807ccddcaa80f5bc4c2a1044f62",
+          "truncated": false,
+          "pages": 6
+        }
+      ]
+    },
+    {
+      "name": "face-model-card",
+      "requestId": "81b2bf1a-0690-4646-b6a6-5de307f297ac",
+      "status": "succeeded",
+      "rawResponseSha256": "806b1ee2c737448c7b3b20ffa82c6c79ac0c1f26957c7e319311f23bcc668b7f",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\face-model-card.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://storage.googleapis.com/mediapipe-assets/Model%20Card%20MediaPipe%20Face%20Mesh%20V2.pdf",
+          "extractedContentSha256": "296798bc8c1e6249c430ff8ce02a50ef830483db89fe97d60a8f252d5b1a0542",
+          "truncated": false,
+          "pages": 7
+        }
+      ]
+    },
+    {
+      "name": "hf-sources",
+      "requestId": "8794598d-d98b-43f2-82bd-a5dea377bde2",
+      "status": "succeeded",
+      "rawResponseSha256": "5aab0bf94e495fc42b311e6e72f1b684f3a255bb4e3031116613f3592819daae",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\hf-sources.json",
+      "urlOutcomes": [
+        {
+          "url": "https://huggingface.co/ByteDance/LatentSync-1.6",
+          "status": "returned"
+        },
+        {
+          "url": "https://huggingface.co/ByteDance/LatentSync/discussions/3",
+          "status": "returned"
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse",
+          "status": "returned"
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse/raw/main/LICENSE",
+          "status": "not_returned"
+        },
+        {
+          "url": "https://huggingface.co/api/models/ByteDance/LatentSync-1.6?blobs=true",
+          "status": "returned"
+        },
+        {
+          "url": "https://huggingface.co/api/models/stabilityai/sd-vae-ft-mse?blobs=true",
+          "status": "returned"
+        }
+      ],
+      "sources": [
+        {
+          "url": "https://huggingface.co/api/models/ByteDance/LatentSync-1.6?blobs=true",
+          "extractedContentSha256": "601c512b6a1cc4033ee5804738182274f407525a043c373b741d0d55872ccf10",
+          "truncated": false
+        },
+        {
+          "url": "https://huggingface.co/api/models/stabilityai/sd-vae-ft-mse?blobs=true",
+          "extractedContentSha256": "c5660cdd8eac972751c605775baee9f57490bce97e4bdc6faac14e7f9a3c2555",
+          "truncated": false
+        },
+        {
+          "url": "https://huggingface.co/ByteDance/LatentSync-1.6",
+          "extractedContentSha256": "06c72992533537fb7360453133df8a0eb0e8012880efffd96a17594e18adea3f",
+          "truncated": false
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse",
+          "extractedContentSha256": "e3901f1ba8c06f173279cf5f68a49680aa8cef57868a15530d373762ac576b8f",
+          "truncated": false
+        },
+        {
+          "url": "https://huggingface.co/ByteDance/LatentSync/discussions/3",
+          "extractedContentSha256": "d789d0dc2edc9d41eef2c7a0dd7ac444707093573324a3fe24edc9a0dfee24f7",
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "name": "latentsync-code-license",
+      "requestId": "ea9bd4a8-64e4-4fef-b2be-c56f4a3c4cfb",
+      "status": "succeeded",
+      "rawResponseSha256": "6d2f65fba91cb30cdd18c081f8f0a5ac78db14ec2265dbce22e4ae0e7fdb2e34",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\latentsync-code-license.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://github.com/bytedance/LatentSync/blob/a229c3948406bc2cf6eaf4873e662e70c6a04746/LICENSE",
+          "upstreamGitBlobSha1": "f49a4e16e68b128803cc2dcea614603632b04eac",
+          "upstreamBytes": 11356,
+          "extractedContentSha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+        }
+      ]
+    },
+    {
+      "name": "license-followup",
+      "requestId": "85d4d4d9-93c1-4724-91ba-a5efc0ec9ac5",
+      "status": "succeeded",
+      "rawResponseSha256": "bb9543cd8ad3601a4ae427cd4eecd7b7ef0f29c7934ea5f4aac363961d9037cb",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\license-followup.json",
+      "urlOutcomes": [
+        {
+          "url": "https://huggingface.co/ByteDance/LatentSync-1.6/raw/c42c7e6c8e9c213626389fa7d9a3c444b8536353/latentsync_unet.pt",
+          "status": "returned"
+        },
+        {
+          "url": "https://huggingface.co/ByteDance/LatentSync-1.6/raw/c42c7e6c8e9c213626389fa7d9a3c444b8536353/whisper/tiny.pt",
+          "status": "returned"
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse/raw/31f26fdeee1355a5c34592e401dd41e45d25a493/README.md",
+          "status": "returned"
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
+          "status": "returned"
+        },
+        {
+          "url": "https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker",
+          "status": "returned"
+        }
+      ],
+      "sources": [
+        {
+          "url": "https://huggingface.co/ByteDance/LatentSync-1.6/raw/c42c7e6c8e9c213626389fa7d9a3c444b8536353/latentsync_unet.pt",
+          "extractedContentSha256": "01ab16b3e8c1ad7e5f06eaf3b1eb2d29ba37b21b07196e2d3e7e92b43d13e44f",
+          "truncated": false
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse/raw/31f26fdeee1355a5c34592e401dd41e45d25a493/README.md",
+          "extractedContentSha256": "9750e5f8adcb61df44b63664ef717a1f65c19c9064e22daa62b6a8f2ae1b4d07",
+          "truncated": false
+        },
+        {
+          "url": "https://huggingface.co/ByteDance/LatentSync-1.6/raw/c42c7e6c8e9c213626389fa7d9a3c444b8536353/whisper/tiny.pt",
+          "extractedContentSha256": "453953277283106f034e5136e7c536a3d8fe17ebd7acd3e857599eeb3f6ce832",
+          "truncated": false
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
+          "extractedContentSha256": "ae8c10a74ddc08bbccd0490d819214f452f0decb5b85e6080a3224c4070a4945",
+          "truncated": false
+        },
+        {
+          "url": "https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker",
+          "extractedContentSha256": "e59cccec7bd5754b3d44faf85e99c4b7173233b257fc4058466ed5166aa4108d",
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "name": "license-tree",
+      "requestId": "5099e842-1903-42e7-9e40-72818c4b0e69",
+      "status": "succeeded",
+      "rawResponseSha256": "34051de195e1c110455657f06ad5781a51f311789afa1d9af7949a562b4a2f03",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\license-tree.json",
+      "urlOutcomes": [
+        {
+          "url": "https://huggingface.co/api/models/stabilityai/stable-diffusion-xl-base-1.0/tree/d5d78e469acad6b8f0534f137610fbee74099480",
+          "status": "returned"
+        }
+      ],
+      "sources": [
+        {
+          "url": "https://huggingface.co/api/models/stabilityai/stable-diffusion-xl-base-1.0/tree/d5d78e469acad6b8f0534f137610fbee74099480",
+          "extractedContentSha256": "bb2e2cd743313d9e3ebef190389a65d69fbc180401c0256c4935cef5ebbc65bf",
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "name": "pinned-vae-license",
+      "requestId": "5d3cff7d-eb4f-44a6-9d90-2ec2664ba2f6",
+      "status": "succeeded",
+      "rawResponseSha256": "908e8ed6694a6c49485d4d146302f5cdffc9d33c15932c5f6ba1c89d859601f7",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\pinned-vae-license.json",
+      "urlOutcomes": [
+        {
+          "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse/raw/31f26fdeee1355a5c34592e401dd41e45d25a493/diffusion_pytorch_model.bin",
+          "status": "returned"
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse/raw/31f26fdeee1355a5c34592e401dd41e45d25a493/diffusion_pytorch_model.safetensors",
+          "status": "returned"
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse/raw/31f26fdeee1355a5c34592e401dd41e45d25a493/config.json",
+          "status": "returned"
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/raw/d5d78e469acad6b8f0534f137610fbee74099480/LICENSE.md",
+          "status": "returned"
+        }
+      ],
+      "sources": [
+        {
+          "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse/raw/31f26fdeee1355a5c34592e401dd41e45d25a493/config.json",
+          "extractedContentSha256": "92d3dfb746fca211a2c9e019e285f8597412211728dce3c5bcf4eda0f2d62e7e",
+          "truncated": false
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse/raw/31f26fdeee1355a5c34592e401dd41e45d25a493/diffusion_pytorch_model.safetensors",
+          "extractedContentSha256": "31e67a41d4d6fa524db441f32d2273cb73bd5c2d854f05895146bfb6b7841392",
+          "truncated": false
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/raw/d5d78e469acad6b8f0534f137610fbee74099480/LICENSE.md",
+          "extractedContentSha256": "8174aaae6e8e320d1e737704989b61b3b7507851a3c373e3d7de4c3a39a4f354",
+          "truncated": false
+        },
+        {
+          "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse/raw/31f26fdeee1355a5c34592e401dd41e45d25a493/diffusion_pytorch_model.bin",
+          "extractedContentSha256": "d69b9c7c6d0d782705ea9e393e59916b35be562c87ebce7013df08ef4720112b",
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "name": "sadtalker-readme",
+      "requestId": "fcc065eb-3df4-4125-ab7d-cbdd4c277553",
+      "status": "succeeded",
+      "rawResponseSha256": "ddd1aca23f9c401c25f2f227585166f39e6bd3cee55f1cfe16f26c223a25dff4",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\sadtalker-readme.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://github.com/OpenTalker/SadTalker/blob/main/README.md",
+          "upstreamGitBlobSha1": "332615dc94bb561efa051bfc4e00968ef3a21e4a",
+          "upstreamBytes": 17124,
+          "extractedContentSha256": "9e56b7033ea70cf2f3946a107e0abd5ce2a9858940921e7ae5af363396edc7d2"
+        }
+      ]
+    },
+    {
+      "name": "wav2lip-readme",
+      "requestId": "fd21660f-4a27-42f4-9027-fa1648c2d1a3",
+      "status": "succeeded",
+      "rawResponseSha256": "44da65a351ef0e8cca8689cec09624958a46edb7ef9c0d158549d5e3032981c6",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\wav2lip-readme.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://github.com/Rudrabha/Wav2Lip/blob/master/README.md",
+          "upstreamGitBlobSha1": "b1c2240c019c90466b176eed40e2d304eb9608c6",
+          "upstreamBytes": 17062,
+          "extractedContentSha256": "5fb27cee3ddefac98e59238c95438fed1ae8f394503699770240eb53e2c710fa"
+        }
+      ]
+    },
+    {
+      "name": "whisper-license",
+      "requestId": "4a009623-9130-4e01-88fe-20fdd514691a",
+      "status": "succeeded",
+      "rawResponseSha256": "855056e59918fad913742e8fc01576bc4f3562bf870311a3b0ab2dc10c628d77",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\whisper-license.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://github.com/openai/whisper/blob/main/LICENSE",
+          "upstreamGitBlobSha1": "d25552598bb9c5400612159ed4bab92ce12a5ce5",
+          "upstreamBytes": 1063,
+          "extractedContentSha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d"
+        }
+      ]
+    },
+    {
+      "name": "whisper-readme",
+      "requestId": "72b292a3-a8fb-4caa-aef5-d3763f5953eb",
+      "status": "succeeded",
+      "rawResponseSha256": "d3818a28eb857ad6bfb066fc91b17337a72ceca1ed001424b026485f331e8996",
+      "privateRawResponse": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt5a-research-20260930\\whisper-readme.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://github.com/openai/whisper/blob/main/README.md",
+          "upstreamGitBlobSha1": "196b48f62d3b6f0b77bac2b7dbc2df5e4cfb070b",
+          "upstreamBytes": 8246,
+          "extractedContentSha256": "fd943faec37ab6f2703de7a750ae3a9b3172666c5f5827bafaf33c74860c8996"
+        }
+      ]
+    }
+  ],
+  "verifiedSmallArtifacts": [
+    {
+      "path": "upstream/OpenRAILpp-M-2023-07-26.LICENSE.txt",
+      "bytes": 14109,
+      "sha256": "19b6998b569b53ac1fc2158a8a3202c8699a9a4605b47075715d9c96be7fb6d0",
+      "gitBlobSha1": "af7e355e31c0d976933aa0d06759611151ad8c39",
+      "verification": "UTF-8 decoded from transport mojibake; exact bytes and Git blob match publisher tree at pinned commit"
+    },
+    {
+      "path": "upstream/vae-config.json",
+      "bytes": 547,
+      "sha256": "92d3dfb746fca211a2c9e019e285f8597412211728dce3c5bcf4eda0f2d62e7e",
+      "gitBlobSha1": "0db26717579be63eb0ddbf15b43faa43700dfe5a",
+      "verification": "Exact extracted bytes match pinned upstream Git blob"
+    },
+    {
+      "path": "upstream/Whisper-MIT.LICENSE.txt",
+      "bytes": 1063,
+      "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+      "gitBlobSha1": "d25552598bb9c5400612159ed4bab92ce12a5ce5",
+      "verification": "Exact bytes match GitHub contents metadata"
+    }
+  ]
+}

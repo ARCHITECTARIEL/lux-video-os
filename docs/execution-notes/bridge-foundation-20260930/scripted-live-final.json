@@ -1,0 +1,83 @@
+{
+  "at": "2026-09-30T20:54:45.892Z",
+  "mode": "tests",
+  "database": {
+    "host": "ep-lingering-fire-aitvfm3y-pooler.c-4.us-east-1.aws.neon.tech",
+    "name": "mvp_verification_20260930",
+    "branch": "br-wandering-violet-ai1egt3g"
+  },
+  "blobStore": "store_8uyr0JDWkUyha8sy",
+  "identity": {
+    "database": "mvp_verification_20260930",
+    "role": "neondb_owner"
+  },
+  "before": {
+    "rows": {
+      "stripe_events": 0,
+      "video_jobs": 1,
+      "credit_transactions": 0,
+      "entitlements": 1,
+      "user_identities": 3,
+      "auth_challenges": 0,
+      "auth_sessions": 0,
+      "identity_enrollment_events": 0,
+      "projects": 0,
+      "identity_consents": 1,
+      "identity_video_enrollments": 2,
+      "media_assets": 7,
+      "standard_narration_consents": 0,
+      "provider_approval_claim_resources": 5,
+      "provider_resources": 5,
+      "users": 4,
+      "credit_accounts": 1,
+      "job_events": 0,
+      "rate_limits": 0,
+      "provider_consumer_references": 3,
+      "provider_lifecycle_operations": 9,
+      "provider_lifecycle_events": 11,
+      "standard_narration_quotes": 0,
+      "provider_verified_account_scopes": 3,
+      "provider_account_binding_promotions": 2,
+      "provider_account_bindings": 4,
+      "provider_approval_claims": 3
+    },
+    "blobs": 0
+  },
+  "testFiles": [
+    "tests/scripted-photo-live.test.mjs"
+  ],
+  "testExit": 1,
+  "after": {
+    "rows": {
+      "stripe_events": 0,
+      "video_jobs": 1,
+      "credit_transactions": 0,
+      "entitlements": 2,
+      "user_identities": 4,
+      "auth_challenges": 0,
+      "auth_sessions": 0,
+      "identity_enrollment_events": 0,
+      "projects": 0,
+      "identity_consents": 2,
+      "identity_video_enrollments": 3,
+      "media_assets": 10,
+      "standard_narration_consents": 0,
+      "provider_approval_claim_resources": 5,
+      "provider_resources": 5,
+      "users": 5,
+      "credit_accounts": 2,
+      "job_events": 0,
+      "rate_limits": 0,
+      "provider_consumer_references": 3,
+      "provider_lifecycle_operations": 9,
+      "provider_lifecycle_events": 11,
+      "standard_narration_quotes": 0,
+      "provider_verified_account_scopes": 3,
+      "provider_account_binding_promotions": 2,
+      "provider_account_bindings": 5,
+      "provider_approval_claims": 3
+    },
+    "blobs": 0
+  },
+  "ok": false
+}

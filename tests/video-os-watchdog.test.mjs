@@ -19,7 +19,7 @@ import {
   claimWorkflowStart, ensureAccount, getAccountContext, getJob, listFailedOrStuckJobs, listStalledActionableJobs, listStalledAmbiguousJobs,
   listStalledSafeToReleaseJobs, reserveRender, transitionJob,
 } from '../db/repositories.js';
-import { users, videoJobs } from '../db/schema.js';
+import { entitlements, users, videoJobs } from '../db/schema.js';
 import { runWatchdogSweep } from '../lib/video-os-watchdog.js';
 
 let dbAvailable = true;
@@ -62,6 +62,7 @@ test(
       await database().delete(users).where(eq(users.id, accountId)).catch(() => {});
     });
     await ensureAccount({ accountId, email: null, name: 'Watchdog Test', initialCredits: 1000 });
+    await database().insert(entitlements).values(['standardRendering', 'liveRendering'].map(entitlementKey => ({ accountId, entitlementKey, enabled: true, sourceType: 'test_fixture' })));
 
     const freshRendering = await makeJob(accountId, { status: 'provider_rendering', minutesAgo: 5 });
     const staleRendering = await makeJob(accountId, { status: 'provider_rendering', providerJobId: 'watchdog-stale-rendering', minutesAgo: 45 });
@@ -117,6 +118,7 @@ test(
       await database().delete(users).where(eq(users.id, accountId)).catch(() => {});
     });
     await ensureAccount({ accountId, email: null, name: 'Watchdog Reserved Test', initialCredits: 1000 });
+    await database().insert(entitlements).values(['standardRendering', 'liveRendering'].map(entitlementKey => ({ accountId, entitlementKey, enabled: true, sourceType: 'test_fixture' })));
 
     const staleReserved = await makeReservedOnlyJob(accountId, { minutesAgo: 45 });
     const freshReserved = await makeReservedOnlyJob(accountId, { minutesAgo: 5 });
@@ -140,6 +142,7 @@ test(
       await database().delete(users).where(eq(users.id, accountId)).catch(() => {});
     });
     await ensureAccount({ accountId, email: null, name: 'Watchdog Release Test', initialCredits: 1000 });
+    await database().insert(entitlements).values(['standardRendering', 'liveRendering'].map(entitlementKey => ({ accountId, entitlementKey, enabled: true, sourceType: 'test_fixture' })));
 
     const staleReserved = await makeReservedOnlyJob(accountId, { minutesAgo: 45, costCredits: 12 });
     const staleAmbiguous = await makeJob(accountId, { status: 'provider_submitting', minutesAgo: 45 });
@@ -174,6 +177,7 @@ test(
       await database().delete(users).where(eq(users.id, accountId)).catch(() => {});
     });
     await ensureAccount({ accountId, email: null, name: 'Watchdog Ambiguous Test', initialCredits: 1000 });
+    await database().insert(entitlements).values(['standardRendering', 'liveRendering'].map(entitlementKey => ({ accountId, entitlementKey, enabled: true, sourceType: 'test_fixture' })));
 
     const jobId = await makeJob(accountId, { status: 'provider_submitting', minutesAgo: 45 });
     const before = await getJob(jobId);

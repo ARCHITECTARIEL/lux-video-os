@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 const SIGNED_OUT_SESSION = {
   ok: true,
@@ -50,6 +52,7 @@ async function installWorkspaceRoutes(page, { results = [], session = SIGNED_OUT
   })));
   await page.route('**/api/video-os-lite/results*', (route) => route.fulfill(json({ ok: true, results })));
   await page.route('**/api/video-os-lite/identities*', (route) => route.fulfill(json({ ok: true, identities: [], providerSubmissionEnabled: false })));
+  await page.route('**/api/video-os-lite/scripted-photo*', (route) => route.fulfill(json({ ok: true, contractVersion: 'scripted-photo-v1', pricingVersion: 'scripted-photo-pricing-v1', quoteTtlSeconds: 300, capabilities: { enabled: false, tiers: { STANDARD: { available: false, credits: null, reasons: ['feature_disabled', 'standard_price_unconfigured'] }, PREMIUM: { available: false, credits: 90, reasons: ['feature_disabled'] } } }, existingJob: null })));
   await page.route('**/api/video-os/talent', (route) => route.fulfill(json({
     ok: true,
     talent: { avatars: [], voices: [] },
@@ -105,12 +108,12 @@ test.describe('Standard local preparation', () => {
 
     await expect(page.locator('#connection-pill')).toHaveAttribute('data-state', 'signed-out');
     await expect(page.locator('#my-cast-list')).toContainText(/sign in/i);
-    await expect(page.getByRole('link', { name: 'Open Identity Studio' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Create or manage an identity' })).toBeVisible();
     await expect(page.locator('#use-fixture-portrait')).toBeHidden();
     await expect(page.locator('#use-fixture-audio')).toBeHidden();
-    await expect(page.locator('#standard-cost')).toHaveText('Not available');
-    await expect(page.locator('#standard-submit')).toBeDisabled();
-    await expect(page.locator('#standard-submit')).toHaveText('Sign in to submit Standard');
+    await expect(page.locator('#standard-scripted-price')).toHaveText('Not available');
+    await expect(page.locator('#standard-scripted-submit')).toBeDisabled();
+    await expect(page.locator('#standard-scripted-status')).toContainText(/sign in/i);
     expect(guard.renderRequests()).toBe(0);
     expect(guard.externalRequests).toEqual([]);
   });
@@ -465,6 +468,7 @@ test.describe('account data containment', () => {
       if (deferredReads) await deferredReads;
       return route.fulfill(json({ ok: true, identities: [privateIdentity], providerSubmissionEnabled: false }));
     });
+    await page.route('**/api/video-os-lite/scripted-photo*', (route) => route.fulfill(json({ ok: true, contractVersion: 'scripted-photo-v1', pricingVersion: 'scripted-photo-pricing-v1', quoteTtlSeconds: 300, capabilities: { enabled: true, tiers: { STANDARD: { available: true, credits: 37, reasons: [] }, PREMIUM: { available: true, credits: 90, reasons: [] } } }, existingJob: null })));
     await page.route('**/api/video-os-lite/results*', async (route) => {
       if (deferredReads) await deferredReads;
       return route.fulfill(json({ ok: true, results: [privateResult] }));
@@ -488,8 +492,7 @@ test.describe('account data containment', () => {
     await installPrivateWorkspace(page);
     await page.goto(`/?identityId=${privateIdentity.id}#create`);
 
-    await expect(page.locator(`[data-standard-identity-id="${privateIdentity.id}"]`)).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('#review-identity')).toHaveText(privateIdentity.displayName);
+    await expect(page.locator(`[data-scripted-standard-identity-id="${privateIdentity.id}"]`)).toHaveAttribute('aria-pressed', 'true');
     await page.locator('#premium-tab').click();
     await expect(page.locator('#premium-title')).toHaveValue(privateProject.title);
     await expect(page.locator('#script-input')).toHaveValue(privateProject.script);
@@ -499,7 +502,7 @@ test.describe('account data containment', () => {
 
     await signOutFromAccount(page);
     await expect(page.locator('#connection-pill')).toHaveAttribute('data-state', 'signed-out');
-    await expect(page.locator('#review-identity')).toHaveText('Not selected');
+    await expect(page.locator(`[data-scripted-standard-identity-id="${privateIdentity.id}"]`)).toHaveCount(0);
     await expect(page.locator('#premium-title')).toHaveValue('');
     await expect(page.locator('#script-input')).toHaveValue('');
     await expect(page.locator('#accepted-video')).toBeHidden();
@@ -543,7 +546,7 @@ test.describe('navigation, keyboard, and responsive layout', () => {
     await expect(page.locator('[data-nav="create"]:visible').first()).toHaveAttribute('aria-current', 'page');
   });
 
-  test('tier tabs work with arrow keys and Standard never requires a script', async ({ page }) => {
+  test('tier tabs work with arrow keys and preserve a separate Standard script editor', async ({ page }) => {
     await installWorkspaceRoutes(page);
     await page.goto('/#create');
 
@@ -554,7 +557,8 @@ test.describe('navigation, keyboard, and responsive layout', () => {
     await page.keyboard.press('ArrowLeft');
     await expect(page.locator('#standard-tab')).toBeFocused();
     await expect(page.locator('#standard-tab')).toHaveAttribute('aria-selected', 'true');
-    await expect(page.locator('#standard-panel textarea, #standard-panel [name="script"]')).toHaveCount(0);
+    await expect(page.locator('#standard-scripted-script')).toBeVisible();
+    await expect(page.locator('#standard-scripted-script')).toHaveValue('');
   });
 
   test('mobile menu is named, traps focus, closes with Escape, and restores its opener', async ({ page }) => {
@@ -652,5 +656,51 @@ test.describe('navigation, keyboard, and responsive layout', () => {
         expect(overflow, destination).toBeLessThanOrEqual(1);
       }
     });
+  }
+});
+
+
+test('actual history DTOs recover in fresh desktop/mobile contexts with acceptance gates', async ({ browser }) => {
+  // Real handlers/repository/DTO, synthetic database boundary. No live acceptance claim.
+  const run = spawnSync(process.execPath, ['--experimental-test-module-mocks', 'tests/helpers/output-acceptance-routes.mjs', '--emit-history'], {
+    encoding: 'utf8', timeout: 20000,
+    env: { ...process.env, DATABASE_URL: '', DATABASE_URL_UNPOOLED: '', BLOB_READ_WRITE_TOKEN: '' },
+  });
+  expect(run.status, run.stderr).toBe(0);
+  const { results } = JSON.parse(run.stdout);
+  for (const [name, viewport] of [['desktop', { width: 1440, height: 1000 }], ['mobile', { width: 390, height: 844 }]]) {
+    const context = await browser.newContext({ viewport });
+    try {
+      const page = await context.newPage();
+      const guard = await installWorkspaceRoutes(page, { results, session: SIGNED_IN_SESSION });
+      // Media playback is a local MP4 fixture, not a provider/validator proof.
+      await page.route('**/api/video-os-lite/download?*', route => route.fulfill({
+        contentType: 'video/mp4', body: readFileSync('public/assets/studio/fixture-output.mp4'),
+      }));
+      await page.goto('/');
+      for (let visit = 0; visit < 2; visit++) {
+        if (visit) await page.reload();
+        if (viewport.width <= 1023) await page.locator('#open-menu').click();
+        await page.locator('[data-nav="videos"]:visible').first().click();
+        const accepted = page.locator(`[data-job-id="${results[0].id}"]`);
+        await expect(accepted).toHaveAttribute('data-job-state', 'SUCCEEDED');
+        await expect(accepted.locator('.result-meta').first()).toContainText('Standard');
+        await expect(accepted.getByRole('link', { name: 'Download' })).toHaveAttribute('href', results[0].url);
+        await accepted.locator('.result-preview-action').click();
+        await expect(page.locator('#accepted-video')).toBeVisible();
+        await expect.poll(() => page.locator('#accepted-video').evaluate(video => video.readyState)).toBeGreaterThanOrEqual(2);
+        const pending = page.locator(`[data-job-id="${results[1].id}"]`);
+        await expect(pending).toHaveAttribute('data-job-state', 'PROCESSING');
+        await expect(pending.getByRole('link', { name: 'Download' })).toHaveCount(0);
+        const deleted = page.locator(`[data-job-id="${results[2].id}"]`);
+        await expect(deleted).toHaveAttribute('data-job-state', 'SUCCEEDED');
+        await expect(deleted.locator('.result-badge')).toHaveText('Output unavailable');
+        await expect(deleted.locator('.result-preview-action')).toHaveCount(0);
+        await expect(deleted.getByRole('link', { name: 'Download' })).toHaveCount(0);
+      }
+      await page.screenshot({ path: `test-results/prompt2-${name}.png`, fullPage: true });
+      expect(guard.renderRequests()).toBe(0);
+      expect(guard.externalRequests).toEqual([]);
+    } finally { await context.close(); }
   }
 });

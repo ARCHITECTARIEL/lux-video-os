@@ -20,6 +20,7 @@ import test from 'node:test';
 import ffmpegPath from 'ffmpeg-static';
 import { finishMedia } from '../services/media-finisher.js';
 import { finishMediaWithRemotion } from '../services/remotion-finisher.js';
+import { inspectMedia } from '../services/final-media-validation.js';
 
 function realFfmpeg(args) {
   const result = spawnSync(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -90,6 +91,7 @@ test('finishMedia and finishMediaWithRemotion reject an empty FFmpeg output inst
       downloadProviderMedia: stubDownload(fixture),
       putPrivateBlob: async (_classification, pathname, _stream, _options) => {
         uploaded = pathname;
+        for await (const chunk of _stream) { void chunk; }
         return { pathname };
       },
     });
@@ -103,10 +105,28 @@ test('finishMedia and finishMediaWithRemotion reject an empty FFmpeg output inst
       downloadProviderMedia: stubDownload(fixture),
       putPrivateBlob: async (_classification, pathname, _stream, _options) => {
         uploaded = pathname;
+        for await (const chunk of _stream) { void chunk; }
         return { pathname };
       },
     });
     assert.ok(result.bytes > 0);
     assert.equal(uploaded, result.privatePathname);
+  });
+
+  await t.test('Remotion uses the real vertical format and preserves source duration', async () => {
+    const stored = join(workdir, 'vertical.mp4');
+    const result = await finishMediaWithRemotion({ ...job, format: 'vertical' }, 'https://example.test/source.mp4', {
+      downloadProviderMedia: stubDownload(fixture),
+      putPrivateBlob: async (_classification, pathname, stream) => {
+        const chunks = [];
+        for await (const chunk of stream) chunks.push(chunk);
+        writeFileSync(stored, Buffer.concat(chunks));
+        return { pathname };
+      },
+    });
+    const inspected = await inspectMedia(stored);
+    assert.equal(inspected.width, 1080);
+    assert.equal(inspected.height, 1920);
+    assert.ok(Math.abs(inspected.durationMs - result.sourceDurationMs) <= 500);
   });
 });

@@ -1,0 +1,38 @@
+{
+  "verifiedAt": "2026-09-30T15:59:32.673404+00:00",
+  "unitCommandExit": 0,
+  "node": {
+    "passed": 379,
+    "failed": 0,
+    "skipped": 42
+  },
+  "vitest": {
+    "passed": 4,
+    "failed": 0
+  },
+  "previewBuild": {
+    "exit": 0,
+    "routes": 39,
+    "steps": 93,
+    "workflows": 2,
+    "releaseAuthorized": false,
+    "productionBoundaryVerified": false
+  },
+  "sourceSha256": "f4ec2e4b83b5ef0dadf0d21c1cdeb27e150a8539bbfd67eda2f940f506132618",
+  "outputSha256": "1623826d33c98fb0afb14c77aea7f24fe60346ccb0f347bc9c58e71544e9b077",
+  "changedSourcePaths": [
+    "lib/video-os-validation.js",
+    "tests/render-request-validation.test.mjs"
+  ],
+  "projectLinkUnchanged": true,
+  "logs": {
+    "lux-scripted-photo-unit.log": {
+      "privatePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-scripted-photo-unit.log",
+      "sha256": "587028cbd9ea8578d8beed1aa0cfcbda38b690d2972f16e0340ffb5e3593a403"
+    },
+    "lux-scripted-photo-build.log": {
+      "privatePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-scripted-photo-build.log",
+      "sha256": "8ceb7ee07d842a9381c25d5f5b6a6d8f624a36432a049289911a3396fa7141c2"
+    }
+  }
+}

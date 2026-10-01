@@ -14,12 +14,11 @@ name: Stripe reconciliation
 # duplicated:
 #   - Secret VIDEO_OS_CRON_SECRET
 #   - Variable VIDEO_OS_BASE_URL
-# The run is skipped-with-a-clear-message if either is unset, same as the
-# watchdog sweep. Also requires STRIPE_SECRET_KEY to be configured on the
-# deployed app itself -- reconcileStripePayments() fails loud (503) if it
-# isn't, which is correct: there is nothing to reconcile against until real
-# Stripe keys exist, and this workflow should not silently report "clean"
-# in that case.
+# Missing workflow configuration fails the run: a skipped reconciliation is
+# not evidence that the ledger is clean. The deployed app also requires
+# STRIPE_SECRET_KEY; reconcileStripePayments() fails loud (503) if it is
+# absent. The response gate validates the JSON result and fails on every
+# reported mismatch, even when the endpoint returns HTTP 200.
 on:
   schedule:
     - cron: '0 9 * * *'
@@ -31,19 +30,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Check out the response gate
+        uses: actions/checkout@v7
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
       - name: Reconcile Stripe payments against the credit ledger
         env:
           CRON_SECRET: ${{ secrets.VIDEO_OS_CRON_SECRET }}
           BASE_URL: ${{ vars.VIDEO_OS_BASE_URL }}
         run: |
+          set -euo pipefail
           if [ -z "$BASE_URL" ] || [ -z "$CRON_SECRET" ]; then
-            echo "::warning::VIDEO_OS_BASE_URL and/or VIDEO_OS_CRON_SECRET are not configured yet -- skipping this run. See this workflow file's header comment for setup."
-            exit 0
-          fi
-          status=$(curl -sS -o response.json -w '%{http_code}' -X POST "$BASE_URL/api/video-os-lite/admin?operation=stripe-reconciliation" \
-            -H "Authorization: Bearer $CRON_SECRET" -H "Content-Type: application/json" -d '{}')
-          cat response.json
-          if [ "$status" != "200" ]; then
-            echo "::error::Stripe reconciliation request failed with HTTP $status"
+            echo "::error::Stripe reconciliation configuration is incomplete. Configure VIDEO_OS_BASE_URL and VIDEO_OS_CRON_SECRET."
             exit 1
           fi
+          if ! status=$(curl --silent --show-error --output response.json --write-out '%{http_code}' \
+            --request POST "$BASE_URL/api/video-os-lite/admin?operation=stripe-reconciliation" \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            --header "Content-Type: application/json" \
+            --data '{}'); then
+            echo "::error::Stripe reconciliation request could not reach the configured endpoint."
+            exit 1
+          fi
+          node tools/check-stripe-reconciliation-response.mjs --status "$status" --file response.json

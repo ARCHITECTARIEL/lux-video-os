@@ -53,10 +53,13 @@ test('Preview deployment stays within the Hobby serverless function budget', () 
     '/api/video-os-lite/admin',
     '/api/video-os-lite/asset',
     '/api/video-os-lite/copywriter',
+    '/api/video-os-lite/enrollment-upload',
+    '/api/video-os-lite/enrollments',
     '/api/video-os-lite/identities',
     '/api/video-os-lite/projects',
     '/api/video-os-lite/providers',
     '/api/video-os-lite/results',
+    '/api/video-os-lite/scripted-photo',
     '/api/video-os-lite/standard',
   ]);
 });
@@ -125,11 +128,11 @@ test('Preview prebuild uses Preview-scoped Vercel configuration', () => {
   assert.match(source, /\['build', '--target', target\]/);
 });
 
-test('finishing retries resume idempotently and failures reach credit release', () => {
+test('finishing resumes from the canonical claimed job and ready-media evidence', () => {
   const source = readFileSync('workflows/video-render.js', 'utf8');
-  assert.match(source, /if \(job\.status === 'provider_ready'\) await transitionJob\(/);
-  assert.match(source, /else if \(job\.status !== 'finishing'\) throw/);
-  assert.match(source, /\['provider_ready', 'finishing'\]\.includes\(job\.status\) && status\.ready/);
+  assert.match(source, /if \(readClaim\.job\.status === 'provider_ready'\) await transitionJob\(/);
+  assert.match(source, /else if \(readClaim\.job\.status !== 'finishing'\) throw/);
+  assert.match(source, /readClaim\.sourceUrlDigest/);
   assert.match(source, /return await finishProviderMedia\(jobId, status\.sourceUrl\)/);
 });
 

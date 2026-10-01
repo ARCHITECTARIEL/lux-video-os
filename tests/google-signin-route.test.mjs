@@ -267,6 +267,9 @@ test(
     assert.equal(firstRes.statusCode, 302);
     assert.equal(isTesterAccountId(domainAccountId), false, 'a pure domain match must NEVER register into the global tester bypass set, even though role is set to \'tester\' for credit-amount purposes -- that is a deliberately separate signal');
     const afterFirst = await getAccountContext(domainAccountId);
+    assert.equal(afterFirst.user.role, 'customer');
+    const { listAdminTesters } = await import('../db/repositories.js');
+    await listAdminTesters();
     assert.equal(afterFirst.entitlements.liveRendering, undefined, 'the first sign-in itself must not grant liveRendering');
     assert.equal(afterFirst.entitlements.standardRendering, true, 'the first sign-in must still grant standardRendering');
 

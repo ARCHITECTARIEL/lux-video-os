@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "environment": "verification",
+  "projectId": "dawn-scene-51988854",
+  "branchId": "br-wandering-violet-ai1egt3g",
+  "parentBranchId": "br-young-base-ai9mgkgd",
+  "isDefault": false,
+  "hosts": ["ep-lingering-fire-aitvfm3y.c-4.us-east-1.aws.neon.tech", "ep-lingering-fire-aitvfm3y-pooler.c-4.us-east-1.aws.neon.tech"],
+  "database": "mvp_verification_20260930",
+  "roles": ["neondb_owner"],
+  "port": 5432,
+  "schemaLock": "database-schema.lock.json"
+}

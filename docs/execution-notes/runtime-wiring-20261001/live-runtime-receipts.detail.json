@@ -1,0 +1,22 @@
+{
+  "passed": true,
+  "scopeType": "space",
+  "environment": "verification",
+  "bindingRows": 1,
+  "providerSpaceRows": 1,
+  "promotionRows": 1,
+  "idempotent": true,
+  "staleAndCopiedBindingsRejected": true,
+  "productionAndRotationRejectedBeforeHeygen": true,
+  "revokedAuthorityNotRestored": true,
+  "runtimeClaimPinnedToVerifiedDatabase": true,
+  "unrelatedCachedPoolIgnored": true,
+  "copiedAndCrossAccountClaimsRejected": true,
+  "revokedAfterResolveClaimRejected": true,
+  "expiredBindingCannotClaimButCanRecordOriginalReceipt": true,
+  "receiptUsesOriginalDatabaseDespiteEnvironmentDrift": true,
+  "providerGetRequests": 10,
+  "providerMutationRequests": 0,
+  "runtimeActivation": false,
+  "fixturesRetainedForGuardedCleanup": true
+}

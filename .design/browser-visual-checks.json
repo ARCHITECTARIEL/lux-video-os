@@ -1,0 +1,205 @@
+{
+  "fixture": "mocked API, synthetic media, no provider calls",
+  "screenshots": [
+    {
+      "state": "identity-photo",
+      "viewport": "desktop",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\identity-photo-desktop.png"
+    },
+    {
+      "state": "identity-video",
+      "viewport": "desktop",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\identity-video-desktop.png"
+    },
+    {
+      "state": "identity-consent",
+      "viewport": "desktop",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\identity-consent-desktop.png"
+    },
+    {
+      "state": "standard-script",
+      "viewport": "desktop",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\standard-script-desktop.png"
+    },
+    {
+      "state": "standard-quote",
+      "viewport": "desktop",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\standard-quote-desktop.png"
+    },
+    {
+      "state": "premium-script",
+      "viewport": "desktop",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\premium-script-desktop.png"
+    },
+    {
+      "state": "identity-photo",
+      "viewport": "mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\identity-photo-mobile.png"
+    },
+    {
+      "state": "identity-video",
+      "viewport": "mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\identity-video-mobile.png"
+    },
+    {
+      "state": "identity-consent",
+      "viewport": "mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\identity-consent-mobile.png"
+    },
+    {
+      "state": "standard-script",
+      "viewport": "mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\standard-script-mobile.png"
+    },
+    {
+      "state": "standard-quote",
+      "viewport": "mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\standard-quote-mobile.png"
+    },
+    {
+      "state": "premium-script",
+      "viewport": "mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\premium-script-mobile.png"
+    },
+    {
+      "state": "identity-photo",
+      "viewport": "small-mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\identity-photo-small-mobile.png"
+    },
+    {
+      "state": "identity-video",
+      "viewport": "small-mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\identity-video-small-mobile.png"
+    },
+    {
+      "state": "identity-consent",
+      "viewport": "small-mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\identity-consent-small-mobile.png"
+    },
+    {
+      "state": "standard-script",
+      "viewport": "small-mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\standard-script-small-mobile.png"
+    },
+    {
+      "state": "standard-quote",
+      "viewport": "small-mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\standard-quote-small-mobile.png"
+    },
+    {
+      "state": "premium-script",
+      "viewport": "small-mobile",
+      "path": "C:\\Users\\ariel\\lux-video-os\\.design\\screenshots\\premium-script-small-mobile.png"
+    }
+  ],
+  "checks": [
+    {
+      "state": "identity-photo",
+      "viewport": "desktop",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "identity-video",
+      "viewport": "desktop",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "identity-consent",
+      "viewport": "desktop",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "standard-script",
+      "viewport": "desktop",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "standard-quote",
+      "viewport": "desktop",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "premium-script",
+      "viewport": "desktop",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "identity-photo",
+      "viewport": "mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "identity-video",
+      "viewport": "mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "identity-consent",
+      "viewport": "mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "standard-script",
+      "viewport": "mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "standard-quote",
+      "viewport": "mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "premium-script",
+      "viewport": "mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "identity-photo",
+      "viewport": "small-mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "identity-video",
+      "viewport": "small-mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "identity-consent",
+      "viewport": "small-mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "standard-script",
+      "viewport": "small-mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "standard-quote",
+      "viewport": "small-mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    },
+    {
+      "state": "premium-script",
+      "viewport": "small-mobile",
+      "horizontalOverflow": false,
+      "pageErrors": []
+    }
+  ]
+}

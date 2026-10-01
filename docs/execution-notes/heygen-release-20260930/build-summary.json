@@ -1,0 +1,69 @@
+{
+  "at": "2026-09-30T19:16:52.223Z",
+  "head": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+  "sourceSha256": "b2e7e583a660823f76d32fda8c3f6d4befa2238846d4fc7cba69c7af1743a7f5",
+  "outputSha256": "b8a3b7dcfe1705b19b5c9a065a78cafb725021485e201b79efcf25476fcca47e",
+  "project": {
+    "id": "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+    "teamId": "team_rTOCyHyMxhhdoLk4LtT2kD9X",
+    "name": "lux-video-os"
+  },
+  "projectLinkSha256": "12fd6ef128686d8ed4918a6f214780ca46ba87a9397892f46ec55356f75054f2",
+  "outputLocation": "C:\\Users\\ariel\\lux-video-os\\.vercel\\review-output-1790795562957-55368",
+  "workflowBoundary": {
+    "verified": true,
+    "code": "NO_KNOWN_SANDBOX_CLASS_LEAK",
+    "sandboxClassModules": [],
+    "manifestSha256": "d873cb76a3e9edcb21de5114013a94d74e34f1a65ce52a17aa578bd056cbef43"
+  },
+  "workerImageIdentity": {
+    "applicable": false,
+    "verified": null,
+    "reason": "The selected HeyGen managed API does not deploy a Video OS worker image."
+  },
+  "remainingReleaseGates": [
+    "OWNER_EXECUTION_AUTHORIZATION",
+    "CURRENT_CANDIDATE_CI",
+    "PRIVATE_STORAGE_MIGRATION_PROOF",
+    "PRODUCTION_P0_RECEIPT",
+    "HEYGEN_ONLY_RUNTIME_SCOPE_UNVERIFIED",
+    "HEYGEN_ACCOUNT_CAPABILITIES_UNVERIFIED",
+    "HEYGEN_PRICING_UNVERIFIED",
+    "HEYGEN_PRIVACY_RETENTION_UNVERIFIED",
+    "HEYGEN_DELETION_RECONCILIATION_UNVERIFIED",
+    "HEYGEN_LIVE_CANARY_UNVERIFIED",
+    "ROLLBACK_SOURCE_BYTES_UNATTESTED",
+    "PRODUCTION_DATABASE_UNVERIFIED"
+  ],
+  "sourceMatches": true,
+  "reviewOnly": true,
+  "providerRelease": {
+    "selectedProvider": "heygen",
+    "runtimeClass": "managed-api",
+    "workerImageIdentity": {
+      "applicable": false,
+      "verified": null,
+      "reason": "The selected HeyGen managed API does not deploy a Video OS worker image."
+    },
+    "providerEvidence": {
+      "verified": false,
+      "reason": "Packaging has no independent live HeyGen account, deletion/reconciliation, privacy, pricing, or canary verifier.",
+      "requiredGates": [
+        "HEYGEN_ONLY_RUNTIME_SCOPE_UNVERIFIED",
+        "HEYGEN_ACCOUNT_CAPABILITIES_UNVERIFIED",
+        "HEYGEN_PRICING_UNVERIFIED",
+        "HEYGEN_PRIVACY_RETENTION_UNVERIFIED",
+        "HEYGEN_DELETION_RECONCILIATION_UNVERIFIED",
+        "HEYGEN_LIVE_CANARY_UNVERIFIED"
+      ]
+    },
+    "remainingReleaseGates": [
+      "HEYGEN_ONLY_RUNTIME_SCOPE_UNVERIFIED",
+      "HEYGEN_ACCOUNT_CAPABILITIES_UNVERIFIED",
+      "HEYGEN_PRICING_UNVERIFIED",
+      "HEYGEN_PRIVACY_RETENTION_UNVERIFIED",
+      "HEYGEN_DELETION_RECONCILIATION_UNVERIFIED",
+      "HEYGEN_LIVE_CANARY_UNVERIFIED"
+    ]
+  }
+}

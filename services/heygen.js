@@ -34,6 +34,27 @@ async function responseJson(response, category) {
   return data;
 }
 
+async function postWithReceiptValidation(path, options, validate) {
+  // Once a POST is sent, an exception is not evidence that no resource exists.
+  // Never automatically replay uploads/clones after a lost or unusable reply.
+  try {
+    const response = await fetch(`${API_ORIGIN}${path}`, options);
+    return await validate(await responseJson(response, 'PROVIDER_SUBMIT_UNKNOWN'));
+  } catch (error) {
+    const status = Number(error?.providerHttpStatus);
+    const providerHttpStatus = Number.isInteger(status) && status >= 400 && status <= 599 ? status : undefined;
+    throw Object.assign(new Error(providerHttpStatus
+      ? `HeyGen request failed with HTTP ${providerHttpStatus}.`
+      : 'HeyGen submission outcome is unknown and requires reconciliation.'), {
+      statusCode: 502,
+      failureCategory: 'PROVIDER_SUBMIT_UNKNOWN',
+      providerSubmissionPossible: true,
+      ...(providerHttpStatus ? { providerHttpStatus } : {}),
+      providerErrorCode: safeProviderErrorCode(error?.providerErrorCode),
+    });
+  }
+}
+
 function enabled(value) { return String(value || '').trim().toLowerCase() === 'true'; }
 
 function cleanProviderId(value, label) {
@@ -233,28 +254,36 @@ export async function uploadHeygenIdentityAsset({ accountId, buffer, contentType
   if (!bytes.byteLength || bytes.byteLength > 32 * 1024 * 1024) throw Object.assign(new Error('Identity asset size is invalid.'), { statusCode: 400, failureCategory: 'INVALID_IDENTITY_ASSET_SIZE' });
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: normalizedType }), cleanFilename(filename));
-  const response = await fetch(`${API_ORIGIN}/v3/assets`, { method: 'POST', signal: AbortSignal.timeout(timeoutMs()), headers: { Accept: 'application/json', 'X-Api-Key': key() }, body: form });
-  const data = (await responseJson(response, 'IDENTITY_ASSET_UPLOAD'))?.data || {};
-  const providerAssetId = data.asset_id || data.id;
-  return {
-    providerAssetId: cleanProviderId(providerAssetId, 'HeyGen asset ID'),
+  return postWithReceiptValidation('/v3/assets', { method: 'POST', signal: AbortSignal.timeout(timeoutMs()), headers: { Accept: 'application/json', 'X-Api-Key': key() }, body: form }, payload => {
+    const data = payload?.data || {};
+    return {
+    providerAssetId: cleanProviderId(data.asset_id || data.id, 'HeyGen asset ID'),
     contentType: typeof data.mime_type === 'string' ? data.mime_type : normalizedType,
     sizeBytes: Number.isFinite(data.size_bytes) ? data.size_bytes : bytes.byteLength,
-  };
+    };
+  });
 }
 
 export async function createHeygenPhotoAvatar({ accountId, assetId, name, idempotencyKey }) {
   assertIdentityProviderMutationEnabled();
   assertIdentityProviderAccountAuthorized(accountId);
   const requestKey = cleanProviderId(idempotencyKey, 'HeyGen idempotency key');
-  const response = await fetch(`${API_ORIGIN}/v3/avatars`, {
+  return postWithReceiptValidation('/v3/avatars', {
     method: 'POST',
     signal: AbortSignal.timeout(timeoutMs()),
     headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Api-Key': key(), 'Idempotency-Key': requestKey },
     body: JSON.stringify(buildPhotoAvatarRequest({ assetId, name })),
+  }, payload => {
+    const data = payload?.data || {};
+    const avatarGroup = normalizeAvatarGroup(data.avatar_group);
+    const avatarLook = normalizeAvatarLook(data.avatar_item);
+    cleanProviderId(avatarGroup.providerGroupId, 'HeyGen avatar group ID');
+    cleanProviderId(avatarLook.providerLookId, 'HeyGen avatar look ID');
+    if (avatarLook.providerGroupId !== avatarGroup.providerGroupId) {
+      throw new Error('HeyGen avatar receipt has conflicting group references.');
+    }
+    return { avatarGroup, avatarLook };
   });
-  const data = (await responseJson(response, 'PHOTO_AVATAR_CREATE'))?.data || {};
-  return { avatarGroup: normalizeAvatarGroup(data.avatar_group), avatarLook: normalizeAvatarLook(data.avatar_item) };
 }
 
 export async function getHeygenPhotoAvatarStatus({ groupId, lookId }) {
@@ -277,14 +306,15 @@ export async function getHeygenPhotoAvatarStatus({ groupId, lookId }) {
 export async function cloneHeygenVoice({ accountId, assetId, name, language, removeBackgroundNoise }) {
   assertIdentityProviderMutationEnabled();
   assertIdentityProviderAccountAuthorized(accountId);
-  const response = await fetch(`${API_ORIGIN}/v3/voices/clone`, {
+  return postWithReceiptValidation('/v3/voices/clone', {
     method: 'POST',
     signal: AbortSignal.timeout(timeoutMs()),
     headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Api-Key': key() },
     body: JSON.stringify(buildVoiceCloneRequest({ assetId, name, language, removeBackgroundNoise })),
+  }, payload => {
+    const data = payload?.data || {};
+    return { providerVoiceId: cleanProviderId(data.voice_clone_id || data.voice_id, 'HeyGen voice ID'), status: 'processing', ready: false };
   });
-  const data = (await responseJson(response, 'VOICE_CLONE_CREATE'))?.data || {};
-  return { providerVoiceId: cleanProviderId(data.voice_clone_id || data.voice_id, 'HeyGen voice ID'), status: 'processing', ready: false };
 }
 
 export async function getHeygenVoiceStatus(voiceId) {

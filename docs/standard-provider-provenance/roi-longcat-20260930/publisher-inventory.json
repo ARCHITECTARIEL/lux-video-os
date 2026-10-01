@@ -1,0 +1,380 @@
+{
+  "capturedAt": "2026-09-30T16:12:48.879825+00:00",
+  "status": "READ_ONLY_QUALIFICATION_PARTIAL",
+  "modelRepository": "meituan-longcat/LongCat-Video-Avatar-1.5",
+  "publisherRevision": "92016c71d5d318d0f5d84e4db30015a571484ab6",
+  "publisherLicenseLabel": "mit",
+  "weightBytesDownloaded": false,
+  "inferenceExecuted": false,
+  "completeDependencyLicenseReview": false,
+  "minimumRuntimeBillOfMaterialsEstablished": false,
+  "shardGroupBytes": {
+    "base_model/": 31706008384,
+    "base_model_int8/": 15880382936
+  },
+  "sizeCaution": "These are publisher file sizes for alternative DiT groups, not total required runtime download size, VRAM requirement or measured cost. Additional foundation/encoder/voice assets need inventory. Do not sum every precision/framework variant as a deployment bill of materials.",
+  "files": [
+    {
+      "path": ".gitattributes",
+      "publisherBytes": 2014,
+      "gitBlobSha1": "1ce8c9b57f905d1a19be06d3d37d811bab28790c",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "README.md",
+      "publisherBytes": 13488,
+      "gitBlobSha1": "3dbdb2f2babc2868b1ccd2a8c6fddd9ce6d55b30",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "assets/1.mp4",
+      "publisherBytes": 544936,
+      "gitBlobSha1": "c3002424a0492f0e3a5ee54d67d3236ad1270c20",
+      "publisherLfsSha256": "2a51597d9c621a7b6e31f0760749e6bf784485a824188ae6ef028af874e3ce67"
+    },
+    {
+      "path": "assets/2.mp4",
+      "publisherBytes": 792416,
+      "gitBlobSha1": "25e3fbd35ae01f79d63d0403c9e1d37722744e7e",
+      "publisherLfsSha256": "77636534ba6509ccf7ae0eccfb739d0ba1045bfc5a50c5f3ab96979ce7be6c23"
+    },
+    {
+      "path": "assets/3.mp4",
+      "publisherBytes": 505141,
+      "gitBlobSha1": "f1feaa5108df46cb2b7e025a7fdb365f46273bab",
+      "publisherLfsSha256": "a31d497065d9623e6ce8123abfeebcd2ed69cf38193bfbc6b271c8671496fc34"
+    },
+    {
+      "path": "assets/4.mp4",
+      "publisherBytes": 1118934,
+      "gitBlobSha1": "861f296204a7409320f7ec91cc38c3a29bcc7bf5",
+      "publisherLfsSha256": "b9dae3bb518dc9093c1cfbd8043f29302abb70edcdcb7a2d84452935784b481c"
+    },
+    {
+      "path": "assets/5.mp4",
+      "publisherBytes": 1163761,
+      "gitBlobSha1": "63672124714140800e44efea6b5f4dde2df5c8a7",
+      "publisherLfsSha256": "f52a36308b0ea5617fd24343735cf1f28d34974802c9cbdd78798fc9564f0a91"
+    },
+    {
+      "path": "assets/6.mp4",
+      "publisherBytes": 1281641,
+      "gitBlobSha1": "f7dd0fb69254d3deba7c2624f104240a8bec8081",
+      "publisherLfsSha256": "405a29da25025974721285257f949402e106611019e2bd08305935312cb099f1"
+    },
+    {
+      "path": "assets/7.mp4",
+      "publisherBytes": 1831483,
+      "gitBlobSha1": "0b5701c0c60920c6fab4a0b439422b5f049dc558",
+      "publisherLfsSha256": "1483fc34f53bac301f27adc6a59c06e355077ec6d860d3f7d42907d89f976433"
+    },
+    {
+      "path": "assets/8.mp4",
+      "publisherBytes": 1424162,
+      "gitBlobSha1": "8450211e39eaa550783b97738c5d786b6337f8fc",
+      "publisherLfsSha256": "688ff4ed30cc6ff0e7318832f18a4317715d7097374dad1bbc72ed7c70846ad6"
+    },
+    {
+      "path": "assets/fig.png",
+      "publisherBytes": 127208,
+      "gitBlobSha1": "100d346c9ecf50dfdc75f7368bb913bc18ba7dd5",
+      "publisherLfsSha256": "bbdadbd7b2795bd2bccf2e2e0499e255f9673a6ab0cd0a1bab27bb16d9826f75"
+    },
+    {
+      "path": "assets/logo.png",
+      "publisherBytes": 150510,
+      "gitBlobSha1": "658f0ac94632fbf610f09ffa36cbde7608a4f42f",
+      "publisherLfsSha256": "cb6be82312236f580433098cc802c077004ce022ac91aac01384cf0173e4cc08"
+    },
+    {
+      "path": "assets/longcat_video_avatar_1.5_logo.svg",
+      "publisherBytes": 2786794,
+      "gitBlobSha1": "ef533f684157011ccc52ae7f3f369f155efa563e",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "base_model/config.json",
+      "publisherBytes": 853,
+      "gitBlobSha1": "666c43c40d8fe6dd61836fcacc807eb418c3235b",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "base_model/diffusion_pytorch_model-00001-of-00006.safetensors",
+      "publisherBytes": 5038262208,
+      "gitBlobSha1": "eccc662947f7a14dc6c829a1d745d0b3d22c965b",
+      "publisherLfsSha256": "c6140bdeb791620f2caa1f7c4d931dd4499bbafd148acdd65f1cdc254bd45eb2"
+    },
+    {
+      "path": "base_model/diffusion_pytorch_model-00002-of-00006.safetensors",
+      "publisherBytes": 5355725552,
+      "gitBlobSha1": "64b45f37adbb6c4c06370fc360fdeb9e12296cb6",
+      "publisherLfsSha256": "90f71c9038c3d5fc596cc2bb2fc74c598b289bc76f57096277a42ff5bc9c37d9"
+    },
+    {
+      "path": "base_model/diffusion_pytorch_model-00003-of-00006.safetensors",
+      "publisherBytes": 5458518600,
+      "gitBlobSha1": "be42452664bbb0fb5af3327a356275153f82661d",
+      "publisherLfsSha256": "bf69617758bfb0a2ca73d97341725dada77cc5fd2f07d07806beac3ecc5e0e6a"
+    },
+    {
+      "path": "base_model/diffusion_pytorch_model-00004-of-00006.safetensors",
+      "publisherBytes": 5265572392,
+      "gitBlobSha1": "d74856cce0e338dac1f171df7ca7754b02a65024",
+      "publisherLfsSha256": "0540804fa47d2558ddc88d19dcf4a58ff7739673ec4da56cb2b1c5623810c57c"
+    },
+    {
+      "path": "base_model/diffusion_pytorch_model-00005-of-00006.safetensors",
+      "publisherBytes": 5353652768,
+      "gitBlobSha1": "19d42c29a6249905d0928e160cbca96ba045dd7f",
+      "publisherLfsSha256": "91eedc26cf8a11a147cb0b29d640ccbd0c411c1b5f1949fad12003f48a9906c8"
+    },
+    {
+      "path": "base_model/diffusion_pytorch_model-00006-of-00006.safetensors",
+      "publisherBytes": 5234276864,
+      "gitBlobSha1": "d90dda0dc3638ed2f745bcd30bd25be34181c4fd",
+      "publisherLfsSha256": "5fdb0fbff4bc75ea9bf1573c3551a974da4ab05b64b7cdd835a9b0d377374d1d"
+    },
+    {
+      "path": "base_model/diffusion_pytorch_model.safetensors.index.json",
+      "publisherBytes": 153151,
+      "gitBlobSha1": "22cf9e9603297b05b90ac9a17cdd2d00e985ecc4",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "base_model_int8/config.json",
+      "publisherBytes": 853,
+      "gitBlobSha1": "666c43c40d8fe6dd61836fcacc807eb418c3235b",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "base_model_int8/quantization_config.json",
+      "publisherBytes": 193,
+      "gitBlobSha1": "8367e2973ccc39bd6c871e16d2c7843a37b73f20",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "base_model_int8/quantized_model-00001-of-00004.safetensors",
+      "publisherBytes": 4264635792,
+      "gitBlobSha1": "9f560b415b85adeb3366d1d25da2c4c1ca058b1b",
+      "publisherLfsSha256": "ccf575d8cdf8e762272e2d4e52ae1a7c0b5d1fa81e26dfa4592867de4dd9a4fd"
+    },
+    {
+      "path": "base_model_int8/quantized_model-00002-of-00004.safetensors",
+      "publisherBytes": 4275232472,
+      "gitBlobSha1": "19331fa128a1376de18c94ce0f9cde499a572037",
+      "publisherLfsSha256": "af6ddb737ad66d12fd5892adee568c14314143ebd4388d3ab9cc6065754b3688"
+    },
+    {
+      "path": "base_model_int8/quantized_model-00003-of-00004.safetensors",
+      "publisherBytes": 4275232472,
+      "gitBlobSha1": "8441856e46a07603efee9fc58baf14a86e4b1fa4",
+      "publisherLfsSha256": "6a349b76592b4752c2967235af457824d8938e3514bad8e78cfa86009e8a9bf5"
+    },
+    {
+      "path": "base_model_int8/quantized_model-00004-of-00004.safetensors",
+      "publisherBytes": 3065282200,
+      "gitBlobSha1": "15bf93a4defdee40859a9ed53ffebe5b801048fd",
+      "publisherLfsSha256": "ab54b648a3f6a53946f07dd0a21441e2a8cb1aa8da17996b5f3f7f2e1370705b"
+    },
+    {
+      "path": "base_model_int8/quantized_model.safetensors.index.json",
+      "publisherBytes": 201884,
+      "gitBlobSha1": "5fe9d29b77315bca6b75d57efb4b61a661c5b678",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "config.json",
+      "publisherBytes": 48,
+      "gitBlobSha1": "9abacc5a8e9e263ef11947f4881e9c63b6784cf0",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "lora/dmd_lora.safetensors",
+      "publisherBytes": 2523077984,
+      "gitBlobSha1": "7858c1b776bf9a0f7a3ab3c445b1fae5e4919035",
+      "publisherLfsSha256": "d969115a7f3fbc212a277ed4399f77a1a065d170148c6d4bc272e980cd3e907a"
+    },
+    {
+      "path": "model_index.json",
+      "publisherBytes": 48,
+      "gitBlobSha1": "9abacc5a8e9e263ef11947f4881e9c63b6784cf0",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "scheduler/scheduler_config.json",
+      "publisherBytes": 213,
+      "gitBlobSha1": "a11b9a003af3c9e300f1857df3acc660dafeec0f",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "vocal_separator/Kim_Vocal_2.onnx",
+      "publisherBytes": 66759214,
+      "gitBlobSha1": "89d344b3926e4d0d7ee41b78e7f387558ec2acdc",
+      "publisherLfsSha256": "ce74ef3b6a6024ce44211a07be9cf8bc6d87728cc852a68ab34eb8e58cde9c8b"
+    },
+    {
+      "path": "vocal_separator/download_checks.json",
+      "publisherBytes": 17194,
+      "gitBlobSha1": "a781a888ac65ca7c42dfe79958f75333545d8804",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "vocal_separator/mdx_model_data.json",
+      "publisherBytes": 11975,
+      "gitBlobSha1": "ba79b189d787ecd9b3035fca87421377f79cd67f",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "vocal_separator/vr_model_data.json",
+      "publisherBytes": 4380,
+      "gitBlobSha1": "025e093664e798716b177706322649be048dca24",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/.gitattributes",
+      "publisherBytes": 1519,
+      "gitBlobSha1": "a6344aac8c09253b3b630fb776ae94478aa0275b",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/README.md",
+      "publisherBytes": 21829,
+      "gitBlobSha1": "f98e6afab120b2c8cc504933527659c5adcc6d30",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/added_tokens.json",
+      "publisherBytes": 34648,
+      "gitBlobSha1": "1b33526d33aaa60d79f78ae8651dae50b730185a",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/config.json",
+      "publisherBytes": 1272,
+      "gitBlobSha1": "14c6c8cf48b64ebb1cb8b637e2b0fab3a9774972",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/flax_model.msgpack",
+      "publisherBytes": 6174007324,
+      "gitBlobSha1": "bfa8dfa9f11ab79c41ec5cd682d821abc9b5b38a",
+      "publisherLfsSha256": "e9c7b745947df8856bb809974ac7f9ef2704f7834ab1760fc925f38f8f5517f5"
+    },
+    {
+      "path": "whisper-large-v3/generation_config.json",
+      "publisherBytes": 3903,
+      "gitBlobSha1": "f3294dfe3654ac4e362570867369ec48104af59f",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/merges.txt",
+      "publisherBytes": 493869,
+      "gitBlobSha1": "6038932a2a1f09a66991b1c2adae0d14066fa29e",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/model.fp32-00001-of-00002.safetensors",
+      "publisherBytes": 4993448880,
+      "gitBlobSha1": "88be36153ba067176e3d8191170ad162afe64b53",
+      "publisherLfsSha256": "08e0005225b3dbaf55dd13ac62926cc7e02c1025d66fa375e6fb305ff79cd4f9"
+    },
+    {
+      "path": "whisper-large-v3/model.fp32-00002-of-00002.safetensors",
+      "publisherBytes": 1180663192,
+      "gitBlobSha1": "daa200811e32be52b0651d7b9eaaa39d8b1f9327",
+      "publisherLfsSha256": "630ca774672856d2e0e39a702e590f635a1cfc5726a64b6578ab46dd367369a9"
+    },
+    {
+      "path": "whisper-large-v3/model.safetensors",
+      "publisherBytes": 3087130976,
+      "gitBlobSha1": "8cd5f415ca1a4669f588af4dfe1c02f3d509a3b3",
+      "publisherLfsSha256": "a8e94b85976e5864ba3e9525c7e6c83b2a1eca42d4b797a0c7c24d778e40fd95"
+    },
+    {
+      "path": "whisper-large-v3/model.safetensors.index.fp32.json",
+      "publisherBytes": 117893,
+      "gitBlobSha1": "86031debbf168a1fc779d34876f4f098015e199c",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/normalizer.json",
+      "publisherBytes": 52666,
+      "gitBlobSha1": "dd6ae819ad738ac1a546e9f9282ef325c33b9ea0",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/preprocessor_config.json",
+      "publisherBytes": 340,
+      "gitBlobSha1": "931c77a740890c46365c7ae0c9d350ba3cca908f",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/pytorch_model.bin",
+      "publisherBytes": 3087394553,
+      "gitBlobSha1": "816313d33e07378a6d73aa50f68df850f5c590d7",
+      "publisherLfsSha256": "8f3dd0108a56caf505b47740a385a6f61be03e670f4fc34e21e3d2bc98d7b6d1"
+    },
+    {
+      "path": "whisper-large-v3/pytorch_model.bin.index.fp32.json",
+      "publisherBytes": 117957,
+      "gitBlobSha1": "af5d0b9220a56eff9caa873e4b9d2c9006177ac4",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/pytorch_model.fp32-00001-of-00002.bin",
+      "publisherBytes": 4993677094,
+      "gitBlobSha1": "a178257d423609e38108fce33d04f6550bd5c083",
+      "publisherLfsSha256": "fed9e023b3519cba5b7279bdfbfd81aacfeb001f04bbe0cd9b8d1995a900b0d8"
+    },
+    {
+      "path": "whisper-large-v3/pytorch_model.fp32-00002-of-00002.bin",
+      "publisherBytes": 1180725482,
+      "gitBlobSha1": "c558d9eb242bbf80f500da06c2a24def4c1e1945",
+      "publisherLfsSha256": "aadd3bdfecf9bc81e6ef6acf3c1ccaf3124c82eb06a94190064a28fdee096d64"
+    },
+    {
+      "path": "whisper-large-v3/special_tokens_map.json",
+      "publisherBytes": 2072,
+      "gitBlobSha1": "3c18e97162d572f2b1d62e7e1c7b805f1be11dbe",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/tokenizer.json",
+      "publisherBytes": 2480617,
+      "gitBlobSha1": "3a5e2ba63acdcac9a19ba56cf9bd27f185bfff61",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/tokenizer_config.json",
+      "publisherBytes": 282843,
+      "gitBlobSha1": "06ffdc8308eae6bb7bd1fdd81e94b0a881a539ab",
+      "publisherLfsSha256": null
+    },
+    {
+      "path": "whisper-large-v3/vocab.json",
+      "publisherBytes": 1036558,
+      "gitBlobSha1": "0f3456460629e21d559c6daa23ab6ce3644e8271",
+      "publisherLfsSha256": null
+    }
+  ],
+  "codeLicense": {
+    "url": "https://github.com/meituan-longcat/LongCat-Video/blob/main/LICENSE",
+    "gitBlobSha1": "072123c866e9553f926e0e7bbcea9b8f29688641",
+    "bytes": 1063,
+    "sha256": "dfdbf36556065706ef8b26e5866acb85209b6465af0395578d38b63470e0bed0",
+    "archive": "LongCat-MIT.LICENSE.txt"
+  },
+  "sourceRequests": [
+    {
+      "requestId": "922be487-1304-41a9-8d52-f240ad70e042",
+      "privateResponsePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-roi-qualification-20260930\\longcat-code-license.json",
+      "responseSha256": "470a150c2d4f62d34eb170b73cd05967548a1c32a5fa5d4a7b09604aa3cb1c74"
+    },
+    {
+      "requestId": "05eb6ff8-7f63-4718-ac3b-e6156f41c12e",
+      "url": "https://huggingface.co/api/models/meituan-longcat/LongCat-Video-Avatar-1.5?blobs=true",
+      "privateResponsePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-roi-qualification-20260930\\longcat-model-metadata.json",
+      "responseSha256": "97dd4b97439f7151f6c7c5a5e1bb85f144d91c3ed54bf0ac35d10609ef7f5776"
+    }
+  ]
+}

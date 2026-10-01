@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "video-os-production-database-identity-metadata/v1",
+  "observedAt": "2026-09-30T14:36:12Z",
+  "vercel": {
+    "projectId": "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+    "environment": "production",
+    "integrationStoreId": "store_iz6hgCg4fbRQkg3Y",
+    "integrationType": "Neon",
+    "integrationExternalResourceId": "still-voice-83326863",
+    "integrationStatus": "ready",
+    "integrationEnvPrefix": "videoos"
+  },
+  "canonicalApplicationVariables": {
+    "DATABASE_URL": {
+      "present": true,
+      "parsableAsUrlFromVercelPull": false
+    },
+    "DATABASE_URL_UNPOOLED": {
+      "present": true,
+      "parsableAsUrlFromVercelPull": false
+    },
+    "authoritativeMappingToIntegration": "unverified"
+  },
+  "integrationPrefixedVariables": {
+    "videoos_NEON_PROJECT_ID": "still-voice-83326863",
+    "videoos_PGHOST": "ep-autumn-morning-awa4hmb6-pooler.c-12.us-east-1.aws.neon.tech",
+    "videoos_PGHOST_UNPOOLED": "ep-autumn-morning-awa4hmb6.c-12.us-east-1.aws.neon.tech",
+    "videoos_PGDATABASE": "neondb",
+    "videoos_PGUSER": "neondb_owner",
+    "videoos_DATABASE_URL": {
+      "present": true,
+      "parsable": true,
+      "protocol": "postgresql:",
+      "pooled": true,
+      "hostMatchesScalar": true,
+      "databaseMatchesScalar": true,
+      "userMatchesScalar": true
+    },
+    "videoos_DATABASE_URL_UNPOOLED": {
+      "present": true,
+      "parsable": true,
+      "protocol": "postgresql:",
+      "pooled": false
+    }
+  },
+  "neonProviderReadback": {
+    "projectId": "still-voice-83326863",
+    "projectName": "neon-byzantium-drum",
+    "region": "aws-us-east-1",
+    "branchId": "br-broad-sunset-awrsmiwa",
+    "branchName": "main",
+    "branchDefault": true,
+    "branchPrimary": true,
+    "endpointId": "ep-autumn-morning-awa4hmb6",
+    "pooledHost": "ep-autumn-morning-awa4hmb6-pooler.c-12.us-east-1.aws.neon.tech",
+    "directHost": "ep-autumn-morning-awa4hmb6.c-12.us-east-1.aws.neon.tech",
+    "database": "neondb",
+    "role": "neondb_owner"
+  },
+  "decision": {
+    "databaseQueryAuthorizedByIdentityEvidence": false,
+    "reason": "The application reads canonical DATABASE_URL, but the pulled canonical value is opaque and cannot be matched to the verified integration-prefixed project, branch and endpoint. The prefixed URL must not be substituted silently.",
+    "requiredNextEvidence": "Independently establish that canonical DATABASE_URL resolves to the verified pooled host, database and role before any production reference query."
+  }
+}

@@ -67,3 +67,10 @@ Thumbs.db
 Desktop.ini
 .vercel
 .env*
+
+# Stray CLI credential/telemetry dumps (accidental artifacts, never commit)
+limit=*/
+until=*/
+
+# Per-suite Playwright result dirs (not the gitignored default test-results/)
+test-results-*/

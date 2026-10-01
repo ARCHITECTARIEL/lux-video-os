@@ -1,0 +1,65 @@
+{
+  "verifiedAt": "2026-09-30T16:52:43.236011+00:00",
+  "unitCommandExit": 0,
+  "node": {
+    "passed": 392,
+    "failed": 0,
+    "skipped": 43
+  },
+  "vitest": {
+    "passed": 4,
+    "failed": 0
+  },
+  "isolatedDatabase": {
+    "scenarioPassed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "beforeRows": 0,
+    "afterRows": 0,
+    "beforeBlobs": 0,
+    "afterBlobs": 0,
+    "receipt": "live-tier-consent.json"
+  },
+  "previewBuild": {
+    "exit": 0,
+    "routes": 39,
+    "steps": 93,
+    "workflows": 2,
+    "releaseAuthorized": false,
+    "productionBoundaryVerified": false
+  },
+  "sourceSha256": "b32f99ea492053741483bee31894523bba5a6c8005691f40203b13c9c8ca8ede",
+  "outputSha256": "003910e3194239a01b606057dd38e29a7a19c9c8d32a8647127deb7b2aca1d93",
+  "changedSourcePaths": [
+    "api/video-os-lite/render-v2.js",
+    "db/dto.js",
+    "db/repositories.js",
+    "lib/scripted-photo-contract.js",
+    "lib/video-os-operations.js",
+    "lib/video-os-validation.js",
+    "tests/helpers/authorization-repair-scenario.mjs",
+    "tests/helpers/scripted-photo-backend-scenario.mjs",
+    "tests/job-dto-privacy.test.mjs",
+    "tests/job-output-acceptance.test.mjs",
+    "tests/render-request-validation.test.mjs",
+    "tests/scripted-photo-backend.test.mjs",
+    "tests/scripted-photo-contract.test.mjs",
+    "tests/scripted-photo-live.test.mjs",
+    "tests/talent-inventory.test.mjs",
+    "workflows/video-render.js"
+  ],
+  "projectLinkUnchanged": true,
+  "schemaAndMigrationsUnchanged": true,
+  "logs": {
+    "lux-shared-heygen-unit.log": {
+      "privatePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-shared-heygen-unit.log",
+      "sha256": "d2c4dda0be86343b2cf5fbbb3c76ab2a1bba340b80c9a211f7af804db7a24400"
+    },
+    "lux-shared-heygen-build.log": {
+      "privatePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-shared-heygen-build.log",
+      "sha256": "cc2b347eac6e718d17d83f5ddeb811b217d5be2fc805713cfedd4a30184eaa59"
+    }
+  },
+  "independentBoundedReview": "PASS",
+  "reviewScope": "Tier separation, claim/refund races, durable error transport, preflight and locked source checks"
+}

@@ -13,7 +13,7 @@ import {
   claimWorkflowStart, ensureAccount, getAdminOverview, getJobEventTimeline,
   listFailedOrStuckJobs, listRecentAccounts, markJobFailedAndRelease, recordSignIn, reserveRender,
 } from '../db/repositories.js';
-import { users } from '../db/schema.js';
+import { entitlements, users } from '../db/schema.js';
 
 let dbAvailable = true;
 try {
@@ -33,6 +33,7 @@ test(
 
     const beforeAccountCreated = await getAdminOverview();
     await ensureAccount({ accountId, email: `${accountId}@example.com`, name: 'Admin Overview Test', initialCredits: 500 });
+    await database().insert(entitlements).values(['standardRendering', 'liveRendering'].map(entitlementKey => ({ accountId, entitlementKey, enabled: true, sourceType: 'test_fixture' })));
 
     await t.test('creating the account is reflected in getAdminOverview', async () => {
       const after = await getAdminOverview();

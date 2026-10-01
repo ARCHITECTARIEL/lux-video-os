@@ -7,6 +7,7 @@ neonConfig.webSocketConstructor = ws;
 
 let client;
 let pool;
+let poolUrl;
 export const databaseDriver = 'neon-serverless';
 
 // A cached WebSocket connection can go silently stale between warm
@@ -48,14 +49,26 @@ function createPool(url) {
   // Evict the cached pool/client on a detected connection error, instead
   // of silently reusing a socket that has already failed once.
   created.on('error', () => {
-    if (pool === created) { pool = undefined; client = undefined; }
+    if (pool === created) { pool = undefined; client = undefined; poolUrl = undefined; }
   });
   return created;
 }
 
 export function database() {
   const url = configuredDatabaseUrl();
-  pool ||= createPool(url);
+  if (pool && poolUrl !== url) {
+    const previousPool = pool;
+    pool = undefined;
+    client = undefined;
+    poolUrl = undefined;
+    // Existing borrowers finish on their original connection; new calls must
+    // never silently query that target after the canonical configuration moves.
+    void previousPool.end().catch(() => {});
+  }
+  if (!pool) {
+    pool = createPool(url);
+    poolUrl = url;
+  }
   client ||= drizzle({ client: pool, schema });
   return client;
 }
@@ -66,6 +79,7 @@ export function database() {
 export function resetDatabaseForTests() {
   pool = undefined;
   client = undefined;
+  poolUrl = undefined;
 }
 
 // Test-only: exposes the currently cached pool so tests can assert that a

@@ -1,0 +1,293 @@
+{
+  "capturedAt": "2026-09-30T15:56:41.462274+00:00",
+  "scope": "Primary documentation screening only; no authenticated provider mutation, inference, weights download or pricing/account verification",
+  "records": [
+    {
+      "name": "heygen-capabilities",
+      "requestId": "0f7caf8d-4701-4910-a6b8-5f7658ecb0fc",
+      "status": "succeeded",
+      "rawResponseSha256": "d16a84d6b30e563c204a5a234b2952b2f9c66ea2817ddd6d9c97f3695028cb41",
+      "privateRawResponsePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-photo-pipeline-research-20260930\\heygen-capabilities.json",
+      "urlOutcomes": [
+        {
+          "url": "https://developers.heygen.com/photo-avatar.md",
+          "status": "returned"
+        },
+        {
+          "url": "https://developers.heygen.com/docs/avatar-from-photo.md",
+          "status": "returned"
+        },
+        {
+          "url": "https://developers.heygen.com/docs/voices/instant-voice-clone.md",
+          "status": "returned"
+        },
+        {
+          "url": "https://developers.heygen.com/reference/create-video.md",
+          "status": "returned"
+        },
+        {
+          "url": "https://developers.heygen.com/docs/avatar-consent.md",
+          "status": "returned"
+        },
+        {
+          "url": "https://developers.heygen.com/models.md",
+          "status": "returned"
+        }
+      ],
+      "sources": [
+        {
+          "url": "https://developers.heygen.com/photo-avatar.md",
+          "truncated": false,
+          "extractedContentSha256": "6b6813a82e4fda9e067201aeafc1711347cbebcc2d034e1c096296ac3932f575"
+        },
+        {
+          "url": "https://developers.heygen.com/docs/avatar-from-photo.md",
+          "truncated": false,
+          "extractedContentSha256": "af0bc14eb0788601ef04be3b33c5a8edf905ca2067dd2a849632b915588f482a"
+        },
+        {
+          "url": "https://developers.heygen.com/docs/avatar-consent.md",
+          "truncated": false,
+          "extractedContentSha256": "3706d8d2f3e27251d035f479e606e2f09bb45ab78587142653b61ee38ac4dbc8"
+        },
+        {
+          "url": "https://developers.heygen.com/models.md",
+          "truncated": false,
+          "extractedContentSha256": "f42071e8038be91e43a0bf0749b03a64fd5c8f452e27cd26311d26b6eb93d11d"
+        },
+        {
+          "url": "https://developers.heygen.com/docs/voices/instant-voice-clone.md",
+          "truncated": false,
+          "extractedContentSha256": "d2a6157392ab72b1932718d0421fd196aa515d447a8777295d9f310c067a4d5c"
+        },
+        {
+          "url": "https://developers.heygen.com/reference/create-video.md",
+          "truncated": true,
+          "extractedContentSha256": "1ac5665c677a2ea30cb8e3d83b103b34989d924444280e29a3ea471d2be32042"
+        }
+      ]
+    },
+    {
+      "name": "heygen-discovery",
+      "requestId": "da5082c7-fd56-4974-a3a7-8879d06ef7c7",
+      "status": "succeeded",
+      "rawResponseSha256": "98f7357d6ed4afa531196a0d62468d0600609d7e02c3208c575c1c37954ed6fd",
+      "privateRawResponsePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-photo-pipeline-research-20260930\\heygen-discovery.json",
+      "urlOutcomes": [
+        {
+          "url": "https://docs.heygen.com/docs/create-videos-with-avatar-iv",
+          "status": "not_returned"
+        },
+        {
+          "url": "https://docs.heygen.com/reference/generate-avatar-iv-video",
+          "status": "not_returned"
+        },
+        {
+          "url": "https://docs.heygen.com/docs/photo-avatars",
+          "status": "not_returned"
+        },
+        {
+          "url": "https://docs.heygen.com/docs/voice-clone",
+          "status": "not_returned"
+        },
+        {
+          "url": "https://docs.heygen.com/llms.txt",
+          "status": "returned"
+        }
+      ],
+      "sources": [
+        {
+          "url": "https://docs.heygen.com/llms.txt",
+          "truncated": true,
+          "extractedContentSha256": "87961e23bcd772f5b3ea6f1027101555f972f86fd8d58576ca218ac29de6217c"
+        }
+      ]
+    },
+    {
+      "name": "infinitetalk-license-confirmed",
+      "requestId": "dc4f252e-6084-4a96-9dfd-2d920809c45a",
+      "status": "succeeded",
+      "rawResponseSha256": "a33b1f89ba9f3a3bc443506b3d1fa96c1bf5d61ccd684f63f85f907e94d1959c",
+      "privateRawResponsePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-photo-pipeline-research-20260930\\infinitetalk-license-confirmed.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/blob/main/LICENSE.txt",
+          "path": "LICENSE.txt",
+          "gitBlobSha1": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+          "declaredBytes": 11357,
+          "extractedContentSha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    {
+      "name": "infinitetalk-license",
+      "requestId": null,
+      "status": "failed",
+      "rawResponseSha256": "3c7c5140827e0e82ec5a8e5f388f20da63359303dab6706bb321687ec0cd2309",
+      "privateRawResponsePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-photo-pipeline-research-20260930\\infinitetalk-license.json",
+      "urlOutcomes": null,
+      "sources": [],
+      "failure": {
+        "httpStatus": 404,
+        "requestedPath": "LICENSE",
+        "note": "No LICENSE file returned; an earlier temporary file mistakenly repeated the README response and is superseded by this failure record."
+      }
+    },
+    {
+      "name": "infinitetalk-readme",
+      "requestId": "6f6cb0ee-33f1-4dd6-be7e-c9c04e393dcc",
+      "status": "succeeded",
+      "rawResponseSha256": "54e635c49efb206d811bd90cb08b501017b3a5a872b16d707a112e757ddf16dc",
+      "privateRawResponsePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-photo-pipeline-research-20260930\\infinitetalk-readme.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/blob/main/README.md",
+          "path": "README.md",
+          "gitBlobSha1": "8a8b242a496f3e7722194e1a6e04d686e953dd00",
+          "declaredBytes": 17441,
+          "extractedContentSha256": "dfbf7cd36fbe2d6bca5c6ac2f48890d0f5f3562aa03d8f8c4b235a30f8adb679"
+        }
+      ]
+    },
+    {
+      "name": "infinitetalk-root",
+      "requestId": "80199ea5-f828-4a5a-a54a-6ef4e35eb47d",
+      "status": "succeeded",
+      "rawResponseSha256": "98c59d82e166e2646c7290eaacbb4ab589bb7d571d87821f1212ac576ee8b15e",
+      "privateRawResponsePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-photo-pipeline-research-20260930\\infinitetalk-root.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/blob/main/LICENSE.txt",
+          "path": "LICENSE.txt",
+          "gitBlobSha1": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+          "declaredBytes": 11357,
+          "extractedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/blob/main/README.md",
+          "path": "README.md",
+          "gitBlobSha1": "8a8b242a496f3e7722194e1a6e04d686e953dd00",
+          "declaredBytes": 17441,
+          "extractedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/blob/main/app.py",
+          "path": "app.py",
+          "gitBlobSha1": "a30be0a462ad632f803dc225c92d11d18eaa2dfe",
+          "declaredBytes": 34103,
+          "extractedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/tree/main/assets",
+          "path": "assets",
+          "gitBlobSha1": "38c229ecce8d3af42b4430f7b0df4e615c23fa52",
+          "declaredBytes": null,
+          "extractedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/tree/main/examples",
+          "path": "examples",
+          "gitBlobSha1": "dc800a7583c8f4473c190ec9ea3be94c38940598",
+          "declaredBytes": null,
+          "extractedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/blob/main/generate_infinitetalk.py",
+          "path": "generate_infinitetalk.py",
+          "gitBlobSha1": "e83daa8f71ab9982df6cf88d2a02f386aae5eb29",
+          "declaredBytes": 24583,
+          "extractedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/tree/main/kokoro",
+          "path": "kokoro",
+          "gitBlobSha1": "449e3582d5b7d2f97557de07ffe8bbd66aee024a",
+          "declaredBytes": null,
+          "extractedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/blob/main/requirements.txt",
+          "path": "requirements.txt",
+          "gitBlobSha1": "85eb330c50d8abb4b1ebdfb67c933d1f51dcc003",
+          "declaredBytes": 287,
+          "extractedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/tree/main/src",
+          "path": "src",
+          "gitBlobSha1": "62e093e5c68d61a52f3314a7322f44fd64d73bad",
+          "declaredBytes": null,
+          "extractedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/tree/main/tools",
+          "path": "tools",
+          "gitBlobSha1": "af9a2a3f07bdb4513b65262c21f992a749d6964f",
+          "declaredBytes": null,
+          "extractedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "url": "https://github.com/MeiGen-AI/InfiniteTalk/tree/main/wan",
+          "path": "wan",
+          "gitBlobSha1": "d824edbd7cd89c4cc4569388ac5e5e8c480fdd4e",
+          "declaredBytes": null,
+          "extractedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "name": "liveportrait-readme",
+      "requestId": "dee685c3-e31e-4d27-9b24-353c97a8698e",
+      "status": "succeeded",
+      "rawResponseSha256": "40da1e9107dc824aa98eed3c561bb0aafd7966715ee0fe504a18c7e10952b6b9",
+      "privateRawResponsePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-photo-pipeline-research-20260930\\liveportrait-readme.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://github.com/KlingAIResearch/LivePortrait/blob/main/readme.md",
+          "path": "readme.md",
+          "gitBlobSha1": "436a2aae0d0d3f5afd3c3f44c45f5724f5c3985b",
+          "declaredBytes": 21614,
+          "extractedContentSha256": "9a4719c2f75c19fc83df3dbefddf4b55809ff1b3b892506f8fdff9e8eecce607"
+        }
+      ]
+    },
+    {
+      "name": "longcat-avatar-readme",
+      "requestId": "c4cedb69-7ae9-4a9b-9c29-17357de464ec",
+      "status": "succeeded",
+      "rawResponseSha256": "526f528353b36c899d55f48b6695a3fd11a77c28b314efb37eeefaa0c4d69cf7",
+      "privateRawResponsePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-photo-pipeline-research-20260930\\longcat-avatar-readme.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://github.com/MeiGen-AI/LongCat-Video-Avatar/blob/main/README.md",
+          "path": "README.md",
+          "gitBlobSha1": "28fef36a6abc27d70787ddb42686ad0afa59d26e",
+          "declaredBytes": 2675,
+          "extractedContentSha256": "d1e6a1387a4c599401f42b61f211a28cb1e34d9b5f852179921f3c3e0b1666c2"
+        }
+      ]
+    },
+    {
+      "name": "longcat-current-readme",
+      "requestId": "5f849b4e-d183-4ca8-b2b8-c5cd53dcba43",
+      "status": "succeeded",
+      "rawResponseSha256": "852b71354661409d2583bdc88d35b740c022308f96f45cf627f95383c6a49463",
+      "privateRawResponsePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-photo-pipeline-research-20260930\\longcat-current-readme.json",
+      "urlOutcomes": null,
+      "sources": [
+        {
+          "url": "https://github.com/meituan-longcat/LongCat-Video/blob/main/README.md",
+          "path": "README.md",
+          "gitBlobSha1": "9d6e54ad0c5ad07e66840f23349efca828f5b86f",
+          "declaredBytes": 19815,
+          "extractedContentSha256": "b8da7e19f2ca9e6c7a26ed49985fe70a5c5b248670646a9663c1724a05e125bc"
+        }
+      ]
+    }
+  ]
+}

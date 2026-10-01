@@ -70,17 +70,18 @@ test('renderHourlyLimit defaults to 20 and honors VIDEO_OS_RENDER_HOURLY_LIMIT',
   }
 });
 
-test('the handler checks the render rate limit after authorization but before reading the request body', () => {
+test('the handler rate limits authenticated requests before reading the body, then authorizes its tier', () => {
   const source = readFileSync(new URL('../api/video-os-lite/render-v2.js', import.meta.url), 'utf8');
   const start = source.indexOf('export default async function handler(req, res) {');
   const end = source.indexOf('async function handlePremiumRender');
   assert.ok(start >= 0 && end > start, 'handler block must remain recognizable');
   const handlerBlock = source.slice(start, end);
-  const authIndex = handlerBlock.indexOf('requireRenderAccountAuthorization(session.accountId, session.email)');
+  const authIndex = handlerBlock.indexOf('sessionFromRequest(req)');
   const rateLimitIndex = handlerBlock.indexOf('await assertRenderRateLimit(session.accountId)');
   const readBodyIndex = handlerBlock.indexOf('const body = await readJson(req)');
   assert.ok(authIndex >= 0 && rateLimitIndex > authIndex, 'rate limit must be checked only after account authorization succeeds');
   assert.ok(readBodyIndex > rateLimitIndex, 'rate limit must be checked before the request body is read');
+  assert.ok(handlerBlock.indexOf('await requirePersistedRenderAuthorization') > handlerBlock.indexOf('narrationRequest = isNarrationRequest(body)'), 'tier permission follows tier selection');
 });
 
 let dbAvailable = true;

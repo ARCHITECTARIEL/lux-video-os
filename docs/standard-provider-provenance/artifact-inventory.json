@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "auditedAt": "2026-09-30T15:25:02.277628+00:00",
+  "status": "PROVENANCE_INVENTORY_NOT_RUNTIME_APPROVAL",
+  "sourceRevisionDeclared": "a229c3948406bc2cf6eaf4873e662e70c6a04746",
+  "workerSourceInventory": "local-worker-files.json",
+  "upstreamEvidence": "upstream-evidence.json",
+  "selectedStandardContract": null,
+  "selectedVaeWeightFormat": null,
+  "deployedImageDigest": null,
+  "imageTagDeclaredByWorkflow": "ghcr.io/architectariel/lux-video-os-latentsync-runpod:<github.sha>",
+  "artifacts": [
+    {
+      "artifact": "latentsync_unet.pt",
+      "upstreamRepository": "https://huggingface.co/ByteDance/LatentSync-1.6",
+      "upstreamRevision": "c42c7e6c8e9c213626389fa7d9a3c444b8536353",
+      "expectedBytes": 5072222488,
+      "expectedSha256": "0a478e89eb660f82da4c35dbdde8a5adfb27f99d1b4e50edd03729e1e98316d3",
+      "evidenceMethod": "publisher Git LFS pointer at exact revision, read via DeepAPI",
+      "evidenceUrl": "https://huggingface.co/ByteDance/LatentSync-1.6/raw/c42c7e6c8e9c213626389fa7d9a3c444b8536353/latentsync_unet.pt",
+      "requestId": "85d4d4d9-93c1-4724-91ba-a5efc0ec9ac5",
+      "localManifestKey": "latentsync_unet.pt",
+      "declaredManifestSha256": "0a478e89eb660f82da4c35dbdde8a5adfb27f99d1b4e50edd03729e1e98316d3",
+      "matchesDeclaredManifestHash": true,
+      "weightBytesDownloadedOrHashedThisSession": false,
+      "deployedArtifactVerified": false
+    },
+    {
+      "artifact": "whisper/tiny.pt",
+      "upstreamRepository": "https://huggingface.co/ByteDance/LatentSync-1.6",
+      "upstreamRevision": "c42c7e6c8e9c213626389fa7d9a3c444b8536353",
+      "expectedBytes": 75572083,
+      "expectedSha256": "65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9",
+      "evidenceMethod": "publisher Git LFS pointer at exact revision, read via DeepAPI",
+      "evidenceUrl": "https://huggingface.co/ByteDance/LatentSync-1.6/raw/c42c7e6c8e9c213626389fa7d9a3c444b8536353/whisper/tiny.pt",
+      "requestId": "85d4d4d9-93c1-4724-91ba-a5efc0ec9ac5",
+      "localManifestKey": "whisper/tiny.pt",
+      "declaredManifestSha256": "65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9",
+      "matchesDeclaredManifestHash": true,
+      "weightBytesDownloadedOrHashedThisSession": false,
+      "deployedArtifactVerified": false
+    },
+    {
+      "artifact": "diffusion_pytorch_model.safetensors",
+      "upstreamRepository": "https://huggingface.co/stabilityai/sd-vae-ft-mse",
+      "upstreamRevision": "31f26fdeee1355a5c34592e401dd41e45d25a493",
+      "expectedBytes": 334643276,
+      "expectedSha256": "a1d993488569e928462932c8c38a0760b874d166399b14414135bd9c42df5815",
+      "evidenceMethod": "publisher Git LFS pointer at exact revision, read via DeepAPI",
+      "evidenceUrl": "https://huggingface.co/stabilityai/sd-vae-ft-mse/raw/31f26fdeee1355a5c34592e401dd41e45d25a493/diffusion_pytorch_model.safetensors",
+      "requestId": "5d3cff7d-eb4f-44a6-9d90-2ec2664ba2f6",
+      "localManifestKey": "stabilityai/sd-vae-ft-mse",
+      "declaredManifestSha256": null,
+      "matchesDeclaredManifestHash": null,
+      "weightBytesDownloadedOrHashedThisSession": false,
+      "deployedArtifactVerified": false
+    },
+    {
+      "artifact": "diffusion_pytorch_model.bin",
+      "upstreamRepository": "https://huggingface.co/stabilityai/sd-vae-ft-mse",
+      "upstreamRevision": "31f26fdeee1355a5c34592e401dd41e45d25a493",
+      "expectedBytes": 334707217,
+      "expectedSha256": "1b4889b6b1d4ce7ae320a02dedaeff1780ad77d415ea0d744b476155c6377ddc",
+      "evidenceMethod": "publisher Git LFS pointer at exact revision, read via DeepAPI",
+      "evidenceUrl": "https://huggingface.co/stabilityai/sd-vae-ft-mse/raw/31f26fdeee1355a5c34592e401dd41e45d25a493/diffusion_pytorch_model.bin",
+      "requestId": "5d3cff7d-eb4f-44a6-9d90-2ec2664ba2f6",
+      "localManifestKey": "stabilityai/sd-vae-ft-mse",
+      "declaredManifestSha256": null,
+      "matchesDeclaredManifestHash": null,
+      "weightBytesDownloadedOrHashedThisSession": false,
+      "deployedArtifactVerified": false
+    },
+    {
+      "artifact": "config.json",
+      "upstreamRepository": "https://huggingface.co/stabilityai/sd-vae-ft-mse",
+      "upstreamRevision": "31f26fdeee1355a5c34592e401dd41e45d25a493",
+      "expectedBytes": 547,
+      "expectedSha256": "92d3dfb746fca211a2c9e019e285f8597412211728dce3c5bcf4eda0f2d62e7e",
+      "evidenceMethod": "retrieved exact small config bytes; matches publisher Git blob 0db26717579be63eb0ddbf15b43faa43700dfe5a",
+      "localEvidence": "upstream/vae-config.json",
+      "deployedArtifactVerified": false
+    },
+    {
+      "artifact": "face_landmarker.task",
+      "sourceUrl": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      "expectedBytes": 3758596,
+      "expectedSha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+      "evidenceMethod": "existing repository SELF_COMPUTED claim dated 2026-09-27; Docker build enforces hash; blob not re-downloaded this session",
+      "weightBytesDownloadedOrHashedThisSession": false,
+      "deployedArtifactVerified": false
+    }
+  ],
+  "gates": [
+    "OWNER_STANDARD_CONTRACT_DECISION",
+    "EXACT_DEPLOYED_IMAGE_AND_WEIGHT_READBACK",
+    "ALL_REQUIRED_MODEL_BYTES_AND_HASHES_ENFORCED_AT_STARTUP",
+    "VAE_FORMAT_REVISION_AND_COMPLETE_FILESET_PIN",
+    "LICENSE_REVIEW_FOR_EXACT_ARTIFACTS_AND_HOSTED_USE",
+    "REAL_PROVIDER_AND_P0_PROOF"
+  ],
+  "ownerDecisionRecord": "owner-decision.json",
+  "decisionScopeNote": "selectedStandardContract is the preparation-time snapshot; owner-decision.json records the later confirmed photo-based output and supporting phone-video requirement."
+}

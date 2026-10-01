@@ -1,0 +1,80 @@
+{
+  "schemaVersion": "video-os-storage-inventory/v1",
+  "target": {
+    "storeId": "store_8uyr0JDWkUyha8sy",
+    "projectId": "prj_vbZKWodyUtKSJMhgLUiTSjoVnlQB",
+    "environment": "development",
+    "access": "private"
+  },
+  "verification": {
+    "credentialBoundToExpectedStore": true,
+    "allPagesListed": true,
+    "objectHostsMatchExpectedAccess": true,
+    "countMatchesStoreMetadata": true,
+    "bytesMatchStoreMetadata": true
+  },
+  "totals": {
+    "objects": 0,
+    "bytes": 0
+  },
+  "categories": {
+    "account-state": {
+      "objects": 0,
+      "bytes": 0,
+      "objectIds": []
+    },
+    "authentication-state": {
+      "objects": 0,
+      "bytes": 0,
+      "objectIds": []
+    },
+    "rate-limit-state": {
+      "objects": 0,
+      "bytes": 0,
+      "objectIds": []
+    },
+    "customer-upload": {
+      "objects": 0,
+      "bytes": 0,
+      "objectIds": []
+    },
+    "finished-customer-video": {
+      "objects": 0,
+      "bytes": 0,
+      "objectIds": []
+    },
+    "job-state": {
+      "objects": 0,
+      "bytes": 0,
+      "objectIds": []
+    },
+    "credit-state": {
+      "objects": 0,
+      "bytes": 0,
+      "objectIds": []
+    },
+    "stripe-event": {
+      "objects": 0,
+      "bytes": 0,
+      "objectIds": []
+    },
+    "recovery-receipt": {
+      "objects": 0,
+      "bytes": 0,
+      "objectIds": []
+    },
+    "unclassified": {
+      "objects": 0,
+      "bytes": 0,
+      "objectIds": []
+    }
+  },
+  "objectFingerprintScheme": "HMAC-SHA256 keyed by the store credential; values change after credential rotation",
+  "rawManifest": {
+    "retainedOutsideRepository": true,
+    "objects": 0,
+    "sha256": "ff80cc7e600a9fb4cd37f70c3d2e5481a06a2de5e7191d64c0f07899d8ad6048"
+  },
+  "generatedAt": "2026-09-30T14:30:36.568Z",
+  "manifestSha256": "f3ae147b1092855088d096b1443abaf97870e037ef0a1fa70ea746defaf1d8f6"
+}

@@ -1,0 +1,28 @@
+[
+    {
+        "id":  "dpl_AEUWrAaSPEyvNjkkZxCbDAg427WP",
+        "url":  "lux-video-nztminlu3-lux-3035s-projects.vercel.app",
+        "state":  "READY",
+        "target":  "production",
+        "createdAt":  1790283770666,
+        "gitSha":  "a04e59513e7cbd5684bf56790311d2ab14676499",
+        "gitRef":  "main",
+        "gitSource":  null
+    },
+    {
+        "id":  "dpl_DLi3r7gP11RoanJLpVeTVW6k86wy",
+        "url":  "lux-video-aypocwqwi-lux-3035s-projects.vercel.app",
+        "state":  "READY",
+        "target":  null,
+        "createdAt":  1790690660766,
+        "gitSha":  "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+        "gitRef":  "main",
+        "gitSource":  {
+                          "ref":  "main",
+                          "repoId":  1302045241,
+                          "sha":  "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+                          "type":  "github",
+                          "prId":  null
+                      }
+    }
+]

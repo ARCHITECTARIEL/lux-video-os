@@ -1,0 +1,62 @@
+{
+  "head": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+  "baselinePath": "C:\\Users\\ariel\\AppData\\Local\\Temp\\lux-prompt1-baseline-20260929T202952Z",
+  "baselinePatchSha256": "88d4d6279abf8c25b2f905a3d38583b58622449884fc536503a4ca563cae5170",
+  "files": [
+    {
+      "path": "api/video-os/talent.js",
+      "sha256": "efd2f5bafede6f9430bd42942426cfa00f88a167d32b4b2aa042b8cdb875c00d"
+    },
+    {
+      "path": "db/repositories.js",
+      "sha256": "1af013198a9a20eb235780c27c699881011b2192b3316fbd126d7f0d29f5af45"
+    },
+    {
+      "path": "db/standard-narration-repository.js",
+      "sha256": "55ef2ccc975a505b88d818ecc11599b7c61e50963d9a2081ba2b737b540cc6a6"
+    },
+    {
+      "path": "lib/video-os-render-authorization.js",
+      "sha256": "a2f6d24ec84a96855e78c17e90de354ba7f706294ee9388038ff802168936c23"
+    },
+    {
+      "path": "tests/talent-inventory.test.mjs",
+      "sha256": "4a4e8ee6a65605eaed90105300d60df181b3b6fb0eab20c56215c4b5bbf15f3a"
+    },
+    {
+      "path": "tests/helpers/talent-authorization-scenario.mjs",
+      "sha256": "236435d5e9ab73991f05b7d16783f3a02145badeb52034f8f04d85edb495cde2"
+    },
+    {
+      "path": "tests/authorization-repair.test.mjs",
+      "sha256": "eae1eac2a266a5cccd3d4fa8aeeb74a1c5e000255d9e7efa2059992ec58ac7bf"
+    },
+    {
+      "path": "tests/helpers/authorization-repair-scenario.mjs",
+      "sha256": "4e34cb0a74f45edd908dd4869e5d75ea664c807b299e4e3aa697196a3fb19956"
+    },
+    {
+      "path": "tests/render-authorization-policy.test.mjs",
+      "sha256": "5de3e114e28cb956cb585e8379a948032b57c746144cfcc79d48f1e507fa56db"
+    },
+    {
+      "path": "workflows/video-render.js",
+      "sha256": "74af25f73171a33123c4bbc0595249b14fef61f3c320f94296a4064df37d2d1e"
+    },
+    {
+      "path": "workflows/standard-render.js",
+      "sha256": "1a6ff8332b229605fdbc918367b8bf501bd5cb957230970e344c9ee6ce977842"
+    }
+  ],
+  "databaseVerification": {
+    "project": "dawn-scene-51988854",
+    "branch": "br-young-base-ai9mgkgd",
+    "branchName": "main",
+    "default": true,
+    "endpoint": "ep-broad-sunset-aiua1fld",
+    "localUrlMatches": true,
+    "testWritesPerformed": false,
+    "isolatedTargetVerified": false,
+    "blobCredentialAvailable": false
+  }
+}

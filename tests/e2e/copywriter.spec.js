@@ -255,7 +255,7 @@ test('a response becomes stale when its brief or working draft changes in flight
   await expect(page.locator('#copywriter-working-draft')).toHaveValue('Newer edit while the response is pending.');
 });
 
-test('copying and Premium handoff require separate explicit actions', async ({ page }) => {
+test('copying and active-tier handoff preserve separate Standard and Premium drafts', async ({ page }) => {
   await page.addInitScript(() => {
     window.__copiedText = [];
     Object.defineProperty(navigator, 'clipboard', {
@@ -271,7 +271,9 @@ test('copying and Premium handoff require separate explicit actions', async ({ p
     voice: { id: 'shared:voice:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', name: 'Voice', source: 'heygen' },
   };
   const guard = await installRoutes(page, { project });
-  await openCopywriter(page);
+  await page.goto('/#create');
+  await page.locator('[data-nav="copywriter"]:visible').first().click();
+  await expect(page.locator('#copywriter-view')).toBeVisible();
   const draft = 'Use this approved draft only after an explicit handoff.';
   await page.locator('#copywriter-working-draft').fill(draft);
   expect(await page.evaluate(() => window.__copiedText)).toEqual([]);
@@ -279,20 +281,30 @@ test('copying and Premium handoff require separate explicit actions', async ({ p
   expect(await page.evaluate(() => window.__copiedText)).toEqual([draft]);
 
   await page.locator('#copywriter-use-premium').click();
+  await expect(page).toHaveURL(/#create$/);
+  await expect(page.locator('#standard-tab')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#standard-scripted-script')).toHaveValue(draft);
+  await expect(page.locator('#script-input')).toHaveValue(project.script);
+  await expect(page.locator('#copywriter-status')).toContainText('moved to Standard');
+
+  await page.locator('#premium-tab').click();
+  await page.locator('[data-nav="copywriter"]:visible').first().click();
+  await page.locator('#copywriter-use-premium').click();
   await expect(page.locator('#premium-handoff-dialog')).toBeVisible();
   await expect(page.locator('#script-input')).toHaveValue(project.script);
-  await page.getByRole('button', { name: 'Keep Premium script' }).click();
+  await page.getByRole('button', { name: 'Keep current script' }).click();
   await expect(page.locator('#script-input')).toHaveValue(project.script);
   await page.locator('#copywriter-use-premium').click();
   await page.locator('#premium-handoff-confirm').click();
   await expect(page).toHaveURL(/#create$/);
   await expect(page.locator('#premium-tab')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#script-input')).toHaveValue(draft);
+  await expect(page.locator('#copywriter-status')).toContainText('moved to Premium');
   expect(guard.projectWrites).toHaveLength(0);
   expect(guard.renderWrites).toHaveLength(0);
 });
 
-test('an active Premium job blocks Copywriter handoff', async ({ page }) => {
+test('an active Premium job blocks handoff only when Premium is the active tier', async ({ page }) => {
   const project = {
     id: PROJECT_ID,
     title: 'Active Premium project',
@@ -304,11 +316,13 @@ test('an active Premium job blocks Copywriter handoff', async ({ page }) => {
     project,
     results: [{ id: 'active-premium-job', projectId: PROJECT_ID, tier: 'premium', status: 'PROCESSING', outputAccepted: false, title: project.title }],
   });
-  await openCopywriter(page);
+  await page.goto('/#create');
+  await page.locator('#premium-tab').click();
+  await page.locator('[data-nav="copywriter"]:visible').first().click();
   await page.locator('#copywriter-working-draft').fill('A new draft that must not overwrite active work.');
   await expect(page.locator('#copywriter-use-premium')).toBeDisabled();
   await expect(page.locator('#copywriter-premium-note')).toBeVisible();
-  await expect(page.locator('#copywriter-premium-note')).toContainText(/Premium is locked/i);
+  await expect(page.locator('#copywriter-premium-note')).toContainText(/active tier is locked/i);
 });
 
 test('errors preserve the working draft, do not retry automatically, and a new attempt uses a new key', async ({ page }) => {

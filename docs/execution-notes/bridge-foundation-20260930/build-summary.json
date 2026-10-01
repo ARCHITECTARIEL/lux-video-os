@@ -1,0 +1,44 @@
+{
+  "verifiedAt": "2026-09-30T21:02:47.126Z",
+  "status": "REVIEW_ONLY",
+  "target": "preview",
+  "releaseAuthorized": false,
+  "source": {
+    "head": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+    "sha256": "f64e77d220008d1c310eb16d8d2f45c2630feb20692251ca4da9f79cc1b0bd5e",
+    "fileCount": 404,
+    "project": {
+      "id": "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+      "teamId": "team_rTOCyHyMxhhdoLk4LtT2kD9X",
+      "name": "lux-video-os"
+    },
+    "projectLinkSha256": "12fd6ef128686d8ed4918a6f214780ca46ba87a9397892f46ec55356f75054f2"
+  },
+  "output": {
+    "sha256": "93fec4087d7ea541e043191796dd00d89699b28e67dbc9bcb5892edbc41c73af",
+    "fileCount": 15640,
+    "location": "C:\\Users\\ariel\\lux-video-os\\.vercel\\review-output-1790802043329-77252"
+  },
+  "workflowBoundary": {
+    "verified": true,
+    "code": "NO_KNOWN_SANDBOX_CLASS_LEAK",
+    "sandboxClassModules": [],
+    "manifestSha256": "283abdf5235318d00d814367c07027a3dd45904a5229a6a64640bac8e89cd948"
+  },
+  "remainingReleaseGates": [
+    "OWNER_EXECUTION_AUTHORIZATION",
+    "CURRENT_CANDIDATE_CI",
+    "PRIVATE_STORAGE_MIGRATION_PROOF",
+    "PRODUCTION_P0_RECEIPT",
+    "HEYGEN_ONLY_RUNTIME_SCOPE_UNVERIFIED",
+    "HEYGEN_ACCOUNT_CAPABILITIES_UNVERIFIED",
+    "HEYGEN_PRICING_UNVERIFIED",
+    "HEYGEN_PRIVACY_RETENTION_UNVERIFIED",
+    "HEYGEN_DELETION_RECONCILIATION_UNVERIFIED",
+    "HEYGEN_LIVE_CANARY_UNVERIFIED",
+    "ROLLBACK_SOURCE_BYTES_UNATTESTED",
+    "PRODUCTION_DATABASE_UNVERIFIED"
+  ],
+  "isolatedDatabaseReceipt": "schema-0010-verified.json",
+  "productionDatabaseVerified": false
+}

@@ -94,7 +94,8 @@ test('identity repositories enforce account ownership and local operation reserv
   assert.match(source, /identity\[fields\.operation\] === operationKey.+replayed: true/s);
   assert.match(source, /Identity component creation is already in progress/);
   assert.match(source, /component === 'avatar'.+providerAvatarRequestId: null.+providerVoiceId: null/s);
-  assert.match(source, /assertActiveIdentityConsent\(tx, identity\)/);
+  assert.match(source, /const linkedEnrollment = await activeLinkedEnrollment\(tx, accountId, identityId\)/);
+  assert.match(source, /assertActiveIdentityConsent\(tx, identity, linkedEnrollment\?\.consentPolicyVersion \|\| IDENTITY_CONSENT_POLICY_VERSION\)/);
   assert.match(source, /photo\.sha256 !== consent\.photoSha256 \|\| voice\.sha256 !== consent\.voiceSha256/);
   assert.match(source, /identity\[fields\.status\] === 'READY'.+cannot be failed/s);
   assert.match(source, /eq\(userIdentities\.accountId, accountId\).+eq\(userIdentities\.id, identityId\).+isNull\(userIdentities\.archivedAt\)/s);

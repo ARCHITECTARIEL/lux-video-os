@@ -1,0 +1,11 @@
+{
+    "observedAt":  "2026-09-30T14:41:13.9979822Z",
+    "alias":  "https://lux-video-os.vercel.app",
+    "projectId":  "prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW",
+    "deploymentId":  "dpl_AEUWrAaSPEyvNjkkZxCbDAg427WP",
+    "deploymentUrl":  "lux-video-nztminlu3-lux-3035s-projects.vercel.app",
+    "state":  "READY",
+    "target":  "production",
+    "recordedGitSha":  "a04e59513e7cbd5684bf56790311d2ab14676499",
+    "sourceByteAttestation":  false
+}

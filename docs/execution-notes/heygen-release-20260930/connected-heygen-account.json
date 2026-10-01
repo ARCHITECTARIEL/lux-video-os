@@ -1,0 +1,20 @@
+{
+  "observedAt": "2026-09-30T18:54:15.590Z",
+  "surface": "connected HeyGen tool",
+  "billingType": "subscription",
+  "plan": "creator",
+  "credits": {
+    "premium_credits": {
+      "remaining": 200,
+      "resets_at": "2026-10-31T16:46:33Z"
+    },
+    "add_on_credits": {
+      "remaining": null,
+      "resets_at": null
+    }
+  },
+  "identityBoundToApplicationKey": false,
+  "mutationPerformed": false,
+  "creditUnitCaveat": "Connector-reported premium credits; not verified as the application's API wallet or pricing.",
+  "authority": "Read-only observation; no upload, clone, render, deletion, or provider activation authority."
+}

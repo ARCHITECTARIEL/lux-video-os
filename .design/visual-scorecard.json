@@ -1,0 +1,23 @@
+{
+  "status": "accepted-local",
+  "version": 1,
+  "scores": {
+    "visualVerdict": 94
+  },
+  "arbiter": {
+    "decision": "pass",
+    "accepted_at": "2026-09-30T21:04:09.542511+00:00",
+    "accepted_by": "root"
+  },
+  "remaining_risks": [
+    "Screenshots use mocked API and synthetic media",
+    "Physical iPhone and Android capture and hosted upload still need qualification"
+  ],
+  "scope": "bridge-v2 consent and existing-source re-consent",
+  "evidence": "bridge-consent-screenshot-manifest.json",
+  "verification": {
+    "fullBrowserPasses": 118,
+    "productionProofSkips": 1,
+    "syntheticMediaOnly": true
+  }
+}

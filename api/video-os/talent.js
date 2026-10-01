@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 
 import { sessionFromRequest } from '../../lib/video-os-account.js';
-import { requireRenderAccountAuthorization } from '../../lib/video-os-security.js';
+import { requirePersistedRenderAuthorization } from '../../db/repositories.js';
 import { FEATURED_CAST } from '../../lib/video-os-featured-cast.js';
 import { fetchHeygenCollection, fetchHeygenPaginatedCollection } from '../../services/heygen.js';
 
@@ -115,18 +115,14 @@ export function buildVoices(voices = []) {
   });
 }
 
-function authorizeTalentRequest(req) {
+async function authorizeTalentRequest(req) {
   try {
     const session = sessionFromRequest(req);
-    const allowed = String(process.env.VIDEO_OS_RENDER_ACCOUNT_ID || '').split(',').map((id) => id.trim()).filter(Boolean);
-    if (allowed.length > 0) {
-      requireRenderAccountAuthorization(session.accountId, session.email);
-    } else {
-      if (!session.accountId) throw Object.assign(new Error('Sign in to access provider talent.'), { statusCode: 401 });
-    }
+    if (!session.accountId) throw Object.assign(new Error('Sign in to access provider talent.'), { statusCode: 401 });
+    await requirePersistedRenderAuthorization(session.accountId, 'premium');
     return { session };
   } catch (error) {
-    const status = error?.statusCode === 403 ? 403 : error?.statusCode === 503 ? 503 : 401;
+    const status = error?.statusCode === 401 ? 401 : error?.statusCode === 403 ? 403 : 503;
     return { error, status };
   }
 }
@@ -254,7 +250,7 @@ export function assertTalentSelectionsAvailable(talent, payload) {
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'Use GET for talent.' });
-  const authorization = authorizeTalentRequest(req);
+  const authorization = await authorizeTalentRequest(req);
   if (authorization.error) {
     const status = authorization.status;
     return send(res, status, { ok: false, code: status === 403 ? 'talent_forbidden' : status === 503 ? 'talent_contained' : 'authentication_required', error: status === 403 ? 'Talent inventory is unavailable for this account.' : status === 503 ? 'Talent inventory is contained pending configuration.' : 'Sign in to access provider talent.' });

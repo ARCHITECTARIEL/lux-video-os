@@ -1,0 +1,42 @@
+import { sleep } from 'workflow';
+/**__internal_workflows{"workflows":{"workflows/video-render.js":{"videoRenderWorkflow":{"workflowId":"workflow//./workflows/video-render//videoRenderWorkflow"}}},"steps":{"workflows/video-render.js":{"failWorkflow":{"stepId":"step//./workflows/video-render//failWorkflow"},"finishProviderMedia":{"stepId":"step//./workflows/video-render//finishProviderMedia"},"pollProvider":{"stepId":"step//./workflows/video-render//pollProvider"},"submitProvider":{"stepId":"step//./workflows/video-render//submitProvider"}}}}*/;
+export function finishingEngine(env = process.env) {
+    const requested = String(env.VIDEO_OS_COMPOSITION_ENGINE || 'ffmpeg').trim().toLowerCase();
+    if (requested === 'ffmpeg' || requested === '') return 'ffmpeg';
+    if (requested === 'remotion') return 'remotion';
+    if (requested !== 'hyperframes') throw Object.assign(new Error(`Unsupported composition engine: ${requested}`), {
+        failureCategory: 'CONFIG_MISSING'
+    });
+    if (String(env.VIDEO_OS_HYPERFRAMES_ENABLED || '').toLowerCase() !== 'true') throw Object.assign(new Error('HyperFrames was requested but disabled.'), {
+        failureCategory: 'CONFIG_MISSING'
+    });
+    return 'hyperframes';
+}
+// Exported (not just used internally by videoRenderWorkflow below) so a
+// non-Vercel worker daemon (worker/render-worker.mjs, for VPS hosting) can
+// call these steps directly in its own poll loop instead of going through
+// Vercel Workflow's orchestration runtime. 'use step' has no effect outside
+// that runtime's build transform -- it's inert here, same as a stray string
+// literal -- so these remain safe to call as plain functions.
+export var submitProvider = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/video-render//submitProvider");
+export var pollProvider = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/video-render//pollProvider");
+export var finishProviderMedia = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/video-render//finishProviderMedia");
+export var failWorkflow = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/video-render//failWorkflow");
+export async function videoRenderWorkflow(jobId) {
+    try {
+        const { providerJobId } = await submitProvider(jobId);
+        for(let attempt = 0; attempt < 120; attempt += 1){
+            const status = await pollProvider(jobId, providerJobId);
+            if (status.ready) return await finishProviderMedia(jobId, status.sourceUrl);
+            await sleep('15s');
+        }
+        throw Object.assign(new Error('Provider render exceeded the 30 minute workflow deadline.'), {
+            failureCategory: 'PROVIDER_TIMEOUT'
+        });
+    } catch (error) {
+        await failWorkflow(jobId, error);
+        throw error;
+    }
+}
+videoRenderWorkflow.workflowId = "workflow//./workflows/video-render//videoRenderWorkflow";
+globalThis.__private_workflows.set("workflow//./workflows/video-render//videoRenderWorkflow", videoRenderWorkflow);

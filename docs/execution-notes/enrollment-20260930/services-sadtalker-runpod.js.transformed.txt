@@ -1,0 +1,15 @@
+/**__internal_workflows{"steps":{"services/sadtalker-runpod.js":{"persistRunpodStandardOutput":{"stepId":"step//./services/sadtalker-runpod//persistRunpodStandardOutput"},"pollRunpodStandard":{"stepId":"step//./services/sadtalker-runpod//pollRunpodStandard"},"submitRunpodStandard":{"stepId":"step//./services/sadtalker-runpod//submitRunpodStandard"}}}}*/;
+function failure(message, failureCategory, statusCode = 503) {
+    return Object.assign(new Error(message), {
+        failureCategory,
+        statusCode
+    });
+}
+export function standardProviderMode(env = process.env) {
+    const mode = String(env.VIDEO_OS_STANDARD_PROVIDER || 'simulation').trim().toLowerCase();
+    if (mode === 'simulation' || mode === 'runpod') return mode;
+    throw failure(`Unsupported Standard provider mode: ${mode}`, 'CONFIG_MISSING');
+}
+export var submitRunpodStandard = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./services/sadtalker-runpod//submitRunpodStandard");
+export var pollRunpodStandard = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./services/sadtalker-runpod//pollRunpodStandard");
+export var persistRunpodStandardOutput = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./services/sadtalker-runpod//persistRunpodStandardOutput");

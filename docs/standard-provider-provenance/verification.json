@@ -1,0 +1,17 @@
+{
+  "verifiedAt": "2026-09-30T15:32:02.531096+00:00",
+  "scope": "Prompt 5A documentation and provenance evidence",
+  "localWorkerFilesHashedAndRechecked": 58,
+  "upstreamSmallArtifactsGitBlobAndSha256Verified": 3,
+  "applicationSourceFilesCompared": 344,
+  "applicationSourceSha256": "c02aa9f3c26332223061dce669026f18e63ad9ad901bfde1e6ec0038206b9b0e",
+  "applicationAndWorkerSourceChanged": false,
+  "projectLinkChanged": false,
+  "jsonAndLocalLinksValid": true,
+  "independentDecisionBriefReview": "PASS",
+  "modelWeightsDownloaded": false,
+  "gpuInferenceExecuted": false,
+  "deploymentExecuted": false,
+  "ownerDecision": "pending",
+  "commercialApproval": "not established"
+}

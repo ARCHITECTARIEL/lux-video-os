@@ -1,3 +1,5 @@
+> **Status superseded 2026-09-29:** Use [CURRENT-MVP-HANDOFF.md](CURRENT-MVP-HANDOFF.md) for current readiness, deployment and next work. This atlas is historical; guarantees, capabilities and test counts below require current evidence.
+
 # LUX Video OS — Comprehensive Developer Handoff Packet
 **Target Audience**: Incoming Lead Engineer & Core Contributors  
 **Last Updated**: September 24, 2026  

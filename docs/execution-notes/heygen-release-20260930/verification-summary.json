@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-30T19:41:26.076702+00:00",
+  "sourceSha256": "b2e7e583a660823f76d32fda8c3f6d4befa2238846d4fc7cba69c7af1743a7f5",
+  "outputSha256": "b8a3b7dcfe1705b19b5c9a065a78cafb725021485e201b79efcf25476fcca47e",
+  "head": "1c6121f83dd455fc8fbac4c96332a284dd9e0bb9",
+  "node": {
+    "pass": 451,
+    "fail": 0,
+    "skip": 44
+  },
+  "vitest": {
+    "pass": 4
+  },
+  "previewBuild": {
+    "exit": 0,
+    "routes": 42,
+    "steps": 29,
+    "workflows": 6,
+    "sandboxBoundaryVerified": true,
+    "releaseAuthorized": false
+  },
+  "design": {
+    "prepared": true,
+    "advisoryArchitecture": "APPROVE_DESIGN_ONLY",
+    "advisoryRisk": "APPROVE_DESIGN_ONLY",
+    "formalRalplanGate": false,
+    "liveExecutionAuthorized": false,
+    "plannedTestCases": 40
+  },
+  "liveProvider": {
+    "readOnlyConnectorProfile": true,
+    "appKeyAccountBound": false,
+    "uploadCloneRenderDeleteCalls": 0
+  },
+  "remainingReleaseGates": [
+    "OWNER_EXECUTION_AUTHORIZATION",
+    "CURRENT_CANDIDATE_CI",
+    "PRIVATE_STORAGE_MIGRATION_PROOF",
+    "PRODUCTION_P0_RECEIPT",
+    "HEYGEN_ONLY_RUNTIME_SCOPE_UNVERIFIED",
+    "HEYGEN_ACCOUNT_CAPABILITIES_UNVERIFIED",
+    "HEYGEN_PRICING_UNVERIFIED",
+    "HEYGEN_PRIVACY_RETENTION_UNVERIFIED",
+    "HEYGEN_DELETION_RECONCILIATION_UNVERIFIED",
+    "HEYGEN_LIVE_CANARY_UNVERIFIED",
+    "ROLLBACK_SOURCE_BYTES_UNATTESTED",
+    "PRODUCTION_DATABASE_UNVERIFIED"
+  ]
+}

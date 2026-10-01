@@ -1,0 +1,58 @@
+{
+  "verified": true,
+  "scope": "live-database",
+  "journalVerified": true,
+  "environment": "verification",
+  "identity": {
+    "database": "mvp_verification_20260930",
+    "role": "neondb_owner"
+  },
+  "targetManifestSha256": "b443ea305508910ddae9cee231d056be35e7511ab96e212c66b6770d09090fa9",
+  "targetManifestBinding": "verification-manifest",
+  "schemaLockSha256": "f1dff71dbb0dcf967032e00036c5401ea20f2d06398e573c4834caa37b980466",
+  "schemaLockBinding": "verification-schema-lock",
+  "validatedConnection": {
+    "endpoint": "ep-lingering-fire-aitvfm3y.c-4.us-east-1.aws.neon.tech",
+    "port": 5432,
+    "database": "mvp_verification_20260930",
+    "role": "neondb_owner"
+  },
+  "databaseUrlValidation": {
+    "canonical": {
+      "present": true,
+      "independentlyValidated": true,
+      "endpoint": "ep-lingering-fire-aitvfm3y-pooler.c-4.us-east-1.aws.neon.tech",
+      "port": 5432,
+      "database": "mvp_verification_20260930",
+      "role": "neondb_owner"
+    },
+    "unpooled": {
+      "present": true,
+      "independentlyValidated": true,
+      "endpoint": "ep-lingering-fire-aitvfm3y.c-4.us-east-1.aws.neon.tech",
+      "port": 5432,
+      "database": "mvp_verification_20260930",
+      "role": "neondb_owner"
+    }
+  },
+  "declaredProviderIdentity": {
+    "verification": "declared-not-independently-verified",
+    "projectId": "dawn-scene-51988854",
+    "branchId": "br-wandering-violet-ai1egt3g"
+  },
+  "migrationSetSha256": "4baaecc7a1d0dff3ce244b7f42a02826d328531c7886e3f8642f797ccb70bf19",
+  "migrationCount": 8,
+  "appliedHashes": [
+    "bf6c6f5c417273ca7b5ca87cab4842926413f3b5388429ff0c249b66e346a6a5",
+    "b813751c8b744f88ff4bc77077f10571af0362176d4acc8bfa7d7428d9cb2d05",
+    "ae51ba7e987631a2a09a6890df94f88587d3926733b5e3ceab3a21bfbe08ad71",
+    "25722392f309704f32d6cedfbb9fd2ef09e876d6c5ba5c3325b732978741ef54",
+    "cc4ed40a79e5fb6708886e8e5b36671340385f3f66e956414e65f4399abc5c54",
+    "3b469d3b473386830568b2e2586468d4f1e325648169283cb65d571b868e7b15",
+    "7dcf1dc67a24960beef21c3d6326db901af60ad3f96554d116ff80faaf02c7b8",
+    "8ed60d68556a7904caea9389709d89e3cf2f3ab656478e840e9805afba8c1593"
+  ],
+  "schemaSha256": "4302d80373b13467abbfa9fc6a3cd8c9a0f0b3ee50497875e92c8c5a2abe297b",
+  "tableCount": 18,
+  "verifiedAt": "2026-09-30T17:41:36.101Z"
+}

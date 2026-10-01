@@ -1,0 +1,43 @@
+import { FatalError, sleep } from 'workflow';
+import { getJob } from '../db/repositories.js';
+import { standardProviderMode } from '../services/sadtalker-runpod.js';
+/**__internal_workflows{"workflows":{"workflows/standard-render.js":{"standardRenderWorkflow":{"workflowId":"workflow//./workflows/standard-render//standardRenderWorkflow"}}},"steps":{"workflows/standard-render.js":{"failWorkflow":{"stepId":"step//./workflows/standard-render//failWorkflow"},"finishStandardProvider":{"stepId":"step//./workflows/standard-render//finishStandardProvider"},"pollStandardProvider":{"stepId":"step//./workflows/standard-render//pollStandardProvider"},"resolveAndRender":{"stepId":"step//./workflows/standard-render//resolveAndRender"},"submitStandardProvider":{"stepId":"step//./workflows/standard-render//submitStandardProvider"}}}}*/;
+// Kept for the local simulator and existing tests. RunPod mode uses the
+// submit/poll/finish steps below so Vercel Workflow and the VPS poller share
+// the same provider lifecycle.
+export var resolveAndRender = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/standard-render//resolveAndRender");
+export var submitStandardProvider = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/standard-render//submitStandardProvider");
+export var pollStandardProvider = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/standard-render//pollStandardProvider");
+export var finishStandardProvider = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/standard-render//finishStandardProvider");
+export async function driveStandardJob(jobOrId) {
+    const job = typeof jobOrId === 'string' ? await getJob(jobOrId) : jobOrId;
+    if (!job) throw new FatalError('Video job not found.');
+    if (job.status === 'ready') return job.output;
+    if (standardProviderMode() === 'simulation') return resolveAndRender(job.id);
+    const submitted = job.providerJobId ? {
+        providerJobId: job.providerJobId
+    } : await submitStandardProvider(job.id);
+    const status = await pollStandardProvider(job.id, submitted.providerJobId);
+    if (status.ready) return finishStandardProvider(job.id, status.output);
+    return status;
+}
+export var failWorkflow = globalThis[Symbol.for("WORKFLOW_USE_STEP")]("step//./workflows/standard-render//failWorkflow");
+export async function standardRenderWorkflow(jobId) {
+    try {
+        if (standardProviderMode() === 'simulation') return await resolveAndRender(jobId);
+        const { providerJobId } = await submitStandardProvider(jobId);
+        for(let attempt = 0; attempt < 120; attempt += 1){
+            const status = await pollStandardProvider(jobId, providerJobId);
+            if (status.ready) return await finishStandardProvider(jobId, status.output);
+            await sleep('15s');
+        }
+        throw Object.assign(new Error('RunPod Standard render exceeded the 30 minute workflow deadline.'), {
+            failureCategory: 'PROVIDER_TIMEOUT'
+        });
+    } catch (error) {
+        await failWorkflow(jobId, error);
+        throw error;
+    }
+}
+standardRenderWorkflow.workflowId = "workflow//./workflows/standard-render//standardRenderWorkflow";
+globalThis.__private_workflows.set("workflow//./workflows/standard-render//standardRenderWorkflow", standardRenderWorkflow);

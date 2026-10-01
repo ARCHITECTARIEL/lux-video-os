@@ -89,7 +89,7 @@ test('identity render fails closed for project mismatch, incomplete, or archived
 // accountId (never seen by REGISTERED_TESTER_ACCOUNTS) paired with the real
 // designated tester email must not be rejected with the entitlement 403.
 test(
-  'render-v2 handler authorizes a designated tester email even on a brand-new accountId never seen by the in-memory tester registry',
+  'an exact tester session without persisted permission cannot render',
   { skip: !dbAvailable && 'DATABASE_URL not configured; skipping live integration test' },
   async () => {
     const originalSecret = process.env.VIDEO_OS_SESSION_SECRET;
@@ -104,8 +104,7 @@ test(
       const res = response();
       await renderHandler(request({}, { cookie: `vos_session=${cookie}` }), res);
 
-      assert.notEqual(res.body.error, 'This account is not authorized for contained rendering.', 'a designated tester email must authorize the render-v2 handler directly, not just the underlying function');
-      assert.notEqual(res.statusCode, 503, 'must not be the CONFIG_MISSING failure either -- that would mean authorization was skipped for an unrelated reason, not genuinely passed');
+      assert.equal(res.statusCode, 403, 'the signed-in email alone cannot substitute for persisted permission');
     } finally {
       if (originalSecret === undefined) delete process.env.VIDEO_OS_SESSION_SECRET; else process.env.VIDEO_OS_SESSION_SECRET = originalSecret;
       if (originalWorkflow === undefined) delete process.env.VIDEO_OS_DURABLE_WORKFLOW_ENABLED; else process.env.VIDEO_OS_DURABLE_WORKFLOW_ENABLED = originalWorkflow;

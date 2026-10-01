@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-30T13:47:06.717Z",
+  "mode": "migrate",
+  "database": {
+    "host": "ep-lingering-fire-aitvfm3y-pooler.c-4.us-east-1.aws.neon.tech",
+    "name": "mvp_verification_20260930",
+    "branch": "br-wandering-violet-ai1egt3g"
+  },
+  "blobStore": "store_8uyr0JDWkUyha8sy",
+  "identity": {
+    "database": "mvp_verification_20260930",
+    "role": "neondb_owner"
+  },
+  "before": {
+    "rows": {},
+    "blobs": 0
+  },
+  "migrationHashes": [
+    "bf6c6f5c417273ca7b5ca87cab4842926413f3b5388429ff0c249b66e346a6a5",
+    "b813751c8b744f88ff4bc77077f10571af0362176d4acc8bfa7d7428d9cb2d05",
+    "ae51ba7e987631a2a09a6890df94f88587d3926733b5e3ceab3a21bfbe08ad71",
+    "25722392f309704f32d6cedfbb9fd2ef09e876d6c5ba5c3325b732978741ef54",
+    "cc4ed40a79e5fb6708886e8e5b36671340385f3f66e956414e65f4399abc5c54",
+    "3b469d3b473386830568b2e2586468d4f1e325648169283cb65d571b868e7b15",
+    "7dcf1dc67a24960beef21c3d6326db901af60ad3f96554d116ff80faaf02c7b8"
+  ],
+  "after": {
+    "rows": {
+      "users": 0,
+      "credit_accounts": 0,
+      "credit_transactions": 0,
+      "job_events": 0,
+      "rate_limits": 0,
+      "stripe_events": 0,
+      "auth_challenges": 0,
+      "auth_sessions": 0,
+      "entitlements": 0,
+      "projects": 0,
+      "identity_consents": 0,
+      "user_identities": 0,
+      "media_assets": 0,
+      "standard_narration_consents": 0,
+      "standard_narration_quotes": 0,
+      "video_jobs": 0
+    },
+    "blobs": 0
+  },
+  "ok": true
+}

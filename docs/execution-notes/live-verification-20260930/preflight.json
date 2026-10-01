@@ -1,0 +1,28 @@
+{
+  "at": "2026-09-30T13:46:49.974Z",
+  "mode": "preflight",
+  "database": {
+    "host": "ep-lingering-fire-aitvfm3y-pooler.c-4.us-east-1.aws.neon.tech",
+    "name": "mvp_verification_20260930",
+    "branch": "br-wandering-violet-ai1egt3g"
+  },
+  "blobStore": "store_8uyr0JDWkUyha8sy",
+  "identity": {
+    "database": "mvp_verification_20260930",
+    "role": "neondb_owner"
+  },
+  "before": {
+    "rows": {},
+    "blobs": 0
+  },
+  "storageProof": {
+    "sha256": "08d2f343736058f8f5ffe3df0740f530e9789b2bd76de9cecdc667cef94806e3",
+    "bytes": 30,
+    "anonymousStatus": 403
+  },
+  "after": {
+    "rows": {},
+    "blobs": 0
+  },
+  "ok": true
+}
