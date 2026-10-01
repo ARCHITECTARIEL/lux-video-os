@@ -4,7 +4,13 @@
 
 **Last audited: 2026-10-01. Start here after root HANDOFF.md.** This file supersedes older status, priority, branch and deployment claims in HANDOFF.md, DEVELOPER_HANDOFF.md, README.md and the September 29 ZIP. Historical architecture notes remain references, not release evidence.
 
-## Latest October 1 — canonical DB confirmed; runtime wiring verified locally
+## Latest October 1 (afternoon) — production migrations 0007-0010 applied; HeyGen binding wiring next
+
+With owner approval, migrations `0007`-`0010` were applied to real production (Neon `still-voice-83326863`). Production now has all 11 migrations and the full 27-table catalogue; previously it had 7/11. Functional-contract checks (the specific FKs/constraints/indexes the application depends on) were independently verified against production and pass. A strict full-structural schema-fingerprint comparison against `config/database-schema.lock.json` still fails (`SCHEMA_DRIFT`), most likely pre-existing historical drift in the already-applied `0000`-`0006` portion rather than anything introduced by this migration — the owner has accepted this as non-blocking. See [the execution note](execution-notes/20261001-production-migration-applied.md) for full detail. Also merged this session: PRs #61,62,64,65,66,67 (dependabot), the accumulated local WIP work from the Sept 29-Oct 1 sessions (previously uncommitted — see that work's own notes below), and light-touch branch protection was added to `main` (CI required, force-push/deletion blocked).
+
+**Exact next action:** wire the already-qualified HeyGen provider-space binding into the live creation/render routes (still disabled). Production DB is no longer the blocker for this.
+
+## Earlier October 1 — canonical DB confirmed; runtime wiring verified locally
 
 Read [the completed runtime receipt](execution-notes/20261001-runtime-wiring.md). Enrollment, provider submission, polling/preview and finishing now use canonical resource/job proofs and exact-target binding transactions. Late receipts retain their original target; incomplete submissions are not replayed; uncertain polling and pre-download failures hold for reconciliation. Both provider creation gates and production binding remain disabled.
 

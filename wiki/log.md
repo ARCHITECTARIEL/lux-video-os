@@ -1,5 +1,14 @@
 # Work Log
 
+## 2026-10-01 - [phase0-consolidation-and-production-migration]
+
+- Reviewed and merged the accumulated local WIP work (Sept 29-Oct 1 sessions, previously uncommitted) into `main`: HeyGen provider-space binding layer, phone enrollment, migrations 0007-0010, release-gate fail-closed checks, devalue CVE patch. No secrets found in a full diff review; 722 Node + 4 Vitest tests pass.
+- Merged dependabot PRs #61,62,64,65,66,67 (ws, zod, vercel, @vercel/blob, actions/checkout, docker/build-push-action); #59,60,63 remain blocked on merge conflicts pending Dependabot auto-rebase.
+- Added light-touch branch protection to `main` (CI required before merge; force-push and deletion blocked; direct pushes still allowed).
+- Applied migrations 0007-0010 to real production (owner-approved). Production now has all 11 migrations / 27 tables. Functional-contract checks pass; a strict schema-fingerprint comparison shows drift, accepted as non-blocking pre-existing variance. See [the execution note](execution-notes/20261001-production-migration-applied.md).
+- Note: a dev/rehearsal side-experiment on `.env.local`'s dev DB (`br-young-base-ai9mgkgd`) surfaced unrelated historical schema drift on that branch (a stray table, stale migration-journal rows) — informational only, not acted on.
+- Next: wire the HeyGen provider-space binding into live creation/render routes.
+
 ## 2026-09-29 - [prompt-2-authorization-repair]
 
 - Implemented the authorized local repair at unchanged HEAD `1c6121f83dd455fc8fbac4c96332a284dd9e0bb9`: read-only tester listing, persisted tier permissions, server-bound reservation authority and cold-worker permission checks.
