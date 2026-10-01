@@ -1,5 +1,11 @@
 # Work Log
 
+## 2026-10-01 - [p0-proof-scoping]
+
+- Investigated the P0 production proof's actual prerequisites before starting it. Found two substantial unbuilt pieces: the P0 evidence collector is permanently disabled by design (needs real browser-session automation, not a script), and private storage migration was explicitly found "not ready to execute" on Sept 30 (26/77 production Blob objects unclassified; its own procedure needs 4 separately-approved phases).
+- One correction to the Sept 30 storage note: today's earlier canonical-DB-mapping investigation resolved that note's blocker #1 (DATABASE_URL -> Neon project mapping). The unclassified-objects and migration-execution blockers remain.
+- No code written, no production state changed. Owner chose to stop here for the session given the real scope involved and the amount of production-impacting work already done today.
+
 ## 2026-10-01 - [production-heygen-binding-bootstrap]
 
 - Refactored `db/heygen-space-binding-repository.js` and `tools/bind-heygen-space.mjs` to support a deliberate production path, which previously didn't exist by design ("There is deliberately no production override or general approval flag"). Generalized ~12 call sites that hardcoded the literal string 'verification' (pinned target path/hash, preflight, binding-identity validation), and added a new, separate `--owner-authorized` CLI flag required specifically for production -- requesting the environment alone is insufficient.
