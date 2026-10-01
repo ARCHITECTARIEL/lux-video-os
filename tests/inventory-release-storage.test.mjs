@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   assertPrivateReportOutsideRepository,
   classifyStoragePathname,
@@ -94,6 +95,6 @@ test('fails closed for wrong credentials, access, count, bytes, or URL pathname'
 test('requires private raw evidence to stay outside the repository', () => {
   assert.throws(() => assertPrivateReportOutsideRepository('relative.json'), /must be absolute/);
   assert.throws(() => assertPrivateReportOutsideRepository(resolve('docs/raw.json')), /outside the repository/);
-  const external = resolve(process.env.TEMP || 'C:\\Windows\\Temp', 'video-os-private-evidence.json');
+  const external = resolve(tmpdir(), 'video-os-private-evidence.json');
   assert.equal(assertPrivateReportOutsideRepository(external), external);
 });
