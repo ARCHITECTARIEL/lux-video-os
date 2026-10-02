@@ -1056,8 +1056,19 @@ export function providerReconciliationExecutionStatus() {
   return Object.freeze({ enabled: false, reason: 'execution_not_implemented' });
 }
 
-export function providerCreationActivationStatus() {
-  return Object.freeze({ enabled: false, reason: 'verified_provider_account_binding_not_wired' });
+// Default-disabled, contained by VIDEO_OS_PROVIDER_CREATION_ENABLED so it can
+// be turned on/off instantly without a redeploy. Real blast radius is still
+// bounded separately: only accounts already holding a standardRendering/
+// liveRendering entitlement (testers/allowlisted accounts, never granted to
+// an ordinary new sign-up -- see lib/video-os-security.js's
+// containedRenderingEntitlementKeys) can actually reach a HeyGen submission
+// even while this reports enabled.
+export function providerCreationActivationStatus(env = process.env) {
+  const enabled = String(env.VIDEO_OS_PROVIDER_CREATION_ENABLED || '').trim().toLowerCase() === 'true';
+  return Object.freeze({
+    enabled,
+    reason: enabled ? 'owner_authorized_contained_activation' : 'verified_provider_account_binding_not_wired',
+  });
 }
 
 export async function withProviderLifecycleLock(accountId, callback, { executor = database() } = {}) {
