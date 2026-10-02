@@ -42,7 +42,7 @@
     "devDependencies": {
         "@playwright/test": "^1.63.0",
         "drizzle-kit": "^0.31.10",
-        "hyperframes": "0.7.64",
+        "hyperframes": "0.8.85",
         "vercel": "^59.23.2",
         "vitest": "^4.1.10"
     },
