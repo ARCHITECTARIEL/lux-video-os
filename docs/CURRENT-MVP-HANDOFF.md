@@ -4,6 +4,10 @@
 
 **Last audited: 2026-10-01.** For "what's left to ship, in priority order," read [../NEXT-DEVELOPER-HANDOFF.md](../NEXT-DEVELOPER-HANDOFF.md) first — this file is the detailed chronological session log underneath it. This file supersedes older status, priority, branch and deployment claims in HANDOFF.md, DEVELOPER_HANDOFF.md, README.md and the September 29 ZIP. Historical architecture notes remain references, not release evidence.
 
+## October 2 follow-up — operator evidence tools, separate from the tested baseline
+
+[PR #84](https://github.com/ARCHITECTARIEL/lux-video-os/pull/84) at `c0688a5` passed CI and CodeQL:116 browser tests passed,5 skipped. A separate stacked follow-up adds a [guarded neutral-asset reprobe](HEYGEN-SPACE-REPROBE.md) and [read-only private-media byte verifier](PRIVATE-MEDIA-BYTE-VERIFICATION.md). Neither tool has been run live. The reprobe needs a new exact lifecycle approval and cannot enforce a provider dollar cap; the byte verifier preserves unresolved/unreferenced/quarantined objects and cannot certify migration. Current expired anchor, creation-off, billing-off and all production release gates remain unchanged.
+
 ## October 2 — release-readiness code under review; live gates still held
 
 See [the review-only implementation note](execution-notes/20261002-release-readiness.md). Production binding resolution is separated from operator bootstrap, and same-identity freshness observations can be reviewed without overwriting the original immutable DB evidence. The refresh projection is intentionally empty: the original anchor remains expired, and genuine new provider evidence is still required. Storage metadata now explicitly categorizes retained quarantine while keeping its disposition unresolved; no deletion is implied. Creation and billing remain off. An [authenticated P0 collector](P0-EVIDENCE-COLLECTOR.md) is implemented for review; no successful production proof, storage migration, deployment or activation is implied.

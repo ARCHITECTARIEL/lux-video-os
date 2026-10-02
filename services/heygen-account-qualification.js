@@ -76,12 +76,15 @@ export function assertQualifiedHeygenCredential(qualification) {
 
 function options(input) {
   if (!isRecord(input)) fail('INVALID_HEYGEN_QUALIFICATION_OPTIONS', 'HeyGen qualification options must be an object.', { statusCode: 400 });
-  const allowed = new Set(['apiKey', 'fetchImpl', 'now', 'timeoutMs']);
+  const allowed = new Set(['apiKey', 'fetchImpl', 'now', 'timeoutMs', 'beforeRequest']);
   for (const key of Object.keys(input)) {
     if (!allowed.has(key)) fail('INVALID_HEYGEN_QUALIFICATION_OPTIONS', 'HeyGen qualification received an unsupported option.', { statusCode: 400 });
   }
   if (input.fetchImpl !== undefined && !ALLOW_TEST_TRANSPORT) {
     fail('INVALID_HEYGEN_QUALIFICATION_OPTIONS', 'Custom HeyGen qualification transport is available only to the Node test runner.', { statusCode: 400 });
+  }
+  if (input.beforeRequest !== undefined && typeof input.beforeRequest !== 'function') {
+    fail('INVALID_HEYGEN_QUALIFICATION_OPTIONS', 'The HeyGen qualification request guard must be a function.', { statusCode: 400 });
   }
   return input;
 }
@@ -227,7 +230,7 @@ function classifyHttpFailure(response, payload, request) {
   fail('HEYGEN_QUALIFICATION_REJECTED', 'HeyGen rejected the qualification request.', details);
 }
 
-async function providerGet(fetchImpl, path, apiKey, timeoutMs) {
+async function providerGet(fetchImpl, path, apiKey, timeoutMs, beforeRequest) {
   if (typeof fetchImpl !== 'function') {
     fail('INVALID_HEYGEN_QUALIFICATION_OPTIONS', 'HeyGen qualification fetch implementation is invalid.', { statusCode: 400 });
   }
@@ -235,13 +238,20 @@ async function providerGet(fetchImpl, path, apiKey, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // Stop-only operator hook: receives no key, transport or response authority.
+    // The deadline includes this guard; a slow fsync cannot start a late request.
+    if (beforeRequest) await abortable(Promise.resolve().then(() => beforeRequest(Object.freeze({ ...request }))), controller.signal);
+    controller.signal.throwIfAborted();
     const response = await abortable(
-      Promise.resolve().then(() => fetchImpl(`${API_ORIGIN}${path}`, {
-        method: 'GET',
-        headers: { Accept: 'application/json', 'X-Api-Key': apiKey },
-        redirect: 'error',
-        signal: controller.signal,
-      })),
+      Promise.resolve().then(() => {
+        controller.signal.throwIfAborted();
+        return fetchImpl(`${API_ORIGIN}${path}`, {
+          method: 'GET',
+          headers: { Accept: 'application/json', 'X-Api-Key': apiKey },
+          redirect: 'error',
+          signal: controller.signal,
+        });
+      }),
       controller.signal,
     );
     const payload = await responsePayload(response, controller.signal, request);
@@ -396,7 +406,7 @@ export async function qualifyHeygenCredential(input) {
   const fetchImpl = resolved.fetchImpl ?? DEFAULT_FETCH;
   const timeoutMs = requestTimeout(resolved.timeoutMs);
   const now = observationClock(resolved.now);
-  const metadataPayload = await providerGet(fetchImpl, API_KEY_SELF_PATH, apiKey, timeoutMs);
+  const metadataPayload = await providerGet(fetchImpl, API_KEY_SELF_PATH, apiKey, timeoutMs, resolved.beforeRequest);
   const metadata = normalizeKeyMetadata(metadataPayload);
   const permissions = permissionReport(metadata.scopes);
   const holds = [];
@@ -405,7 +415,7 @@ export async function qualifyHeygenCredential(input) {
   let profile = null;
   let profileProbeOutcome = 'SKIPPED_MISSING_ACCOUNT_READ';
   if (permissions.account.read) {
-    profile = normalizeProfile(await providerGet(fetchImpl, USER_PROFILE_PATH, apiKey, timeoutMs));
+    profile = normalizeProfile(await providerGet(fetchImpl, USER_PROFILE_PATH, apiKey, timeoutMs, resolved.beforeRequest));
     profileProbeOutcome = 'OBSERVED';
   } else {
     addHold(holds, 'PROFILE_PROBE_SKIPPED_MISSING_ACCOUNT_READ');

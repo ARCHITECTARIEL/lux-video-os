@@ -37,3 +37,5 @@ Storage copy/reference migration/deletion each requires a concrete reviewed scop
 ## October 2 refresh transition (review only)
 
 See [the refresh implementation and exact next steps](execution-notes/20261002-release-readiness.md). The source-pinned refresh document is intentionally empty until independently reviewed new provider observations exist. Production runtime resolution is read-only and exact-target checked; operator bootstrap remains forbidden inside deployed production. A refresh neither overwrites immutable DB evidence nor enables creation/billing or clears P0.
+
+Separate operator workflows: [one-shot HeyGen reprobe](HEYGEN-SPACE-REPROBE.md) and [read-only private-media byte verification](PRIVATE-MEDIA-BYTE-VERIFICATION.md). Neither executes during packaging or clears production gates; the reprobe needs new explicit lifecycle approval and has no enforceable dollar cap.

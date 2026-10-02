@@ -525,3 +525,10 @@
 - Local unit/import/schema-snapshot/workflow/audit/Python and preview-packaging checks pass; browser startup is environment-blocked and remains an exact-commit CI requirement
 - Inventory schema v2 recognizes retained quarantine without clearing unresolved disposition or authorizing deletion
 - Fixed recursive packaging exclusion for nested hidden directories; actual NFT regression passes with retained prior build output present
+
+## 2026-10-02 — separately reviewed operator tooling
+
+- Preserve PR84/c0688a5 as the exact green baseline (116 browser pass/5 skipped, CI and CodeQL success)
+- Add an operator-only, one-shot neutral-asset reprobe with protected consumed-intent records and exact five-file receipts; no live probe or freshness installation occurred
+- Add authenticated read-only private-media discovery/byte hashing with no guessed totals, target/version/hash checks and fail-closed Windows/POSIX privacy gates; all migration/deletion/release authority remains false
+- Runbooks state the exact prerequisites, commands, approval/spend limits and untested native/live boundaries
