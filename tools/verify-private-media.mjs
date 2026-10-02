@@ -276,7 +276,17 @@ async function privatePath(path, repositoryRoot, existing) {
   if (process.platform === 'win32') await assertWindowsPrivatePath(existing ? path : dirname(path), { directory: !existing });
   const root = await realpath(repositoryRoot);
   const actual = existing ? await realpath(path) : resolve(await realpath(dirname(path)), path.split(/[\\/]/).at(-1));
-  requireThat(!isInside(root, actual), 'private_file_inside_repository'); return actual;
+  requireThat(!isInside(root, actual), 'private_file_inside_repository');
+  if (process.platform !== 'win32') {
+    // Verify the actual private parent without repairing permissions or following
+    // a caller-selected symlink. Apply equally to raw inputs, snapshots/reports.
+    requireThat(resolve(path) === actual, 'private_path_symlink_rejected');
+    const parent = await lstat(dirname(actual));
+    requireThat(parent.isDirectory() && !parent.isSymbolicLink() && (parent.mode & 0o077) === 0
+      && typeof process.getuid === 'function' && parent.uid === process.getuid(), 'private_parent_permissions');
+    if (existing) requireThat(!(await lstat(path)).isSymbolicLink(), 'private_path_symlink_rejected');
+  }
+  return actual;
 }
 async function readPrivateJson(path, repositoryRoot) {
   path = await privatePath(path, repositoryRoot, true); const handle = await open(path, 'r');
@@ -303,7 +313,7 @@ Optional discovery bounds (may only reduce hard limits): --max-objects 100 --max
 After reviewing the discovery report, pin its snapshotSha256 for verification:
   node tools/verify-private-media.mjs --mode verify --manifest /private/db-assets.json --store-id store_ID --project-id prj_ID --environment production --snapshot /private/new-snapshot.json --snapshot-sha256 DIGEST --report /private/verification-safe.json
 Manifest schema: video-os-private-media-expectations/v1; observedAt; target {storeId,projectId,environment,access:private}; assets [{privatePathname,bytes,sha256,kind}].
-Manifest/snapshot must already be private and outside the checkout. POSIX requires 0600; Windows requires a current-SID-owned protected parent DACL with only current-SID FullControl and file/container inheritance, plus matching file ownership/effective ACLs. Windows ACL checks are read-only, reject reparse points, and fail closed if unavailable; this implementation has mocked coverage but has not been run on a native Windows host. The tool does not create or change ACLs. Outputs are create-only (0600 on POSIX). Only DB-manifest upload/final paths are downloaded; all other objects stay retained. Stored-hash matches cannot clear migration, source-copy, access-denial, P0 or release gates.\n`;
+Manifest/snapshot/report paths must be absolute, outside the checkout and have private parents. POSIX inputs require 0600 and a current-user-owned private parent; Windows requires a current-SID-owned protected parent DACL with only current-SID FullControl and file/container inheritance, plus matching file ownership/effective ACLs. Windows ACL checks are read-only, reject reparse points, and fail closed if unavailable; this implementation has mocked coverage but has not been run on a native Windows host. The tool does not create or change ACLs. Outputs are create-only (0600 on POSIX). Only DB-manifest upload/final paths are downloaded; all other objects stay retained. Stored-hash matches cannot clear migration, source-copy, access-denial, P0 or release gates.\n`;
 export async function runPrivateMediaCli(argv = process.argv.slice(2), env = process.env, dependencies = {}) {
   const stdout = dependencies.stdout || ((s) => process.stdout.write(s));
   if (argv.length === 1 && argv[0] === '--help') { stdout(HELP); return { exitCode: 0 }; }
@@ -313,8 +323,8 @@ export async function runPrivateMediaCli(argv = process.argv.slice(2), env = pro
     const key = argv[i]?.slice(2); requireThat(argv[i]?.startsWith('--') && allowed.has(key) && !Object.hasOwn(args, key) && argv[i + 1] && !argv[i + 1].startsWith('--'), 'invalid_arguments'); args[key] = argv[i + 1];
   }
   requireThat(['discover','verify'].includes(args.mode) && args.report, 'invalid_arguments'); assertSafeRuntime(env); assertSafeRuntime(process.env);
-  const reportDestination = await preflightOutput(resolve(args.report));
   const repositoryRoot = dependencies.repositoryRoot || resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const reportDestination = await preflightOutput(await privatePath(args.report, repositoryRoot, false));
   const manifest = await readPrivateJson(args.manifest, repositoryRoot);
   const target = { storeId: args['store-id'], projectId: args['project-id'], environment: args.environment, access: 'private' };
   const common = { token: env.BLOB_READ_WRITE_TOKEN, target, manifest, listPage: dependencies.listPage, fetchImpl: dependencies.fetchImpl };

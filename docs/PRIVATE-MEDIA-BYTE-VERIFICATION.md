@@ -49,7 +49,7 @@ This SQL was checked against repository schema, not executed by this implementat
 
 ## Private filesystem requirements
 
-On POSIX, private manifest/snapshot inputs must be mode 0600 with private parents; files and outputs must be outside the checkout where required. On Windows, the tool performs read-only SID/ACL checks: the private parent must be owned by the current user SID, have protected inheritance, and grant only that SID FullControl with file/container inheritance. Existing private files must have the matching owner/effective ACL; reparse points are refused. It neither creates nor changes these ACLs. An unavailable/failed check stops before network access.
+On POSIX, manifest/snapshot inputs must be mode 0600 and their direct parents must be private and owned by the current user. Symlinked paths are refused. Manifest, snapshot and report paths must all be absolute and outside the checkout, with the same private-parent enforcement. On Windows, the tool performs read-only SID/ACL checks: the private parent must be owned by the current user SID, have protected inheritance, and grant only that SID FullControl with file/container inheritance. Existing private files must have the matching owner/effective ACL; reparse points are refused. It neither creates nor changes these ACLs. An unavailable/failed check stops before network access.
 
 Native Windows checks have mocked coverage but have not been executed on a native Windows host during implementation. Do not treat Node's 0600 mode alone as Windows privacy. Use a separately reviewed private-folder preparation procedure if needed. Never work in a shared/synced folder or weaken checks to proceed.
 

@@ -265,3 +265,25 @@ test('CLI rejects repository/private-file symlink escapes and loose input permis
   const badOutput = args(external); badOutput[badOutput.indexOf('--private-snapshot') + 1] = join(parentLink,'raw.json');
   await assert.rejects(runPrivateMediaCli(badOutput, { BLOB_READ_WRITE_TOKEN: token }, deps), /private_file_inside_repository/);
 });
+
+test('CLI rejects loose POSIX private parents and in-checkout or symlinked reports before I/O', { skip: process.platform === 'win32' }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'private-media-parent-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const repo = join(dir, 'repo'); await mkdir(repo, {mode: 0o700});
+  const input = join(dir, 'db.json'); await writeFile(input, JSON.stringify(manifest()), {mode: 0o600});
+  const common = ['--mode','discover','--manifest',input,'--store-id',target.storeId,'--project-id',target.projectId,
+    '--environment','production','--private-snapshot',join(dir,'snapshot.json')];
+  let calls = 0;
+  const deps = {repositoryRoot: repo, listPage: async () => { calls++; throw Error('must not run'); }};
+  await assert.rejects(runPrivateMediaCli([...common,'--report',join(repo,'report.json')], {BLOB_READ_WRITE_TOKEN: token}, deps), /private_file_inside_repository/);
+  await assert.rejects(runPrivateMediaCli([...common,'--report','relative-report.json'], {BLOB_READ_WRITE_TOKEN: token}, deps), /private_path_must_be_absolute/);
+  const loose = join(dir, 'loose'); await mkdir(loose, {mode: 0o755});
+  await assert.rejects(runPrivateMediaCli([...common,'--report',join(loose,'report.json')], {BLOB_READ_WRITE_TOKEN: token}, deps), /private_parent_permissions/);
+  const looseInput = join(loose, 'db.json'); await writeFile(looseInput, JSON.stringify(manifest()), {mode: 0o600});
+  const inputArgs = [...common]; inputArgs[inputArgs.indexOf('--manifest') + 1] = looseInput;
+  await assert.rejects(runPrivateMediaCli([...inputArgs,'--report',join(dir,'report.json')], {BLOB_READ_WRITE_TOKEN: token}, deps), /private_parent_permissions/);
+  const privateDir = join(dir, 'private'); await mkdir(privateDir, {mode: 0o700});
+  const linked = join(dir, 'linked'); await symlink(privateDir, linked);
+  await assert.rejects(runPrivateMediaCli([...common,'--report',join(linked,'report.json')], {BLOB_READ_WRITE_TOKEN: token}, deps), /private_path_symlink_rejected/);
+  assert.equal(calls, 0);
+});

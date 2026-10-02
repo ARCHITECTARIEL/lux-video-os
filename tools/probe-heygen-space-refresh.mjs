@@ -23,7 +23,16 @@ const OWN_ERRORS = new WeakSet();
 function fail(code) { const e = Object.assign(new Error('HeyGen reprobe stopped; inspect protected local evidence.'), {code}); OWN_ERRORS.add(e); throw e; }
 function object(v) { return v !== null && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype; }
 function exact(v, keys) { if (!object(v) || Object.keys(v).sort().join('\0') !== [...keys].sort().join('\0')) fail('REPROBE_INVALID_INPUT'); }
+// Content hashes never receive authentication secrets. Credential identification
+// uses the same explicit domain-separated incremental construction as the live
+// qualifier and binding repository; this is not password storage/verification.
 const digest = value => createHash('sha256').update(value).digest('hex');
+function credentialFingerprint(apiKey) {
+  return createHash('sha256')
+    .update(Buffer.from('LUX_VIDEO_OS\0HEYGEN_CREDENTIAL_KEY\0V1\0', 'utf8'))
+    .update(apiKey, 'utf8')
+    .digest('hex');
+}
 function iso(v) { if (typeof v !== 'string' || !Number.isFinite(Date.parse(v)) || new Date(v).toISOString() !== v) fail('REPROBE_INVALID_INPUT'); return Date.parse(v); }
 function clock(now) { const d = new Date(now()); if (!Number.isFinite(d.getTime())) fail('REPROBE_INVALID_CLOCK'); return d; }
 function safePath(path) {
@@ -148,7 +157,7 @@ async function collect(input, deps) {
   if (clock(deps.now).getTime() <= iso(origin.spaceObservedAt)) fail('REPROBE_ORIGIN_NOT_HISTORICAL');
   const apiKey = credential(deps.env);
   // Refuse a different credential before sending even the read-only qualification.
-  if (digest(Buffer.concat([Buffer.from('LUX_VIDEO_OS\0HEYGEN_CREDENTIAL_KEY\0V1\0'), Buffer.from(apiKey)])) !== origin.credentialKeyFingerprint) fail('REPROBE_CREDENTIAL_IDENTITY_MISMATCH');
+  if (credentialFingerprint(apiKey) !== origin.credentialKeyFingerprint) fail('REPROBE_CREDENTIAL_IDENTITY_MISMATCH');
   const fixtureFile = await open(FIXTURE, constants.O_RDONLY | constants.O_NOFOLLOW);
   let fixture;
   try {const stat = await fixtureFile.stat(); if (!stat.isFile() || stat.size !== 95) fail('REPROBE_FIXTURE_MISMATCH'); fixture = await fixtureFile.readFile();} finally {await fixtureFile.close();}
