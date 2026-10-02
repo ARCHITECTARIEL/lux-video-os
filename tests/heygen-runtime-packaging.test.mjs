@@ -48,7 +48,7 @@ test('actual bundled Node entrypoint loads the pinned anchor from function-local
 
 test('actual Vercel file tracing excludes build recursion, secret files and private evidence', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'lux-runtime-trace-'));
-  const blocked = ['.vercel/output/probe.json', '.git/probe.json', '.env', '.env.heygen.local', '.omx/probe.json', '.aws/probe.json', 'docs/private-proof.json', 'tests/fixture.json', 'archive/old.json', 'data/private.json'];
+  const blocked = ['.vercel/output/probe.json', '.vercel/review-output-fixture/functions/.well-known/workflow/.hidden/step.func/private.json', '.aws/region/.nested/.hidden/secret.json', '.git/objects/.nested/object', '.git/probe.json', '.env', '.env.heygen.local', '.omx/probe.json', '.aws/probe.json', 'docs/private-proof.json', 'tests/fixture.json', 'archive/old.json', 'data/private.json'];
   const allowed = 'public/required-logo.svg';
   try {
     const paths = [...blocked, allowed];
@@ -59,6 +59,7 @@ test('actual Vercel file tracing excludes build recursion, secret files and priv
     await mkdir(join(directory, 'api'));
     await writeFile(join(directory, 'api/entry.js'), "import {readFileSync} from 'node:fs';\n" + paths.map(name => `readFileSync(new URL('../${name}', import.meta.url));`).join('\n'));
     const config = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+    assert.ok(config.functions['api/**/*.js'].excludeFiles.length <= 256, 'Vercel excludes must fit the config schema limit.');
     const trace = await nodeFileTrace([join(directory, 'api/entry.js')], { base: directory, processCwd: directory, ignore: config.functions['api/**/*.js'].excludeFiles });
     const traced = new Set([...trace.fileList].map(name => name.replaceAll('\\', '/')));
     assert.equal(traced.has('api/entry.js'), true);

@@ -513,3 +513,15 @@
 - Final verification: 722 Node tests and four Vitest tests passed; 47 explicit skips; four isolated DB/Blob suites passed. Runtime audit reports zero vulnerabilities. Review packaging passed 42 routes, 29 steps and six workflows; default deployable output is absent.
 - Isolated cleanup verified 27 empty tables and zero Blob objects. Handoff, execution prompts and evidence were updated. No production schema/configuration write, deployment, commit, push or HeyGen mutation occurred.
 - Next action is the documented migration rehearsal. Production activation and remaining provider/privacy release gates stay held. This entry refreshes the closure writeback requested by the hook; it does not repeat implementation or live operations.
+
+
+## 2026-10-02 — review-only release readiness
+
+- Added exact-project production runtime binding resolution while preserving operator bootstrap denial and exact DB/schema/credential checks
+- Added reviewed same-identity space freshness transition, protected evidence candidate preparation and runtime manifest staging; original DB evidence is immutable
+- Empty refresh projection preserves current expiry; no provider probe, production mutation, deployment, creation activation or billing activation occurred
+- See `docs/execution-notes/20261002-release-readiness.md` for genuine-evidence collection/review requirements and remaining release gates
+- Added an authenticated browser/read-only-source P0 collector and offline regressions; it retains private observations for independent review and never self-certifies release
+- Local unit/import/schema-snapshot/workflow/audit/Python and preview-packaging checks pass; browser startup is environment-blocked and remains an exact-commit CI requirement
+- Inventory schema v2 recognizes retained quarantine without clearing unresolved disposition or authorizing deletion
+- Fixed recursive packaging exclusion for nested hidden directories; actual NFT regression passes with retained prior build output present

@@ -50,7 +50,7 @@ export async function runSpaceBindingCli({ args = process.argv.slice(2), loadRep
       : await repository.resolveFreshHeygenSpaceBinding({ accountId: parsed.accountId });
     const status = repository.safeHeygenSpaceBindingStatus(binding);
     if (status?.scopeType !== 'space' || status?.environment !== parsed.environment || status?.runtimeActivation !== false) fail('UNSAFE_BINDING_STATUS');
-    const allowed = ['version', 'provider', 'scopeType', 'environment', 'verified', 'runtimeActivation', 'providerSpaceFingerprint', 'credentialScopeFingerprint', 'databaseBindingSha256', 'identityDigest', 'freshUntil', 'globalAccountIdVerified'];
+    const allowed = ['version', 'provider', 'scopeType', 'environment', 'verified', 'runtimeActivation', 'providerSpaceFingerprint', 'credentialScopeFingerprint', 'databaseBindingSha256', 'identityDigest', 'freshUntil', 'spaceObservedAt', 'anchorExpiresAt', 'originSpaceObservedAt', 'freshnessEvidenceSha256', 'globalAccountIdVerified'];
     const publicStatus = Object.fromEntries(allowed.filter(name => Object.hasOwn(status, name)).map(name => [name, status[name]]));
     stdout.write(`${JSON.stringify({ command: parsed.command, ...publicStatus })}\n`);
     return { exitCode: 0, status: publicStatus };

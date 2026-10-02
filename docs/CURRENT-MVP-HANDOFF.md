@@ -4,6 +4,12 @@
 
 **Last audited: 2026-10-01.** For "what's left to ship, in priority order," read [../NEXT-DEVELOPER-HANDOFF.md](../NEXT-DEVELOPER-HANDOFF.md) first — this file is the detailed chronological session log underneath it. This file supersedes older status, priority, branch and deployment claims in HANDOFF.md, DEVELOPER_HANDOFF.md, README.md and the September 29 ZIP. Historical architecture notes remain references, not release evidence.
 
+## October 2 — release-readiness code under review; live gates still held
+
+See [the review-only implementation note](execution-notes/20261002-release-readiness.md). Production binding resolution is separated from operator bootstrap, and same-identity freshness observations can be reviewed without overwriting the original immutable DB evidence. The refresh projection is intentionally empty: the original anchor remains expired, and genuine new provider evidence is still required. Storage metadata now explicitly categorizes retained quarantine while keeping its disposition unresolved; no deletion is implied. Creation and billing remain off. An [authenticated P0 collector](P0-EVIDENCE-COLLECTOR.md) is implemented for review; no successful production proof, storage migration, deployment or activation is implied.
+
+**Exact next action:** complete the read-only storage classification and collector review; obtain bounded approval and genuine provider observations for the fresh neutral-asset reprobe. Review/install the safe refresh projection, then follow separately scoped storage and production-proof gates. Do not extend the old expiry or reuse the exhausted probe approval.
+
 ## Latest October 1 (night) — P0 proof scoped, deliberately not started
 
 The owner asked to proceed to the P0 production proof next; billing (Stripe or Authorize.net, undecided) is explicitly deferred to later and does not block this. Investigation found two substantial, unbuilt prerequisites, not quick continuations: (1) `tools/verify-p0-release-gate.mjs` is permanently disabled by design -- a real evidence collector needs actual browser-session automation (fresh-session anonymous/wrong-account/direct-Blob denial checks), not a script; (2) private storage migration was explicitly found "not ready to execute" on Sept 30 (26 of 77 production Blob objects unclassified), and its own reviewed procedure requires 4 separately-approved phases, the last marked "destructive approval." See [the scoping note](execution-notes/20261001-p0-proof-scoping.md). The owner chose to stop here for this session rather than start either piece.

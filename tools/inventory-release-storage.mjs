@@ -5,7 +5,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { list } from '@vercel/blob';
 
-export const INVENTORY_SCHEMA_VERSION = 'video-os-storage-inventory/v1';
+export const INVENTORY_SCHEMA_VERSION = 'video-os-storage-inventory/v2';
 
 const CATEGORY_PREFIXES = Object.freeze([
   ['account-state', 'video-os/accounts/'],
@@ -17,6 +17,9 @@ const CATEGORY_PREFIXES = Object.freeze([
   ['credit-state', 'video-os/credit-state/'],
   ['stripe-event', 'video-os/stripe-events/'],
   ['recovery-receipt', 'video-os/recovery-receipts/'],
+  // Observed legacy containment location. This is a retention hold, not proof
+  // of ownership, source integrity, completed migration, or deletion authority.
+  ['quarantined-retained', 'video-os/containment-20260715/quarantine/'],
 ]);
 
 const ALL_CATEGORIES = Object.freeze([...CATEGORY_PREFIXES.map(([category]) => category), 'unclassified']);
@@ -159,6 +162,17 @@ export async function collectStorageInventory({
     },
     totals: { objects: raw.length, bytes: totalBytes },
     categories,
+    dispositionReview: {
+      evidenceBasis: 'metadata-only',
+      unclassifiedObjects: categories.unclassified.objects,
+      quarantinedRetainedObjects: categories['quarantined-retained'].objects,
+      unresolvedObjects: categories.unclassified.objects + categories['quarantined-retained'].objects,
+      unresolvedBytes: categories.unclassified.bytes + categories['quarantined-retained'].bytes,
+      quarantineDisposition: 'retain-without-mutation-pending-provenance-and-retention-review',
+      migrationVerified: false,
+      releaseAuthorized: false,
+      destructiveActionsAuthorized: false,
+    },
     objectFingerprintScheme: 'HMAC-SHA256 keyed by the store credential; values change after credential rotation',
     rawManifest: {
       retainedOutsideRepository: true,
