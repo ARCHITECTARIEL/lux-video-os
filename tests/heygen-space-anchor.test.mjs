@@ -243,9 +243,9 @@ test('qualification snapshot enforces exact identity, null-expiry holds, permiss
   assert.throws(() => assertFreshHeygenSpaceProof(proof, { now: qualification.observedAt }), { code: 'UNVERIFIED_HEYGEN_SPACE_PROOF' });
   assert.throws(() => assertFreshHeygenBootstrapProof(proof, { now: qualification.observedAt }), { code: 'UNVERIFIED_HEYGEN_SPACE_PROOF' });
 
-  validateHeygenQualificationSnapshotForTests(anchor, qualification, { now: '2026-10-01T16:01:00.000Z' });
+  validateHeygenQualificationSnapshotForTests(anchor, qualification, { now: '2026-10-01T16:00:59.999Z' });
   assert.throws(
-    () => validateHeygenQualificationSnapshotForTests(anchor, qualification, { now: '2026-10-01T16:01:00.001Z' }),
+    () => validateHeygenQualificationSnapshotForTests(anchor, qualification, { now: '2026-10-01T16:01:00.000Z' }),
     { code: 'HEYGEN_QUALIFICATION_STALE' },
   );
 

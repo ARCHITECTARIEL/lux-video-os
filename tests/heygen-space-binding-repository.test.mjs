@@ -423,7 +423,7 @@ test('production environment with the wrong confirmation value still fails befor
   assert.equal(executor.operations.length, 0);
 });
 
-test('a running Vercel production runtime is rejected regardless of requested environment or confirmation', async () => {
+test('a deployed production resolver rejects verification target or missing project', async () => {
   const executor = createExecutor();
   const repository = createHeygenSpaceBindingRepository({
     env: () => ({
@@ -437,7 +437,7 @@ test('a running Vercel production runtime is rejected regardless of requested en
   });
   await assert.rejects(
     repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID }),
-    error => error.code === 'CANONICAL_TARGET_UNVERIFIED',
+    error => error.code === 'APPLICATION_PROJECT_MISMATCH',
   );
   assert.equal(executor.operations.length, 0);
 });
@@ -714,12 +714,12 @@ test('default target preflight validates pinned URL and schema before provider a
   ]);
 });
 
-test('default target preflight validates the pinned production target only with explicit confirmation, same pipeline as verification', async () => {
+test('deployed production resolver still verifies the exact pinned database/schema without operator permission', async () => {
   const executor = createExecutor();
   const order = [];
   const env = {
-    VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production',
-    VIDEO_OS_PRODUCTION_BINDING_CONFIRMED: PRODUCTION_BINDING_CONFIRMATION_PHRASE,
+    VERCEL_ENV: 'production',
+    VERCEL_PROJECT_ID: 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW',
     DATABASE_URL: 'postgresql://user:secret@production.example.test/database?sslmode=require',
     HEYGEN_API_KEY: 'secret-test-key',
   };
@@ -807,4 +807,67 @@ test('bootstrap succeeds end to end for the confirmed production environment and
   assert.equal(status.environment, 'production');
   assert.equal(status.runtimeActivation, false);
   assert.equal(repository.assertFreshHeygenSpaceBinding(binding), binding);
+});
+
+
+test('deployed production bootstrap remains forbidden even with pinned project and explicit confirmation', async () => {
+  const executor = createExecutor();
+  const repository = createHeygenSpaceBindingRepository({
+    env: () => ({ VERCEL_ENV: 'production', VERCEL_PROJECT_ID: 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW',
+      VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production', VIDEO_OS_PRODUCTION_BINDING_CONFIRMED: PRODUCTION_BINDING_CONFIRMATION_PHRASE }),
+    executor, lstat: async () => { throw new Error('must not run'); },
+  });
+  await assert.rejects(repository.bootstrapVerifiedHeygenSpaceBinding({ accountId: ACCOUNT_ID, privateEvidenceDir: PRIVATE_EVIDENCE_DIR }),
+    error => error.code === 'CANONICAL_TARGET_UNVERIFIED');
+  assert.deepEqual(executor.operations, []);
+});
+
+test('deployed production resolver requires the exact application project', async () => {
+  for (const project of [undefined, '', 'prj_other', ' prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW']) {
+    const executor = createExecutor();
+    const repository = createHeygenSpaceBindingRepository({
+      env: () => ({ VERCEL_ENV: 'production', VERCEL_PROJECT_ID: project }), executor,
+      lstat: async () => { throw new Error('must not run'); },
+    });
+    await assert.rejects(repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID }), error => error.code === 'APPLICATION_PROJECT_MISMATCH');
+    assert.deepEqual(executor.operations, []);
+  }
+});
+
+test('production runtime resolver uses existing authority without bootstrap writes or operator permission', async () => {
+  const env = { VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production', VIDEO_OS_PRODUCTION_BINDING_CONFIRMED: PRODUCTION_BINDING_CONFIRMATION_PHRASE,
+    DATABASE_URL: 'postgresql://user:secret@production.example.test/database?sslmode=require', HEYGEN_API_KEY: 'secret-test-key' };
+  const {repository, executor} = fixture({ env, targetPreflight: async () => ({ environment: 'production',
+    projectId: 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW', databaseBindingSha256: DIGESTS.database, databaseUrl: env.DATABASE_URL, unpooledUrl: null }) });
+  await repository.bootstrapVerifiedHeygenSpaceBinding({ accountId: ACCOUNT_ID, privateEvidenceDir: PRIVATE_EVIDENCE_DIR });
+  env.VERCEL_ENV = 'production'; env.VERCEL_PROJECT_ID = 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW';
+  delete env.VIDEO_OS_SPACE_BINDING_ENVIRONMENT; delete env.VIDEO_OS_PRODUCTION_BINDING_CONFIRMED;
+  executor.operations.length = 0;
+  const binding = await repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID });
+  assert.equal(binding.environment, 'production');
+  assert.equal(executor.operations.some(operation => operation.startsWith('insert:')), false);
+  env.VERCEL_PROJECT_ID = 'prj_other';
+  assert.throws(() => repository.assertFreshHeygenSpaceBinding(binding), error => error.code === 'APPLICATION_PROJECT_MISMATCH');
+});
+
+test('reviewed same-identity refresh preserves immutable DB evidence and promotion observation', async () => {
+  const executor = createExecutor();
+  const initial = fixture({executor});
+  await initial.repository.bootstrapVerifiedHeygenSpaceBinding({ accountId: ACCOUNT_ID, privateEvidenceDir: PRIVATE_EVIDENCE_DIR });
+  const before = structuredClone(executor.state);
+  const refreshed = { ...proof(), originSpaceObservedAt: proof().spaceObservedAt, freshnessEvidenceSha256: 'd'.repeat(64),
+    spaceObservedAt: '2026-10-02T15:40:00.000Z', qualifiedAt: '2026-10-02T15:41:00.000Z',
+    expiresAt: '2026-10-02T15:42:00.000Z', anchorExpiresAt: '2026-10-03T15:40:00.000Z' };
+  const fresh = fixture({executor, proof: Object.freeze(refreshed), now: () => new Date(refreshed.qualifiedAt)});
+  executor.operations.length = 0;
+  const binding = await fresh.repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID });
+  assert.equal(binding.spaceObservedAt, refreshed.spaceObservedAt);
+  assert.equal(binding.originSpaceObservedAt, proof().spaceObservedAt);
+  assert.equal(binding.identityDigest, DIGESTS.identity);
+  const status = fresh.repository.safeHeygenSpaceBindingStatus(binding);
+  assert.equal(status.originSpaceObservedAt, proof().spaceObservedAt);
+  assert.equal(status.freshnessEvidenceSha256, refreshed.freshnessEvidenceSha256);
+  assert.equal(status.anchorExpiresAt, refreshed.anchorExpiresAt);
+  assert.deepEqual(executor.state, before);
+  assert.equal(executor.operations.some(operation => operation.startsWith('insert:')), false);
 });

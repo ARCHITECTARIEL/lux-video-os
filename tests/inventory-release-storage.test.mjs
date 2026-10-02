@@ -6,6 +6,7 @@ import {
   assertPrivateReportOutsideRepository,
   classifyStoragePathname,
   collectStorageInventory,
+  INVENTORY_SCHEMA_VERSION,
 } from '../tools/inventory-release-storage.mjs';
 
 const token = 'vercel_blob_rw_TestStore_secret-value';
@@ -41,6 +42,11 @@ test('classifies every governed storage prefix and keeps unknowns explicit', () 
     ['video-os/credit-state/a.json', 'credit-state'],
     ['video-os/stripe-events/a.json', 'stripe-event'],
     ['video-os/recovery-receipts/a.json', 'recovery-receipt'],
+    ['video-os/containment-20260715/quarantine/a.json', 'quarantined-retained'],
+    ['video-os/containment-20260715/quarantine/a.mp4', 'quarantined-retained'],
+    ['video-os/containment-20260715/quarantine-other/a.json', 'unclassified'],
+    ['video-os/containment-20260715/a.json', 'unclassified'],
+    ['video-os/containment-20261002/quarantine/a.json', 'unclassified'],
     ['video-os/new-prefix/a.json', 'unclassified'],
   ]);
   for (const [pathname, category] of expected) assert.equal(classifyStoragePathname(pathname), category);
@@ -57,9 +63,55 @@ test('produces a deterministic sanitized inventory without raw names or URLs', a
   assert.equal(first.sanitized.categories['customer-upload'].objects, 1);
   assert.equal(first.sanitized.categories['job-state'].bytes, 20);
   assert.equal(first.sanitized.categories['customer-upload'].objectIds[0].length, 64);
+  assert.equal(first.sanitized.schemaVersion, INVENTORY_SCHEMA_VERSION);
+  assert.equal(first.sanitized.dispositionReview.unresolvedObjects, 0);
+  assert.equal(first.sanitized.dispositionReview.migrationVerified, false);
+  assert.equal(first.sanitized.dispositionReview.releaseAuthorized, false);
   const published = JSON.stringify(first.sanitized);
   assert.doesNotMatch(published, /alice|customer-job-id|blob\.vercel-storage|pathname|etag-/i);
   assert.match(JSON.stringify(first.raw), /alice@example\.com/);
+});
+
+test('quarantine classification preserves every object and keeps migration unresolved', async () => {
+  const objects = Array.from({ length: 26 }, (_, index) => blob(`video-os/containment-20260715/quarantine/private-${index}.json`, 10));
+  objects.push(blob('video-os/unknown/private-unclassified.mp4', 20));
+  const result = await collectStorageInventory({
+    ...base,
+    expectedCount: 27,
+    expectedBytes: 280,
+    listPage: async () => ({ blobs: objects, hasMore: false }),
+  });
+  assert.equal(result.raw.objects.length, 27);
+  assert.equal(result.sanitized.categories['quarantined-retained'].objects, 26);
+  assert.equal(result.sanitized.categories['quarantined-retained'].objectIds.length, 26);
+  assert.equal(new Set(result.sanitized.categories['quarantined-retained'].objectIds).size, 26);
+  assert.equal(result.sanitized.categories.unclassified.objects, 1);
+  assert.deepEqual(result.sanitized.dispositionReview, {
+    evidenceBasis: 'metadata-only',
+    unclassifiedObjects: 1,
+    quarantinedRetainedObjects: 26,
+    unresolvedObjects: 27,
+    unresolvedBytes: 280,
+    quarantineDisposition: 'retain-without-mutation-pending-provenance-and-retention-review',
+    migrationVerified: false,
+    releaseAuthorized: false,
+    destructiveActionsAuthorized: false,
+  });
+  assert.doesNotMatch(JSON.stringify(result.sanitized), /private-\d|private-unclassified|blob\.vercel-storage|containment-20260715/);
+});
+
+test('zero unclassified objects never clears retained-quarantine or release holds', async () => {
+  const result = await collectStorageInventory({
+    ...base,
+    expectedCount: 1,
+    expectedBytes: 10,
+    listPage: async () => ({ blobs: [blob('video-os/containment-20260715/quarantine/old.mp4', 10)], hasMore: false }),
+  });
+  assert.equal(result.sanitized.categories.unclassified.objects, 0);
+  assert.equal(result.sanitized.dispositionReview.unresolvedObjects, 1);
+  assert.equal(result.sanitized.dispositionReview.migrationVerified, false);
+  assert.equal(result.sanitized.dispositionReview.releaseAuthorized, false);
+  assert.equal(result.sanitized.dispositionReview.destructiveActionsAuthorized, false);
 });
 
 test('paginates once, rejects duplicate pathnames, and requires advancing cursors', async () => {

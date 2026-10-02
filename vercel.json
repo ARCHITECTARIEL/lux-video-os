@@ -1,7 +1,7 @@
 {
     "functions": {
         "api/**/*.js": {
-            "excludeFiles": "{.vercel**,.vercel/**,.git**,.git/**,.omx**,.omx/**,.codex**,.codex/**,.agents**,.agents/**,.aws**,.aws/**,.env,.env.*,docs**,docs/**,tests**,tests/**,archive**,archive/**,data**,data/**}"
+            "excludeFiles": "{.env{,.*},{.vercel,.git,.omx,.codex,.agents,.aws,docs,tests,archive,data}{*,/*({*,.*}/){*,.*}}}"
         }
     },
     "routes": [
