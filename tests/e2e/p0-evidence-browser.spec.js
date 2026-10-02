@@ -22,7 +22,7 @@ const client = createScriptedPhotoClient({ request, storage: localStorage });
 const draft = () => ({ title: document.querySelector('#premium-title').value, script: 'Approved fixture script with 200 credits mentioned', identityId: '01234567-1234-4123-8123-012345678903', format:'landscape' });
 const history = async () => { const r = await request('/api/video-os-lite/results'); document.querySelector('#result-gallery').innerHTML = r.results.map(j => '<article class="result-card"><a href="/api/video-os-lite/download?jobId='+j.id+'" download="video.mp4">Download</a></article>').join(''); };
 document.querySelector('#login').onclick = async () => { await request('/api/video-os-lite/password-login', { method:'POST', body: '{}' }); await history(); };
-await client.loadCapabilities(); client.setScope('fixture-owner');
+client.setScope('fixture-owner'); await client.loadCapabilities();
 document.querySelector('#generate-video').onclick = async () => { const d = draft(); const result = await client.prepareQuote('PREMIUM', d); document.querySelector('#scripted-photo-quote-summary').innerHTML = '<div><span>Title</span><strong>'+d.title+'</strong></div><div><span>Script</span><strong>'+d.script+'</strong></div><div><span>Current price</span><strong>'+result.quote.credits.toLocaleString('en-US')+' credits</strong></div>'; document.querySelector('dialog').showModal(); };
 document.querySelector('#scripted-photo-quote-confirm').onclick = async () => { await client.submit('PREMIUM', draft()); document.querySelector('dialog').close(); await history(); };
 await history();
@@ -69,6 +69,7 @@ async function harness(browser, credits = 90) {
   const facade = {
     async newContext(options) {
       const context = await browser.newContext(options); current = context; contexts.push(context);
+      context.on('page', page => page.on('pageerror', error => console.error('[offline collector fixture]', error.message)));
       // All app observations use real local HTTP. Only the private Blob denial
       // is stubbed: this offline suite must never contact a real storage host.
       const requestGet = context.request.get.bind(context.request);
@@ -76,7 +77,7 @@ async function harness(browser, credits = 90) {
         ? { status: () => 403, dispose: async () => {} } : requestGet(url, options);
       return context;
     },
-    async close() { for (const context of contexts) await context.close(); },
+    async close() { await Promise.all(contexts.map(context => context.close().catch(() => {}))); },
   };
   const collector = await createBrowserCollector({ origin, chromium: { launch: async () => facade }, prompt: async message => {
     if (message.startsWith('Sign in')) {
@@ -86,15 +87,21 @@ async function harness(browser, credits = 90) {
     if (message.startsWith('Review the displayed')) expect(message).toContain('provider-spend');
   } });
   const close = collector.close;
-  collector.close = async () => { await close(); await new Promise(resolve => server.close(resolve)); };
+  collector.close = async () => {
+    try { await close(); }
+    finally {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  };
   return { collector, get renderCount() { return renderCount; } };
 }
 
 test('collector observes real client render-v2, distinct issued sessions, gallery downloads and all denials', async ({ browser }) => {
   const h = await harness(browser);
   try {
-    const original = await h.collector.signIn('original'); checkSession(original);
-    const submission = await h.collector.submitExactlyOne({ title, maxCredits: 90 });
+    const original = await test.step('observe original login', () => h.collector.signIn('original')); checkSession(original);
+    const submission = await test.step('submit exact approved quote once', () => h.collector.submitExactlyOne({ title, maxCredits: 90 }));
     expect(submission.requestCount).toBe(1); expect(h.renderCount).toBe(1);
     const job = { id: jobId, correlationId: 'fixture-correlation', output: { bytes: media.length } };
     expect((await h.collector.galleryDownload(original, job)).sha256).toBe(sha256(media));
