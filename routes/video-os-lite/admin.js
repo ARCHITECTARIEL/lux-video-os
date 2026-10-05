@@ -10,7 +10,7 @@ import { handleOptions, parseCookies, readJson, send, verifySessionToken } from 
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { deletePrivateBlob, getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../../lib/video-os-private-blob.js';
 import { timingSafeMatch } from '../../lib/video-os-security.js';
-import { handleProductionDbBindingDiagnostic } from '../../lib/production-db-binding-diagnostic.js';
+import { diagnosticWindowOpen, handleProductionDbBindingDiagnostic } from '../../lib/production-db-binding-diagnostic.js';
 import { reconcileStripePayments } from '../../lib/video-os-stripe-reconciliation.js';
 import { runWatchdogSweep } from '../../lib/video-os-watchdog.js';
 
@@ -37,8 +37,13 @@ function isAdminRequest(req) {
 
 function isDiagnosticOperatorRequest(req) {
   const token = String(process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN || '').trim();
+  const adminToken = String(process.env.VIDEO_OS_ADMIN_TOKEN || '').trim();
+  const cronToken = String(process.env.CRON_SECRET || '').trim();
   const match = /^Bearer ([^\s]+)$/i.exec(String(req.headers.authorization || ''));
-  return Boolean(token && match) && timingSafeMatch(match[1], token);
+  return Boolean(token && match)
+    && (!adminToken || !timingSafeMatch(token, adminToken))
+    && (!cronToken || !timingSafeMatch(token, cronToken))
+    && timingSafeMatch(match[1], token);
 }
 
 async function jobsSummary() {
@@ -81,6 +86,7 @@ async function handleVideoStream(req, res, jobId) {
 
 async function handleGet(req, res, operation, url) {
   if (operation === 'db-binding') {
+    if (!diagnosticWindowOpen()) return handleProductionDbBindingDiagnostic(req, res);
     if (!isDiagnosticOperatorRequest(req)) {
       res.statusCode = 401;
       res.setHeader('Cache-Control', 'private, no-store, max-age=0');

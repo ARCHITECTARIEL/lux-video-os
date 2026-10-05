@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import target from '../config/database-target.production.json' with { type: 'json' };
-import { evaluateProductionDbBinding, handleProductionDbBindingDiagnostic } from '../lib/production-db-binding-diagnostic.js';
+import { diagnosticWindowOpen, evaluateProductionDbBinding, handleProductionDbBindingDiagnostic } from '../lib/production-db-binding-diagnostic.js';
 import adminHandler from '../routes/video-os-lite/admin.js';
 import { makeSession } from '../lib/video-os-account.js';
 
@@ -92,6 +92,16 @@ test('diagnostic is off by default and expires within its bounded window', async
   assert.equal(disabled.getQueries() + longWindow.getQueries(), 0);
 });
 
+test('window rejects future starts, expiry equality, malformed time and more than 30 minutes', () => {
+  const base = options().env;
+  assert.equal(diagnosticWindowOpen(base, NOW), true);
+  assert.equal(diagnosticWindowOpen({ ...base, VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT: new Date(NOW + 1).toISOString() }, NOW), false);
+  assert.equal(diagnosticWindowOpen({ ...base, VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW).toISOString() }, NOW), false);
+  assert.equal(diagnosticWindowOpen({ ...base, VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT: 'invalid' }, NOW), false);
+  assert.equal(diagnosticWindowOpen({ ...base, VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW + 30 * 60_000).toISOString() }, NOW), true);
+  assert.equal(diagnosticWindowOpen({ ...base, VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW + 30 * 60_000 + 1).toISOString() }, NOW), false);
+});
+
 test('wrong live identity or a writable transaction never attests', async () => {
   for (const row of [
     { database: 'wrong', role: target.roles[0], read_only: 'on' },
@@ -139,10 +149,18 @@ test('dedicated diagnostic bearer cannot access ordinary admin operations', asyn
   const previousOperator = process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN;
   const previousCron = process.env.CRON_SECRET;
   const previousSession = process.env.VIDEO_OS_SESSION_SECRET;
+  const previousEnabled = process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED;
+  const previousStarted = process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT;
+  const previousExpires = process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT;
+  const previousVercelEnv = process.env.VERCEL_ENV;
   process.env.VIDEO_OS_ADMIN_TOKEN = 'synthetic-admin-token';
   process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN = 'synthetic-operator-token';
   process.env.CRON_SECRET = 'synthetic-cron-token';
   process.env.VIDEO_OS_SESSION_SECRET = 'synthetic-diagnostic-test-secret';
+  process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED = 'true';
+  process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT = new Date(Date.now() - 1_000).toISOString();
+  process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT = new Date(Date.now() + 15 * 60_000).toISOString();
+  process.env.VERCEL_ENV = 'production';
   try {
     const cookie = `vos_admin=${encodeURIComponent(makeSession('admin', 'synthetic@fixture.invalid'))}`;
     for (const { auth, cookieHeader } of [
@@ -165,8 +183,8 @@ test('dedicated diagnostic bearer cannot access ordinary admin operations', asyn
       headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-operator-token' } };
     const res = { setHeader() {}, end(value) { this.body = value; } };
     await adminHandler(authorized, res);
-    assert.equal(res.statusCode, 404);
-    assert.equal(JSON.parse(res.body).code, 'diagnostic_unavailable');
+    assert.equal(res.statusCode, 400);
+    assert.equal(JSON.parse(res.body).code, 'expected_identity_required');
     for (const method of ['GET', 'POST']) {
       const ordinary = { method, url: '/api/video-os-lite/admin?operation=grant-credit',
         headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-operator-token' } };
@@ -179,6 +197,21 @@ test('dedicated diagnostic bearer cannot access ordinary admin operations', asyn
     const normalResponse = { setHeader() {}, end(value) { this.body = value; } };
     await adminHandler(normalAdmin, normalResponse);
     assert.equal(normalResponse.statusCode, 400);
+    for (const collisionName of ['VIDEO_OS_ADMIN_TOKEN', 'CRON_SECRET']) {
+      const prior = process.env[collisionName];
+      process.env[collisionName] = 'synthetic-operator-token';
+      const collided = { setHeader() {}, end(value) { this.body = value; } };
+      await adminHandler(authorized, collided);
+      assert.equal(collided.statusCode, 401);
+      process.env[collisionName] = prior;
+    }
+    delete process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED;
+    for (const auth of ['Bearer synthetic-operator-token', 'Bearer invalid-token']) {
+      const disabled = { setHeader() {}, end(value) { this.body = value; } };
+      await adminHandler({ ...authorized, headers: { ...authorized.headers, authorization: auth } }, disabled);
+      assert.equal(disabled.statusCode, 404);
+      assert.equal(JSON.parse(disabled.body).code, 'diagnostic_unavailable');
+    }
   } finally {
     if (previousAdmin === undefined) delete process.env.VIDEO_OS_ADMIN_TOKEN;
     else process.env.VIDEO_OS_ADMIN_TOKEN = previousAdmin;
@@ -188,5 +221,13 @@ test('dedicated diagnostic bearer cannot access ordinary admin operations', asyn
     else process.env.CRON_SECRET = previousCron;
     if (previousSession === undefined) delete process.env.VIDEO_OS_SESSION_SECRET;
     else process.env.VIDEO_OS_SESSION_SECRET = previousSession;
+    if (previousEnabled === undefined) delete process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED;
+    else process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED = previousEnabled;
+    if (previousStarted === undefined) delete process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT;
+    else process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT = previousStarted;
+    if (previousExpires === undefined) delete process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT;
+    else process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT = previousExpires;
+    if (previousVercelEnv === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = previousVercelEnv;
   }
 });
