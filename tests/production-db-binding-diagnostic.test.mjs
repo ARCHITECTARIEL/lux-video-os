@@ -9,7 +9,8 @@ import { makeSession } from '../lib/video-os-account.js';
 
 const NOW = Date.parse('2026-10-05T15:20:00.000Z');
 const digest = (value) => createHash('sha256').update(value).digest('hex');
-const targetFileSha256 = digest(readFileSync(new URL('../config/database-target.production.json', import.meta.url)));
+const targetFileLf = readFileSync(new URL('../config/database-target.production.json', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const targetFileSha256 = digest(targetFileLf);
 const deployment = 'fixture-deployment';
 const source = 'fixture-source';
 const project = 'fixture-project';
@@ -21,6 +22,11 @@ test('release baseline is raw UTF-8 JSON accepted by the production build reader
   const baseline = JSON.parse(raw);
   assert.equal(baseline.sourceByteAttestation, false);
   assert.equal(baseline.state, 'READY');
+});
+
+test('reviewed manifest pin is the Git LF content across LF and CRLF checkouts', () => {
+  assert.equal(targetFileSha256, '987c494527adb6f4e7a08c0b68c38be6a1eb3d7430cdbdd4927ce6cfdd9961ef');
+  assert.equal(digest(targetFileLf.replace(/\n/g, '\r\n').replace(/\r\n/g, '\n')), targetFileSha256);
 });
 
 function options(overrides = {}) {
