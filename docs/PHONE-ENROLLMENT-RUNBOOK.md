@@ -2,6 +2,10 @@
 
 Updated September 30, 2026. Scope: local MVP implementation. Activation and a real HeyGen canary remain separate release work.
 
+> 2026-10-04 candidate: the account-bound private enrollment canary below is
+> local and inactive. Use the current handoff and live readback for production
+> migration and deployment status; September 30 observations are historical.
+
 ## Product contract
 
 The customer supplies a photo and one phone video. The photo determines the visible presenter. With explicit permission, the application extracts the recording's audio into a private reusable voice sample. There is no third mandatory upload. Once the photo avatar and voice are both ready, Standard and Premium accept a title, script, identity and output format, followed by an explicit credit quote and confirmation.
@@ -41,9 +45,29 @@ New enrollment and extraction flags are off by default:
 - `VIDEO_OS_PHONE_VIDEO_ENROLLMENT_ENABLED`
 - `VIDEO_OS_PHONE_VIDEO_EXTRACTION_ENABLED`
 
+For a contained Vercel production canary, the candidate also requires
+`VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID` to equal the authenticated owner's
+account ID exactly, and `VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT` to be the
+reviewed UTC start of this new cohort. Production enrollment capability is
+hidden from every
+other account; create/consent/retry, private upload-token issuance and generic
+identity photo/voice source uploads fail before media writes for other
+accounts. New enrollment creation refuses an older photo; consent, retry,
+upload reconciliation and callback acceptance refuse pre-canary enrollment
+records. Provider reconsent is excluded from this private-only canary. A
+missing pin or start timestamp fails closed. Revocation and owner-scoped existing
+record reads remain available. This is an account boundary, not approval to
+enable the flags. Keep the pin in place until an authorized attempt reaches a
+terminal state or its upload token expires and cleanup is reconciled; do not
+advance the cohort start timestamp while callbacks remain possible. While
+the production pin is set, `providerCreationActivationStatus()` also holds
+provider creation and render submission off even if their separate flag is
+accidentally enabled. Removing the pin to pursue later provider work requires
+a new scoped review; it disables new production enrollment until replaced.
+
 Enrollment additionally requires Blob storage, durable Vercel Workflow dispatch, an exact HTTPS `VIDEO_OS_PUBLIC_ORIGIN`, a strong existing session secret, and `VIDEO_OS_ENROLLMENT_BLOB_STORE_ID` matching the configured private store token. Never put tokens in browser state, logs or handoff files. Existing provider, account, privacy, scripted-render and pricing gates still apply; enabling enrollment alone does not enable paid generation. The existing gates include `VIDEO_OS_IDENTITY_PROVIDER_ENABLED`, `VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID` (the contained pilot account), `HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED`, `VIDEO_OS_SCRIPTED_PHOTO_ENABLED`, `VIDEO_OS_STANDARD_SCRIPTED_CREDITS` and `VIDEO_OS_DURABLE_WORKFLOW_ENABLED`. Provider credentials remain server-only. These names are configuration requirements, not instructions to enable them now.
 
-Migration `drizzle/0007_exotic_bruce_banner.sql` adds `identity_video_enrollments` and `identity_enrollment_events` without altering existing tables. Additive migration `drizzle/0008_ambiguous_scalphunter.sql` records dispatch and provider-reconciliation receipts and makes source/derived asset ownership unique. The isolated verification database has nine migrations and 18 application tables. Production migration has NOT been run. Do not substitute integration-prefixed database variables for the application's canonical DATABASE_URL or treat snapshot checks as live verification.
+Migration `drizzle/0007_exotic_bruce_banner.sql` adds `identity_video_enrollments` and `identity_enrollment_events` without altering existing tables. Additive migration `drizzle/0008_ambiguous_scalphunter.sql` records dispatch and provider-reconciliation receipts and makes source/derived asset ownership unique. The September 30 isolated verification database had nine migrations and 18 application tables. The current handoff records production migrations `0007`-`0010` applied on October 1; reverify the canonical live target before activation. Do not substitute integration-prefixed database variables for the application's canonical DATABASE_URL or treat snapshot checks as live verification.
 
 `tools/build-browser-clients.mjs` bundles the installed Blob upload client using the existing esbuild dependency. `tools/build-production.mjs` regenerates it before source attestation, validates all four enrollment workflow IDs and all three new API routes through the existing workspace function, and stages a Linux FFmpeg binary. Build output remains quarantined and review-only.
 

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { assertDatabaseConfigured } from '../../db/client.js';
 import { addUploadMediaAsset, consumeRateLimit, getOwnedMediaAsset } from '../../db/repositories.js';
 import { sessionFromRequest } from '../../lib/video-os-account.js';
+import { assertEnrollmentAccountAllowed, assertEnrollmentExtractionCapability } from '../../lib/enrollment-policy.js';
 import { validateIdentityUpload } from '../../lib/identity-upload.js';
 import { deletePrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../../lib/video-os-private-blob.js';
 import { accountHash, requestId } from '../../lib/video-os-security.js';
@@ -125,6 +126,10 @@ export function createUploadHandler(overrides = {}) {
       const payload = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
       const dataUrl = String(payload.dataUrl || '');
       const identityKind = payload.kind === 'identity_photo' ? 'photo' : payload.kind === 'identity_voice' ? 'voice' : null;
+      if (identityKind && (process.env.VERCEL_ENV === 'production' || String(process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID || '').trim())) {
+        assertEnrollmentAccountAllowed(session.accountId);
+        assertEnrollmentExtractionCapability();
+      }
       let buffer;
       let mime;
       let ext;

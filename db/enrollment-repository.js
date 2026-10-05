@@ -11,6 +11,8 @@ import {
   ENROLLMENT_UPLOAD_VALIDITY_MS,
   LEGACY_ENROLLMENT_CONSENT_POLICY_VERSION,
   assertEnrollmentTransition,
+  assertEnrollmentCanaryRecord,
+  assertEnrollmentCanaryPhoto,
   enrollmentFailureIsRetryable,
   enrollmentNeedsTerminalCleanup,
   safeEnrollmentFilename,
@@ -86,14 +88,17 @@ export async function createEnrollment({ accountId, correlationId, input, now = 
       eq(identityVideoEnrollments.idempotencyKey, input.idempotencyKey),
     )).for('update').limit(1))[0];
     if (existing) {
+      assertEnrollmentCanaryRecord(existing);
       if (!sameCreate(existing, input)) throw failure('Enrollment idempotency key belongs to a different request.', 409, 'RECONCILIATION', 'IDEMPOTENCY_CONFLICT');
       const replayPhoto = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, input.photoAssetId))).for('share').limit(1))[0];
       assertPhotoAsset(replayPhoto, accountId, input.photoAssetId);
+      assertEnrollmentCanaryPhoto(replayPhoto);
       if (replayPhoto.sha256 !== existing.photoSha256) throw failure('Enrollment photo no longer matches its frozen source.', 409, 'CONSENT', 'PHOTO_SOURCE_MISMATCH');
       return { enrollment: existing, replayed: true };
     }
     const photo = (await tx.select().from(mediaAssets).where(and(eq(mediaAssets.accountId, accountId), eq(mediaAssets.id, input.photoAssetId))).for('share').limit(1))[0];
     assertPhotoAsset(photo, accountId, input.photoAssetId);
+    assertEnrollmentCanaryPhoto(photo);
     const id = crypto.randomUUID();
     const operationKey = crypto.randomUUID();
     const filename = safeEnrollmentFilename(input.filename, input.contentType);

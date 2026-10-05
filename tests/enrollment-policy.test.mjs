@@ -7,10 +7,15 @@ import {
   LEGACY_ENROLLMENT_CONSENT_POLICY_VERSION,
   ENROLLMENT_CONTRACT_VERSION,
   ENROLLMENT_STATUSES,
+  assertEnrollmentAccountAllowed,
+  assertEnrollmentCanaryRecord,
+  assertEnrollmentCanaryPhoto,
   assertEnrollmentCapability,
   decodeEnrollmentUploadContext,
   enrollmentNeedsTerminalCleanup,
   encodeEnrollmentUploadContext,
+  enrollmentAccountAllowed,
+  enrollmentCanaryStartedAt,
   parseEnrollmentRequest,
   validateEnrollmentTransport,
 } from '../lib/enrollment-policy.js';
@@ -79,6 +84,32 @@ test('feature and exact private Blob store identity fail closed', () => {
     { VIDEO_OS_ENROLLMENT_BLOB_STORE_ID: '' }, { VIDEO_OS_ENROLLMENT_BLOB_STORE_ID: 'other' },
     { BLOB_READ_WRITE_TOKEN: '' }, { VIDEO_OS_PUBLIC_ORIGIN: 'http://video.example' }, { WORKFLOW_DISPATCH_MODE: 'poll' },
   ]) assert.throws(() => assertEnrollmentCapability({ ...valid, ...mutation }), { failureCategory: 'CONFIG_MISSING' });
+});
+
+test('production enrollment canary permits only its pinned account', () => {
+  const env = { VERCEL_ENV: 'production', VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: 'owner-account' };
+  assert.equal(enrollmentAccountAllowed('owner-account', env), true);
+  assert.equal(enrollmentAccountAllowed('other-account', env), false);
+  assert.equal(enrollmentAccountAllowed('owner-account', { VERCEL_ENV: 'production' }), false);
+  assert.equal(enrollmentAccountAllowed('owner-account', { VERCEL_ENV: 'production', VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: ' owner-account ' }), true);
+  assert.equal(enrollmentAccountAllowed('other-account', { VERCEL_ENV: 'preview' }), true);
+  assert.equal(enrollmentAccountAllowed('other-account', { ...env, VERCEL_ENV: 'preview' }), false);
+  assert.throws(() => assertEnrollmentAccountAllowed('other-account', env), { statusCode: 403, failureCategory: 'ENTITLEMENT' });
+});
+
+test('private canary boundary rejects historical enrollment records and missing epochs', () => {
+  const env = {
+    VERCEL_ENV: 'production', VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: 'owner-account',
+    VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT: '2026-10-04T14:00:00.000Z',
+  };
+  assert.equal(enrollmentCanaryStartedAt(env).toISOString(), env.VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT);
+  assert.doesNotThrow(() => assertEnrollmentCanaryRecord({ createdAt: '2026-10-04T14:00:01.000Z' }, env));
+  assert.throws(() => assertEnrollmentCanaryRecord({ createdAt: '2026-10-04T13:59:59.000Z' }, env), { statusCode: 403, failureCategory: 'ENTITLEMENT' });
+  assert.doesNotThrow(() => assertEnrollmentCanaryPhoto({ createdAt: '2026-10-04T14:00:01.000Z' }, env));
+  assert.throws(() => assertEnrollmentCanaryPhoto({ createdAt: '2026-10-04T13:59:59.000Z' }, env), { statusCode: 403, failureCategory: 'ENTITLEMENT' });
+  assert.throws(() => enrollmentCanaryStartedAt({ ...env, VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT: '' }), { statusCode: 503, failureCategory: 'CONFIG_MISSING' });
+  assert.throws(() => enrollmentCanaryStartedAt({ ...env, VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT: '2026-10-04T14:00:00-04:00' }), { statusCode: 503, failureCategory: 'CONFIG_MISSING' });
+  assert.equal(enrollmentCanaryStartedAt({ VERCEL_ENV: 'preview' }), null);
 });
 
 test('terminal cleanup policy preserves retryable failures until retry or TTL expiry', () => {
