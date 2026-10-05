@@ -150,6 +150,13 @@ function assertProofShape(proof) {
   const expiresAt = exactIso(proof.expiresAt, 'qualification expiry time');
   exactIso(proof.spaceObservedAt, 'provider space observation time');
   exactIso(proof.anchorExpiresAt, 'anchor expiry time');
+  if (Object.hasOwn(proof, 'originSpaceObservedAt') || Object.hasOwn(proof, 'freshnessEvidenceSha256')) {
+    exactIso(proof.originSpaceObservedAt, 'original provider space observation time');
+    exactDigest(proof.freshnessEvidenceSha256, 'reviewed freshness evidence digest');
+    if (Date.parse(proof.originSpaceObservedAt) >= Date.parse(proof.spaceObservedAt)) {
+      throw failure('HEYGEN_SPACE_PROOF_INVALID', 'Refreshed evidence must follow the immutable original observation.');
+    }
+  }
   const lifetime = Date.parse(expiresAt) - Date.parse(qualifiedAt);
   if (lifetime <= 0 || lifetime > 60_000) {
     throw failure('HEYGEN_SPACE_PROOF_INVALID', 'HeyGen space proof freshness window is invalid.');
@@ -190,19 +197,27 @@ function providerOriginScopeKey(credentialScopeFingerprint) {
   return createHash('sha256').update(PROVIDER_CREDENTIAL_SCOPE_DOMAIN).update(credentialScopeFingerprint, 'utf8').digest('hex');
 }
 
-// Returns the validated binding environment ('verification' or 'production').
-// Two independent concerns are checked here and must both keep holding:
-// (1) this administrative tool must never execute inside the actual deployed
-// Vercel production runtime, regardless of which target it is binding to;
-// (2) only an explicitly, separately confirmed request may target the real
-// production database -- requesting the environment alone is not enough.
-function assertBindingEnvironment(env) {
+// Operator writes require independent production confirmation and cannot run
+// inside deployed production. Read-only runtime resolution may reconstruct an
+// existing binding only for the pinned production app and target; it cannot
+// bootstrap a binding or enable creation.
+function assertBindingEnvironment(env, operation = 'bootstrap') {
   const requested = typeof env.VIDEO_OS_SPACE_BINDING_ENVIRONMENT === 'string'
     ? env.VIDEO_OS_SPACE_BINDING_ENVIRONMENT.trim()
     : '';
   const vercelEnvironment = typeof env.VERCEL_ENV === 'string' ? env.VERCEL_ENV.trim().toLowerCase() : '';
   if (vercelEnvironment === 'production') {
-    throw failure('CANONICAL_TARGET_UNVERIFIED', 'This administrative binding tool must never run inside the deployed production runtime.');
+    // The operator bootstrap is forbidden in deployed code. The resolver is
+    // read-only authority reconstruction used by render/enrollment/continuation
+    // and must not inherit the operator CLI's mutation permission.
+    if (operation !== 'resolve') {
+      throw failure('CANONICAL_TARGET_UNVERIFIED', 'Administrative binding is forbidden inside the deployed production runtime.');
+    }
+    if ((requested && requested !== 'production')
+      || env.VERCEL_PROJECT_ID !== PINNED_APPLICATION_PROJECT_ID) {
+      throw failure('APPLICATION_PROJECT_MISMATCH', 'Production runtime must match the pinned application and production target.');
+    }
+    return 'production';
   }
   if (requested !== 'verification' && requested !== 'production') {
     throw failure('HEYGEN_BINDING_ENVIRONMENT_UNSUPPORTED', 'Only the pinned verification or production target is supported.');
@@ -225,13 +240,13 @@ function assertBindingEnvironment(env) {
 function canonicalDatabaseUrl(env) {
   const value = env.DATABASE_URL;
   if (typeof value !== 'string' || value.length === 0 || value !== value.trim()) {
-    throw failure('CANONICAL_DATABASE_URL_REQUIRED', 'The canonical verification DATABASE_URL is required.');
+    throw failure('CANONICAL_DATABASE_URL_REQUIRED', 'The canonical DATABASE_URL is required.');
   }
   return value;
 }
 
-async function defaultTargetPreflight(env, dependencies) {
-  const environment = assertBindingEnvironment(env);
+async function defaultTargetPreflight(env, dependencies, operation) {
+  const environment = assertBindingEnvironment(env, operation);
   const targetPath = TARGET_PATHS[environment];
   const databaseUrl = canonicalDatabaseUrl(env);
   const targetMetadata = await dependencies.lstat(targetPath);
@@ -283,8 +298,8 @@ async function defaultTargetPreflight(env, dependencies) {
   });
 }
 
-function assertRuntimeInputsStable(env, preflight, credential) {
-  if (assertBindingEnvironment(env) !== preflight.environment
+function assertRuntimeInputsStable(env, preflight, credential, operation) {
+  if (assertBindingEnvironment(env, operation) !== preflight.environment
     || canonicalDatabaseUrl(env) !== preflight.databaseUrl
     || String(env.DATABASE_URL_UNPOOLED || '') !== String(preflight.unpooledUrl || '')
     || selectCredential(env) !== credential) {
@@ -378,7 +393,7 @@ function exactExistingPromotion(promotion, binding, scope, proof, refs) {
     || promotion.originScopeKey !== binding.originScopeKey
     || promotion.verifiedAccountScopeId !== scope.id || promotion.state !== 'verified'
     || promotion.evidenceDigest !== proof.identityDigest || promotion.evidenceRef !== refs.promotion
-    || observedAt !== proof.spaceObservedAt || verifiedAt == null
+    || observedAt !== (proof.originSpaceObservedAt || proof.spaceObservedAt) || verifiedAt == null
     || Date.parse(verifiedAt) < Date.parse(observedAt) || promotion.revokedAt !== null) {
     throw failure('HEYGEN_SPACE_PROMOTION_CONFLICT', 'Existing HeyGen space promotion conflicts with pinned evidence.', 409);
   }
@@ -434,6 +449,7 @@ function makeBinding({ accountId, preflight, proof, binding, scope, promotion })
     providerSpaceFingerprint: proof.providerSpaceFingerprint,
     canonicalScopeKey: proof.canonicalScopeKey,
     identityDigest: proof.identityDigest,
+    ...(proof.originSpaceObservedAt ? { originSpaceObservedAt: proof.originSpaceObservedAt, freshnessEvidenceSha256: proof.freshnessEvidenceSha256 } : {}),
     spaceObservedAt: proof.spaceObservedAt,
     qualifiedAt: proof.qualifiedAt,
     expiresAt: effectiveExpiresAt,
@@ -605,10 +621,10 @@ export function createHeygenSpaceBindingRepository(trustedDependencies = {}) {
     throw failure('EXECUTOR_DATABASE_URL_UNBOUND', 'An injected environment requires an executor bound to the same database.', 500);
   }
 
-  async function prepare({ privateEvidenceDir = null } = {}) {
+  async function prepare({ privateEvidenceDir = null, operation = 'resolve' } = {}) {
     const env = dependencies.env();
     if (!isEnvironment(env)) throw failure('HEYGEN_BINDING_ENVIRONMENT_INVALID', 'Binding environment is unavailable.');
-    const preflight = await dependencies.targetPreflight(env, dependencies);
+    const preflight = await dependencies.targetPreflight(env, dependencies, operation);
     const anchorNow = exactDate(dependencies.now());
     const bootstrap = privateEvidenceDir !== null;
     const anchor = bootstrap
@@ -625,13 +641,13 @@ export function createHeygenSpaceBindingRepository(trustedDependencies = {}) {
     const proof = assertProofShape(dependencies.validateFreshHeygenQualification(anchor, qualification, { now: proofNow }));
     const assertFreshProof = bootstrap ? dependencies.assertFreshHeygenBootstrapProof : dependencies.assertFreshHeygenSpaceProof;
     assertFreshProof(proof, { now: proofNow });
-    assertRuntimeInputsStable(env, preflight, credential);
-    return { env, preflight, credential, proof, assertFreshProof, refs: evidenceRefs(proof) };
+    assertRuntimeInputsStable(env, preflight, credential, operation);
+    return { env, preflight, credential, proof, assertFreshProof, operation, refs: evidenceRefs(proof) };
   }
 
   async function withExecutor(prepared, callback, { requireCurrentInputs = true } = {}) {
     if (dependencies.executor) return dependencies.executor.transaction(callback);
-    if (requireCurrentInputs) assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential);
+    if (requireCurrentInputs) assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation);
     neonConfig.webSocketConstructor = ws;
     const pool = new Pool({
       connectionString: prepared.preflight.databaseUrl,
@@ -662,7 +678,7 @@ export function createHeygenSpaceBindingRepository(trustedDependencies = {}) {
       assertCurrent() {
         const now = exactDate(dependencies.now());
         prepared.assertFreshProof(prepared.proof, { now });
-        assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential);
+        assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation);
         assertBindingShape(binding, now);
       },
     }));
@@ -676,11 +692,11 @@ export function createHeygenSpaceBindingRepository(trustedDependencies = {}) {
       || value.privateEvidenceDir !== value.privateEvidenceDir.trim()) {
       throw failure('INVALID_HEYGEN_SPACE_BINDING_INPUT', 'privateEvidenceDir must be an absolute protected path.', 400);
     }
-    const prepared = await prepare({ privateEvidenceDir: value.privateEvidenceDir });
+    const prepared = await prepare({ privateEvidenceDir: value.privateEvidenceDir, operation: 'bootstrap' });
     const result = await withExecutor(prepared, async tx => {
       await dependencies.acquireProviderLifecycleLock(tx, accountId);
       prepared.assertFreshProof(prepared.proof, { now: exactDate(dependencies.now()) });
-      assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential);
+      assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation);
       await requireAccountTx(tx, accountId);
       const scope = await ensureVerifiedScopeTx(tx, prepared.proof, prepared.refs);
       const binding = await ensureBootstrapBindingTx(tx, {
@@ -713,7 +729,7 @@ export function createHeygenSpaceBindingRepository(trustedDependencies = {}) {
     const result = await withExecutor(prepared, async tx => {
       await dependencies.acquireProviderLifecycleLock(tx, accountId);
       prepared.assertFreshProof(prepared.proof, { now: exactDate(dependencies.now()) });
-      assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential);
+      assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation);
       await requireAccountTx(tx, accountId);
       const bindings = await tx.select().from(providerAccountBindings).where(and(
         eq(providerAccountBindings.applicationAccountId, accountId),
@@ -768,6 +784,12 @@ export function createHeygenSpaceBindingRepository(trustedDependencies = {}) {
       canonicalScopeKey: verified.canonicalScopeKey,
       identityDigest: verified.identityDigest,
       freshUntil: verified.expiresAt,
+      spaceObservedAt: verified.spaceObservedAt,
+      anchorExpiresAt: verified.anchorExpiresAt,
+      ...(verified.freshnessEvidenceSha256 ? {
+        originSpaceObservedAt: verified.originSpaceObservedAt,
+        freshnessEvidenceSha256: verified.freshnessEvidenceSha256,
+      } : {}),
       verified: true,
       runtimeActivation: false,
     });
