@@ -27,6 +27,8 @@ test('diagnostic packaging requires clean reviewed project and bounded paths', (
     { source: { ...source, project: { ...source.project, id: 'wrong' } } },
     { changedPaths: ['db/canceled-standard-job-repair.js'] },
     { changedPaths: ['routes/video-os-lite/identities.js'] },
+    { changedPaths: DIAGNOSTIC_PATHS.slice(1) },
+    { changedPaths: [...DIAGNOSTIC_PATHS, 'db/canceled-standard-job-repair.js'] },
     { changedPaths: [] },
   ]) assert.throws(() => assertDiagnosticBuildInputs(input(invalid)));
 });

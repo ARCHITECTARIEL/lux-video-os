@@ -4,7 +4,6 @@ import { spawnSync } from 'node:child_process';
 
 export const ACTIVE_APP_BASE = '8203d1f7c6777c0eda644170c017265f76ac552f';
 export const DIAGNOSTIC_PATHS = Object.freeze([
-  '.github/workflows/db-binding-diagnostic-review.yml',
   'config/release-baseline.json',
   'lib/production-db-binding-diagnostic.js',
   'package-lock.json',
@@ -35,7 +34,7 @@ export function assertDiagnosticBuildInputs({ root, env, changedPaths, source })
   if (source.dirty || !/^[a-f0-9]{40}$/.test(source.head || '')) throw new Error('Diagnostic build requires an exact clean commit.');
   if (source.project?.name !== 'lux-video-os' || source.project?.id !== 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW') throw new Error('Diagnostic build project differs from the reviewed production project.');
   const allowed = new Set(DIAGNOSTIC_PATHS);
-  if (!changedPaths.length || changedPaths.some(path => !allowed.has(path))) throw new Error('Diagnostic build source exceeds the reviewed path scope.');
+  if (changedPaths.length !== allowed.size || changedPaths.some(path => !allowed.has(path))) throw new Error('Diagnostic build source differs from the reviewed path scope.');
   if (env.DATABASE_URL || env.DATABASE_URL_UNPOOLED || env.VIDEO_OS_DB_TARGET_MANIFEST) throw new Error('Diagnostic build must not load production database credentials.');
   for (const name of ['.env', '.env.local', '.env.production', '.env.production.local', '.vercel/.env.production.local']) {
     if (existsSync(join(root, name))) throw new Error('Diagnostic build found a local environment file; remove it from this isolated worktree before packaging.');
@@ -43,6 +42,8 @@ export function assertDiagnosticBuildInputs({ root, env, changedPaths, source })
 }
 
 export function diagnosticChangedPaths(root) {
+  const ancestor = spawnSync('git', ['merge-base', 'HEAD', ACTIVE_APP_BASE], { cwd: root, encoding: 'utf8' });
+  if (ancestor.status !== 0 || ancestor.stdout.trim() !== ACTIVE_APP_BASE) throw new Error('Diagnostic build is not based on the recorded active source.');
   const run = spawnSync('git', ['diff', '--name-only', ACTIVE_APP_BASE, 'HEAD'], { cwd: root, encoding: 'utf8' });
   if (run.status !== 0) throw new Error('Diagnostic build cannot verify the recorded active source base.');
   return run.stdout.trim().split(/\r?\n/).filter(Boolean);
