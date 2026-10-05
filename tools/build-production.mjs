@@ -6,6 +6,7 @@ import { videoRenderWorkflowMetadata } from '../workflows/video-render-metadata.
 import { stageHeygenRuntimeFiles } from './stage-heygen-runtime-files.mjs';
 import { identityEnrollmentHashWorkflowMetadata, identityEnrollmentExtractionWorkflowMetadata, identityEnrollmentCleanupWorkflowMetadata, identityEnrollmentExpiryWorkflowMetadata } from '../workflows/identity-enrollment-metadata.js';
 import { writeReleaseBuildManifest, assertProductionWorkflowBoundary, captureSourceIdentity, assertStableDatabase, quarantineBuildOutput, assertNoDefaultBuildOutput } from './release-build-manifest.mjs';
+import { assertDiagnosticBuildInputs, diagnosticChangedPaths, diagnosticDatabaseEvidence } from './db-binding-diagnostic-build-policy.mjs';
 
 const root = new URL('../', import.meta.url);
 const output = new URL('../.vercel/output/', import.meta.url);
@@ -38,7 +39,13 @@ async function stageWorkflowFfmpeg(stepFunction) {
 
 const target = process.argv.includes('--preview') ? 'preview' : 'production';
 const preflightOnly = process.argv.includes('--preflight-only');
+const diagnosticOnly = process.argv.includes('--diagnostic-db-binding');
 async function build() {
+if (diagnosticOnly) {
+  if (target !== 'production' || preflightOnly) throw new Error('Diagnostic packaging requires a full production-target build.');
+  const source = await captureSourceIdentity(fileURLToPath(root));
+  assertDiagnosticBuildInputs({ root: fileURLToPath(root), env: process.env, changedPaths: diagnosticChangedPaths(fileURLToPath(root)), source });
+}
 if (!preflightOnly) await quarantineBuildOutput(fileURLToPath(output), 'previous');
 else await assertNoDefaultBuildOutput(fileURLToPath(output));
 
@@ -48,10 +55,10 @@ const preflightReceipt = new URL('../.vercel/database-preflight.json', import.me
 await mkdir(new URL('../.vercel/', import.meta.url), { recursive: true });
 await rm(preflightReceipt, { force: true });
 const migrationCheck = new URL('check-migrations.mjs', import.meta.url);
-run(migrationCheck, target === 'production'
+run(migrationCheck, target === 'production' && !diagnosticOnly
   ? ['--strict', '--environment', 'production', '--receipt', fileURLToPath(preflightReceipt)]
-  : ['--snapshot-only']);
-const databaseEvidence = target === 'production'
+  : diagnosticOnly ? ['--snapshot-only', '--environment', 'production'] : ['--snapshot-only']);
+const databaseEvidence = diagnosticOnly ? diagnosticDatabaseEvidence() : target === 'production'
   ? JSON.parse(await readFile(preflightReceipt, 'utf8'))
   : { verified: false, scope: 'snapshots-only', environment: 'preview' };
 if (preflightOnly) {
@@ -95,7 +102,7 @@ let rollbackBaseline = null;
 try { rollbackBaseline = JSON.parse(await readFile(new URL('../config/release-baseline.json', import.meta.url), 'utf8')); }
 catch { console.warn('Rollback baseline unavailable or malformed; release remains blocked.'); }
 let finalDatabaseEvidence = databaseEvidence;
-if (target === 'production') {
+if (target === 'production' && !diagnosticOnly) {
   run(migrationCheck, ['--strict', '--environment', 'production', '--receipt', fileURLToPath(preflightReceipt)]);
   finalDatabaseEvidence = JSON.parse(await readFile(preflightReceipt, 'utf8'));
   assertStableDatabase(databaseEvidence, finalDatabaseEvidence);
@@ -109,6 +116,12 @@ for (const name of ['enrollments', 'enrollment-upload', 'scripted-photo']) {
 }
 const receiptPath = fileURLToPath(new URL('../.vercel/release-build-manifest.json', import.meta.url));
 const releaseManifest = await writeReleaseBuildManifest({ root: fileURLToPath(root), outputRoot: fileURLToPath(output), target, database: finalDatabaseEvidence, receiptPath, rollbackBaseline, expectedSource });
+if (diagnosticOnly) {
+  releaseManifest.diagnosticOnly = true;
+  releaseManifest.routineDeployAuthorized = false;
+  releaseManifest.releaseAuthorized = false;
+  releaseManifest.exceptionGranted = false;
+}
 if (target === 'production') assertProductionWorkflowBoundary(releaseManifest.workflowBoundary);
 // Every artifact from this preparation command is review-only. A future authorized
 // release must recheck all gates before making anything available to --prebuilt.
