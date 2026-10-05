@@ -14,6 +14,7 @@ const targetFileSha256 = digest(targetFileLf);
 const deployment = 'fixture-deployment';
 const source = 'fixture-source';
 const project = 'fixture-project';
+const uniqueDeploymentHost = 'fixture-deployment-lux-projects.vercel.app';
 const databaseUrl = ['postgresql://', encodeURIComponent(target.roles[0]), ':synthetic-only@',
   target.hosts[0], ':', target.port, '/', target.database, '?sslmode=require'].join('');
 
@@ -36,6 +37,7 @@ function options(overrides = {}) {
     VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW + 15 * 60_000).toISOString(),
     VERCEL_ENV: 'production', VERCEL_DEPLOYMENT_ID: deployment,
     VERCEL_GIT_COMMIT_SHA: source, VERCEL_PROJECT_ID: project,
+    VERCEL_URL: uniqueDeploymentHost,
     DATABASE_URL: databaseUrl,
     ...overrides.env,
   };
@@ -44,6 +46,7 @@ function options(overrides = {}) {
     'x-expected-deployment-sha256': digest(deployment),
     'x-expected-git-commit-sha256': digest(source),
     'x-expected-project-sha256': digest(project),
+    'x-expected-deployment-url-sha256': digest(uniqueDeploymentHost),
     'x-expected-target-manifest-sha256': targetFileSha256,
     ...overrides.headers,
   } };
@@ -64,10 +67,24 @@ test('exact deployment, source, project and canonical database match with read-o
   assert.equal(result.status, 200);
   assert.equal(result.body.ok, true);
   assert.equal(result.body.readOnly, true);
+  assert.equal(result.body.stableAliasHostMatched, true);
+  assert.equal(result.body.uniqueDeploymentHostMatched, false);
+  assert.equal(result.body.durableRenderDisabled, true);
+  assert.equal(result.body.providerCreationDisabled, true);
+  assert.equal(result.body.billingDisabled, true);
   assert.equal(result.body.sourceByteAttested, false);
   assert.equal(input.getQueries(), 1);
   assert.equal(JSON.stringify(result).includes(databaseUrl), false);
   assert.equal(JSON.stringify(result).includes(target.hosts[0]), false);
+});
+
+test('exact Vercel unique deployment host attests before alias assignment', async () => {
+  const input = options({ headers: { host: uniqueDeploymentHost } });
+  const result = await evaluateProductionDbBinding(input);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.stableAliasHostMatched, false);
+  assert.equal(result.body.uniqueDeploymentHostMatched, true);
+  assert.equal(input.getQueries(), 1);
 });
 
 test('deployment mismatch and wrong target fail before opening the database', async () => {
@@ -83,6 +100,42 @@ test('deployment mismatch and wrong target fail before opening the database', as
   const wrongManifest = options({ headers: { 'x-expected-target-manifest-sha256': digest('other manifest') } });
   assert.equal((await evaluateProductionDbBinding(wrongManifest)).body.targetManifestMatched, false);
   assert.equal(wrongManifest.getQueries(), 0);
+});
+
+test('wrong deployment, source, project or unique host cannot open a database connection', async () => {
+  for (const change of [
+    { headers: { 'x-expected-deployment-sha256': digest('wrong') } },
+    { headers: { 'x-expected-git-commit-sha256': digest('wrong') } },
+    { headers: { 'x-expected-project-sha256': digest('wrong') } },
+    { headers: { host: uniqueDeploymentHost, 'x-expected-deployment-url-sha256': digest('wrong') } },
+    { headers: { host: 'other-deployment.vercel.app' } },
+    { env: { VERCEL_URL: 'other-deployment.vercel.app' }, headers: { host: uniqueDeploymentHost } },
+  ]) {
+    const input = options(change);
+    assert.notEqual((await evaluateProductionDbBinding(input)).status, 200);
+    assert.equal(input.getQueries(), 0);
+  }
+});
+
+test('every enabled mutation gate blocks attestation before SQL', async () => {
+  for (const name of [
+    'VIDEO_OS_DURABLE_WORKFLOW_ENABLED', 'VIDEO_OS_STANDARD_RENDER_ENABLED',
+    'VIDEO_OS_SCRIPTED_PHOTO_ENABLED', 'VIDEO_OS_BILLING_ENABLED',
+    'VIDEO_OS_PHONE_VIDEO_ENROLLMENT_ENABLED', 'VIDEO_OS_PHONE_VIDEO_EXTRACTION_ENABLED',
+  ]) {
+    const input = options({ env: { [name]: 'true' } });
+    const result = await evaluateProductionDbBinding(input);
+    assert.equal(result.status, 409, name);
+    assert.equal(result.body.ok, false, name);
+    assert.equal(input.getQueries(), 0, name);
+    assert.equal(JSON.stringify(result).includes('synthetic-only'), false);
+  }
+  const providerEnabled = options();
+  providerEnabled.providerStatus = () => ({ enabled: true });
+  const result = await evaluateProductionDbBinding(providerEnabled);
+  assert.equal(result.status, 409);
+  assert.equal(result.body.providerCreationDisabled, false);
+  assert.equal(providerEnabled.getQueries(), 0);
 });
 
 test('diagnostic is off by default and expires within its bounded window', async () => {
@@ -135,6 +188,9 @@ test('wrong host, method, environment and malformed expected digest fail closed'
   const input = options(); input.req.method = 'POST';
   assert.equal((await evaluateProductionDbBinding(input)).status, 404);
   assert.equal(input.getQueries(), 0);
+  const expired = options({ env: { VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW).toISOString() } });
+  assert.equal((await evaluateProductionDbBinding(expired)).status, 404);
+  assert.equal(expired.getQueries(), 0);
 });
 
 test('response prevents caching and conceals database failures', async () => {
@@ -175,15 +231,17 @@ test('dedicated diagnostic bearer cannot access ordinary admin operations', asyn
       { auth: 'Basic synthetic-operator-token' }, { auth: 'Bearer ' },
       { auth: 'Bearer synthetic-operator-token extra' }, { auth: '', cookieHeader: cookie },
     ]) {
-      const req = { method: 'GET', url: '/api/video-os-lite/admin?operation=db-binding',
-        headers: { host: 'lux-video-os.vercel.app', authorization: auth, cookie: cookieHeader } };
-      const headers = {};
-      let body;
-      const res = { setHeader: (key, value) => { headers[key] = value; }, end: (value) => { body = value; } };
-      await adminHandler(req, res);
-      assert.equal(res.statusCode, 401);
-      assert.match(headers['Cache-Control'], /no-store/);
-      assert.notEqual(JSON.parse(body).ok, true);
+      for (const host of ['lux-video-os.vercel.app', uniqueDeploymentHost]) {
+        const req = { method: 'GET', url: '/api/video-os-lite/admin?operation=db-binding',
+          headers: { host, authorization: auth, cookie: cookieHeader } };
+        const headers = {};
+        let body;
+        const res = { setHeader: (key, value) => { headers[key] = value; }, end: (value) => { body = value; } };
+        await adminHandler(req, res);
+        assert.equal(res.statusCode, 401);
+        assert.match(headers['Cache-Control'], /no-store/);
+        assert.notEqual(JSON.parse(body).ok, true);
+      }
     }
     const authorized = { method: 'GET', url: '/api/video-os-lite/admin?operation=db-binding',
       headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-operator-token' } };
@@ -191,8 +249,11 @@ test('dedicated diagnostic bearer cannot access ordinary admin operations', asyn
     await adminHandler(authorized, res);
     assert.equal(res.statusCode, 400);
     assert.equal(JSON.parse(res.body).code, 'expected_identity_required');
-    for (const method of ['GET', 'POST']) {
-      const ordinary = { method, url: '/api/video-os-lite/admin?operation=grant-credit',
+    for (const [method, operation] of [
+      ['GET', 'grant-credit'], ['POST', 'db-binding'], ['POST', 'grant-credit'],
+      ['POST', 'retry-job'], ['POST', 'watchdog-sweep'], ['POST', 'stripe-reconciliation'],
+    ]) {
+      const ordinary = { method, url: `/api/video-os-lite/admin?operation=${operation}`,
         headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-operator-token' } };
       const denied = { setHeader() {}, end(value) { this.body = value; } };
       await adminHandler(ordinary, denied);
