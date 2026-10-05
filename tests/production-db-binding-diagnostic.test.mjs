@@ -134,19 +134,22 @@ test('response prevents caching and conceals database failures', async () => {
   assert.equal(body.includes(databaseUrl), false);
 });
 
-test('admin route excludes cron bearer from diagnostic operator access', async () => {
+test('dedicated diagnostic bearer cannot access ordinary admin operations', async () => {
   const previousAdmin = process.env.VIDEO_OS_ADMIN_TOKEN;
+  const previousOperator = process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN;
   const previousCron = process.env.CRON_SECRET;
   const previousSession = process.env.VIDEO_OS_SESSION_SECRET;
   process.env.VIDEO_OS_ADMIN_TOKEN = 'synthetic-admin-token';
+  process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN = 'synthetic-operator-token';
   process.env.CRON_SECRET = 'synthetic-cron-token';
   process.env.VIDEO_OS_SESSION_SECRET = 'synthetic-diagnostic-test-secret';
   try {
     const cookie = `vos_admin=${encodeURIComponent(makeSession('admin', 'synthetic@fixture.invalid'))}`;
     for (const { auth, cookieHeader } of [
-      { auth: 'Bearer synthetic-cron-token' }, { auth: 'synthetic-admin-token' },
-      { auth: 'Basic synthetic-admin-token' }, { auth: 'Bearer ' },
-      { auth: 'Bearer synthetic-admin-token extra' }, { auth: '', cookieHeader: cookie },
+      { auth: 'Bearer synthetic-cron-token' }, { auth: 'Bearer synthetic-admin-token' },
+      { auth: 'synthetic-operator-token' },
+      { auth: 'Basic synthetic-operator-token' }, { auth: 'Bearer ' },
+      { auth: 'Bearer synthetic-operator-token extra' }, { auth: '', cookieHeader: cookie },
     ]) {
       const req = { method: 'GET', url: '/api/video-os-lite/admin?operation=db-binding',
         headers: { host: 'lux-video-os.vercel.app', authorization: auth, cookie: cookieHeader } };
@@ -159,14 +162,28 @@ test('admin route excludes cron bearer from diagnostic operator access', async (
       assert.notEqual(JSON.parse(body).ok, true);
     }
     const authorized = { method: 'GET', url: '/api/video-os-lite/admin?operation=db-binding',
-      headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-admin-token' } };
+      headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-operator-token' } };
     const res = { setHeader() {}, end(value) { this.body = value; } };
     await adminHandler(authorized, res);
     assert.equal(res.statusCode, 404);
     assert.equal(JSON.parse(res.body).code, 'diagnostic_unavailable');
+    for (const method of ['GET', 'POST']) {
+      const ordinary = { method, url: '/api/video-os-lite/admin?operation=grant-credit',
+        headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-operator-token' } };
+      const denied = { setHeader() {}, end(value) { this.body = value; } };
+      await adminHandler(ordinary, denied);
+      assert.equal(denied.statusCode, 401);
+    }
+    const normalAdmin = { method: 'GET', url: '/api/video-os-lite/admin?operation=unknown-test-operation',
+      headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-admin-token' } };
+    const normalResponse = { setHeader() {}, end(value) { this.body = value; } };
+    await adminHandler(normalAdmin, normalResponse);
+    assert.equal(normalResponse.statusCode, 400);
   } finally {
     if (previousAdmin === undefined) delete process.env.VIDEO_OS_ADMIN_TOKEN;
     else process.env.VIDEO_OS_ADMIN_TOKEN = previousAdmin;
+    if (previousOperator === undefined) delete process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN;
+    else process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN = previousOperator;
     if (previousCron === undefined) delete process.env.CRON_SECRET;
     else process.env.CRON_SECRET = previousCron;
     if (previousSession === undefined) delete process.env.VIDEO_OS_SESSION_SECRET;

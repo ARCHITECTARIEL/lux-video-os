@@ -18,6 +18,8 @@ function isAdminRequest(req) {
   const token = String(process.env.VIDEO_OS_ADMIN_TOKEN || '').trim();
   const cronSecret = String(process.env.CRON_SECRET || '').trim();
   const auth = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const diagnosticToken = String(process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN || '').trim();
+  if (diagnosticToken && timingSafeMatch(auth, diagnosticToken)) return false;
   let cookieAdmin = false;
   try { cookieAdmin = verifySessionToken(parseCookies(req).vos_admin).accountId === 'admin'; } catch {}
   // CRON_SECRET follows Vercel's own documented cron-auth convention
@@ -34,7 +36,7 @@ function isAdminRequest(req) {
 }
 
 function isDiagnosticOperatorRequest(req) {
-  const token = String(process.env.VIDEO_OS_ADMIN_TOKEN || '').trim();
+  const token = String(process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN || '').trim();
   const match = /^Bearer ([^\s]+)$/i.exec(String(req.headers.authorization || ''));
   return Boolean(token && match) && timingSafeMatch(match[1], token);
 }
@@ -245,9 +247,10 @@ export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
   if (!['GET', 'POST'].includes(req.method)) return send(res, 405, { ok: false, error: 'Use GET or POST for admin requests.' });
   try {
-    if (!isAdminRequest(req)) return send(res, 401, { ok: false, error: 'Admin login required.' });
     const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
     const operation = url.searchParams.get('operation') || 'jobs';
+    if (req.method === 'GET' && operation === 'db-binding') return await handleGet(req, res, operation, url);
+    if (!isAdminRequest(req)) return send(res, 401, { ok: false, error: 'Admin login required.' });
     if (req.method === 'POST') return await handlePost(req, res, operation);
     return await handleGet(req, res, operation, url);
   } catch (error) {
