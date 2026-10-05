@@ -15,7 +15,7 @@ jobs:
           persist-credentials: false
       - name: Assert exact diagnostic candidate head
         env:
-          REVIEWED_HEAD: 96fe7023b08bc384a82b97b5c865072e1f39aeb1
+          REVIEWED_HEAD: addda577a2cc6940152cba82d3ab83c1a0cb496a
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           test "$PR_HEAD" = "$REVIEWED_HEAD"
