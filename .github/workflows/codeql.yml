@@ -1,7 +1,7 @@
 name: CodeQL
 on:
   pull_request:
-    branches: [codex/db-binding-review-base-20261005]
+    branches: [codex/db-binding-prealias-review-base-20261005]
 permissions:
   actions: read
   contents: read
@@ -15,7 +15,7 @@ jobs:
           persist-credentials: false
       - name: Assert exact diagnostic candidate head
         env:
-          REVIEWED_HEAD: addda577a2cc6940152cba82d3ab83c1a0cb496a
+          REVIEWED_HEAD: aab769f5b48c3504feb2384a6a66d7d4e42668b0
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           test "$PR_HEAD" = "$REVIEWED_HEAD"
