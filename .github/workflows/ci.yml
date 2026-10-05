@@ -1,8 +1,7 @@
 name: CI
 on:
   pull_request:
-  push:
-    branches: [main]
+    branches: [codex/db-binding-review-base-20261005]
 permissions:
   contents: read
 jobs:
@@ -11,6 +10,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert exact diagnostic candidate head
+        env:
+          REVIEWED_HEAD: 96fe7023b08bc384a82b97b5c865072e1f39aeb1
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$PR_HEAD" = "$REVIEWED_HEAD"
+          test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD"
       - uses: actions/setup-node@v7
         with:
           node-version: 24

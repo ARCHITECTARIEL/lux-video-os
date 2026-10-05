@@ -1,10 +1,7 @@
 name: CodeQL
 on:
   pull_request:
-  push:
-    branches: [main]
-  schedule:
-    - cron: '23 4 * * 1'
+    branches: [codex/db-binding-review-base-20261005]
 permissions:
   actions: read
   contents: read
@@ -13,6 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert exact diagnostic candidate head
+        env:
+          REVIEWED_HEAD: 96fe7023b08bc384a82b97b5c865072e1f39aeb1
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$PR_HEAD" = "$REVIEWED_HEAD"
+          test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD"
       - uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript,python
@@ -23,14 +30,14 @@ jobs:
       - name: Retain CodeQL SARIF artifact
         uses: actions/upload-artifact@v7
         with:
-          name: codeql-sarif-${{ github.sha }}
+          name: codeql-sarif-${{ github.event.pull_request.head.sha }}
           path: codeql-results/*.sarif
           if-no-files-found: error
           retention-days: 30
       - name: Download retained CodeQL SARIF artifact
         uses: actions/download-artifact@v8
         with:
-          name: codeql-sarif-${{ github.sha }}
+          name: codeql-sarif-${{ github.event.pull_request.head.sha }}
           path: codeql-enforced-results
       - name: Enforce retained CodeQL SARIF artifact
         run: node tools/enforce-codeql-sarif.mjs codeql-enforced-results
