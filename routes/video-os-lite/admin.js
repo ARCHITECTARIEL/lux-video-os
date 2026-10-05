@@ -10,6 +10,7 @@ import { handleOptions, parseCookies, readJson, send, verifySessionToken } from 
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { deletePrivateBlob, getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../../lib/video-os-private-blob.js';
 import { timingSafeMatch } from '../../lib/video-os-security.js';
+import { handleProductionDbBindingDiagnostic } from '../../lib/production-db-binding-diagnostic.js';
 import { reconcileStripePayments } from '../../lib/video-os-stripe-reconciliation.js';
 import { runWatchdogSweep } from '../../lib/video-os-watchdog.js';
 
@@ -30,6 +31,12 @@ function isAdminRequest(req) {
   // credit-minting mutation (operation=grant-credit), which raised the
   // value of this check beyond what a plain string compare should protect.
   return (Boolean(token) && timingSafeMatch(auth, token)) || (Boolean(cronSecret) && timingSafeMatch(auth, cronSecret)) || cookieAdmin;
+}
+
+function isDiagnosticOperatorRequest(req) {
+  const token = String(process.env.VIDEO_OS_ADMIN_TOKEN || '').trim();
+  const match = /^Bearer ([^\s]+)$/i.exec(String(req.headers.authorization || ''));
+  return Boolean(token && match) && timingSafeMatch(match[1], token);
 }
 
 async function jobsSummary() {
@@ -71,6 +78,15 @@ async function handleVideoStream(req, res, jobId) {
 }
 
 async function handleGet(req, res, operation, url) {
+  if (operation === 'db-binding') {
+    if (!isDiagnosticOperatorRequest(req)) {
+      res.statusCode = 401;
+      res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      return res.end(JSON.stringify({ ok: false, code: 'operator_required' }));
+    }
+    return handleProductionDbBindingDiagnostic(req, res);
+  }
   if (operation === 'jobs') return send(res, 200, { ok: true, ...(await jobsSummary()) });
   if (operation === 'overview') return send(res, 200, { ok: true, overview: await getAdminOverview() });
   if (operation === 'attention') return send(res, 200, { ok: true, jobs: await listFailedOrStuckJobs(200) });

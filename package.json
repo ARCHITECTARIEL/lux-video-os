@@ -63,6 +63,7 @@
         "@workflow/world-vercel": {
             "undici": "7.29.1"
         },
-        "tar": "7.5.22"
+        "tar": "7.5.22",
+        "http-cache-semantics": "4.3.0"
     }
 }
