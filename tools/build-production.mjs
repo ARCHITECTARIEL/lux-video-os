@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmod, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -126,8 +127,11 @@ if (target === 'production') assertProductionWorkflowBoundary(releaseManifest.wo
 // Every artifact from this preparation command is review-only. A future authorized
 // release must recheck all gates before making anything available to --prebuilt.
 releaseManifest.output.location = await quarantineBuildOutput(fileURLToPath(output), 'review');
-await writeFile(receiptPath, JSON.stringify(releaseManifest, null, 2) + '\n');
-await writeFile(`${releaseManifest.output.location}.packaging-success.json`, JSON.stringify({ packagingComplete: true, releaseAuthorized: false, sourceSha256: releaseManifest.source.sha256, outputSha256: releaseManifest.output.sha256 }) + '\n');
+const manifestBytes = JSON.stringify(releaseManifest, null, 2) + '\n';
+const manifestSha256 = createHash('sha256').update(manifestBytes).digest('hex');
+await writeFile(receiptPath, manifestBytes);
+await writeFile(`${releaseManifest.output.location}.release-build-manifest.json`, manifestBytes);
+await writeFile(`${releaseManifest.output.location}.packaging-success.json`, JSON.stringify({ packagingComplete: true, releaseAuthorized: false, manifestSha256, sourceSha256: releaseManifest.source.sha256, outputSha256: releaseManifest.output.sha256 }) + '\n');
 console.log(`${target} packaging complete: ${routes.length} routes. Review-only manifest written; no deployment authorization or P0 approval is implied.`);
 if (!releaseManifest.workflowBoundary.verified) console.warn('Known Sandbox workflow boundary remains unverified; this diagnostic build cannot clear release.');
 }
