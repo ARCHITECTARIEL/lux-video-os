@@ -1,0 +1,300 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+import target from '../config/database-target.production.json' with { type: 'json' };
+import { diagnosticWindowOpen, evaluateProductionDbBinding, handleProductionDbBindingDiagnostic } from '../lib/production-db-binding-diagnostic.js';
+import adminHandler from '../routes/video-os-lite/admin.js';
+import { makeSession } from '../lib/video-os-account.js';
+
+const NOW = Date.parse('2026-10-05T15:20:00.000Z');
+const digest = (value) => createHash('sha256').update(value).digest('hex');
+const targetFileLf = readFileSync(new URL('../config/database-target.production.json', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const targetFileSha256 = digest(targetFileLf);
+const deployment = 'fixture-deployment';
+const source = 'fixture-source';
+const project = 'fixture-project';
+const uniqueDeploymentHost = 'fixture-deployment-lux-projects.vercel.app';
+const databaseUrl = ['postgresql://', encodeURIComponent(target.roles[0]), ':synthetic-only@',
+  target.hosts[0], ':', target.port, '/', target.database, '?sslmode=require'].join('');
+
+test('release baseline is raw UTF-8 JSON accepted by the production build reader', () => {
+  const raw = readFileSync(new URL('../config/release-baseline.json', import.meta.url), 'utf8');
+  const baseline = JSON.parse(raw);
+  assert.equal(baseline.sourceByteAttestation, false);
+  assert.equal(baseline.state, 'READY');
+});
+
+test('reviewed manifest pin is the Git LF content across LF and CRLF checkouts', () => {
+  assert.equal(targetFileSha256, '987c494527adb6f4e7a08c0b68c38be6a1eb3d7430cdbdd4927ce6cfdd9961ef');
+  assert.equal(digest(targetFileLf.replace(/\n/g, '\r\n').replace(/\r\n/g, '\n')), targetFileSha256);
+});
+
+function options(overrides = {}) {
+  const env = {
+    VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED: 'true',
+    VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT: new Date(NOW).toISOString(),
+    VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW + 15 * 60_000).toISOString(),
+    VERCEL_ENV: 'production', VERCEL_DEPLOYMENT_ID: deployment,
+    VERCEL_GIT_COMMIT_SHA: source, VERCEL_PROJECT_ID: project,
+    VERCEL_URL: uniqueDeploymentHost,
+    DATABASE_URL: databaseUrl,
+    ...overrides.env,
+  };
+  const req = { method: 'GET', headers: {
+    host: 'lux-video-os.vercel.app',
+    'x-expected-deployment-sha256': digest(deployment),
+    'x-expected-git-commit-sha256': digest(source),
+    'x-expected-project-sha256': digest(project),
+    'x-expected-deployment-url-sha256': digest(uniqueDeploymentHost),
+    'x-expected-target-manifest-sha256': targetFileSha256,
+    ...overrides.headers,
+  } };
+  let queries = 0;
+  const db = () => ({ transaction: async (fn, config) => {
+    assert.deepEqual(config, { isolationLevel: 'repeatable read', accessMode: 'read only' });
+    return fn({ execute: async () => {
+      queries += 1;
+      return { rows: [{ database: target.database, role: target.roles[0], read_only: 'on' }] };
+    } });
+  } });
+  return { req, env, db, now: NOW, getQueries: () => queries };
+}
+
+test('exact deployment, source, project and canonical database match with read-only query', async () => {
+  const input = options();
+  const result = await evaluateProductionDbBinding(input);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.ok, true);
+  assert.equal(result.body.readOnly, true);
+  assert.equal(result.body.stableAliasHostMatched, true);
+  assert.equal(result.body.uniqueDeploymentHostMatched, false);
+  assert.equal(result.body.durableRenderDisabled, true);
+  assert.equal(result.body.providerCreationDisabled, true);
+  assert.equal(result.body.billingDisabled, true);
+  assert.equal(result.body.sourceByteAttested, false);
+  assert.equal(input.getQueries(), 1);
+  assert.equal(JSON.stringify(result).includes(databaseUrl), false);
+  assert.equal(JSON.stringify(result).includes(target.hosts[0]), false);
+});
+
+test('exact Vercel unique deployment host attests before alias assignment', async () => {
+  const input = options({ headers: { host: uniqueDeploymentHost } });
+  const result = await evaluateProductionDbBinding(input);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.stableAliasHostMatched, false);
+  assert.equal(result.body.uniqueDeploymentHostMatched, true);
+  assert.equal(input.getQueries(), 1);
+});
+
+test('deployment mismatch and wrong target fail before opening the database', async () => {
+  const mismatch = options({ headers: { 'x-expected-deployment-sha256': digest('other') } });
+  const result = await evaluateProductionDbBinding(mismatch);
+  assert.equal(result.status, 409);
+  assert.equal(result.body.deploymentMatched, false);
+  assert.equal(mismatch.getQueries(), 0);
+  const wrongUrl = options({ env: { DATABASE_URL: 'postgresql://synthetic:synthetic@localhost:5432/wrong' } });
+  const rejected = await evaluateProductionDbBinding(wrongUrl);
+  assert.equal(rejected.body.canonicalUrlMatchesTarget, false);
+  assert.equal(wrongUrl.getQueries(), 0);
+  const wrongManifest = options({ headers: { 'x-expected-target-manifest-sha256': digest('other manifest') } });
+  assert.equal((await evaluateProductionDbBinding(wrongManifest)).body.targetManifestMatched, false);
+  assert.equal(wrongManifest.getQueries(), 0);
+});
+
+test('wrong deployment, source, project or unique host cannot open a database connection', async () => {
+  for (const change of [
+    { headers: { 'x-expected-deployment-sha256': digest('wrong') } },
+    { headers: { 'x-expected-git-commit-sha256': digest('wrong') } },
+    { headers: { 'x-expected-project-sha256': digest('wrong') } },
+    { headers: { host: uniqueDeploymentHost, 'x-expected-deployment-url-sha256': digest('wrong') } },
+    { headers: { host: 'other-deployment.vercel.app' } },
+    { env: { VERCEL_URL: 'other-deployment.vercel.app' }, headers: { host: uniqueDeploymentHost } },
+  ]) {
+    const input = options(change);
+    assert.notEqual((await evaluateProductionDbBinding(input)).status, 200);
+    assert.equal(input.getQueries(), 0);
+  }
+});
+
+test('every enabled mutation gate blocks attestation before SQL', async () => {
+  for (const name of [
+    'VIDEO_OS_DURABLE_WORKFLOW_ENABLED', 'VIDEO_OS_STANDARD_RENDER_ENABLED',
+    'VIDEO_OS_SCRIPTED_PHOTO_ENABLED', 'VIDEO_OS_BILLING_ENABLED',
+    'VIDEO_OS_PHONE_VIDEO_ENROLLMENT_ENABLED', 'VIDEO_OS_PHONE_VIDEO_EXTRACTION_ENABLED',
+  ]) {
+    const input = options({ env: { [name]: 'true' } });
+    const result = await evaluateProductionDbBinding(input);
+    assert.equal(result.status, 409, name);
+    assert.equal(result.body.ok, false, name);
+    assert.equal(input.getQueries(), 0, name);
+    assert.equal(JSON.stringify(result).includes('synthetic-only'), false);
+  }
+  const providerEnabled = options();
+  providerEnabled.providerStatus = () => ({ enabled: true });
+  const result = await evaluateProductionDbBinding(providerEnabled);
+  assert.equal(result.status, 409);
+  assert.equal(result.body.providerCreationDisabled, false);
+  assert.equal(providerEnabled.getQueries(), 0);
+});
+
+test('diagnostic is off by default and expires within its bounded window', async () => {
+  const disabled = options({ env: { VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED: undefined } });
+  assert.equal((await evaluateProductionDbBinding(disabled)).status, 404);
+  const longWindow = options({ env: { VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW + 31 * 60_000).toISOString() } });
+  assert.equal((await evaluateProductionDbBinding(longWindow)).status, 404);
+  const delayed = options({ env: {
+    VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT: new Date(NOW - 24 * 60 * 60_000).toISOString(),
+    VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW + 15 * 60_000).toISOString(),
+  } });
+  assert.equal((await evaluateProductionDbBinding(delayed)).status, 404);
+  assert.equal(disabled.getQueries() + longWindow.getQueries(), 0);
+});
+
+test('window rejects future starts, expiry equality, malformed time and more than 30 minutes', () => {
+  const base = options().env;
+  assert.equal(diagnosticWindowOpen(base, NOW), true);
+  assert.equal(diagnosticWindowOpen({ ...base, VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT: new Date(NOW + 1).toISOString() }, NOW), false);
+  assert.equal(diagnosticWindowOpen({ ...base, VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW).toISOString() }, NOW), false);
+  assert.equal(diagnosticWindowOpen({ ...base, VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT: 'invalid' }, NOW), false);
+  assert.equal(diagnosticWindowOpen({ ...base, VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW + 30 * 60_000).toISOString() }, NOW), true);
+  assert.equal(diagnosticWindowOpen({ ...base, VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW + 30 * 60_000 + 1).toISOString() }, NOW), false);
+});
+
+test('wrong live identity or a writable transaction never attests', async () => {
+  for (const row of [
+    { database: 'wrong', role: target.roles[0], read_only: 'on' },
+    { database: target.database, role: 'wrong', read_only: 'on' },
+    { database: target.database, role: target.roles[0], read_only: 'off' },
+  ]) {
+    const input = options();
+    input.db = () => ({ transaction: async (fn) => fn({ execute: async () => ({ rows: [row] }) }) });
+    const result = await evaluateProductionDbBinding(input);
+    assert.equal(result.status, 409);
+    assert.equal(result.body.connectedDatabaseMatchesTarget, false);
+  }
+});
+
+test('wrong host, method, environment and malformed expected digest fail closed', async () => {
+  for (const change of [
+    { headers: { host: 'unreviewed.invalid' } },
+    { env: { VERCEL_ENV: 'preview' } },
+    { headers: { 'x-expected-project-sha256': 'invalid' } },
+  ]) {
+    const input = options(change);
+    assert.notEqual((await evaluateProductionDbBinding(input)).status, 200);
+    assert.equal(input.getQueries(), 0);
+  }
+  const input = options(); input.req.method = 'POST';
+  assert.equal((await evaluateProductionDbBinding(input)).status, 404);
+  assert.equal(input.getQueries(), 0);
+  const expired = options({ env: { VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW).toISOString() } });
+  assert.equal((await evaluateProductionDbBinding(expired)).status, 404);
+  assert.equal(expired.getQueries(), 0);
+});
+
+test('response prevents caching and conceals database failures', async () => {
+  const input = options();
+  input.db = () => ({ transaction: async () => { throw new Error(databaseUrl); } });
+  const headers = {};
+  let body;
+  const res = { setHeader: (name, value) => { headers[name] = value; }, end: (value) => { body = value; } };
+  await handleProductionDbBindingDiagnostic(input.req, res, input);
+  assert.equal(res.statusCode, 503);
+  assert.match(headers['Cache-Control'], /no-store/);
+  assert.equal(headers['X-Content-Type-Options'], 'nosniff');
+  assert.equal(body.includes(databaseUrl), false);
+});
+
+test('dedicated diagnostic bearer cannot access ordinary admin operations', async () => {
+  const previousAdmin = process.env.VIDEO_OS_ADMIN_TOKEN;
+  const previousOperator = process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN;
+  const previousCron = process.env.CRON_SECRET;
+  const previousSession = process.env.VIDEO_OS_SESSION_SECRET;
+  const previousEnabled = process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED;
+  const previousStarted = process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT;
+  const previousExpires = process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT;
+  const previousVercelEnv = process.env.VERCEL_ENV;
+  process.env.VIDEO_OS_ADMIN_TOKEN = 'synthetic-admin-token';
+  process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN = 'synthetic-operator-token';
+  process.env.CRON_SECRET = 'synthetic-cron-token';
+  process.env.VIDEO_OS_SESSION_SECRET = 'synthetic-diagnostic-test-secret';
+  process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED = 'true';
+  process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT = new Date(Date.now() - 1_000).toISOString();
+  process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT = new Date(Date.now() + 15 * 60_000).toISOString();
+  process.env.VERCEL_ENV = 'production';
+  try {
+    const cookie = `vos_admin=${encodeURIComponent(makeSession('admin', 'synthetic@fixture.invalid'))}`;
+    for (const { auth, cookieHeader } of [
+      { auth: 'Bearer synthetic-cron-token' }, { auth: 'Bearer synthetic-admin-token' },
+      { auth: 'synthetic-operator-token' },
+      { auth: 'Basic synthetic-operator-token' }, { auth: 'Bearer ' },
+      { auth: 'Bearer synthetic-operator-token extra' }, { auth: '', cookieHeader: cookie },
+    ]) {
+      for (const host of ['lux-video-os.vercel.app', uniqueDeploymentHost]) {
+        const req = { method: 'GET', url: '/api/video-os-lite/admin?operation=db-binding',
+          headers: { host, authorization: auth, cookie: cookieHeader } };
+        const headers = {};
+        let body;
+        const res = { setHeader: (key, value) => { headers[key] = value; }, end: (value) => { body = value; } };
+        await adminHandler(req, res);
+        assert.equal(res.statusCode, 401);
+        assert.match(headers['Cache-Control'], /no-store/);
+        assert.notEqual(JSON.parse(body).ok, true);
+      }
+    }
+    const authorized = { method: 'GET', url: '/api/video-os-lite/admin?operation=db-binding',
+      headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-operator-token' } };
+    const res = { setHeader() {}, end(value) { this.body = value; } };
+    await adminHandler(authorized, res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(JSON.parse(res.body).code, 'expected_identity_required');
+    for (const [method, operation] of [
+      ['GET', 'grant-credit'], ['POST', 'db-binding'], ['POST', 'grant-credit'],
+      ['POST', 'retry-job'], ['POST', 'watchdog-sweep'], ['POST', 'stripe-reconciliation'],
+    ]) {
+      const ordinary = { method, url: `/api/video-os-lite/admin?operation=${operation}`,
+        headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-operator-token' } };
+      const denied = { setHeader() {}, end(value) { this.body = value; } };
+      await adminHandler(ordinary, denied);
+      assert.equal(denied.statusCode, 401);
+    }
+    const normalAdmin = { method: 'GET', url: '/api/video-os-lite/admin?operation=unknown-test-operation',
+      headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-admin-token' } };
+    const normalResponse = { setHeader() {}, end(value) { this.body = value; } };
+    await adminHandler(normalAdmin, normalResponse);
+    assert.equal(normalResponse.statusCode, 400);
+    for (const collisionName of ['VIDEO_OS_ADMIN_TOKEN', 'CRON_SECRET']) {
+      const prior = process.env[collisionName];
+      process.env[collisionName] = 'synthetic-operator-token';
+      const collided = { setHeader() {}, end(value) { this.body = value; } };
+      await adminHandler(authorized, collided);
+      assert.equal(collided.statusCode, 401);
+      process.env[collisionName] = prior;
+    }
+    delete process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED;
+    for (const auth of ['Bearer synthetic-operator-token', 'Bearer invalid-token']) {
+      const disabled = { setHeader() {}, end(value) { this.body = value; } };
+      await adminHandler({ ...authorized, headers: { ...authorized.headers, authorization: auth } }, disabled);
+      assert.equal(disabled.statusCode, 404);
+      assert.equal(JSON.parse(disabled.body).code, 'diagnostic_unavailable');
+    }
+  } finally {
+    if (previousAdmin === undefined) delete process.env.VIDEO_OS_ADMIN_TOKEN;
+    else process.env.VIDEO_OS_ADMIN_TOKEN = previousAdmin;
+    if (previousOperator === undefined) delete process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN;
+    else process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN = previousOperator;
+    if (previousCron === undefined) delete process.env.CRON_SECRET;
+    else process.env.CRON_SECRET = previousCron;
+    if (previousSession === undefined) delete process.env.VIDEO_OS_SESSION_SECRET;
+    else process.env.VIDEO_OS_SESSION_SECRET = previousSession;
+    if (previousEnabled === undefined) delete process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED;
+    else process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED = previousEnabled;
+    if (previousStarted === undefined) delete process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT;
+    else process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT = previousStarted;
+    if (previousExpires === undefined) delete process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT;
+    else process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT = previousExpires;
+    if (previousVercelEnv === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = previousVercelEnv;
+  }
+});
