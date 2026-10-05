@@ -1064,10 +1064,14 @@ export function providerReconciliationExecutionStatus() {
 // containedRenderingEntitlementKeys) can actually reach a HeyGen submission
 // even while this reports enabled.
 export function providerCreationActivationStatus(env = process.env) {
-  const enabled = String(env.VIDEO_OS_PROVIDER_CREATION_ENABLED || '').trim().toLowerCase() === 'true';
+  const privateEnrollmentCanary = Boolean(String(env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID || '').trim());
+  const enabled = !privateEnrollmentCanary && String(env.VIDEO_OS_PROVIDER_CREATION_ENABLED || '').trim().toLowerCase() === 'true';
+  let reason = 'verified_provider_account_binding_not_wired';
+  if (privateEnrollmentCanary) reason = 'private_enrollment_canary_active';
+  else if (enabled) reason = 'owner_authorized_contained_activation';
   return Object.freeze({
     enabled,
-    reason: enabled ? 'owner_authorized_contained_activation' : 'verified_provider_account_binding_not_wired',
+    reason,
   });
 }
 

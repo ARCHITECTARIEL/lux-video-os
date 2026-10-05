@@ -4,6 +4,51 @@
 
 Billing, paid-credit activation, hosted finishing, pilot enrollment, and launch remain blocked until one new production job produces the complete receipt below. Existing or manually repaired artifacts are invalid proof.
 
+## Owner-approved pre-P0 private enrollment exception (inactive)
+
+A fresh identity may be needed before the new-job P0 proof can be run. The
+general pilot-enrollment prohibition above remains in force. On October 4,
+2026, the owner approved a separate policy exception for one owner-operated
+**private source capture and extraction canary**, with no HeyGen contact,
+provider creation, render or billing. This approval does not authorize a
+deployment, production flag change, media upload or database/storage write.
+Before any live write, present the exact account, deployment, private store,
+one photo/video attempt and its bounded retry/cleanup plan for the separate
+production-action approval required by the owner.
+The current code pins the account but does not enforce a durable one-attempt
+budget for that account; its existing per-account rate limit remains in force.
+An owner-approved operator window must monitor and close the canary after the
+single planned attempt, or a separate durable one-shot guard must be reviewed
+before activation. Do not describe the account pin as a one-shot budget.
+Immediately before activation, read back zero existing enrollment rows and no
+pending enrollment workflows on the canonical production target; otherwise
+stop and reconcile the historical cohort before opening the window. The
+October 4 aggregate zero-row observation is a dated baseline, not permanent
+authority.
+
+The candidate must prove that production enrollment and identity-source upload
+requests are limited to the pinned account, with persisted account entitlement,
+an exact UTC cohort start, denial of older photo/enrollment sources and denial
+of provider reconsent during the private canary,
+correct private-store identity, authorized preview and anonymous/cross-account
+denial. Provider creation, HeyGen upload, rendering, billing and hosted finishing
+remain disabled. The canary may produce an `IDENTITY_READY` local draft only;
+that state is neither provider readiness nor the P0 receipt. New source bytes,
+consent and hashes belong to a new cohort. All legacy, unreferenced and
+quarantined objects and references remain intact. Historical original-source
+equality and the private-storage migration requirement below remain blocked.
+
+The current enrollment UI requires six affirmative permissions, including
+authorization for future temporary public provider exposure. Provider work is
+still blocked in this canary. If the owner declines that permission, stop;
+do not precheck it or treat private capture as consent to provider exposure.
+An extraction-only consent path would require a separate reviewed change.
+
+The separate approval must include the private-store probe's disposable test
+object and conditional deletion, the real photo/video/derived-audio writes,
+workflow recovery, and exact evidence/readback. No deployment, environment
+change, upload or cleanup is implied by this proposed exception.
+
 ## Required configuration gates
 
 - `VIDEO_OS_BILLING_ENABLED` remains unset or `false`.

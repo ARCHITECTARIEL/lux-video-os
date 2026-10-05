@@ -151,6 +151,141 @@ test('create returns resumable private multipart instructions and revoke remains
     'create and revoke each schedule the post-upload-expiry cleanup recheck');
 });
 
+test('production canary hides enrollment from other accounts and denies their new writes', async () => {
+  environment(true);
+  process.env.VERCEL_ENV = 'production';
+  process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = accountId;
+  process.env.VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT = '2026-10-04T14:00:00.000Z';
+  try {
+    let created = 0;
+    let tokenIssued = 0;
+    let historicalMutations = 0;
+    const handler = createEnrollmentHandler({
+      sessionFromRequest: () => ({ accountId: 'other-account', email: 'other@example.test' }),
+      listOwnedEnrollments: async () => [],
+      createEnrollment: async () => { created++; return { enrollment: enrollment() }; },
+      revokeEnrollment: async () => ({ enrollment: enrollment({ status: ENROLLMENT_STATUSES.REVOKED }), replayed: false }),
+      getPrivateBlob: async () => null,
+      recordEnrollmentCleanup: async () => ({}),
+      start: async () => ({ runId: 'test-run' }),
+    });
+    const getRes = response();
+    await handler(request('GET'), getRes);
+    assert.equal(getRes.statusCode, 200);
+    assert.equal(getRes.body.enabled, false);
+    assert.equal(getRes.body.extractionEnabled, false);
+
+    const ownerHandler = createEnrollmentHandler({
+      sessionFromRequest: () => ({ accountId }),
+      listOwnedEnrollments: async () => [],
+      getOwnedEnrollment: async () => enrollment({ createdAt: '2026-10-04T13:00:00.000Z' }),
+      retryEnrollment: async () => { historicalMutations++; },
+      grantProviderBridgeReconsent: async () => { historicalMutations++; },
+    });
+    const ownerGetRes = response();
+    await ownerHandler(request('GET'), ownerGetRes);
+    assert.equal(ownerGetRes.statusCode, 200);
+    assert.equal(ownerGetRes.body.enabled, true);
+    assert.equal(ownerGetRes.body.extractionEnabled, true);
+
+    const historicalRetry = response();
+    await ownerHandler(request('POST', { action: 'retry', contractVersion: ENROLLMENT_CONTRACT_VERSION, enrollmentId, expectedStateVersion: 1, idempotencyKey }), historicalRetry);
+    assert.equal(historicalRetry.statusCode, 403);
+
+    const historicalReconsent = response();
+    await ownerHandler(request('POST', {
+      action: 'provider-reconsent', contractVersion: ENROLLMENT_CONTRACT_VERSION,
+      enrollmentId, identityId: '55555555-5555-4555-8555-555555555555', expectedStateVersion: 1, idempotencyKey,
+      policyVersion: ENROLLMENT_CONSENT_POLICY_VERSION, purpose: 'identity-voice-enrollment',
+      sourcePhotoSha256: 'a'.repeat(64), sourceVideoSha256: 'b'.repeat(64), derivedVoiceSha256: 'c'.repeat(64),
+      audioExtractionAuthorization: true, faceAuthorization: true, voiceAuthorization: true,
+      providerProcessingAuthorization: true, archiveDeleteAcknowledgment: true,
+      temporaryPublicProviderExposureAuthorization: true,
+    }), historicalReconsent);
+    assert.equal(historicalReconsent.statusCode, 403);
+    assert.equal(historicalMutations, 0);
+
+    delete process.env.VIDEO_OS_PHONE_VIDEO_EXTRACTION_ENABLED;
+    const extractionOffRes = response();
+    await ownerHandler(request('POST', {
+      action: 'create', contractVersion: ENROLLMENT_CONTRACT_VERSION, idempotencyKey, displayName: 'Owner', photoAssetId,
+      filename: 'phone.mov', contentType: 'video/quicktime', bytes: 10_000,
+    }), extractionOffRes);
+    assert.equal(extractionOffRes.statusCode, 503, 'a new enrollment cannot start when extraction is disabled');
+    process.env.VIDEO_OS_PHONE_VIDEO_EXTRACTION_ENABLED = 'true';
+
+    const createRes = response();
+    await handler(request('POST', {
+      action: 'create', contractVersion: ENROLLMENT_CONTRACT_VERSION, idempotencyKey, displayName: 'Other', photoAssetId,
+      filename: 'phone.mov', contentType: 'video/quicktime', bytes: 10_000,
+    }), createRes);
+    assert.equal(createRes.statusCode, 403);
+    assert.equal(created, 0);
+
+    const uploadHandler = createEnrollmentUploadHandler({
+      sessionFromRequest: () => ({ accountId: 'other-account' }),
+      assertEnrollmentPrivateStoreReady: async () => { tokenIssued++; },
+      handleUpload: async () => { tokenIssued++; },
+    });
+    const uploadReq = request('POST', { type: 'blob.generate-client-token' }, '/api/video-os-lite/enrollment-upload');
+    uploadReq.body = { type: 'blob.generate-client-token' };
+    const uploadRes = response();
+    await uploadHandler(uploadReq, uploadRes);
+    assert.equal(uploadRes.statusCode, 403);
+    assert.equal(tokenIssued, 0);
+
+    const historicalCallbackHandler = createEnrollmentUploadHandler({
+      getEnrollmentForUploadCallback: async () => enrollment({ createdAt: '2026-10-04T13:00:00.000Z' }),
+      getPrivateBlob: async () => assert.fail('Historical callback must not read media.'),
+      acceptEnrollmentUpload: async () => { historicalMutations++; },
+      handleUpload: async options => options.onUploadCompleted({
+        blob: { pathname: enrollment().uploadPathname, contentType: 'video/quicktime', etag: 'test-etag' },
+        tokenPayload: encodeEnrollmentUploadContext({ version: 1, enrollmentId, operationKey }, sessionSecret),
+      }),
+    });
+    const callbackReq = request('POST', { type: 'blob.upload-completed' }, '/api/video-os-lite/enrollment-upload');
+    callbackReq.body = { type: 'blob.upload-completed' };
+    const callbackRes = response();
+    await historicalCallbackHandler(callbackReq, callbackRes);
+    assert.equal(callbackRes.statusCode, 403);
+    assert.equal(historicalMutations, 0);
+
+    const changedBoundaryHandler = createEnrollmentUploadHandler({
+      getEnrollmentForUploadCallback: async () => enrollment({ createdAt: '2026-10-04T14:00:01.000Z' }),
+      getPrivateBlob: async () => assert.fail('Changed-boundary callback must not read media.'),
+      acceptEnrollmentUpload: async () => { historicalMutations++; },
+      handleUpload: async options => options.onUploadCompleted({
+        blob: { pathname: enrollment().uploadPathname, contentType: 'video/quicktime', etag: 'test-etag' },
+        tokenPayload: encodeEnrollmentUploadContext({ version: 1, enrollmentId, operationKey }, sessionSecret),
+      }),
+    });
+    process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = 'different-account';
+    const changedPinRes = response();
+    await changedBoundaryHandler(callbackReq, changedPinRes);
+    assert.equal(changedPinRes.statusCode, 403);
+    process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = accountId;
+    process.env.VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT = '2026-10-04T14:00:02.000Z';
+    const changedEpochRes = response();
+    await changedBoundaryHandler(callbackReq, changedEpochRes);
+    assert.equal(changedEpochRes.statusCode, 403);
+    assert.equal(historicalMutations, 0);
+    process.env.VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT = '2026-10-04T14:00:00.000Z';
+
+    delete process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID;
+    const unpinnedGetRes = response();
+    await ownerHandler(request('GET'), unpinnedGetRes);
+    assert.equal(unpinnedGetRes.body.enabled, false, 'missing production pin cannot expose enrollment');
+
+    const revokeRes = response();
+    await handler(request('POST', { action: 'revoke', contractVersion: ENROLLMENT_CONTRACT_VERSION, enrollmentId, expectedStateVersion: 1, idempotencyKey }), revokeRes);
+    assert.equal(revokeRes.statusCode, 200, 'revocation remains available after canary access is removed');
+  } finally {
+    delete process.env.VERCEL_ENV;
+    delete process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID;
+    delete process.env.VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT;
+  }
+});
+
 test('owner-only source preview streams exact private bytes without exposing a Blob URL', async () => {
   environment(false);
   const bytes = Buffer.from('private phone video');

@@ -65,6 +65,48 @@ test('upload handler returns 429 without touching Blob or database writes when t
   assert.equal(calls.databaseWrites, 0);
 });
 
+test('production identity source uploads require the exact enrollment canary account', async () => {
+  const prior = Object.fromEntries(['VERCEL_ENV', 'VIDEO_OS_PHONE_VIDEO_ENROLLMENT_ENABLED', 'VIDEO_OS_PHONE_VIDEO_EXTRACTION_ENABLED', 'VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID', 'VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT', 'VIDEO_OS_ENROLLMENT_BLOB_STORE_ID', 'BLOB_READ_WRITE_TOKEN', 'VIDEO_OS_PUBLIC_ORIGIN', 'WORKFLOW_DISPATCH_MODE', 'STORAGE_DRIVER'].map(key => [key, process.env[key]]));
+  Object.assign(process.env, {
+    VERCEL_ENV: 'production', VIDEO_OS_PHONE_VIDEO_ENROLLMENT_ENABLED: 'true', VIDEO_OS_PHONE_VIDEO_EXTRACTION_ENABLED: 'true',
+    VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: 'canary-account', VIDEO_OS_ENROLLMENT_BLOB_STORE_ID: 'store123',
+    VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT: '2026-10-04T14:00:00.000Z',
+    BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_store123_secret', VIDEO_OS_PUBLIC_ORIGIN: 'https://video.example',
+    WORKFLOW_DISPATCH_MODE: 'vercel', STORAGE_DRIVER: 'blob',
+  });
+  try {
+    const { calls, handler } = harness({ rateLimit: async () => true });
+    const denied = response();
+    await handler(request({ kind: 'identity_photo' }), denied);
+    assert.equal(denied.statusCode, 403);
+    assert.equal(calls.blobWrites, 0);
+    assert.equal(calls.databaseWrites, 0);
+
+    const { calls: ownerCalls, handler: ownerHandler } = harness({
+      sessionFromRequest: () => ({ accountId: 'canary-account' }), rateLimit: async () => true,
+    });
+    const allowed = response();
+    await ownerHandler(request({ kind: 'identity_photo' }), allowed);
+    assert.equal(allowed.statusCode, 400, 'the owner passed the gate and reached fixture image validation');
+
+    delete process.env.VIDEO_OS_PHONE_VIDEO_EXTRACTION_ENABLED;
+    const extractionOff = response();
+    await ownerHandler(request({ kind: 'identity_photo' }), extractionOff);
+    assert.equal(extractionOff.statusCode, 503);
+    process.env.VIDEO_OS_PHONE_VIDEO_EXTRACTION_ENABLED = 'true';
+
+    delete process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID;
+    const unpinned = response();
+    await ownerHandler(request({ kind: 'identity_photo' }), unpinned);
+    assert.equal(unpinned.statusCode, 403);
+    assert.equal(ownerCalls.blobWrites, 0);
+  } finally {
+    for (const [key, value] of Object.entries(prior)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+});
+
 test('upload handler checks the rate limit before parsing the upload payload', async () => {
   let rateLimitCalled = false;
   const { handler } = harness({

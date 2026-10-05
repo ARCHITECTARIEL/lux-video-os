@@ -20,9 +20,14 @@ import {
   ENROLLMENT_EXTRACTION_FLAG,
   ENROLLMENT_MEDIA_LIMITS,
   ENROLLMENT_STATUSES,
+  assertEnrollmentAccountAllowed,
+  assertEnrollmentCanaryRecord,
   assertEnrollmentCapability,
+  assertEnrollmentExtractionCapability,
   assertEnrollmentPrivateReadback,
   enrollmentEnabled,
+  enrollmentAccountAllowed,
+  enrollmentCanaryStartedAt,
   enrollmentUploadInstructions,
   parseEnrollmentRequest,
   validateEnrollmentTransport,
@@ -208,7 +213,7 @@ export function createEnrollmentHandler(overrides = {}) {
     try {
       const session = dependencies.sessionFromRequest(req);
       if (req.method === 'GET') {
-        const enabled = enrollmentEnabled();
+        const enabled = enrollmentEnabled() && enrollmentAccountAllowed(session.accountId);
         const capabilities = enrollmentCapabilitiesDto({ enabled, extractionEnabled: enabled && String(process.env[ENROLLMENT_EXTRACTION_FLAG] || '').toLowerCase() === 'true' });
         if (enabled) assertEnrollmentCapability();
         const url = new URL(req.url, 'https://video-os.invalid');
@@ -240,7 +245,19 @@ export function createEnrollmentHandler(overrides = {}) {
         await dependencies.start(identityEnrollmentExpiryWorkflowMetadata, [result.enrollment.id]).catch(() => {});
         return send(res, 200, { ok: true, enrollment: await dtoFor(result.enrollment, dependencies), cleanupPending });
       }
-      assertEnrollmentCapability();
+      assertEnrollmentAccountAllowed(session.accountId);
+      if (input.action === 'create') assertEnrollmentExtractionCapability();
+      else assertEnrollmentCapability();
+      if (enrollmentCanaryStartedAt()) {
+        if (input.action === 'provider-reconsent') {
+          throw Object.assign(new Error('Provider reconsent is outside the private enrollment canary.'), { statusCode: 403, failureCategory: 'ENTITLEMENT' });
+        }
+        if (input.action !== 'create') {
+          const canaryRecord = await dependencies.getOwnedEnrollment(session.accountId, input.enrollmentId);
+          if (!canaryRecord) return send(res, 404, { ok: false, error: 'Enrollment not found.' });
+          assertEnrollmentCanaryRecord(canaryRecord);
+        }
+      }
       const allowed = await dependencies.consumeRateLimit({ accountId: session.accountId, key: `enrollment:hourly:${session.accountId}`, limit: 20, windowMs: 60 * 60 * 1000 });
       if (!allowed) throw Object.assign(new Error('Enrollment request limit reached.'), { statusCode: 429, failureCategory: 'VALIDATION' });
       await dependencies.ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: DEFAULT_TRIAL_CREDITS });

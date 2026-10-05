@@ -5,6 +5,8 @@ import { acceptEnrollmentUpload, authorizeEnrollmentUpload, claimEnrollmentWorkf
 import {
   ENROLLMENT_ALLOWED_CONTENT_TYPES,
   ENROLLMENT_MEDIA_LIMITS,
+  assertEnrollmentAccountAllowed,
+  assertEnrollmentCanaryRecord,
   assertEnrollmentCapability,
   assertEnrollmentPrivateReadback,
   decodeEnrollmentUploadContext,
@@ -59,6 +61,7 @@ export function createEnrollmentUploadHandler(overrides = {}) {
       if (tokenRequest) {
         validateEnrollmentTransport(req);
         tokenAccountId = dependencies.sessionFromRequest(req).accountId;
+        assertEnrollmentAccountAllowed(tokenAccountId);
         await dependencies.assertEnrollmentPrivateStoreReady();
       }
       const result = await dependencies.handleUpload({
@@ -71,6 +74,7 @@ export function createEnrollmentUploadHandler(overrides = {}) {
           const enrollment = await dependencies.authorizeEnrollmentUpload({
             accountId: tokenAccountId, enrollmentId: context.enrollmentId, operationKey: context.operationKey, pathname,
           });
+          assertEnrollmentCanaryRecord(enrollment);
           return {
             allowedContentTypes: [enrollment.declaredContentType],
             maximumSizeInBytes: Math.min(enrollment.declaredBytes, ENROLLMENT_MEDIA_LIMITS.maxSourceBytes),
@@ -85,6 +89,8 @@ export function createEnrollmentUploadHandler(overrides = {}) {
         onUploadCompleted: async ({ blob, tokenPayload }) => {
           const context = decodeEnrollmentUploadContext(tokenPayload);
           const enrollment = await dependencies.getEnrollmentForUploadCallback(context.enrollmentId, context.operationKey);
+          assertEnrollmentAccountAllowed(enrollment?.accountId);
+          assertEnrollmentCanaryRecord(enrollment);
           if (!blob || blob.pathname !== enrollment.uploadPathname || blob.contentType !== enrollment.declaredContentType || !blob.etag
             || !ENROLLMENT_ALLOWED_CONTENT_TYPES.includes(blob.contentType)) {
             throw Object.assign(new Error('Enrollment upload callback does not match its operation.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
