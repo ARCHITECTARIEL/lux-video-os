@@ -32,6 +32,7 @@ test('reviewed manifest pin is the Git LF content across LF and CRLF checkouts',
 
 function options(overrides = {}) {
   const env = {
+    VIDEO_OS_DIAGNOSTIC_MAINTENANCE: 'true',
     VIDEO_OS_DB_BINDING_DIAGNOSTIC_ENABLED: 'true',
     VIDEO_OS_DB_BINDING_DIAGNOSTIC_STARTED_AT: new Date(NOW).toISOString(),
     VIDEO_OS_DB_BINDING_DIAGNOSTIC_EXPIRES_AT: new Date(NOW + 15 * 60_000).toISOString(),
@@ -72,6 +73,7 @@ test('exact deployment, source, project and canonical database match with read-o
   assert.equal(result.body.durableRenderDisabled, true);
   assert.equal(result.body.providerCreationDisabled, true);
   assert.equal(result.body.billingDisabled, true);
+  assert.equal(result.body.maintenanceAdmissionActive, true);
   assert.equal(result.body.sourceByteAttested, false);
   assert.equal(input.getQueries(), 1);
   assert.equal(JSON.stringify(result).includes(databaseUrl), false);
@@ -136,6 +138,18 @@ test('every enabled mutation gate blocks attestation before SQL', async () => {
   assert.equal(result.status, 409);
   assert.equal(result.body.providerCreationDisabled, false);
   assert.equal(providerEnabled.getQueries(), 0);
+});
+
+test('maintenance admission must be active before DB binding can attest or query', async () => {
+  for (const value of [undefined, 'false', '', 'TRUE', 'malformed']) {
+    const input = options({ env: { VIDEO_OS_DIAGNOSTIC_MAINTENANCE: value } });
+    const result = await evaluateProductionDbBinding(input);
+    assert.equal(result.status, 409, String(value));
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.maintenanceAdmissionActive, false);
+    assert.equal(result.body.readOnly, false);
+    assert.equal(input.getQueries(), 0);
+  }
 });
 
 test('diagnostic is off by default and expires within its bounded window', async () => {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { assertDiagnosticBuildInputs, diagnosticDatabaseEvidence, DIAGNOSTIC_PATHS } from '../tools/db-binding-diagnostic-build-policy.mjs';
@@ -37,4 +38,28 @@ test('diagnostic packaging rejects database credentials in process memory', () =
   for (const name of ['DATABASE_URL', 'DATABASE_URL_UNPOOLED', 'VIDEO_OS_DB_TARGET_MANIFEST']) {
     assert.throws(() => assertDiagnosticBuildInputs(input({ env: { [name]: 'synthetic-secret' } })));
   }
+});
+
+test('reviewed path scope covers every deployed API function and the maintenance guard', () => {
+  const routes = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).routes;
+  const apiFunctions = new Set(routes.filter(({ dest }) => dest.startsWith('/api/')).map(({ dest }) => dest.slice(1)));
+  assert.equal(apiFunctions.size, 9);
+  for (const path of apiFunctions) assert.ok(DIAGNOSTIC_PATHS.includes(path), path);
+  for (const path of [
+    'lib/diagnostic-maintenance-gate.js',
+    'tests/diagnostic-maintenance-gate.test.mjs',
+    'tests/diagnostic-maintenance-server-routing.test.mjs',
+    'docs/execution-notes/20261006-diagnostic-maintenance-gate.md',
+    'tools/build-browser-clients.mjs',
+  ]) assert.ok(DIAGNOSTIC_PATHS.includes(path), path);
+  assert.equal(DIAGNOSTIC_PATHS.some((path) => path.startsWith('db/') || path.startsWith('workflows/')), false);
+});
+
+test('diagnostic packaging rejects a local operator token or active maintenance mode', () => {
+  for (const env of [
+    { VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN: 'synthetic-only' },
+    { VIDEO_OS_DIAGNOSTIC_MAINTENANCE: 'true' },
+    { VIDEO_OS_DIAGNOSTIC_MAINTENANCE: 'malformed' },
+  ]) assert.throws(() => assertDiagnosticBuildInputs(input({ env })));
+  assert.doesNotThrow(() => assertDiagnosticBuildInputs(input({ env: { VIDEO_OS_DIAGNOSTIC_MAINTENANCE: 'false' } })));
 });

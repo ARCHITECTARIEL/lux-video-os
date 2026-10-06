@@ -5,6 +5,7 @@ import { sessionFromRequest } from '../../lib/video-os-account.js';
 import { validateIdentityUpload } from '../../lib/identity-upload.js';
 import { deletePrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../../lib/video-os-private-blob.js';
 import { accountHash, requestId } from '../../lib/video-os-security.js';
+import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 
 const MAX_UPLOAD_BYTES = 20_000_000;
 const ALLOWED = {
@@ -115,6 +116,7 @@ export function createUploadHandler(overrides = {}) {
   };
 
   return async function handler(req, res) {
+    if (blockForDiagnosticMaintenance(req, res)) return;
     if (req.method === 'OPTIONS') return send(res, 204, {});
     if (req.method !== 'POST') return send(res, 405, { ok: false, code: 'method_not_allowed', error: 'Method not allowed' });
     const correlationId = dependencies.requestId(req);

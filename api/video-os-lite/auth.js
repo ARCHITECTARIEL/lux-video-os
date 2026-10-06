@@ -5,6 +5,7 @@ import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessio
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
 import { containedRenderingEntitlementKeys, isTesterAccountId, isTesterEmailDomain, isTesterEmailExact, publicOrigin } from '../../lib/video-os-security.js';
+import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 
 function route(req) {
   const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
@@ -131,6 +132,7 @@ async function loadCeoAccount() {
   });
 }
 export default async function handler(req, res) {
+  if (blockForDiagnosticMaintenance(req, res)) return;
   if (handleOptions(req, res)) return;
   const action = route(req);
   try {

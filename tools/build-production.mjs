@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { videoRenderWorkflowMetadata } from '../workflows/video-render-metadata.js';
 import { stageHeygenRuntimeFiles } from './stage-heygen-runtime-files.mjs';
 import { identityEnrollmentHashWorkflowMetadata, identityEnrollmentExtractionWorkflowMetadata, identityEnrollmentCleanupWorkflowMetadata, identityEnrollmentExpiryWorkflowMetadata } from '../workflows/identity-enrollment-metadata.js';
-import { writeReleaseBuildManifest, assertProductionWorkflowBoundary, captureSourceIdentity, assertStableDatabase, quarantineBuildOutput, assertNoDefaultBuildOutput } from './release-build-manifest.mjs';
+import { writeReleaseBuildManifest, assertProductionWorkflowBoundary, captureSourceIdentity, assertStableDatabase, assertUnchangedBuildSource, quarantineBuildOutput, assertNoDefaultBuildOutput } from './release-build-manifest.mjs';
 import { assertDiagnosticBuildInputs, diagnosticChangedPaths, diagnosticDatabaseEvidence } from './db-binding-diagnostic-build-policy.mjs';
 
 const root = new URL('../', import.meta.url);
@@ -42,10 +42,12 @@ const target = process.argv.includes('--preview') ? 'preview' : 'production';
 const preflightOnly = process.argv.includes('--preflight-only');
 const diagnosticOnly = process.argv.includes('--diagnostic-db-binding');
 async function build() {
+let diagnosticSource = null;
 if (diagnosticOnly) {
   if (target !== 'production' || preflightOnly) throw new Error('Diagnostic packaging requires a full production-target build.');
   const source = await captureSourceIdentity(fileURLToPath(root));
   assertDiagnosticBuildInputs({ root: fileURLToPath(root), env: process.env, changedPaths: diagnosticChangedPaths(fileURLToPath(root)), source });
+  diagnosticSource = source;
 }
 if (!preflightOnly) await quarantineBuildOutput(fileURLToPath(output), 'previous');
 else await assertNoDefaultBuildOutput(fileURLToPath(output));
@@ -69,6 +71,10 @@ if (preflightOnly) {
 
 run(new URL('build-browser-clients.mjs', import.meta.url), []);
 const expectedSource = await captureSourceIdentity(fileURLToPath(root));
+if (diagnosticSource) {
+  assertUnchangedBuildSource(diagnosticSource, expectedSource);
+  if (expectedSource.dirty) throw new Error('Diagnostic browser build dirtied the reviewed source.');
+}
 await rm(new URL('../.vercel/release-build-manifest.json', import.meta.url), { force: true });
 await rm(output, { recursive: true, force: true });
 run(vercelCli, ['build', '--target', target]);
