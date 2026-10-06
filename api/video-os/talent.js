@@ -5,6 +5,7 @@ import { sessionFromRequest } from '../../lib/video-os-account.js';
 import { requirePersistedRenderAuthorization } from '../../db/repositories.js';
 import { FEATURED_CAST } from '../../lib/video-os-featured-cast.js';
 import { fetchHeygenCollection, fetchHeygenPaginatedCollection } from '../../services/heygen.js';
+import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 
 const itemSchema = z.record(z.string(), z.unknown());
 const compact = (value, max = 160) => String(value || '').trim().slice(0, max);
@@ -249,6 +250,7 @@ export function assertTalentSelectionsAvailable(talent, payload) {
 }
 
 export default async function handler(req, res) {
+  if (blockForDiagnosticMaintenance(req, res)) return;
   if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'Use GET for talent.' });
   const authorization = await authorizeTalentRequest(req);
   if (authorization.error) {
