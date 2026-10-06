@@ -1,7 +1,7 @@
 name: CI
 on:
   pull_request:
-    branches: [codex/db-binding-prealias-review-base-20261005]
+    branches: [codex/app-maintenance-review-base-20261006]
 permissions:
   contents: read
 jobs:
@@ -15,7 +15,7 @@ jobs:
           persist-credentials: false
       - name: Assert exact diagnostic candidate head
         env:
-          REVIEWED_HEAD: aab769f5b48c3504feb2384a6a66d7d4e42668b0
+          REVIEWED_HEAD: 2a2122c8c593c0c49e1ae52d6338f313709c5127
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           test "$PR_HEAD" = "$REVIEWED_HEAD"
