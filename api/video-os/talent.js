@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { sessionFromRequest } from '../../lib/video-os-account.js';
 import { requirePersistedRenderAuthorization } from '../../db/repositories.js';
 import { FEATURED_CAST } from '../../lib/video-os-featured-cast.js';
-import { fetchHeygenCollection, fetchHeygenPaginatedCollection } from '../../services/heygen.js';
+import { avatarGroupConsentEligible, fetchHeygenCollection, fetchHeygenPaginatedCollection, normalizeAvatarGroup, normalizeAvatarLook } from '../../services/heygen.js';
 
 const itemSchema = z.record(z.string(), z.unknown());
 const compact = (value, max = 160) => String(value || '').trim().slice(0, max);
@@ -127,6 +127,40 @@ async function authorizeTalentRequest(req) {
   }
 }
 
+async function eligiblePrivateFeaturedLooks(accountAvatars, { fetchImpl, key }) {
+  const byId = new Map(accountAvatars.map((item) => [compact(item.id || item.avatar_id || item.avatarId, 255), item]));
+  const featuredLooks = FEATURED_CAST.map((item) => byId.get(item.avatarId)).filter(Boolean);
+  const validGroupId = (value) => /^[A-Za-z0-9_.:-]{1,255}$/.test(value);
+  const groupIds = [...new Set(featuredLooks.map((item) => compact(item.group_id, 255)).filter(validGroupId))];
+  const groups = new Map();
+  let groupReadFailed = false;
+  for (let offset = 0; offset < groupIds.length; offset += 4) {
+    const batch = groupIds.slice(offset, offset + 4);
+    const results = await Promise.all(batch.map(async (groupId) => {
+      try {
+        const response = await fetchImpl(`https://api.heygen.com/v3/avatars/${encodeURIComponent(groupId)}`, {
+          signal: AbortSignal.timeout(8_000),
+          headers: { Accept: 'application/json', 'X-Api-Key': key },
+        });
+        if (!response.ok) return null;
+        const group = normalizeAvatarGroup(await response.json());
+        return group.providerGroupId === groupId ? group : null;
+      } catch {
+        return null;
+      }
+    }));
+    results.forEach((group, index) => {
+      if (group) groups.set(batch[index], group);
+      else groupReadFailed = true;
+    });
+  }
+  const eligibleIds = new Set(featuredLooks.filter((item) => {
+    const groupId = compact(item.group_id, 255);
+    return avatarGroupConsentEligible(groups.get(groupId), normalizeAvatarLook(item), groupId);
+  }).map((item) => compact(item.id || item.avatar_id || item.avatarId, 255)));
+  return { eligibleIds, groupReadFailed };
+}
+
 export async function loadTalentInventory(options = {}) {
   const env = options.env || process.env;
   const fetchImpl = options.fetchImpl || fetch;
@@ -146,8 +180,8 @@ export async function loadTalentInventory(options = {}) {
         featured: true,
         featuredKey: featured.key,
         matchedVoiceId,
-        active: true,
-        providerReady: true,
+        active: false,
+        providerReady: false,
         archived: false,
         blocked: false,
         providerOrder,
@@ -164,8 +198,8 @@ export async function loadTalentInventory(options = {}) {
         shared: false,
         featured: true,
         featuredKey: featured.key,
-        active: true,
-        providerReady: true,
+        active: false,
+        providerReady: false,
         archived: false,
         blocked: false,
         providerOrder,
@@ -173,7 +207,7 @@ export async function loadTalentInventory(options = {}) {
     });
     return {
       talent: { source: 'curated-cast', avatars: fallbackFeatured, voices: fallbackVoices },
-      connection: { connected: true, status: 'curated_active' },
+      connection: { connected: false, status: 'provider_unconfigured' },
     };
   }
   const accountAvatarsUrl = env.HEYGEN_ACCOUNT_AVATARS_URL || 'https://api.heygen.com/v3/avatars/looks?ownership=private&limit=50';
@@ -187,21 +221,18 @@ export async function loadTalentInventory(options = {}) {
   const accountAvatars = settled[0].status === 'fulfilled' ? settled[0].value.items : [];
   const publicLooks = settled[1].status === 'fulfilled' ? settled[1].value.items : [];
   const voices = settled[2].status === 'fulfilled' ? settled[2].value : [];
+  const { eligibleIds, groupReadFailed } = await eligiblePrivateFeaturedLooks(accountAvatars, { fetchImpl, key });
   const rawFeaturedAvatars = buildFeaturedAvatars(accountAvatars);
   const featuredAvatars = rawFeaturedAvatars.map((avatar) => {
-    if (avatar.providerReady && avatar.previewUrl) return avatar;
     const featured = FEATURED_CAST.find((f) => f.key === avatar.featuredKey);
     if (!featured) return avatar;
-    const item = {
+    const ready = avatar.providerReady && eligibleIds.has(featured.avatarId);
+    return withProviderIdentity({
       ...avatar,
       previewUrl: avatar.previewUrl || `/assets/cast/${featured.key}.webp`,
-      providerReady: true,
-      active: true,
-      role: featured.role || 'Curated Presenter',
-      style: featured.gender || 'available',
-    };
-    delete item.unavailableReason;
-    return withProviderIdentity(item, avatar.id, featured.avatarId);
+      providerReady: ready,
+      unavailableReason: ready ? undefined : 'Presenter consent or provider readiness is not verified.',
+    }, avatar.id, featured.avatarId);
   });
   const sharedAvatars = buildSharedAvatars(publicLooks).slice(0, Math.max(0, 20 - featuredAvatars.length));
   const normalizedVoices = buildVoices(voices);
@@ -218,15 +249,15 @@ export async function loadTalentInventory(options = {}) {
         featured: true,
         featuredKey: featured.key,
         active: true,
-        providerReady: true,
+        providerReady: false,
         archived: false,
         blocked: false,
         providerOrder: normalizedVoices.length,
       }, voiceRef, featured.voiceId));
     }
   }
-  const connected = Boolean(sharedAvatars.length || featuredAvatars.length) && Boolean(normalizedVoices.length);
-  const degraded = settled.some((result) => result.status === 'rejected');
+  const connected = [...featuredAvatars, ...sharedAvatars].some((item) => item.providerReady) && normalizedVoices.some((item) => item.providerReady);
+  const degraded = groupReadFailed || settled.some((result) => result.status === 'rejected');
   return {
     talent: { source: degraded ? 'heygen-partial' : 'heygen', avatars: [...featuredAvatars, ...sharedAvatars], voices: normalizedVoices },
     connection: { connected, status: degraded ? 'degraded' : connected ? 'connected' : 'empty_inventory' },

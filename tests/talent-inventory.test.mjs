@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 
 import { FEATURED_CAST } from '../lib/video-os-featured-cast.js';
-import talentHandler, { assertTalentSelectionsAvailable, buildFeaturedAvatars, buildSharedAvatars, buildVoices, normalizeTalentItem } from '../api/video-os/talent.js';
+import talentHandler, { assertTalentSelectionsAvailable, buildFeaturedAvatars, buildSharedAvatars, buildVoices, loadTalentInventory, normalizeTalentItem } from '../api/video-os/talent.js';
 import { fetchHeygenPaginatedCollection } from '../services/heygen.js';
 
 function response(payload, status = 200) {
@@ -148,4 +148,41 @@ test('persisted render input stays namespaced instead of embedding unverified in
   assert.doesNotMatch(renderSource, /input: providerPayload|resolveFeaturedProviderSelections/);
   // Submission now requires a canonical owned-identity claim; provider
   // submission boundaries have their own runtime wiring regression suite.
+});
+
+test('private featured looks require exact accepted group consent before selection', async (t) => {
+  withInventoryEnvironment(t);
+  const pending = FEATURED_CAST[0];
+  const accepted = FEATURED_CAST[2];
+  const groupReads = [];
+  const fetchImpl = async (url) => {
+    if (url.includes('ownership=private')) return response({ data: [
+      { id: pending.avatarId, group_id: 'group-pending', avatar_type: 'digital_twin', status: 'completed', preview_image_url: 'https://media.example/pending.jpg' },
+      { id: accepted.avatarId, group_id: 'group-accepted', avatar_type: 'digital_twin', status: 'completed', preview_image_url: 'https://media.example/accepted.jpg' },
+    ] });
+    if (url.includes('ownership=public')) return response({ data: [] });
+    if (url.includes('/voices')) return response({ data: [{ voice_id: accepted.voiceId, status: 'active' }] });
+    if (url.endsWith('/group-pending') || url.endsWith('/group-accepted')) {
+      groupReads.push(url);
+      return response({ data: { id: url.split('/').pop(), status: 'completed', consent_status: url.endsWith('/group-pending') ? 'pending' : 'accepted' } });
+    }
+    throw new Error('Unexpected provider inventory request');
+  };
+  const { talent } = await loadTalentInventory({ fetchImpl });
+  assert.equal(talent.avatars.find((item) => item.id === 'featured:' + pending.key).providerReady, false);
+  assert.equal(talent.avatars.find((item) => item.id === 'featured:' + accepted.key).providerReady, true);
+  assert.equal(talent.avatars.find((item) => item.id === 'featured:oso').providerReady, false, 'missing private look cannot use local fallback as live readiness');
+  assert.equal(talent.voices.find((item) => item.id === 'featured:' + pending.key + ':voice').providerReady, false, 'missing private voice cannot use local fallback as live readiness');
+  assert.equal(groupReads.length, 2);
+  const unavailable = await loadTalentInventory({ fetchImpl: async (url) => url.includes('/v3/avatars/group-') ? response({}, 503) : fetchImpl(url) });
+  assert.equal(unavailable.talent.avatars.find((item) => item.id === 'featured:' + accepted.key).providerReady, false);
+  assert.equal(unavailable.connection.status, 'degraded');
+});
+
+test('unconfigured provider cannot present curated private avatars as ready', async (t) => {
+  withInventoryEnvironment(t);
+  delete process.env.HEYGEN_API_KEY;
+  const inventory = await loadTalentInventory();
+  assert.equal(inventory.connection.connected, false);
+  assert.ok(inventory.talent.avatars.every((item) => item.providerReady === false));
 });

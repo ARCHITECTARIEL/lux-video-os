@@ -222,6 +222,13 @@ export function normalizeAvatarLook(payload) {
   };
 }
 
+export function avatarGroupConsentEligible(avatarGroup, avatarLook, expectedGroupId) {
+  if (!expectedGroupId || avatarGroup?.providerGroupId !== expectedGroupId || avatarLook?.providerGroupId !== expectedGroupId
+    || avatarGroup.ready !== true || avatarLook.ready !== true || avatarLook.avatarType === 'unknown') return false;
+  return avatarGroup.consentStatus === 'accepted'
+    || (avatarGroup.consentStatus === null && ['photo_avatar', 'prompt_avatar'].includes(avatarLook.avatarType));
+}
+
 export function normalizeVoice(payload) {
   const data = payload?.data || payload || {};
   const previewAudioUrl = safeHttpsUrl(data.preview_audio_url);
@@ -299,14 +306,10 @@ export async function getHeygenPhotoAvatarStatus({ groupId, lookId }) {
   ]);
   const avatarGroup = normalizeAvatarGroup(groupPayload);
   const avatarLook = normalizeAvatarLook(lookPayload);
-  const exactGroup = avatarGroup.providerGroupId === groupReference && avatarLook.providerGroupId === groupReference;
-  const knownType = avatarLook.avatarType !== 'unknown';
-  const consentAccepted = avatarGroup.consentStatus === 'accepted'
-    || (avatarGroup.consentStatus === null && ['photo_avatar', 'prompt_avatar'].includes(avatarLook.avatarType));
   return {
     avatarGroup,
     avatarLook,
-    ready: avatarGroup.ready && avatarLook.ready && exactGroup && knownType && consentAccepted,
+    ready: avatarGroupConsentEligible(avatarGroup, avatarLook, groupReference),
     failed: avatarGroup.status === 'failed' || avatarLook.status === 'failed',
   };
 }
