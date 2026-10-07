@@ -69,6 +69,20 @@ test('accepted type-aware provider consent produces a fresh exact observation', 
   assert.strictEqual(assertFreshProviderAvatarConsentObservation(observation, { accountId, identityId, sourceBinding, now }), observation);
 });
 
+test('typed photo avatar with not-applicable group consent remains eligible under local source authorization', async () => {
+  const photo = status(null, { ready: true });
+  const observation = await observeProviderAvatarConsent({ accountId, identityId, sourceBinding }, dependencies({ readProviderAvatarStatus: async () => photo }));
+  assert.equal(observation.providerAvatarType, 'photo_avatar');
+  assert.equal(observation.providerConsentStatus, null);
+  assert.strictEqual(assertFreshProviderAvatarConsentObservation(observation, { accountId, identityId, sourceBinding, now }), observation);
+  await assert.rejects(observeProviderAvatarConsent({ accountId, identityId, sourceBinding }, dependencies({
+    readProviderAvatarStatus: async () => status(null, { ready: false, avatarLook: { ...photo.avatarLook, avatarType: 'digital_twin' } }),
+  })), { failureCategory: 'CONSENT' });
+  await assert.rejects(observeProviderAvatarConsent({ accountId, identityId, sourceBinding }, dependencies({
+    readProviderAvatarStatus: async () => status(null, { ready: false, avatarLook: { ...photo.avatarLook, avatarType: 'prompt_avatar' } }),
+  })), { failureCategory: 'CONSENT' });
+});
+
 test('pending consent, group drift, stale evidence, and readback outage fail closed', async () => {
   await assert.rejects(
     observeProviderAvatarConsent({ accountId, identityId, sourceBinding }, dependencies({ readProviderAvatarStatus: async () => status('pending') })),

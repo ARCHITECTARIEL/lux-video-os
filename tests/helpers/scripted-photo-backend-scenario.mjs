@@ -177,7 +177,7 @@ if (scenario === 'repository') {
     prepareProviderRead: async () => ({ accountId, identityId, component: 'avatar', providerAvatarGroupId: 'heygen-avatar-group', providerRenderableAvatarId: 'heygen-avatar' }),
     readProviderAvatarStatus: async () => ({
       ready: true,
-      avatarGroup: { providerGroupId: 'heygen-avatar-group', status: 'completed', consentStatus: 'accepted', ready: true },
+      avatarGroup: { providerGroupId: 'heygen-avatar-group', status: 'completed', consentStatus: null, ready: true },
       avatarLook: { providerLookId: 'heygen-avatar', providerGroupId: 'heygen-avatar-group', avatarType: 'photo_avatar', status: 'completed', ready: true },
     }),
     now: () => observedAt ?? Date.now(),
