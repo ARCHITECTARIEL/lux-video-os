@@ -172,6 +172,7 @@ export async function acceptHostedSubjectConsentNoticeTx(tx, input) {
       && replay.audioExtractionAuthorization === false
       && replay.temporaryPublicProviderExposureAuthorization === false;
     if (!exact) throw failure('Subject notice replay conflicts with its consent receipt.', 409, 'PROVIDER_OPERATION_CONFLICT');
+    if (replay.revokedAt) throw failure('Subject consent was withdrawn.', 409, 'SUBJECT_CONSENT_REQUIRED');
     return Object.freeze({ consent: replay, replayed: true });
   }
   if (notice.usedAt || notice.expiresAt <= now) {
@@ -334,6 +335,11 @@ async function activeConsentTx(tx, { accountId, identityId, identityConsentId, p
   )).limit(1);
   if (!notice || validDate(notice.usedAt, 'notice.usedAt') > validDate(consent.acceptedAt, 'consent.acceptedAt')) {
     throw failure('Subject notice acceptance evidence is missing or inconsistent.', 409, 'SUBJECT_CONSENT_REQUIRED');
+  }
+  const source = await resolveHostedSubjectSourceConsentTx(tx, { accountId, identityId, lock });
+  if (!source || source.photoSha256 !== consent.photoSha256 || source.sourceVideoSha256 !== consent.sourceVideoSha256
+    || source.voiceSha256 !== consent.voiceSha256) {
+    throw failure('Subject authorization no longer matches active identity sources.', 409, 'SUBJECT_CONSENT_REQUIRED');
   }
   return consent;
 }
