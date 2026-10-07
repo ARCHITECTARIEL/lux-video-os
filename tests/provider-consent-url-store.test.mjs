@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { saveProviderConsentUrl, consumeProviderConsentUrl, readProviderConsentUrl } from '../lib/provider-consent-url-store.js';
+import { saveProviderConsentUrl, consumeProviderConsentUrl, readProviderConsentUrl, deleteExpiredProviderConsentUrl } from '../lib/provider-consent-url-store.js';
 
 test('hosted consent URL is private, digest-bound, and absent from the saved DTO', async () => {
   let written;
@@ -50,4 +50,22 @@ test('a new local launch challenge can read the same private session without del
   assert.equal(await readProviderConsentUrl({ path, operationId: 'operation-1' }, deps), url);
   assert.equal(reads, 2);
   await assert.rejects(readProviderConsentUrl({ path, operationId: 'wrong' }, deps), /unavailable/);
+});
+
+test('expiry cleanup deletes only an expired exact operation with a Blob version', async () => {
+  const path = 'video-os/auth/provider-consent/' + 'b'.repeat(64) + '.json';
+  const now = Date.parse('2026-10-07T18:00:00.000Z');
+  const record = { version: 1, operationId: 'operation-1', url: 'https://app.heygen.com/consent', expiresAt: new Date(now - 1).toISOString() };
+  const deleted = [];
+  const deps = {
+    now,
+    get: async () => ({ stream: new Blob([JSON.stringify(record)]).stream(), blob: { etag: 'etag-1' } }),
+    del: async (...args) => { deleted.push(args); return { deleted: true }; },
+  };
+  assert.equal(await deleteExpiredProviderConsentUrl({ path, operationId: 'operation-1' }, deps), true);
+  assert.deepEqual(deleted, [['authentication-state', path, { ifMatch: 'etag-1' }]]);
+  await assert.rejects(deleteExpiredProviderConsentUrl({ path, operationId: 'other' }, deps), /unavailable/);
+  assert.equal(deleted.length, 1);
+  await assert.rejects(deleteExpiredProviderConsentUrl({ path, operationId: 'operation-1' }, { ...deps, now: now - 2 }), /not expired/);
+  assert.equal(deleted.length, 1);
 });
