@@ -23,12 +23,13 @@ import {
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9_.:@-]{1,255}$/;
-const OPERATION_KINDS = new Set(['asset_upload', 'avatar_create', 'voice_clone', 'video_create', 'resource_read', 'resource_delete', 'url_probe']);
+const OPERATION_KINDS = new Set(['asset_upload', 'avatar_create', 'avatar_consent_submit', 'voice_clone', 'video_create', 'resource_read', 'resource_delete', 'url_probe']);
 const RESOURCE_KINDS = new Set(['asset', 'avatar_look', 'avatar_group', 'voice', 'video']);
 const RESOURCE_STATES = new Set(['unknown', 'processing', 'present', 'ready', 'failed', 'delete_claimed', 'delete_acknowledged', 'api_absent', 'pending_reconciliation']);
 const RESOURCE_KINDS_BY_OPERATION = Object.freeze({
   asset_upload: new Set(['asset']),
   avatar_create: new Set(['avatar_group', 'avatar_look']),
+  avatar_consent_submit: new Set([]),
   voice_clone: new Set(['voice']),
   video_create: new Set(['video']),
   resource_read: new Set(RESOURCE_KINDS),

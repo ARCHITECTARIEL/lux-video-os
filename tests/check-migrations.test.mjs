@@ -158,7 +158,7 @@ test('live identity, missing schema-qualified journal, stale baseline and schema
   assert.equal('providerBinding' in good, false);
 });
 test('repository plan accounts for every migration and only LF/CRLF source encodings', async () => {
-  const actual = await migrationPlan(); assert.equal(actual.migrations.length, 11);
+  const actual = await migrationPlan(); assert.equal(actual.migrations.length, 12);
   assert.ok(actual.migrations.every(entry => entry.hashes.length >= 1 && entry.hashes.length <= 2));
 });
 test('unreachable reviewed target fails with no credentials in CLI output', () => {

@@ -213,7 +213,22 @@ export const identityConsents = pgTable('identity_consents', {
   index('identity_consents_account_identity_idx').on(table.accountId, table.identityId, table.acceptedAt),
   uniqueIndex('identity_consents_account_idempotency_uq').on(table.accountId, table.idempotencyKey).where(sql`${table.idempotencyKey} is not null`),
   uniqueIndex('identity_consents_active_policy_uq').on(table.identityId, table.policyVersion).where(sql`${table.revokedAt} is null`),
-  check('identity_consents_authorizations_ck', sql`${table.faceAuthorization} and ${table.voiceAuthorization} and ${table.providerProcessingAuthorization} and ${table.archiveDeleteAcknowledgment}`),
+  check('identity_consents_authorizations_ck', sql`(
+    ${table.policyVersion} = 'identity-provider-subject-consent-v3'
+    and ${table.faceAuthorization}
+    and ${table.voiceAuthorization} = false
+    and ${table.providerProcessingAuthorization}
+    and ${table.archiveDeleteAcknowledgment}
+    and ${table.audioExtractionAuthorization} = false
+    and ${table.temporaryPublicProviderExposureAuthorization} = false
+    and ${table.consentPurpose} = 'hosted-avatar-consent'
+  ) or (
+    ${table.policyVersion} <> 'identity-provider-subject-consent-v3'
+    and ${table.faceAuthorization}
+    and ${table.voiceAuthorization}
+    and ${table.providerProcessingAuthorization}
+    and ${table.archiveDeleteAcknowledgment}
+  )`),
   check('identity_consents_source_video_hash_ck', sql`${table.sourceVideoSha256} is null or ${table.sourceVideoSha256} ~ '^[a-f0-9]{64}$'`),
   check('identity_consents_bridge_v2_ck', sql`${table.policyVersion} <> 'identity-provider-bridge-v2' or (${table.audioExtractionAuthorization} and ${table.temporaryPublicProviderExposureAuthorization} and ${table.sourceVideoSha256} is not null and ${table.consentPurpose} is not null and ${table.consentPurpose} = 'identity-voice-enrollment')`),
 ]);
@@ -452,7 +467,7 @@ export const providerLifecycleOperations = pgTable('provider_lifecycle_operation
   index('provider_lifecycle_operations_enrollment_idx').on(table.enrollmentId),
   index('provider_lifecycle_operations_identity_idx').on(table.identityId),
   index('provider_lifecycle_operations_job_idx').on(table.jobId),
-  check('provider_lifecycle_operations_kind_ck', sql`${table.kind} in ('asset_upload', 'avatar_create', 'voice_clone', 'video_create', 'resource_read', 'resource_delete', 'url_probe')`),
+  check('provider_lifecycle_operations_kind_ck', sql`${table.kind} in ('asset_upload', 'avatar_create', 'avatar_consent_submit', 'voice_clone', 'video_create', 'resource_read', 'resource_delete', 'url_probe')`),
   check('provider_lifecycle_operations_state_ck', sql`${table.state} in ('reserved', 'pending', 'succeeded', 'failed', 'ambiguous')`),
   check('provider_lifecycle_operations_attempt_ck', sql`${table.attempt} between 1 and 100`),
   check('provider_lifecycle_operations_hash_ck', sql`${table.originScopeKey} ~ '^[a-f0-9]{64}$' and ${table.requestDigest} ~ '^[a-f0-9]{64}$' and (${table.sourceSha256} is null or ${table.sourceSha256} ~ '^[a-f0-9]{64}$')`),
