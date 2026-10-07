@@ -8,6 +8,7 @@ import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy
 import { ENROLLMENT_CONSENT_POLICY_VERSION } from '../lib/enrollment-policy.js';
 import { SCRIPTED_PHOTO_CONTRACT_VERSION, assertScriptedPhotoJobActivation, isScriptedPhotoRequest, renderTierForJob, renderTierForReservation, scriptedPhotoActivation } from '../lib/scripted-photo-contract.js';
 import { digestScriptedPhotoSourceBinding, safeScriptedPhotoQuoteProof, verifyScriptedPhotoQuote } from '../lib/scripted-photo-quote.js';
+import { assertFreshProviderAvatarConsentObservation } from '../lib/provider-avatar-consent.js';
 import { assertEnrollmentConsentRecord } from './enrollment-repository.js';
 import { acquireProviderLifecycleLock } from './provider-lifecycle-lock.js';
 import { assertHeygenProviderReceiptTx, withFreshHeygenSpaceBindingTransaction, withHeygenSpaceBindingReceiptTransaction } from './heygen-space-binding-repository.js';
@@ -184,7 +185,7 @@ function assertPersistedScriptedQuoteProof(job, intent) {
   return proof;
 }
 
-export async function reserveRender({ jobId, accountId, idempotencyKey, correlationId, provider, tier, title, format, costCredits, input, quoteToken }) {
+export async function reserveRender({ jobId, accountId, idempotencyKey, correlationId, provider, tier, title, format, costCredits, input, quoteToken, providerAvatarConsentObservation }) {
   const authorizationTier = renderTierForReservation({ provider, tier, input });
   const scripted = isScriptedPhotoRequest(input);
   return database().transaction(async (tx) => {
@@ -225,6 +226,11 @@ export async function reserveRender({ jobId, accountId, idempotencyKey, correlat
       }, { lock: true });
       if (resolved.project.settings?.format !== format) throw Object.assign(new Error('Scripted-photo format no longer matches its saved project.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
       reservedInput = resolved.input;
+      assertFreshProviderAvatarConsentObservation(providerAvatarConsentObservation, {
+        accountId,
+        identityId: reservedInput.identityId,
+        sourceBinding: reservedInput.sourceBinding,
+      });
     }
     const authorization = await requirePersistedRenderAuthorization(accountId, authorizationTier, tx);
     if (scripted) {

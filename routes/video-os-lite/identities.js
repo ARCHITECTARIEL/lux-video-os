@@ -31,6 +31,7 @@ import {
   reserveIdentityComponentCreation,
 } from '../../db/repositories.js';
 import { handleOptions, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { observeProviderAvatarConsent } from '../../lib/provider-avatar-consent.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../../lib/video-os-identity-policy.js';
 import { assertPublicDns } from '../../lib/video-os-security.js';
 import {
@@ -62,6 +63,46 @@ function providerEnabled(accountId) {
   } catch {
     return false;
   }
+}
+
+export async function projectIdentitiesForClient(accountId, identities, {
+  observeProviderConsent = observeProviderAvatarConsent,
+  resolveProviderBinding = resolveFreshHeygenSpaceBinding,
+  prepareProviderRead = prepareIdentityProviderRead,
+  readProviderAvatarStatus = getHeygenPhotoAvatarStatus,
+  providerObservationNow = Date.now,
+} = {}) {
+  let providerBindingPromise;
+  const cachedBinding = input => {
+    providerBindingPromise ||= Promise.resolve(resolveProviderBinding(input));
+    return providerBindingPromise;
+  };
+  return Promise.all((identities || []).map(async (identity) => {
+    if (identity?.overallStatus !== 'READY' || identity.archivedAt) return identityForClient(identity);
+    if (identity.accountId !== accountId || identity.provider !== 'heygen'
+      || !identity.providerAvatarGroupId || !identity.providerRenderableAvatarId) {
+      return identityForClient({ ...identity, overallStatus: 'PROCESSING', avatarStatus: 'PROCESSING' });
+    }
+    try {
+      await observeProviderConsent({
+        accountId,
+        identityId: identity.id,
+        sourceBinding: {
+          provider: identity.provider,
+          providerAvatarGroupId: identity.providerAvatarGroupId,
+          providerRenderableAvatarId: identity.providerRenderableAvatarId,
+        },
+      }, {
+        resolveProviderBinding: cachedBinding,
+        prepareProviderRead,
+        readProviderAvatarStatus,
+        now: providerObservationNow,
+      });
+      return identityForClient(identity);
+    } catch {
+      return identityForClient({ ...identity, overallStatus: 'PROCESSING', avatarStatus: 'PROCESSING' });
+    }
+  }));
 }
 
 function identityForClient(identity) {
@@ -500,7 +541,7 @@ export default async function handler(req, res) {
       const identities = await listOwnedIdentities(session.accountId);
       return send(res, 200, {
         ok: true,
-        identities: identities.map(identityForClient),
+        identities: await projectIdentitiesForClient(session.accountId, identities),
         consentPolicyVersion: IDENTITY_CONSENT_POLICY_VERSION,
         providerSubmissionEnabled: providerEnabled(session.accountId),
       });
@@ -550,7 +591,7 @@ export default async function handler(req, res) {
     } else {
       throw Object.assign(new Error('Unknown identity action.'), { statusCode: 400 });
     }
-    return send(res, 200, { ok: true, identity: identityForClient(identity) });
+    return send(res, 200, { ok: true, identity: (await projectIdentitiesForClient(session.accountId, [identity]))[0] });
   } catch (error) {
     const status = error.statusCode || 500;
     const publicMessage = status < 500 || error.failureCategory === 'CAPABILITY_BLOCKED' ? error.message : 'Identity Studio could not complete this request.';

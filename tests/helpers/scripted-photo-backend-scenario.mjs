@@ -6,6 +6,7 @@ import { FatalError } from 'workflow';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../../lib/video-os-identity-policy.js';
 import { SCRIPTED_PHOTO_CONTRACT_VERSION, parseDurableRenderFailure } from '../../lib/scripted-photo-contract.js';
 import { SCRIPTED_PHOTO_QUOTE_TTL_MS, issueScriptedPhotoQuote, safeScriptedPhotoQuoteProof, verifyScriptedPhotoQuote } from '../../lib/scripted-photo-quote.js';
+import { assertFreshProviderAvatarConsentObservation, observeProviderAvatarConsent } from '../../lib/provider-avatar-consent.js';
 
 const scenario = process.argv[2];
 const accountId = 'scripted-standard-owner';
@@ -97,7 +98,7 @@ if (scenario === 'repository') {
   // This scenario proves quotes, authorization and financial ordering. The
   // provider ledger has its own repository/live suite; supply explicit scoped
   // resources here and still require both job references to be attached.
-  const providerBinding = { fixture: 'scripted-financial-verified-binding', applicationAccountId: accountId };
+  const providerBinding = { fixture: 'scripted-financial-verified-binding', applicationAccountId: accountId, bindingId: 'fixture-binding', originScopeKey: '6'.repeat(64), verifiedAccountScopeId: 'fixture-verified-account' };
   const { acquireProviderLifecycleLock } = await import('../../db/provider-lifecycle-lock.js');
   let activeBindingTransaction = null;
   mock.module('../../db/heygen-space-binding-repository.js', { namedExports: {
@@ -171,6 +172,17 @@ if (scenario === 'repository') {
   await assert.rejects(repo.getScriptedPhotoReservationContext({ accountId, projectId, identityId, title, script, tier: 'STANDARD' }), { statusCode: 409 });
   project.settings = savedSettings;
   const context = await repo.getScriptedPhotoReservationContext({ accountId, projectId, identityId, title, script, tier: 'STANDARD' });
+  const providerConsentObservation = async observedAt => observeProviderAvatarConsent({ accountId, identityId, sourceBinding: context.input.sourceBinding }, {
+    resolveProviderBinding: async () => providerBinding,
+    prepareProviderRead: async () => ({ accountId, identityId, component: 'avatar', providerAvatarGroupId: 'heygen-avatar-group', providerRenderableAvatarId: 'heygen-avatar' }),
+    readProviderAvatarStatus: async () => ({
+      ready: true,
+      avatarGroup: { providerGroupId: 'heygen-avatar-group', status: 'completed', consentStatus: 'accepted', ready: true },
+      avatarLook: { providerLookId: 'heygen-avatar', providerGroupId: 'heygen-avatar-group', avatarType: 'photo_avatar', status: 'completed', ready: true },
+    }),
+    now: () => observedAt ?? Date.now(),
+  });
+  const freshProviderConsentObservation = await providerConsentObservation();
   process.env.VIDEO_OS_SESSION_SECRET = 'scripted-photo-backend-quote-secret';
   const scriptedIdempotencyKey = randomUUID();
   const repositoryQuote = (idempotencyKey, { credits = 37, now = Date.now(), sourceBinding = context.input.sourceBinding } = {}) => issueScriptedPhotoQuote({
@@ -179,7 +191,7 @@ if (scenario === 'repository') {
   const quoteToken = repositoryQuote(scriptedIdempotencyKey);
   const standardRequest = {
     jobId: 'scripted-job', accountId, idempotencyKey: scriptedIdempotencyKey, correlationId: 'scripted-correlation', provider: 'heygen', tier: 'standard',
-    title, format: 'vertical', costCredits: 37, input: context.input, quoteToken,
+    title, format: 'vertical', costCredits: 37, input: context.input, quoteToken, providerAvatarConsentObservation: freshProviderConsentObservation,
   };
   delete process.env.VIDEO_OS_SCRIPTED_PHOTO_ENABLED;
   await assert.rejects(repo.reserveRender(standardRequest), { statusCode: 503, failureCategory: 'CONFIG_MISSING' });
@@ -212,6 +224,23 @@ if (scenario === 'repository') {
   creditLockDelayMs = 0;
   assert.equal(credit.reserved, 0, 'expired, changed-source and changed-cost quotes must fail before reservation');
   assert.equal(jobs.length, 0);
+  const missingObservationKey = randomUUID();
+  await assert.rejects(repo.reserveRender({
+    ...standardRequest,
+    jobId: 'missing-observation-attempt',
+    idempotencyKey: missingObservationKey,
+    quoteToken: repositoryQuote(missingObservationKey),
+    providerAvatarConsentObservation: undefined,
+  }), { statusCode: 409, failureCategory: 'CONSENT' });
+  const staleObservationKey = randomUUID();
+  await assert.rejects(repo.reserveRender({
+    ...standardRequest,
+    jobId: 'stale-observation-attempt',
+    idempotencyKey: staleObservationKey,
+    quoteToken: repositoryQuote(staleObservationKey),
+    providerAvatarConsentObservation: await providerConsentObservation(Date.now() - 60_001),
+  }), { statusCode: 409, failureCategory: 'CONSENT' });
+  assert.equal(credit.reserved, 0, 'stale provider consent must fail before credit reservation');
   const reserved = await repo.reserveRender(standardRequest);
   assert.equal(reserved.job.provider, 'heygen');
   assert.equal(reserved.job.input.tier, 'STANDARD');
@@ -629,6 +658,31 @@ if (scenario === 'repository') {
   await failWorkflow(jobId, new Error('workflow runtime failed before provider claim'));
   assert.equal(releases, releasesBeforeUnclaimedFailure + 1);
 } else if (scenario === 'route') {
+  const routeProviderBinding = { applicationAccountId: accountId, bindingId: 'route-binding', originScopeKey: '7'.repeat(64), verifiedAccountScopeId: 'route-verified-account' };
+  let routeConsentStatus = 'accepted';
+  let routeReadGroupId = 'heygen-avatar-group';
+  let routeReadFailure;
+  let forceStaleObservation = false;
+  const bindingRepository = await import('../../db/heygen-space-binding-repository.js');
+  mock.module('../../db/heygen-space-binding-repository.js', { namedExports: {
+    ...bindingRepository,
+    resolveFreshHeygenSpaceBinding: async ({ accountId: requestedAccountId }) => {
+      assert.equal(requestedAccountId, accountId);
+      return routeProviderBinding;
+    },
+  } });
+  const heygen = await import('../../services/heygen.js');
+  mock.module('../../services/heygen.js', { namedExports: {
+    ...heygen,
+    getHeygenPhotoAvatarStatus: async ({ groupId, lookId }) => {
+      if (routeReadFailure) throw routeReadFailure;
+      return {
+        ready: routeConsentStatus === 'accepted',
+        avatarGroup: { providerGroupId: groupId, status: 'completed', consentStatus: routeConsentStatus, ready: true },
+        avatarLook: { providerLookId: lookId, providerGroupId: groupId, avatarType: 'photo_avatar', status: 'completed', ready: true },
+      };
+    },
+  } });
   const repo = await import('../../db/repositories.js');
   const input = {
     contractVersion: SCRIPTED_PHOTO_CONTRACT_VERSION, tier: 'STANDARD', projectId, identityId, script,
@@ -656,12 +710,22 @@ if (scenario === 'repository') {
     },
     requirePersistedRenderAuthorization: async (_accountId, tier) => { authorizedTier = tier; if (tier !== 'standard') throw Object.assign(new Error('Tier denied'), { statusCode: 403, failureCategory: 'ENTITLEMENT' }); return authority(tier, 'pending'); },
     getScriptedPhotoReservationContext: async () => ({ input, project: resolvedProject }),
+    prepareIdentityProviderRead: async ({ accountId: requestedAccountId, identityId: requestedIdentityId, component, providerBinding }) => {
+      assert.equal(requestedAccountId, accountId); assert.equal(requestedIdentityId, identityId); assert.equal(component, 'avatar'); assert.equal(providerBinding, routeProviderBinding);
+      return { accountId, identityId, component, providerAvatarGroupId: routeReadGroupId, providerRenderableAvatarId: 'heygen-avatar' };
+    },
     ensureAccount: async () => ({ user: { id: accountId, name: 'Owner', role: 'customer' }, credits: { balance: 500, reserved: 37 }, entitlements: { standardRendering: true } }),
     reserveRender: async request => {
       if (request.input?.projectId !== projectId || request.input?.identityId !== identityId || request.input?.script !== script
         || request.input?.tier !== 'STANDARD' || resolvedProject.settings.format !== request.format) {
         throw Object.assign(new Error('Atomic scripted-photo intent changed.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
       }
+      assertFreshProviderAvatarConsentObservation(request.providerAvatarConsentObservation, {
+        accountId,
+        identityId,
+        sourceBinding: input.sourceBinding,
+        ...(forceStaleObservation ? { now: request.providerAvatarConsentObservation.observedAt + 60_001 } : {}),
+      });
       const claims = verifyScriptedPhotoQuote(request.quoteToken, {
         accountId,
         projectId,
@@ -711,6 +775,22 @@ if (scenario === 'repository') {
     await handler(req, res);
     return res;
   }
+  routeConsentStatus = 'pending';
+  assert.equal((await call(base)).statusCode, 409);
+  assert.equal(reserveCalls, 0);
+  routeConsentStatus = 'accepted';
+  routeReadGroupId = 'different-avatar-group';
+  assert.equal((await call(base)).statusCode, 409);
+  assert.equal(reserveCalls, 0);
+  routeReadGroupId = 'heygen-avatar-group';
+  routeReadFailure = new TypeError('provider readback unavailable');
+  assert.equal((await call(base)).statusCode, 503);
+  assert.equal(reserveCalls, 0);
+  routeReadFailure = undefined;
+  forceStaleObservation = true;
+  assert.equal((await call(base)).statusCode, 409);
+  assert.equal(reserveCalls, 0);
+  forceStaleObservation = false;
   const accepted = await call(base);
   assert.equal(accepted.statusCode, 202, JSON.stringify(accepted.body));
   assert.equal(authorizedTier, 'standard');
