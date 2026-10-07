@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { saveProviderConsentUrl, consumeProviderConsentUrl } from '../lib/provider-consent-url-store.js';
+import { saveProviderConsentUrl, consumeProviderConsentUrl, readProviderConsentUrl } from '../lib/provider-consent-url-store.js';
 
 test('hosted consent URL is private, digest-bound, and absent from the saved DTO', async () => {
   let written;
@@ -38,4 +38,16 @@ test('private store rejects a provider URL outside HeyGen', async () => {
   await assert.rejects(saveProviderConsentUrl({
     operationId: 'operation-1', url: 'https://other.example/consent?token=private', expiresAt: new Date(Date.now() + 60_000).toISOString(),
   }, { put: async () => { throw new Error('must not write'); } }), /unavailable/);
+});
+
+test('a new local launch challenge can read the same private session without deleting it', async () => {
+  const url = 'https://app.heygen.com/avatars/api-video/record?token=private';
+  const record = { version: 1, operationId: 'operation-1', url, expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  let reads = 0;
+  const deps = { get: async () => { reads += 1; return { stream: new Blob([JSON.stringify(record)]).stream() }; } };
+  const path = 'video-os/auth/provider-consent/' + 'a'.repeat(64) + '.json';
+  assert.equal(await readProviderConsentUrl({ path, operationId: 'operation-1' }, deps), url);
+  assert.equal(await readProviderConsentUrl({ path, operationId: 'operation-1' }, deps), url);
+  assert.equal(reads, 2);
+  await assert.rejects(readProviderConsentUrl({ path, operationId: 'wrong' }, deps), /unavailable/);
 });

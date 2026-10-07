@@ -42,6 +42,7 @@ const state = {
   providerSubmissionEnabled: false,
   hostedConsentByIdentity: new Map(),
   lastHostedConsentStatusFetchAt: 0,
+  hostedConsentPollTimer: null,
   activeIdentityId: null,
   pollTimer: null,
   pollCount: 0,
@@ -403,6 +404,11 @@ async function loadIdentities() {
     }));
     state.hostedConsentByIdentity = new Map(statuses);
     renderIdentities();
+    clearTimeout(state.hostedConsentPollTimer);
+    state.hostedConsentPollTimer = null;
+    if (statuses.some(([, result]) => result?.consent && !result.consent.terminalOutcome)) {
+      state.hostedConsentPollTimer = setTimeout(() => { loadIdentities().catch(() => {}); }, 15_000);
+    }
   }
   const processing = state.identities.some(identity => ['CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING'].includes(identity.overallStatus));
   if (processing) scheduleIdentityPolling(); else stopIdentityPolling();
