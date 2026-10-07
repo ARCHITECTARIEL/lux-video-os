@@ -31,20 +31,22 @@
 <section class="lp-legal">
   <div class="lp-legal-inner">
     <h1>Privacy Policy</h1>
-    <p class="lp-legal-updated">Last updated September 21, 2026</p>
+    <p class="lp-legal-updated">Last updated October 7, 2026</p>
 
-    <p>LUX Video OS ("LUX," "we," "us") is an AI video studio: you provide either your own photo and a recorded
-    narration (Standard) or a script and a licensed presenter selection (Premium), and we render a video for your
-    account. This policy explains what we collect to do that, how we use it, and who else ever sees it.</p>
+    <p>LUX Video OS ("LUX," "we," "us") is an AI video studio. You can provide a portrait and recorded narration
+    for a Standard video, or use an authorized presenter and voice with a script for a scripted Standard or Premium
+    video. This policy explains the information we use to create identities and videos, and the providers that may
+    process it.</p>
 
     <h2>Information we collect</h2>
     <p><strong>Account information.</strong> The email address and name you sign in with — via Google, a magic-link
     email, or a workspace username/password — and a record of when you sign in.</p>
-    <p><strong>Content you provide.</strong> For Standard renders: the portrait photo and WAV narration recording
-    you upload, and your explicit consent confirmation for that specific photo-and-recording pair. For Premium
-    renders: the script you write (or draft with the optional AI copywriter) and your chosen licensed presenter and
-    voice — Premium presenters are licensed by LUX, not your own likeness. For both: the finished video itself,
-    stored privately to your account.</p>
+    <p><strong>Content you provide.</strong> This can include portrait photos, source recordings, narration audio,
+    scripts, descriptions used to generate a presenter, presenter and voice selections, and finished videos. If you
+    create a reusable presenter or voice from someone's likeness or speech, we also record the applicable source
+    authorization and identity verification state. The portrait-and-narration Standard flow records authorization for the specific photo and recording used
+    in that render. Where the separate subject capture flow is available, it can also collect a separate consent
+    recording and the subject's acknowledgments. Saving that recording does not mean an identity is approved.</p>
     <p><strong>Payment information.</strong> Purchases are handled directly by Stripe. We never see or store your
     full card number — only what Stripe returns to confirm a purchase (amount, credits granted, transaction status).</p>
     <p><strong>Technical information.</strong> A session cookie that keeps you signed in, and standard operational
@@ -54,13 +56,14 @@
 
     <h2>How we use your information</h2>
     <ul>
-      <li>To render the specific video you request, and to let you review, download, and manage it.</li>
+      <li>To create and verify an authorized presenter or voice where that feature is available, render the video you
+      request, and let you review, download, and manage it.</li>
       <li>To operate your account: sign-in, credit balance, purchase history, and support requests.</li>
       <li>To detect and prevent abuse, and to keep the service secure and reliable.</li>
       <li>To send you service email: render-ready notifications, sign-in links, and purchase receipts.</li>
     </ul>
-    <p>We do not sell your information, and we do not use your photo, voice, or video content to train any AI
-    model — ours or anyone else's — beyond generating the specific render you asked for.</p>
+    <p>We do not sell your information. Authorized source media may be processed to create a reusable presenter or
+    voice for your account and to generate the videos you request.</p>
 
     <h2>Who we share information with</h2>
     <p>We use a small number of service providers to operate LUX, each of which only receives what it needs to do
@@ -69,23 +72,30 @@
       <li><strong>Google</strong> — if you choose to sign in with Google.</li>
       <li><strong>Resend</strong> — to deliver sign-in and notification email.</li>
       <li><strong>Stripe</strong> — to process credit-pack purchases.</li>
-      <li><strong>HeyGen</strong> — to render Premium-tier videos (receives your script and presenter/voice
-      selection, not your own photo or voice).</li>
-      <li><strong>RunPod</strong> — to render Standard-tier videos (receives your uploaded portrait and narration,
-      solely to generate that render).</li>
+      <li><strong>HeyGen</strong> — for supported scripted Standard and Premium videos and, where enabled, creation
+      and verification of reusable presenters and voices. Depending on the feature you use, this can include an
+      authorized photo or recording, presenter description, script, presenter and voice identifiers, and the
+      resulting video. A separate subject consent recording would be sent only if the applicable verification path
+      is enabled.</li>
+      <li><strong>RunPod</strong> — when selected for the portrait-and-narration Standard rendering path, to process
+      the uploaded portrait and narration for that video.</li>
       <li><strong>Vercel and Neon</strong> — our hosting, storage, and database infrastructure.</li>
       <li><strong>Sentry</strong> — sanitized error monitoring, with authentication data removed before we receive it.</li>
     </ul>
     <p>We do not share your information with any other party for their own marketing or advertising purposes.</p>
 
-    <h2>Your consent for your photo and voice</h2>
-    <p>Every Standard-tier render requires you to explicitly confirm, at submission time, that you're authorized to
-    use the specific portrait and recording you're uploading. That consent is recorded and tied to that render — it
-    is not a blanket, ongoing authorization, and it is never reused for a different video without asking again.</p>
+    <h2>Authorization for a person's likeness and voice</h2>
+    <p>The portrait-and-narration Standard flow asks you to confirm your authority to use the specific photo and
+    recording for that render. A reusable presenter or voice based on a real person requires that person's
+    authorization for the source media and permitted uses. A provider may have additional verification requirements.
+    A photo or prompt avatar with no provider consent API step still requires the person's permission when it uses or
+    imitates a real person's likeness. You can request withdrawal of a reusable identity by contacting us.</p>
 
     <h2>Data retention and deletion</h2>
-    <p>We keep your account, uploaded content, and rendered videos for as long as your account is active, so you
-    can keep coming back to your work. To request deletion of your account and associated data, email
+    <p>Account content and finished videos may remain available while your account is active. Temporary uploads and
+    separate verification recordings have their own expiry and cleanup process; withdrawal or deletion requests may
+    also require us to remove provider-held identity assets. To request deletion of your account and associated data,
+    or withdrawal of a reusable presenter or voice, email
     <a href="mailto:ariel@luxmarketingcompany.com">ariel@luxmarketingcompany.com</a> — we don't currently have a
     self-service delete button, so this goes to a real person.</p>
 
