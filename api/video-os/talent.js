@@ -129,7 +129,11 @@ async function authorizeTalentRequest(req) {
 
 async function eligiblePrivateFeaturedLooks(accountAvatars, { fetchImpl, key }) {
   const byId = new Map(accountAvatars.map((item) => [compact(item.id || item.avatar_id || item.avatarId, 255), item]));
-  const featuredLooks = FEATURED_CAST.map((item) => byId.get(item.avatarId)).filter(Boolean);
+  const featuredLooks = FEATURED_CAST.map((item) => byId.get(item.avatarId)).filter((raw) => {
+    if (!raw) return false;
+    const item = normalizeTalentItem(raw, 'avatar', { featured: true });
+    return Boolean(item.previewUrl && item.active && !item.archived && !item.blocked);
+  });
   const validGroupId = (value) => /^[A-Za-z0-9_.:-]{1,255}$/.test(value);
   const groupIds = [...new Set(featuredLooks.map((item) => compact(item.group_id, 255)).filter(validGroupId))];
   const groups = new Map();
