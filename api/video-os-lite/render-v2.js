@@ -306,7 +306,7 @@ async function handleScriptedPhotoRender(req, res, session, body, correlationId)
       ok: true,
       ...(account ? accountDto(account) : {}),
       recovered: reserved.replayed,
-      provider: { id: 'heygen', name: 'HeyGen', configured: true },
+      provider: { id: 'heygen', name: payload.tier === 'STANDARD' ? 'Standard' : 'The Render', configured: true },
       job: jobDto(reservedJob),
       workflowRunId: reservedJob.workflowRunId,
       correlationId: reservedJob.correlationId,
@@ -363,7 +363,7 @@ async function handlePremiumRender(req, res, session, body, correlationId) {
     } else {
       reservedJob = await getJob(reserved.job.id);
     }
-    return send(res, reserved.replayed ? 200 : 202, { ok: true, ...accountDto(account), provider: { id: 'heygen', name: 'HeyGen', configured: true }, job: jobDto(reservedJob), workflowRunId: reservedJob.workflowRunId, correlationId: reservedJob.correlationId, status: reservedJob.status, stage: reservedJob.status, message: reserved.replayed ? 'Existing render workflow recovered.' : 'Render workflow started.' });
+    return send(res, reserved.replayed ? 200 : 202, { ok: true, ...accountDto(account), provider: { id: 'heygen', name: 'The Render', configured: true }, job: jobDto(reservedJob), workflowRunId: reservedJob.workflowRunId, correlationId: reservedJob.correlationId, status: reservedJob.status, stage: reservedJob.status, message: reserved.replayed ? 'Existing render workflow recovered.' : 'Render workflow started.' });
   } catch (error) {
     if (shouldReleaseWorkflowReservation({ job: reservedJob, workflowDispatchAttempted })) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.', undefined, { expectedStatuses: ['reserved'] }).catch(() => {});
     captureJobError(error, { jobId: reservedJob?.id, accountId: reservedJob?.accountId, correlationId: reservedJob?.correlationId, route: 'render' });

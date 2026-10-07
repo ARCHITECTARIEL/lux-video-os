@@ -31,6 +31,7 @@ test('a Standard scripted-photo HeyGen job is displayed as Standard from its dur
     },
   });
   assert.equal(jobDto(job).tier, 'standard');
+  assert.equal(jobDto(job).provider.name, 'Standard');
 
   delete job.input.renderAuthorization;
   assert.throws(() => jobDto(job), { failureCategory: 'RECONCILIATION' });
