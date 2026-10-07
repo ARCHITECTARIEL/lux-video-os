@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -128,6 +129,14 @@ test('scripted-photo HeyGen input is fully buildable before provider claim', () 
   for (const timeout of ['NaN', '0', '2147483648']) {
     assert.throws(() => assertScriptedPhotoHeygenInput(job, { HEYGEN_TIMEOUT_MS: timeout }), { failureCategory: 'CONFIG_MISSING' });
   }
+});
+
+test('scripted-photo repository binds the avatar group through reservation and provider claim', () => {
+  const source = readFileSync(new URL('../db/repositories.js', import.meta.url), 'utf8');
+  assert.match(source, /providerAvatarGroupId:\s*identity\.providerAvatarGroupId/);
+  assert.match(source, /kind:\s*'avatar_group',\s*providerResourceId:\s*groupId/);
+  assert.match(source, /kind:\s*'avatar_group',\s*providerResourceId:\s*current\.input\.sourceBinding\?\.providerAvatarGroupId/);
+  assert.match(source, /avatarGroupId:\s*current\.input\?\.sourceBinding\?\.providerAvatarGroupId\s*\|\|\s*null/);
 });
 
 test('durable render failure codes survive Error property stripping and reject untrusted variants', () => {

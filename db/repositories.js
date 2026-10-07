@@ -240,14 +240,17 @@ export async function reserveRender({ jobId, accountId, idempotencyKey, correlat
     }
     let providerResourcesForJob = [];
     if (provider === 'heygen' && reservedInput?.identityId) {
+      const scriptedPhoto = isScriptedPhotoRequest(reservedInput);
+      const groupId = reservedInput?.sourceBinding?.providerAvatarGroupId;
       const lookId = reservedInput?.sourceBinding?.providerRenderableAvatarId || reservedInput?.avatar?.avatarId;
       const voiceId = reservedInput?.sourceBinding?.providerVoiceId || reservedInput?.voice?.voiceId;
-      if (!lookId || !voiceId) throw Object.assign(new Error('Identity provider resources are missing.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_UNVERIFIED' });
+      if (!lookId || !voiceId || (scriptedPhoto && !groupId)) throw Object.assign(new Error('Identity provider resources are missing.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_UNVERIFIED' });
       providerResourcesForJob = [
+        ...(scriptedPhoto ? [await getExactProviderResourceTx(tx, { accountId, kind: 'avatar_group', providerResourceId: groupId, lock: true })] : []),
         await getExactProviderResourceTx(tx, { accountId, kind: 'avatar_look', providerResourceId: lookId, lock: true }),
         await getExactProviderResourceTx(tx, { accountId, kind: 'voice', providerResourceId: voiceId, lock: true }),
       ];
-      if (providerResourcesForJob[0].verifiedAccountScopeId !== providerResourcesForJob[1].verifiedAccountScopeId) {
+      if (new Set(providerResourcesForJob.map(resource => resource.verifiedAccountScopeId)).size !== 1) {
         throw Object.assign(new Error('Identity provider resources are bound to different provider accounts.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_UNVERIFIED' });
       }
     }
@@ -456,7 +459,8 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
       // lock serializes the claim with grant revocation; already claimed work
       // may finish, but a revocation committed first blocks a new claim.
       await requirePersistedRenderAuthorization(current.accountId, tier, tx);
-      if (isScriptedPhotoRequest(current.input)) await assertScriptedPhotoClaimBinding(tx, current);
+      const scriptedPhoto = isScriptedPhotoRequest(current.input);
+      if (scriptedPhoto) await assertScriptedPhotoClaimBinding(tx, current);
       else if (current.input?.identityId) {
         const linked = await activeLinkedEnrollment(tx, current.accountId, current.input.identityId, { lock: true });
         const [identity] = await tx.select().from(userIdentities).where(and(
@@ -475,6 +479,7 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
         jobId: current.id,
         providerBinding,
         expectedResources: [
+          ...(scriptedPhoto ? [{ kind: 'avatar_group', providerResourceId: current.input.sourceBinding?.providerAvatarGroupId }] : []),
           { kind: 'avatar_look', providerResourceId: current.input.avatar?.avatarId },
           { kind: 'voice', providerResourceId: current.input.voice?.voiceId },
         ],
@@ -484,6 +489,7 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
           version: 'provider-video-request/v1', jobId: current.id, accountId: current.accountId,
           projectId: current.projectId, title: current.title, format: current.format,
           identityId: current.input?.identityId || null, script: current.input?.script || null,
+          avatarGroupId: current.input?.sourceBinding?.providerAvatarGroupId || null,
           avatarId: current.input?.avatar?.avatarId || null, voiceId: current.input?.voice?.voiceId || null,
         });
         const ledger = await reserveProviderOperationTx(tx, {
@@ -1208,7 +1214,7 @@ async function resolveScriptedPhotoContext(tx, { accountId, projectId, identityI
   if (!identity) throw scriptedPhotoBindingError('Video identity not found.', 404, 'OWNERSHIP');
   if (identity.archivedAt || identity.provider !== 'heygen'
     || ![identity.overallStatus, identity.avatarStatus, identity.voiceStatus].every(status => status === 'READY')
-    || !identity.providerRenderableAvatarId || !identity.providerVoiceId) {
+    || !identity.providerAvatarGroupId || !identity.providerRenderableAvatarId || !identity.providerVoiceId) {
     throw scriptedPhotoBindingError('Video identity is not ready for scripted rendering.', 409, 'CONSENT');
   }
   let consentResult;
@@ -1239,6 +1245,7 @@ async function resolveScriptedPhotoContext(tx, { accountId, projectId, identityI
     photoPrivatePathname: photo.privatePathname,
     voicePrivatePathname: voice.privatePathname,
     provider: 'heygen',
+    providerAvatarGroupId: identity.providerAvatarGroupId,
     providerRenderableAvatarId: identity.providerRenderableAvatarId,
     providerVoiceId: identity.providerVoiceId,
   };
