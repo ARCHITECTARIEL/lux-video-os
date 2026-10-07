@@ -41,6 +41,7 @@ const state = {
   identities: [],
   providerSubmissionEnabled: false,
   hostedConsentByIdentity: new Map(),
+  pendingHostedInvitations: new Map(),
   lastHostedConsentStatusFetchAt: 0,
   hostedConsentPollTimer: null,
   activeIdentityId: null,
@@ -255,6 +256,17 @@ function appendHostedConsent(container, identity) {
     const feedback = document.createElement('p');
     feedback.setAttribute('role', 'status');
     form.append(email, issue, feedback);
+    const pendingInvitation = state.pendingHostedInvitations.get(identity.id);
+    if (pendingInvitation && pendingInvitation.expiresAt > Date.now()) {
+      const link = document.createElement('input');
+      link.type = 'text';
+      link.readOnly = true;
+      link.value = pendingInvitation.url;
+      link.setAttribute('aria-label', 'Private presenter invitation link');
+      link.addEventListener('focus', () => link.select());
+      form.append(link);
+      feedback.textContent = `Share this private link with the presenter. It expires ${new Date(pendingInvitation.expiresAt).toLocaleString()}.`;
+    }
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       issue.disabled = true;
@@ -273,6 +285,12 @@ function appendHostedConsent(container, identity) {
         form.querySelector('input[readonly]')?.remove();
         form.append(link);
         feedback.textContent = `Share this private link with the presenter. It expires ${new Date(response.invitation.expiresAt).toLocaleString()}.`;
+        state.pendingHostedInvitations.set(identity.id, {
+          url: response.invitation.url,
+          expiresAt: Date.parse(response.invitation.expiresAt),
+        });
+        clearTimeout(state.hostedConsentPollTimer);
+        state.hostedConsentPollTimer = setTimeout(() => { loadIdentities().catch(() => {}); }, 15_000);
       } catch (error) {
         feedback.textContent = error.message;
       } finally {
@@ -403,10 +421,16 @@ async function loadIdentities() {
       catch { return [identity.id, null]; }
     }));
     state.hostedConsentByIdentity = new Map(statuses);
+    for (const [identityId, invitation] of state.pendingHostedInvitations) {
+      if (!Number.isFinite(invitation.expiresAt) || invitation.expiresAt <= Date.now()) state.pendingHostedInvitations.delete(identityId);
+    }
+    for (const [identityId, result] of statuses) {
+      if (result?.consent?.terminalOutcome) state.pendingHostedInvitations.delete(identityId);
+    }
     renderIdentities();
     clearTimeout(state.hostedConsentPollTimer);
     state.hostedConsentPollTimer = null;
-    if (statuses.some(([, result]) => result?.consent && !result.consent.terminalOutcome)) {
+    if (state.pendingHostedInvitations.size || statuses.some(([, result]) => result?.consent && !result.consent.terminalOutcome)) {
       state.hostedConsentPollTimer = setTimeout(() => { loadIdentities().catch(() => {}); }, 15_000);
     }
   }
