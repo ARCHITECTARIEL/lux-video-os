@@ -57,6 +57,7 @@ test('Preview deployment stays within the Hobby serverless function budget', () 
     '/api/video-os-lite/enrollments',
     '/api/video-os-lite/identities',
     '/api/video-os-lite/projects',
+    '/api/video-os-lite/provider-consent',
     '/api/video-os-lite/providers',
     '/api/video-os-lite/results',
     '/api/video-os-lite/scripted-photo',
