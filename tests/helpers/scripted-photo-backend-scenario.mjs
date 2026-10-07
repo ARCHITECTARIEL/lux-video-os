@@ -36,7 +36,7 @@ if (scenario === 'repository') {
   const project = { id: projectId, accountId, identityId, title, script, settings: { contractVersion: SCRIPTED_PHOTO_CONTRACT_VERSION, tier: 'STANDARD', format: 'vertical' } };
   const identity = {
     id: identityId, accountId, provider: 'heygen', overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY', archivedAt: null,
-    sourcePhotoAssetId: photoId, sourceVoiceAssetId: voiceId, providerRenderableAvatarId: 'heygen-avatar', providerVoiceId: 'heygen-voice',
+    sourcePhotoAssetId: photoId, sourceVoiceAssetId: voiceId, providerAvatarGroupId: 'heygen-avatar-group', providerRenderableAvatarId: 'heygen-avatar', providerVoiceId: 'heygen-voice',
   };
   const consent = { id: consentId, accountId, identityId, policyVersion: IDENTITY_CONSENT_POLICY_VERSION, photoSha256: 'a'.repeat(64), voiceSha256: 'b'.repeat(64), revokedAt: null };
   const photo = { id: photoId, accountId, kind: 'identity-photo-source', contentType: 'image/png', privatePathname: `video-os/uploads/${accountId}/photo.png`, sha256: consent.photoSha256, quarantinedAt: null };
@@ -117,6 +117,7 @@ if (scenario === 'repository') {
   } });
   const providerLedger = await import('../../db/provider-reconciliation-repository.js');
   const providerResources = [
+    { id: 'fixture-group-resource', applicationAccountId: accountId, bindingId: 'fixture-binding', originScopeKey: '6'.repeat(64), kind: 'avatar_group', providerResourceId: 'heygen-avatar-group', originOperationId: 'fixture-avatar-operation', verifiedAccountScopeId: 'fixture-verified-account' },
     { id: 'fixture-look-resource', applicationAccountId: accountId, bindingId: 'fixture-binding', originScopeKey: '6'.repeat(64), kind: 'avatar_look', providerResourceId: 'heygen-avatar', originOperationId: 'fixture-avatar-operation', verifiedAccountScopeId: 'fixture-verified-account' },
     { id: 'fixture-voice-resource', applicationAccountId: accountId, bindingId: 'fixture-binding', originScopeKey: '6'.repeat(64), kind: 'voice', providerResourceId: 'heygen-voice', originOperationId: 'fixture-voice-operation', verifiedAccountScopeId: 'fixture-verified-account' },
   ];
@@ -127,7 +128,7 @@ if (scenario === 'repository') {
       assert.equal(tx, db); assert.equal(input.accountId, accountId); assert.equal(input.jobId, jobs[0].id);
       assert.equal(input.providerBinding, providerBinding);
       assert.deepEqual(input.expectedResources, providerResources.map(({ kind, providerResourceId }) => ({ kind, providerResourceId })));
-      assert.equal(attachedReferences.length, 2);
+      assert.equal(attachedReferences.length, 3);
       return true;
     },
     reserveProviderOperationTx: async (tx, input) => {
@@ -148,7 +149,7 @@ if (scenario === 'repository') {
     getExactProviderResourceTx: async (tx, input) => {
       assert.equal(tx, db); assert.equal(input.accountId, accountId); assert.equal(input.lock, true);
       const found = providerResources.find(resource => resource.kind === input.kind && resource.providerResourceId === input.providerResourceId);
-      assert.ok(found, 'Only the exact owned presenter and voice resources are fixtures.');
+      assert.ok(found, 'Only the exact owned avatar group, presenter, and voice resources are fixtures.');
       return found;
     },
     attachProviderConsumerReferenceTx: async (tx, input) => {
@@ -242,6 +243,10 @@ if (scenario === 'repository') {
   await assert.rejects(repo.transitionJob({ jobId: jobs[0].id, stageTo: 'provider_submitting', eventType: 'test.changed_resource', providerBinding }), { failureCategory: 'CONSENT' });
   assert.equal(jobs[0].status, 'workflow_started');
   identity.providerVoiceId = 'heygen-voice';
+  identity.providerAvatarGroupId = 'changed-provider-avatar-group';
+  await assert.rejects(repo.transitionJob({ jobId: jobs[0].id, stageTo: 'provider_submitting', eventType: 'test.changed_avatar_group', providerBinding }), { failureCategory: 'CONSENT' });
+  assert.equal(jobs[0].status, 'workflow_started');
+  identity.providerAvatarGroupId = 'heygen-avatar-group';
 
   for (const input of [
     { ...context.input, script: 'changed' },
@@ -315,7 +320,7 @@ if (scenario === 'repository') {
       script,
       avatar: { avatarId: 'heygen-avatar' },
       voice: { voiceId: 'heygen-voice' },
-      sourceBinding: { provider: 'heygen', providerRenderableAvatarId: 'heygen-avatar', providerVoiceId: 'heygen-voice' },
+      sourceBinding: { provider: 'heygen', providerAvatarGroupId: 'heygen-avatar-group', providerRenderableAvatarId: 'heygen-avatar', providerVoiceId: 'heygen-voice' },
       renderAuthorization: authority('standard', jobId),
     },
   };
@@ -326,10 +331,20 @@ if (scenario === 'repository') {
   let unknownPersistenceFailure = false;
   let loadFailure;
   let releases = 0;
+  let avatarConsentStatus = 'accepted';
   const releasedMessages = [];
   mock.module('../../db/repositories.js', { namedExports: {
     ...repo,
     getJob: async () => { if (loadFailure) throw loadFailure; return job; },
+    prepareIdentityProviderRead: async ({ accountId: requestedAccountId, identityId: requestedIdentityId, component, providerBinding }) => {
+      assert.equal(requestedAccountId, accountId); assert.equal(requestedIdentityId, identityId); assert.equal(component, 'avatar');
+      assert.equal(providerBindings.has(providerBinding), true);
+      return Object.freeze({
+        version: 'heygen-identity-read-claim/v1', accountId, identityId, component,
+        providerAvatarGroupId: 'heygen-avatar-group', providerRenderableAvatarId: 'heygen-avatar', providerVoiceId: null,
+        resourceIds: Object.freeze(['fixture-group-resource', 'fixture-look-resource']),
+      });
+    },
     prepareProviderVideoRead: async ({ jobId: requestedJobId, providerJobId, providerBinding }) => {
       assert.equal(requestedJobId, jobId);
       assert.equal(providerBindings.has(providerBinding), true);
@@ -405,6 +420,14 @@ if (scenario === 'repository') {
   const submittedJobs = [];
   mock.module('../../services/heygen.js', { namedExports: {
     ...heygen,
+    getHeygenPhotoAvatarStatus: async ({ groupId, lookId }) => {
+      assert.equal(groupId, 'heygen-avatar-group'); assert.equal(lookId, 'heygen-avatar');
+      return {
+        ready: avatarConsentStatus === 'accepted', failed: false,
+        avatarGroup: { providerGroupId: groupId, status: 'completed', consentStatus: avatarConsentStatus, ready: true },
+        avatarLook: { providerLookId: lookId, providerGroupId: groupId, avatarType: 'photo_avatar', status: 'completed', ready: true },
+      };
+    },
     submitHeygen: async candidate => { submittedJobs.push(candidate); providerCalls++; if (providerFailure) throw providerFailure; return { providerJobId: 'heygen-scripted-job' }; },
     pollHeygen: async () => { pollCalls++; if (pollFailure) throw pollFailure; return pollResult; },
   } });
@@ -418,6 +441,15 @@ if (scenario === 'repository') {
   assert.equal(providerCalls, 1);
   assert.strictEqual(submittedJobs[0].input, canonicalClaimInput, 'provider must receive the canonical job returned by the locked claim');
   canonicalClaimInput = undefined;
+
+  const submittedJob = job;
+  avatarConsentStatus = 'pending';
+  job = { ...job, status: 'workflow_started', providerJobId: null };
+  const pendingConsentDenial = await submitProvider(jobId).then(() => null, error => error);
+  assert.deepEqual(parseDurableRenderFailure(pendingConsentDenial), { kind: 'heygen-preclaim', failureCategory: 'CONSENT' });
+  assert.equal(providerCalls, 1, 'pending provider consent must fail before submission');
+  avatarConsentStatus = 'accepted';
+  job = submittedJob;
 
   let pollDenial = await pollProvider(jobId, 'wrong-provider-job').then(() => null, error => error);
   assert.deepEqual(parseDurableRenderFailure(pollDenial), { kind: 'provider-submission-possible', failureCategory: 'PROVIDER_SUBMIT_UNKNOWN' });
@@ -600,7 +632,8 @@ if (scenario === 'repository') {
   const repo = await import('../../db/repositories.js');
   const input = {
     contractVersion: SCRIPTED_PHOTO_CONTRACT_VERSION, tier: 'STANDARD', projectId, identityId, script,
-    avatar: { avatarId: 'heygen-avatar' }, voice: { voiceId: 'heygen-voice' }, sourceBinding: { consentId },
+    avatar: { avatarId: 'heygen-avatar' }, voice: { voiceId: 'heygen-voice' },
+    sourceBinding: { consentId, provider: 'heygen', providerAvatarGroupId: 'heygen-avatar-group', providerRenderableAvatarId: 'heygen-avatar', providerVoiceId: 'heygen-voice' },
   };
   const resolvedProject = { id: projectId, accountId, identityId, title, script, settings: { contractVersion: SCRIPTED_PHOTO_CONTRACT_VERSION, tier: 'STANDARD', format: 'vertical' } };
   let captured;
