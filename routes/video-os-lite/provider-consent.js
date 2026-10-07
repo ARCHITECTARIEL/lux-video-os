@@ -22,8 +22,9 @@ import {
   providerSubjectConsentActivationStatus,
 } from '../../db/provider-subject-consent-repository.js';
 import { identityConsents, providerLifecycleEvents, providerLifecycleOperations } from '../../db/schema.js';
-import { getOwnedIdentity } from '../../db/repositories.js';
+import { consumeRateLimit, getOwnedIdentity } from '../../db/repositories.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { assertProviderConsentInvitationEmailConfigured, sendProviderConsentInvitationEmail } from '../../lib/video-os-notifications.js';
 import { saveProviderConsentUrl, readProviderConsentUrl } from '../../lib/provider-consent-url-store.js';
 import { PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../../lib/video-os-private-blob.js';
 import {
@@ -208,6 +209,9 @@ export function createProviderConsentHandler(dependencies = {}) {
   const findLaunchOperation = dependencies.resolveLaunchOperation || resolveLaunchOperation;
   const findIssuedEvidence = dependencies.recoverIssuedEvidence || ((tx, operationId) => recoverIssuedEvidence(tx, operationId, now()));
   const persistReadbackEvidence = dependencies.persistReadbackEvidence || persistProviderReadbackEvidence;
+  const assertInvitationEmailConfigured = dependencies.assertInvitationEmailConfigured || assertProviderConsentInvitationEmailConfigured;
+  const sendInvitation = dependencies.sendInvitation || sendProviderConsentInvitationEmail;
+  const rateLimit = dependencies.consumeRateLimit || consumeRateLimit;
 
   async function issueNotice(req, res, input) {
     assertEnabled(env);
@@ -215,6 +219,9 @@ export function createProviderConsentHandler(dependencies = {}) {
     const identity = await exactIdentity(actor.accountId, input.identityId, lookupIdentity);
     const subjectEmail = normalizedEmail(input.subjectEmail);
     if (!EMAIL.test(subjectEmail) || subjectEmail.length > 320) throw routeError('invalid_request', 'Subject email is invalid.');
+    assertInvitationEmailConfigured(env);
+    const allowed = await rateLimit({ accountId: actor.accountId, key: `hosted-consent-invite:${actor.accountId}:${identity.id}`, limit: 5, windowMs: 60 * 60 * 1000 });
+    if (!allowed) throw routeError('rate_limited', 'Presenter invitation limit reached. Try again later.', 429, 'RATE_LIMIT');
     const expiresAt = new Date(now() + INVITATION_TTL_MS);
     const invitation = issueProviderSubjectInvitation({ accountId: actor.accountId, identityId: identity.id, subjectEmail, expiresAt }, { env, now });
     await db().transaction(tx => issueNoticeTx(tx, {
@@ -222,7 +229,8 @@ export function createProviderConsentHandler(dependencies = {}) {
       tokenHash: invitation.tokenHash, expiresAt,
     }));
     const url = `${publicOrigin(env)}/provider-consent?invite=${encodeURIComponent(invitation.token)}`;
-    return send(res, 201, { ok: true, invitation: { url, expiresAt: invitation.expiresAt } });
+    await sendInvitation({ email: subjectEmail, url, expiresAt: invitation.expiresAt }, { env });
+    return send(res, 201, { ok: true, invitation: { delivered: true, expiresAt: invitation.expiresAt } });
   }
 
   async function acceptNotice(req, res, input) {

@@ -252,41 +252,26 @@ function appendHostedConsent(container, identity) {
     const issue = document.createElement('button');
     issue.type = 'submit';
     issue.className = 'button secondary';
-    issue.textContent = 'Prepare invitation';
+    issue.textContent = 'Email invitation';
     const feedback = document.createElement('p');
     feedback.setAttribute('role', 'status');
     form.append(email, issue, feedback);
     const pendingInvitation = state.pendingHostedInvitations.get(identity.id);
     if (pendingInvitation && pendingInvitation.expiresAt > Date.now()) {
-      const link = document.createElement('input');
-      link.type = 'text';
-      link.readOnly = true;
-      link.value = pendingInvitation.url;
-      link.setAttribute('aria-label', 'Private presenter invitation link');
-      link.addEventListener('focus', () => link.select());
-      form.append(link);
-      feedback.textContent = `Share this private link with the presenter. It expires ${new Date(pendingInvitation.expiresAt).toLocaleString()}.`;
+      feedback.textContent = `Invitation emailed to the presenter. It expires ${new Date(pendingInvitation.expiresAt).toLocaleString()}.`;
     }
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       issue.disabled = true;
-      feedback.textContent = 'Preparing invitation…';
+      feedback.textContent = 'Sending invitation…';
       try {
         const response = await api('/api/video-os-lite/provider-consent', {
           method: 'POST',
           body: JSON.stringify({ action: 'issue-notice', identityId: identity.id, subjectEmail: email.value.trim() }),
         });
-        const link = document.createElement('input');
-        link.type = 'text';
-        link.readOnly = true;
-        link.value = response.invitation.url;
-        link.setAttribute('aria-label', 'Private presenter invitation link');
-        link.addEventListener('focus', () => link.select());
-        form.querySelector('input[readonly]')?.remove();
-        form.append(link);
-        feedback.textContent = `Share this private link with the presenter. It expires ${new Date(response.invitation.expiresAt).toLocaleString()}.`;
+        if (response.invitation.delivered !== true) throw new Error('Invitation delivery was not confirmed.');
+        feedback.textContent = `Invitation emailed to the presenter. It expires ${new Date(response.invitation.expiresAt).toLocaleString()}.`;
         state.pendingHostedInvitations.set(identity.id, {
-          url: response.invitation.url,
           expiresAt: Date.parse(response.invitation.expiresAt),
         });
         clearTimeout(state.hostedConsentPollTimer);

@@ -11,6 +11,7 @@ const secret = 'i'.repeat(48);
 const identity = { id: identityId, archivedAt: null, providerAvatarGroupId: 'private-group', providerRenderableAvatarId: 'private-look' };
 const binding = { bindingId: 'binding-1', originScopeKey: 'a'.repeat(64), verifiedAccountScopeId: 'scope-1' };
 const digest = value => createHash('sha256').update(value).digest('hex');
+let sentInvitation;
 
 function response() {
   return { headers: {}, setHeader(name, value) { this.headers[name] = value; }, end(value) { this.body = value ? JSON.parse(value) : undefined; } };
@@ -42,6 +43,9 @@ function base(overrides = {}) {
       return { providerConsentStatus: status, evidenceDigest: 'e'.repeat(64), privateEvidenceRef: 'video-os/auth/provider-consent-readback/evidence.json' };
     },
     now: () => Date.parse('2026-10-07T18:00:00Z'),
+    assertInvitationEmailConfigured: () => {},
+    consumeRateLimit: async () => true,
+    sendInvitation: async input => { sentInvitation = input; return { sent: true }; },
     ...overrides,
   });
 }
@@ -59,16 +63,39 @@ test('route is default-off before invitation state or provider work', async () =
   assert.equal(touched, false);
 });
 
-test('owner can issue a local invitation but the route sends no email and exposes no provider reference', async () => {
+test('owner issues one rate-limited email invitation without exposing its bearer in the response', async () => {
   let challenge;
   const handler = base({ issueNoticeTx: async (_tx, input) => { challenge = input; return {}; } });
   const res = response();
   await handler(request({ action: 'issue-notice', identityId, subjectEmail: 'Subject@Example.test' }), res);
   assert.equal(res.statusCode, 201);
-  assert.ok(res.body.invitation.url.startsWith(`${ORIGIN}/provider-consent?invite=`));
+  assert.ok(sentInvitation.url.startsWith(`${ORIGIN}/provider-consent?invite=`));
+  assert.equal(res.body.invitation.delivered, true);
+  assert.equal(JSON.stringify(res.body).includes('invite='), false);
   assert.equal(JSON.stringify(res.body).includes('private-group'), false);
   assert.equal(challenge.subjectEmail, 'subject@example.test');
   assert.match(challenge.tokenHash, /^[a-f0-9]{64}$/);
+});
+
+test('invitation sender configuration and rate limit fail before a challenge is created', async () => {
+  let created = 0;
+  const req = request({ action: 'issue-notice', identityId, subjectEmail: 'subject@example.test' });
+  const unconfigured = response();
+  await base({ assertInvitationEmailConfigured: () => { throw Object.assign(new Error('Email unavailable.'), { statusCode: 503 }); }, issueNoticeTx: async () => { created += 1; } })(req, unconfigured);
+  assert.equal(unconfigured.statusCode, 503);
+  const limited = response();
+  await base({ consumeRateLimit: async () => false, issueNoticeTx: async () => { created += 1; } })(req, limited);
+  assert.equal(limited.statusCode, 429);
+  assert.equal(created, 0);
+});
+
+test('failed email delivery never reports an invitation as delivered', async () => {
+  const res = response();
+  await base({ issueNoticeTx: async () => ({}), sendInvitation: async () => { throw Object.assign(new Error('Provider details hidden.'), { statusCode: 502 }); } })(
+    request({ action: 'issue-notice', identityId, subjectEmail: 'subject@example.test' }), res);
+  assert.equal(res.statusCode, 502);
+  assert.equal(res.body.ok, false);
+  assert.equal(JSON.stringify(res.body).includes('invite='), false);
 });
 
 test('affirmative notice requires the invited subject session', async () => {
@@ -76,7 +103,7 @@ test('affirmative notice requires the invited subject session', async () => {
   const issuer = base({ issueNoticeTx: async () => {} });
   const issued = response();
   await issuer(request({ action: 'issue-notice', identityId, subjectEmail: 'subject@example.test' }), issued);
-  invitationUrl = issued.body.invitation.url;
+  invitationUrl = sentInvitation.url;
   const invitationToken = new URL(invitationUrl).searchParams.get('invite');
   let accepted = false;
   const wrongActor = base({ acceptNoticeTx: async () => { accepted = true; } });
@@ -101,7 +128,7 @@ test('subject session reserves before one provider POST and receives only a loca
   const issuer = base({ issueNoticeTx: async () => {} });
   const issued = response();
   await issuer(request({ action: 'issue-notice', identityId, subjectEmail: 'subject@example.test' }), issued);
-  const invitationToken = new URL(issued.body.invitation.url).searchParams.get('invite');
+  const invitationToken = new URL(sentInvitation.url).searchParams.get('invite');
   const order = [];
   let providerInput;
   const handler = base({
@@ -218,7 +245,7 @@ test('exact create-session retry keeps the return digest stable and reissues lau
   const issuer = base({ issueNoticeTx: async () => {} });
   const issued = response();
   await issuer(request({ action: 'issue-notice', identityId, subjectEmail: 'subject@example.test' }), issued);
-  const invitationToken = new URL(issued.body.invitation.url).searchParams.get('invite');
+  const invitationToken = new URL(sentInvitation.url).searchParams.get('invite');
   const reservations = [];
   let providerPosts = 0;
   let providerUrlReads = 0;

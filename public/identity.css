@@ -642,7 +642,6 @@ legend { margin: 0 0 22px; padding: 0; font-size: 23px; font-weight: 650; letter
 .hosted-consent-panel p { font-size: 12px; }
 .hosted-consent-form { display: grid; gap: 8px; margin-top: 12px; }
 .hosted-consent-form input { width: 100%; min-width: 0; min-height: 42px; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); }
-.hosted-consent-form input[readonly] { font-size: 12px; }
 .hosted-consent-form .button { justify-self: start; }
 .wizard-actions {
   z-index: 4;
