@@ -215,6 +215,7 @@ test('completed private looks stay unavailable while their group consent is pend
     assert.equal(pending.avatarGroup.consentStatus, 'pending');
   }
   assert.equal((await statusFor(null, 'digital_twin')).ready, false, 'digital twin needs explicit accepted consent');
+  assert.equal((await statusFor(null, 'prompt_avatar')).ready, false, 'prompt avatar has no qualified LUX subject-consent path in this release');
   assert.equal((await statusFor(null, 'unknown_type')).ready, false, 'unknown type cannot inherit photo-avatar exemption');
   assert.equal((await statusFor('rejected', 'digital_twin')).ready, false);
   assert.equal((await statusFor('accepted', 'digital_twin')).ready, true);

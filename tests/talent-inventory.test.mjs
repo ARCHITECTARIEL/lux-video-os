@@ -154,26 +154,29 @@ test('private featured looks require exact accepted group consent before selecti
   withInventoryEnvironment(t);
   const pending = FEATURED_CAST[0];
   const accepted = FEATURED_CAST[2];
+  const unsupported = FEATURED_CAST[3];
   const groupReads = [];
   const fetchImpl = async (url) => {
     if (url.includes('ownership=private')) return response({ data: [
       { id: pending.avatarId, group_id: 'group-pending', avatar_type: 'digital_twin', status: 'completed', preview_image_url: 'https://media.example/pending.jpg' },
       { id: accepted.avatarId, group_id: 'group-accepted', avatar_type: 'digital_twin', status: 'completed', preview_image_url: 'https://media.example/accepted.jpg' },
+      { id: unsupported.avatarId, group_id: 'group-null', avatar_type: 'prompt_avatar', status: 'completed', preview_image_url: 'https://media.example/unknown.jpg' },
     ] });
     if (url.includes('ownership=public')) return response({ data: [] });
     if (url.includes('/voices')) return response({ data: [{ voice_id: accepted.voiceId, status: 'active' }] });
-    if (url.endsWith('/group-pending') || url.endsWith('/group-accepted')) {
+    if (url.endsWith('/group-pending') || url.endsWith('/group-accepted') || url.endsWith('/group-null')) {
       groupReads.push(url);
-      return response({ data: { id: url.split('/').pop(), status: 'completed', consent_status: url.endsWith('/group-pending') ? 'pending' : 'accepted' } });
+      return response({ data: { id: url.split('/').pop(), status: 'completed', consent_status: url.endsWith('/group-pending') ? 'pending' : url.endsWith('/group-null') ? null : 'accepted' } });
     }
     throw new Error('Unexpected provider inventory request');
   };
   const { talent } = await loadTalentInventory({ fetchImpl });
   assert.equal(talent.avatars.find((item) => item.id === 'featured:' + pending.key).providerReady, false);
   assert.equal(talent.avatars.find((item) => item.id === 'featured:' + accepted.key).providerReady, true);
+  assert.equal(talent.avatars.find((item) => item.id === 'featured:' + unsupported.key).providerReady, false, 'prompt avatar has no qualified LUX consent path');
   assert.equal(talent.avatars.find((item) => item.id === 'featured:oso').providerReady, false, 'missing private look cannot use local fallback as live readiness');
   assert.equal(talent.voices.find((item) => item.id === 'featured:' + pending.key + ':voice').providerReady, false, 'missing private voice cannot use local fallback as live readiness');
-  assert.equal(groupReads.length, 2);
+  assert.equal(groupReads.length, 3);
   const unavailable = await loadTalentInventory({ fetchImpl: async (url) => url.includes('/v3/avatars/group-') ? response({}, 503) : fetchImpl(url) });
   assert.equal(unavailable.talent.avatars.find((item) => item.id === 'featured:' + accepted.key).providerReady, false);
   assert.equal(unavailable.connection.status, 'degraded');
