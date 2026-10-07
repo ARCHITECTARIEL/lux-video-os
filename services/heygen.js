@@ -7,6 +7,8 @@ const IDENTITY_CONTENT_TYPES = new Set(['image/jpeg', 'image/png', 'audio/mpeg',
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,255}$/;
 const TERMINAL_READY = new Set(['complete', 'completed', 'ready', 'success', 'succeeded']);
 const TERMINAL_FAILED = new Set(['error', 'failed', 'failure', 'rejected']);
+const AVATAR_TYPES = new Set(['photo_avatar', 'prompt_avatar', 'digital_twin']);
+const GROUP_CONSENT_STATES = new Set(['pending', 'accepted', 'rejected']);
 
 export function assertHeygenConfigured(env = process.env) {
   const configured = Boolean(String(env.HEYGEN_API_KEY || env.HEYGEN_TOKEN || '').trim());
@@ -189,10 +191,11 @@ export function normalizeAvatarGroup(payload) {
   const data = payload?.data || payload || {};
   const failureCode = safeProviderErrorCode(data?.error?.code);
   const status = normalizeIdentityProviderStatus(data.status, { hasFailure: Boolean(failureCode || data?.error?.message) });
+  const rawConsent = typeof data.consent_status === 'string' ? data.consent_status.toLowerCase() : null;
   return {
     providerGroupId: typeof data.id === 'string' ? data.id : null,
     status,
-    consentStatus: typeof data.consent_status === 'string' ? data.consent_status.toLowerCase() : null,
+    consentStatus: rawConsent && !GROUP_CONSENT_STATES.has(rawConsent) ? 'unknown' : rawConsent,
     ready: status === 'completed',
     failureCode,
     failureMessage: status === 'failed' ? 'HeyGen avatar processing failed.' : null,
@@ -208,6 +211,7 @@ export function normalizeAvatarLook(payload) {
   return {
     providerLookId: typeof data.id === 'string' ? data.id : null,
     providerGroupId: typeof data.group_id === 'string' ? data.group_id : null,
+    avatarType: AVATAR_TYPES.has(data.avatar_type) ? data.avatar_type : 'unknown',
     status,
     ready: status === 'completed' && typeof data.id === 'string',
     supportedEngines: Array.isArray(data.supported_api_engines) ? data.supported_api_engines.filter((item) => typeof item === 'string').slice(0, 10) : [],
@@ -295,10 +299,14 @@ export async function getHeygenPhotoAvatarStatus({ groupId, lookId }) {
   ]);
   const avatarGroup = normalizeAvatarGroup(groupPayload);
   const avatarLook = normalizeAvatarLook(lookPayload);
+  const exactGroup = avatarGroup.providerGroupId === groupReference && avatarLook.providerGroupId === groupReference;
+  const knownType = avatarLook.avatarType !== 'unknown';
+  const consentAccepted = avatarGroup.consentStatus === 'accepted'
+    || (avatarGroup.consentStatus === null && ['photo_avatar', 'prompt_avatar'].includes(avatarLook.avatarType));
   return {
     avatarGroup,
     avatarLook,
-    ready: avatarGroup.ready && avatarLook.ready,
+    ready: avatarGroup.ready && avatarLook.ready && exactGroup && knownType && consentAccepted,
     failed: avatarGroup.status === 'failed' || avatarLook.status === 'failed',
   };
 }

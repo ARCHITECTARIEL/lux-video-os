@@ -176,7 +176,7 @@ test('status reads use exact group, look, and voice endpoints', async () => {
   const urls = [];
   globalThis.fetch = async (url) => {
     urls.push(url);
-    if (url.includes('/looks/')) return new Response(JSON.stringify({ data: { id: 'look_1', group_id: 'group_1', status: 'completed' } }), { status: 200 });
+    if (url.includes('/looks/')) return new Response(JSON.stringify({ data: { id: 'look_1', group_id: 'group_1', avatar_type: 'photo_avatar', status: 'completed' } }), { status: 200 });
     if (url.includes('/voices/')) return new Response(JSON.stringify({ data: { voice_id: 'voice_1', status: 'complete', preview_audio_url: 'https://files.heygen.ai/voice.mp3' } }), { status: 200 });
     return new Response(JSON.stringify({ data: { id: 'group_1', status: 'completed' } }), { status: 200 });
   };
@@ -199,4 +199,25 @@ test('provider HTTP failures expose only a sanitized code and generic message', 
     cloneHeygenVoice({ accountId: 'acct-proof', assetId: 'asset_2', name: 'CEO Voice' }),
     (error) => error.message === 'HeyGen request failed with HTTP 403.' && error.providerErrorCode === 'plan_upgrade_required' && !error.message.includes('secret.example'),
   );
+});
+
+test('completed private looks stay unavailable while their group consent is pending or unknown', async () => {
+  process.env.HEYGEN_API_KEY = 'test-key';
+  async function statusFor(consentStatus, avatarType, lookGroup = 'group_1') {
+    globalThis.fetch = async (url) => new Response(JSON.stringify({ data: url.includes('/looks/')
+      ? { id: 'look_1', group_id: lookGroup, avatar_type: avatarType, status: 'completed' }
+      : { id: 'group_1', status: 'completed', consent_status: consentStatus } }), { status: 200 });
+    return getHeygenPhotoAvatarStatus({ groupId: 'group_1', lookId: 'look_1' });
+  }
+  for (const type of ['digital_twin', 'photo_avatar']) {
+    const pending = await statusFor('pending', type);
+    assert.equal(pending.ready, false, type + ' cannot bypass pending group consent');
+    assert.equal(pending.avatarGroup.consentStatus, 'pending');
+  }
+  assert.equal((await statusFor(null, 'digital_twin')).ready, false, 'digital twin needs explicit accepted consent');
+  assert.equal((await statusFor(null, 'unknown_type')).ready, false, 'unknown type cannot inherit photo-avatar exemption');
+  assert.equal((await statusFor('rejected', 'digital_twin')).ready, false);
+  assert.equal((await statusFor('accepted', 'digital_twin')).ready, true);
+  assert.equal((await statusFor(null, 'photo_avatar')).ready, true, 'typed photo avatar may use documented not-applicable consent');
+  assert.equal((await statusFor('accepted', 'digital_twin', 'other_group')).ready, false, 'look must belong to the exact group');
 });
