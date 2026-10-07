@@ -29,7 +29,7 @@
         "@sentry/node": "^10.74.0",
         "@vercel/analytics": "^2.0.1",
         "@vercel/blob": "latest",
-        "@vercel/sandbox": "2.8.0",
+        "@vercel/sandbox": "3.5.1",
         "ai": "^7.0.0",
         "bufferutil": "^4.1.0",
         "drizzle-orm": "^0.45.2",
