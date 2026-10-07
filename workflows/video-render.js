@@ -1,11 +1,11 @@
 import { FatalError, sleep } from 'workflow';
 import { createHash } from 'node:crypto';
-import { finalizeReadyJob, getJob, prepareProviderVideoFinish, prepareProviderVideoRead, requireJobRenderAuthorization, markJobFailedAndRelease, transitionJob } from '../db/repositories.js';
+import { finalizeReadyJob, getJob, prepareProviderVideoFinish, prepareProviderVideoRead, prepareIdentityProviderRead, requireJobRenderAuthorization, markJobFailedAndRelease, transitionJob } from '../db/repositories.js';
 import { featureEnabled } from '../lib/video-os-security.js';
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
 import { notifyRenderReady } from '../lib/video-os-render-notify.js';
-import { assertHeygenConfigured, pollHeygen, submitHeygen } from '../services/heygen.js';
+import { assertHeygenConfigured, getHeygenPhotoAvatarStatus, pollHeygen, submitHeygen } from '../services/heygen.js';
 import {
   assertFreshHeygenSpaceBinding,
   resolveFreshHeygenSpaceBinding,
@@ -50,6 +50,17 @@ function assertRenderProviderClaim(claimedJob, providerBinding, { jobId, account
     });
   }
   return claimedJob;
+}
+
+export function assertProviderAvatarConsentClaim(job, readClaim, provider) {
+  if (!job?.accountId || !job.input?.identityId || !job.input?.avatar?.avatarId
+    || readClaim?.accountId !== job.accountId || readClaim?.identityId !== job.input.identityId
+    || !readClaim?.providerAvatarGroupId || readClaim?.providerRenderableAvatarId !== job.input.avatar.avatarId
+    || provider?.ready !== true || provider.avatarGroup?.providerGroupId !== readClaim.providerAvatarGroupId
+    || provider.avatarLook?.providerLookId !== readClaim.providerRenderableAvatarId) {
+    throw Object.assign(new Error('Provider avatar subject consent is not verified.'), { statusCode: 409, failureCategory: 'CONSENT' });
+  }
+  return true;
 }
 
 export function assertProviderVideoReadClaim(readClaim, providerBinding, { jobId, providerJobId = null }) {
@@ -114,6 +125,9 @@ export async function submitProvider(jobId) {
   let claimedJob;
   try {
     providerBinding = await resolveFreshHeygenSpaceBinding({ accountId: job.accountId });
+    const avatarRead = await prepareIdentityProviderRead({ accountId: job.accountId, identityId: job.input.identityId, component: 'avatar', providerBinding });
+    const avatarStatus = await getHeygenPhotoAvatarStatus({ groupId: avatarRead.providerAvatarGroupId, lookId: avatarRead.providerRenderableAvatarId });
+    assertProviderAvatarConsentClaim(job, avatarRead, avatarStatus);
     const transitionedJob = await transitionJob({ jobId, stageTo: 'provider_submitting', eventType: 'provider.submit_started', providerBinding });
     submissionClaimed = true;
     claimedJob = assertRenderProviderClaim(transitionedJob, providerBinding, { jobId, accountId: job.accountId });
