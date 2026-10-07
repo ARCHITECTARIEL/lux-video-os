@@ -192,3 +192,25 @@ test('unconfigured provider cannot present curated private avatars as ready', as
   assert.equal(inventory.connection.connected, false);
   assert.ok(inventory.talent.avatars.every((item) => item.providerReady === false));
 });
+
+test('concurrent inventory requests share only in-flight group consent reads', async (t) => {
+  withInventoryEnvironment(t);
+  const featured = FEATURED_CAST[0];
+  let groupReads = 0;
+  const fetchImpl = async (url) => {
+    if (url.includes('ownership=private')) return response({ data: [
+      { id: featured.avatarId, group_id: 'group-shared', avatar_type: 'digital_twin', status: 'completed', preview_image_url: 'https://media.example/featured.jpg' },
+    ] });
+    if (url.includes('ownership=public') || url.includes('/voices')) return response({ data: [] });
+    if (url.endsWith('/group-shared')) {
+      groupReads += 1;
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return response({ data: { id: 'group-shared', status: 'completed', consent_status: 'accepted' } });
+    }
+    throw new Error('Unexpected provider inventory request');
+  };
+  await Promise.all([loadTalentInventory({ fetchImpl }), loadTalentInventory({ fetchImpl })]);
+  assert.equal(groupReads, 1);
+  await loadTalentInventory({ fetchImpl });
+  assert.equal(groupReads, 2, 'a later request must recheck provider consent');
+});
