@@ -221,6 +221,7 @@ export const identityConsents = pgTable('identity_consents', {
     and ${table.archiveDeleteAcknowledgment}
     and ${table.audioExtractionAuthorization} = false
     and ${table.temporaryPublicProviderExposureAuthorization} = false
+    and ${table.consentPurpose} is not null
     and ${table.consentPurpose} = 'hosted-avatar-consent'
   ) or (
     ${table.policyVersion} <> 'identity-provider-subject-consent-v3'

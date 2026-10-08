@@ -8,6 +8,7 @@ ALTER TABLE "identity_consents" ADD CONSTRAINT "identity_consents_authorizations
     and "identity_consents"."archive_delete_acknowledgment"
     and "identity_consents"."audio_extraction_authorization" = false
     and "identity_consents"."temporary_public_provider_exposure_authorization" = false
+    and "identity_consents"."consent_purpose" is not null
     and "identity_consents"."consent_purpose" = 'hosted-avatar-consent'
   ) or (
     "identity_consents"."policy_version" <> 'identity-provider-subject-consent-v3'
