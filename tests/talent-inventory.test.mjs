@@ -214,3 +214,42 @@ test('concurrent inventory requests share only in-flight group consent reads', a
   await loadTalentInventory({ fetchImpl });
   assert.equal(groupReads, 2, 'a later request must recheck provider consent');
 });
+
+test('in-flight group consent reads stay isolated by credential and failed reads are retried', async (t) => {
+  withInventoryEnvironment(t);
+  const featured = FEATURED_CAST[0];
+  const groupKeys = [];
+  let retrySecondCredential = false;
+  const fetchImpl = async (url, options = {}) => {
+    if (url.includes('ownership=private')) return response({ data: [
+      { id: featured.avatarId, group_id: 'group-scoped', avatar_type: 'digital_twin', status: 'completed', preview_image_url: 'https://media.example/featured.jpg' },
+    ] });
+    if (url.includes('ownership=public') || url.includes('/voices')) return response({ data: [] });
+    if (url.endsWith('/group-scoped')) {
+      const credential = options.headers?.['X-Api-Key'];
+      groupKeys.push(credential);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return credential === 'credential-b' && !retrySecondCredential
+        ? response({}, 503)
+        : response({ data: { id: 'group-scoped', status: 'completed', consent_status: 'accepted' } });
+    }
+    throw new Error('Unexpected provider inventory request');
+  };
+  const first = { fetchImpl, env: { HEYGEN_API_KEY: 'credential-a' } };
+  const second = { fetchImpl, env: { HEYGEN_API_KEY: 'credential-b' } };
+  const [a1, a2, b1] = await Promise.all([
+    loadTalentInventory(first), loadTalentInventory(first), loadTalentInventory(second),
+  ]);
+  assert.deepEqual(groupKeys.sort(), ['credential-a', 'credential-b']);
+  assert.equal(a1.talent.avatars.find(item => item.id === `featured:${featured.key}`).providerReady, true);
+  assert.equal(a2.talent.avatars.find(item => item.id === `featured:${featured.key}`).providerReady, true);
+  assert.equal(b1.talent.avatars.find(item => item.id === `featured:${featured.key}`).providerReady, false);
+  assert.equal(b1.connection.status, 'degraded');
+  assert.equal(JSON.stringify([a1, a2, b1]).includes('credential-a'), false);
+  assert.equal(JSON.stringify([a1, a2, b1]).includes('credential-b'), false);
+
+  retrySecondCredential = true;
+  const b2 = await loadTalentInventory(second);
+  assert.equal(groupKeys.filter(key => key === 'credential-b').length, 2);
+  assert.equal(b2.talent.avatars.find(item => item.id === `featured:${featured.key}`).providerReady, true);
+});

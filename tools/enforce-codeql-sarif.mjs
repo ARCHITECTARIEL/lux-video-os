@@ -87,6 +87,18 @@ export const ALLOWED_FINDINGS = [
     reason: "This is a test assertion verifying a response body does not leak the private Blob storage domain, not a runtime trust decision made on untrusted input. The flagged substring check never gates access or sanitizes anything in production code.",
   },
   {
+    ruleId: 'js/incomplete-url-substring-sanitization',
+    file: 'tests/provider-consent-email.test.mjs',
+    lineHash: '3ff7a37d658f2415:1',
+    reason: "This negative assertion checks that an invitation email does not disclose the provider hostname. It does not validate, redirect, sanitize, or authorize a URL at runtime; the actual email-link validation is in lib/video-os-notifications.js.",
+  },
+  {
+    ruleId: 'js/incomplete-url-substring-sanitization',
+    file: 'tests/provider-consent-route.test.mjs',
+    lineHash: 'cb76023e02ce3028:1',
+    reason: "This negative assertion checks that the create-session response omits a private provider hostname. It is test-only leak detection, not a runtime URL trust decision; the route issues a local one-time launch URL.",
+  },
+  {
     ruleId: 'js/incomplete-sanitization',
     file: 'tests/heygen-reconciliation-contract.test.mjs',
     lineHash: '2f3e7b9a9f2c42f5:1',

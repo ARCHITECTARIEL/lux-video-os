@@ -218,3 +218,12 @@ test('CodeQL SARIF CLI exits 0 for zero results and 1 for blocking findings', as
     );
   });
 });
+
+test('reviewed consent leak assertions do not allow a credential-cache finding', () => {
+  const email = { ruleId: 'js/incomplete-url-substring-sanitization', securitySeverity: '7.8', file: 'tests/provider-consent-email.test.mjs', line: 29, lineHash: '3ff7a37d658f2415:1' };
+  const route = { ruleId: 'js/incomplete-url-substring-sanitization', securitySeverity: '7.8', file: 'tests/provider-consent-route.test.mjs', line: 152, lineHash: 'cb76023e02ce3028:1' };
+  const cache = { ruleId: 'js/insufficient-password-hash', securitySeverity: '8.1', file: 'api/video-os/talent.js', line: 147, lineHash: 'f5906bef65266aa6:1' };
+  const { allowed, blocking } = partitionAllowedFindings([email, route, cache]);
+  assert.deepEqual(allowed.map(({ finding }) => finding), [email, route]);
+  assert.deepEqual(blocking, [cache]);
+});
