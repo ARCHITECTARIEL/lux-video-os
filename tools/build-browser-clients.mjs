@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 // Use the already locked SDK and bundler. Do not load upload code from a CDN.
@@ -7,7 +7,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const destination = new URL('../public/vendor/', import.meta.url);
 await mkdir(destination, { recursive: true });
 const sdk = JSON.parse(await readFile(new URL('../node_modules/@vercel/blob/package.json', import.meta.url), 'utf8'));
-await build({
+const result = await build({
   absWorkingDir: root,
   stdin: { contents: "export { upload } from '@vercel/blob/client';", resolveDir: root, sourcefile: 'blob-browser-entry.js' },
   outfile: fileURLToPath(new URL('vercel-blob-client.js', destination)),
@@ -18,5 +18,13 @@ await build({
   minify: true,
   legalComments: 'linked',
   banner: { js: `// Generated from locked @vercel/blob ${sdk.version}; run node tools/build-browser-clients.mjs.` },
+  write: false,
 });
+for (const file of result.outputFiles) {
+  const existing = await readFile(file.path).catch(error => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (!existing?.equals(file.contents)) await writeFile(file.path, file.contents);
+}
 console.log(`Bundled private-upload browser client from @vercel/blob ${sdk.version}.`);
