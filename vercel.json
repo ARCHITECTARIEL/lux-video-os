@@ -18,6 +18,10 @@
             "dest": "/api/video-os-lite/workspace.js"
         },
         {
+            "src": "/api/video-os-lite/provider-consent",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
             "src": "/api/video-os/talent",
             "dest": "/api/video-os/talent.js"
         },
@@ -121,6 +125,14 @@
             "dest": "/identity.html",
             "headers": {
                 "Cache-Control": "no-store"
+            }
+        },
+        {
+            "src": "/provider-consent",
+            "dest": "/provider-consent.html",
+            "headers": {
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer"
             }
         },
         {

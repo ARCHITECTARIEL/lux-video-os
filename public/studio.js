@@ -872,6 +872,8 @@ function renderIdentityLibrary() {
     const actions = node('div', 'result-actions');
     const use = node('button', 'button secondary compact', 'Use in Studio');
     use.type = 'button';
+    use.disabled = identity.ready !== true;
+    if (use.disabled) use.title = 'This presenter is still being verified.';
     use.addEventListener('click', () => {
       selectStandardIdentity(identity);
       choosePremiumIdentity(identity);

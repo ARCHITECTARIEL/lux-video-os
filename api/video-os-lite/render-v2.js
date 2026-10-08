@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import { start } from 'workflow/api';
 import { accountDto, jobDto } from '../../db/dto.js';
-import { claimWorkflowStart, consumeRateLimit, requirePersistedRenderAuthorization, ensureAccount, getJob, getOwnedProject, getOwnedScriptedPhotoJobByIdempotency, getRenderAuthorizedIdentity, markJobFailedAndRelease, reserveRender, setWorkflowRun } from '../../db/repositories.js';
+import { claimWorkflowStart, consumeRateLimit, requirePersistedRenderAuthorization, ensureAccount, getJob, getOwnedProject, getOwnedScriptedPhotoJobByIdempotency, getRenderAuthorizedIdentity, getScriptedPhotoReservationContext, markJobFailedAndRelease, prepareIdentityProviderRead, reserveRender, setWorkflowRun } from '../../db/repositories.js';
+import { resolveFreshHeygenSpaceBinding } from '../../db/heygen-space-binding-repository.js';
 import { standardNarrationRepository } from '../../db/standard-narration-repository.js';
 import { assertTalentSelectionsAvailable, loadTalentInventory } from '../video-os/talent.js';
 import { captureJobError } from '../../lib/video-os-observability.js';
@@ -13,6 +14,8 @@ import { videoRenderWorkflowMetadata } from '../../workflows/video-render-metada
 import { standardRenderWorkflowMetadata } from '../../workflows/standard-render-metadata.js';
 import { sanitizeStandardNarrationReason, STANDARD_CONTRACT_VERSION, standardNarrationActivation } from '../../lib/standard-narration-contract.js';
 import { hasScriptedPhotoContractMarker, isScriptedPhotoRequest, scriptedPhotoActivation, validateScriptedPhotoTransport } from '../../lib/scripted-photo-contract.js';
+import { observeProviderAvatarConsent } from '../../lib/provider-avatar-consent.js';
+import { getHeygenPhotoAvatarStatus } from '../../services/heygen.js';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -244,6 +247,23 @@ async function handleScriptedPhotoRender(req, res, session, body, correlationId)
       const activation = scriptedPhotoActivation(payload.tier);
       await requirePersistedRenderAuthorization(session.accountId, activation.tier);
       account = await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: DEFAULT_TRIAL_CREDITS });
+      const context = await getScriptedPhotoReservationContext({
+        accountId: session.accountId,
+        projectId: payload.projectId,
+        identityId: payload.identityId,
+        title: payload.title,
+        script: payload.script,
+        tier: payload.tier,
+      });
+      const providerAvatarConsentObservation = await observeProviderAvatarConsent({
+        accountId: session.accountId,
+        identityId: payload.identityId,
+        sourceBinding: context.input.sourceBinding,
+      }, {
+        resolveProviderBinding: resolveFreshHeygenSpaceBinding,
+        prepareProviderRead: prepareIdentityProviderRead,
+        readProviderAvatarStatus: getHeygenPhotoAvatarStatus,
+      });
       reserved = await reserveRender({
         jobId: `job-${crypto.randomUUID()}`,
         accountId: session.accountId,
@@ -255,6 +275,7 @@ async function handleScriptedPhotoRender(req, res, session, body, correlationId)
         format: payload.format,
         costCredits: activation.costCredits,
         quoteToken: payload.quoteToken,
+        providerAvatarConsentObservation,
         input: {
           contractVersion: payload.contractVersion,
           tier: payload.tier,
@@ -285,7 +306,7 @@ async function handleScriptedPhotoRender(req, res, session, body, correlationId)
       ok: true,
       ...(account ? accountDto(account) : {}),
       recovered: reserved.replayed,
-      provider: { id: 'heygen', name: 'HeyGen', configured: true },
+      provider: { id: 'heygen', name: payload.tier === 'STANDARD' ? 'Standard' : 'The Render', configured: true },
       job: jobDto(reservedJob),
       workflowRunId: reservedJob.workflowRunId,
       correlationId: reservedJob.correlationId,
@@ -342,7 +363,7 @@ async function handlePremiumRender(req, res, session, body, correlationId) {
     } else {
       reservedJob = await getJob(reserved.job.id);
     }
-    return send(res, reserved.replayed ? 200 : 202, { ok: true, ...accountDto(account), provider: { id: 'heygen', name: 'HeyGen', configured: true }, job: jobDto(reservedJob), workflowRunId: reservedJob.workflowRunId, correlationId: reservedJob.correlationId, status: reservedJob.status, stage: reservedJob.status, message: reserved.replayed ? 'Existing render workflow recovered.' : 'Render workflow started.' });
+    return send(res, reserved.replayed ? 200 : 202, { ok: true, ...accountDto(account), provider: { id: 'heygen', name: 'The Render', configured: true }, job: jobDto(reservedJob), workflowRunId: reservedJob.workflowRunId, correlationId: reservedJob.correlationId, status: reservedJob.status, stage: reservedJob.status, message: reserved.replayed ? 'Existing render workflow recovered.' : 'Render workflow started.' });
   } catch (error) {
     if (shouldReleaseWorkflowReservation({ job: reservedJob, workflowDispatchAttempted })) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.', undefined, { expectedStatuses: ['reserved'] }).catch(() => {});
     captureJobError(error, { jobId: reservedJob?.id, accountId: reservedJob?.accountId, correlationId: reservedJob?.correlationId, route: 'render' });

@@ -310,6 +310,12 @@ if (scenario === 'claim') {
     getOwnedJob: async (id, requestedJob) => { assert.equal(id, accountId); assert.equal(requestedJob, 'other-account-job'); return null; },
     getOwnedMediaAsset: async (id, requestedAsset) => { assert.equal(id, accountId); assert.equal(requestedAsset, 'other-account-asset'); return null; },
     getJob: async () => job,
+    prepareIdentityProviderRead: async ({ accountId: id, identityId, component }) => {
+      assert.equal(id, accountId);
+      assert.equal(identityId, job.input.identityId);
+      assert.equal(component, 'avatar');
+      return { accountId: id, identityId, providerAvatarGroupId: 'fixture-group', providerRenderableAvatarId: 'a' };
+    },
     claimWorkflowStart: async () => job,
     markJobFailedAndRelease: async (id, category) => { releasedCategory = category; },
     transitionJob: async ({ stageTo, providerJobId, providerBinding }) => {
@@ -342,6 +348,7 @@ if (scenario === 'claim') {
   } });
   mock.module('../../services/heygen.js', { namedExports: {
     assertHeygenConfigured: () => true,
+    getHeygenPhotoAvatarStatus: async ({ groupId, lookId }) => ({ ready: true, avatarGroup: { providerGroupId: groupId }, avatarLook: { providerLookId: lookId } }),
     submitHeygen: async () => { submissions++; return { providerJobId: 'synthetic-provider-job' }; },
     pollHeygen: async () => ({}),
   } });

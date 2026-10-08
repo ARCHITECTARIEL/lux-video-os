@@ -11,6 +11,7 @@ import { createHeygenSpaceBindingRepository, withFreshHeygenSpaceBindingTransact
 import { ENROLLMENT_CONSENT_POLICY_VERSION, ENROLLMENT_CONTRACT_VERSION } from '../lib/enrollment-policy.js';
 import { SCRIPTED_PHOTO_CONTRACT_VERSION } from '../lib/scripted-photo-contract.js';
 import { SCRIPTED_PHOTO_QUOTE_TTL_MS, issueScriptedPhotoQuote } from '../lib/scripted-photo-quote.js';
+import { observeProviderAvatarConsent } from '../lib/provider-avatar-consent.js';
 import { failWorkflow } from '../workflows/video-render.js';
 
 const fixtureDigest = value => createHash('sha256').update(String(value), 'utf8').digest('hex');
@@ -183,9 +184,26 @@ test('isolated live DB: Standard entitlement reserves HeyGen with Standard bindi
     accountId, projectId, identityId, idempotencyKey, title, script, format: 'vertical', tier,
     sourceBinding: context.input.sourceBinding, credits,
   }, { now }).token;
-  const reserveStandard = (jobId, idempotencyKey, quoteNow = Date.now()) => reserveRender({ ...request, jobId, idempotencyKey, tier: 'standard', costCredits: 37, quoteToken: quoteFor(idempotencyKey, 'STANDARD', 37, quoteNow) });
+  const providerConsentObservation = () => observeProviderAvatarConsent({ accountId, identityId, sourceBinding: context.input.sourceBinding }, {
+    resolveProviderBinding: async () => providerBinding,
+    prepareProviderRead: async () => ({ accountId, identityId, component: 'avatar', providerAvatarGroupId: providerGroupId, providerRenderableAvatarId: providerLookId }),
+    readProviderAvatarStatus: async () => ({
+      ready: true,
+      avatarGroup: { providerGroupId, status: 'completed', consentStatus: 'accepted', ready: true },
+      avatarLook: { providerLookId, providerGroupId, avatarType: 'photo_avatar', status: 'completed', ready: true },
+    }),
+  });
+  const reserveStandard = async (jobId, idempotencyKey, quoteNow = Date.now()) => reserveRender({
+    ...request,
+    jobId,
+    idempotencyKey,
+    tier: 'standard',
+    costCredits: 37,
+    quoteToken: quoteFor(idempotencyKey, 'STANDARD', 37, quoteNow),
+    providerAvatarConsentObservation: await providerConsentObservation(),
+  });
   const premiumKey = randomUUID();
-  await assert.rejects(reserveRender({ ...request, jobId: randomUUID(), idempotencyKey: premiumKey, tier: 'premium', costCredits: 90, input: { ...context.input, tier: 'PREMIUM' }, quoteToken: quoteFor(premiumKey, 'PREMIUM', 90) }), { statusCode: 409 });
+  await assert.rejects(reserveRender({ ...request, jobId: randomUUID(), idempotencyKey: premiumKey, tier: 'premium', costCredits: 90, input: { ...context.input, tier: 'PREMIUM' }, quoteToken: quoteFor(premiumKey, 'PREMIUM', 90), providerAvatarConsentObservation: await providerConsentObservation() }), { statusCode: 409 });
 
   const delayedLockKey = randomUUID();
   const delayedLockJobId = randomUUID();

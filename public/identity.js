@@ -40,6 +40,10 @@ const state = {
   captureRequestToken: 0,
   identities: [],
   providerSubmissionEnabled: false,
+  hostedConsentByIdentity: new Map(),
+  pendingHostedInvitations: new Map(),
+  lastHostedConsentStatusFetchAt: 0,
+  hostedConsentPollTimer: null,
   activeIdentityId: null,
   pollTimer: null,
   pollCount: 0,
@@ -216,6 +220,73 @@ function componentRow(label, status) {
   return row;
 }
 
+function appendHostedConsent(container, identity) {
+  const result = state.hostedConsentByIdentity.get(identity.id);
+  if (!result?.availability?.enabled) return;
+  const panel = document.createElement('section');
+  panel.className = 'hosted-consent-panel';
+  panel.setAttribute('aria-label', 'Presenter consent');
+  const heading = document.createElement('h4');
+  heading.textContent = 'Presenter consent';
+  const detail = document.createElement('p');
+  const status = result.consent?.providerConsentStatus;
+  detail.textContent = status === 'ACCEPTED'
+    ? 'HeyGen has accepted this presenter’s consent.'
+    : status === 'REJECTED'
+      ? 'HeyGen rejected the consent recording. Contact support before another attempt.'
+      : result.consent?.hostedSessionState === 'RETURNED'
+        ? 'The presenter returned. HeyGen consent is still being checked.'
+        : result.consent?.hostedSessionState === 'ISSUED'
+          ? 'The presenter can finish the one-time recording through the invitation.'
+          : 'Invite the person shown to review a separate notice and record consent once.';
+  panel.append(heading, detail);
+  if (status !== 'ACCEPTED' && status !== 'REJECTED') {
+    const form = document.createElement('form');
+    form.className = 'hosted-consent-form';
+    const email = document.createElement('input');
+    email.type = 'email';
+    email.required = true;
+    email.autocomplete = 'email';
+    email.placeholder = 'Presenter email';
+    email.setAttribute('aria-label', 'Presenter email');
+    const issue = document.createElement('button');
+    issue.type = 'submit';
+    issue.className = 'button secondary';
+    issue.textContent = 'Email invitation';
+    const feedback = document.createElement('p');
+    feedback.setAttribute('role', 'status');
+    form.append(email, issue, feedback);
+    const pendingInvitation = state.pendingHostedInvitations.get(identity.id);
+    if (pendingInvitation && pendingInvitation.expiresAt > Date.now()) {
+      feedback.textContent = `Invitation emailed to the presenter. It expires ${new Date(pendingInvitation.expiresAt).toLocaleString()}.`;
+    }
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      issue.disabled = true;
+      feedback.textContent = 'Sending invitation…';
+      try {
+        const response = await api('/api/video-os-lite/provider-consent', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'issue-notice', identityId: identity.id, subjectEmail: email.value.trim() }),
+        });
+        if (response.invitation.delivered !== true) throw new Error('Invitation delivery was not confirmed.');
+        feedback.textContent = `Invitation emailed to the presenter. It expires ${new Date(response.invitation.expiresAt).toLocaleString()}.`;
+        state.pendingHostedInvitations.set(identity.id, {
+          expiresAt: Date.parse(response.invitation.expiresAt),
+        });
+        clearTimeout(state.hostedConsentPollTimer);
+        state.hostedConsentPollTimer = setTimeout(() => { loadIdentities().catch(() => {}); }, 15_000);
+      } catch (error) {
+        feedback.textContent = error.message;
+      } finally {
+        issue.disabled = false;
+      }
+    });
+    panel.append(form);
+  }
+  container.append(panel);
+}
+
 function renderIdentity(identity) {
   const linkedEnrollment = linkedEnrollmentForIdentity(identity.id);
   const card = document.createElement('article');
@@ -300,6 +371,7 @@ function renderIdentity(identity) {
   body.append(title, created, componentRow('Photo avatar', identity.avatarStatus), componentRow('Reusable voice', identity.voiceStatus));
   appendProviderLifecycle(body, linkedEnrollment);
   appendProviderConsentState(body, linkedEnrollment);
+  appendHostedConsent(body, identity);
   if (identity.avatarFailure?.message) {
     const error = document.createElement('p'); error.className = 'component-error'; error.textContent = `Avatar: ${identity.avatarFailure.message}`; body.append(error);
   }
@@ -327,6 +399,26 @@ async function loadIdentities() {
   state.identities = data.identities || [];
   state.providerSubmissionEnabled = data.providerSubmissionEnabled === true;
   renderIdentities();
+  if (state.identities.length && Date.now() - state.lastHostedConsentStatusFetchAt >= 15_000) {
+    state.lastHostedConsentStatusFetchAt = Date.now();
+    const statuses = await Promise.all(state.identities.map(async (identity) => {
+      try { return [identity.id, await api(`/api/video-os-lite/provider-consent?action=status&identityId=${encodeURIComponent(identity.id)}`)]; }
+      catch { return [identity.id, null]; }
+    }));
+    state.hostedConsentByIdentity = new Map(statuses);
+    for (const [identityId, invitation] of state.pendingHostedInvitations) {
+      if (!Number.isFinite(invitation.expiresAt) || invitation.expiresAt <= Date.now()) state.pendingHostedInvitations.delete(identityId);
+    }
+    for (const [identityId, result] of statuses) {
+      if (result?.consent?.terminalOutcome) state.pendingHostedInvitations.delete(identityId);
+    }
+    renderIdentities();
+    clearTimeout(state.hostedConsentPollTimer);
+    state.hostedConsentPollTimer = null;
+    if (state.pendingHostedInvitations.size || statuses.some(([, result]) => result?.consent && !result.consent.terminalOutcome)) {
+      state.hostedConsentPollTimer = setTimeout(() => { loadIdentities().catch(() => {}); }, 15_000);
+    }
+  }
   const processing = state.identities.some(identity => ['CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING'].includes(identity.overallStatus));
   if (processing) scheduleIdentityPolling(); else stopIdentityPolling();
   return data;

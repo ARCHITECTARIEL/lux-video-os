@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Presenter consent | LUX Video OS</title>
+  <link rel="stylesheet" href="/provider-consent.css">
+</head>
+<body>
+  <main>
+    <p class="eyebrow">LUX VIDEO OS</p>
+    <h1>Presenter consent</h1>
+    <p id="intro">Review this notice before continuing to HeyGen for a one-time consent recording.</p>
+    <section id="notice-panel" aria-labelledby="notice-heading">
+      <h2 id="notice-heading">What you are authorizing</h2>
+      <p>You are authorizing LUX Video OS and HeyGen to process your likeness to create a reusable video presenter for the account that invited you. HeyGen will ask you to record a separate consent clip and will check that you are the person shown. This step does not authorize a reusable voice clone.</p>
+      <p>You can decline now. You can also ask the account owner to withdraw your permission later; new video requests will be held while the provider status is reconciled. Read the <a href="/privacy" target="_blank" rel="noopener">privacy notice</a> for data handling details.</p>
+      <label class="affirm"><input id="affirmative-notice" type="checkbox"><span>I am the person shown, and I agree to this likeness and provider verification step.</span></label>
+      <button id="continue" type="button" disabled>Continue to consent recording</button>
+    </section>
+    <p id="status" role="status" aria-live="polite"></p>
+    <p id="signin-help" class="fine">This invitation is bound to the presenter’s email. <a href="/" target="_blank" rel="noopener">Sign in with that email</a>, then return to this page to continue.</p>
+    <p class="fine">The HeyGen page is part of this one-time setup. Returning here means only that the page closed; Video OS enables a presenter after HeyGen confirms consent.</p>
+  </main>
+  <script type="module" src="/provider-consent.js"></script>
+</body>
+</html>

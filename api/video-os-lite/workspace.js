@@ -9,9 +9,10 @@ import standard from '../../routes/video-os-lite/standard.js';
 import enrollments from '../../routes/video-os-lite/enrollments.js';
 import enrollmentUpload from '../../routes/video-os-lite/enrollment-upload.js';
 import scriptedPhoto from '../../routes/video-os-lite/scripted-photo.js';
+import providerConsent from '../../routes/video-os-lite/provider-consent.js';
 import { send } from '../../lib/video-os-account.js';
 
-const handlers = { admin, asset, copywriter, identities, projects, providers, results, standard, enrollments, 'enrollment-upload': enrollmentUpload, 'scripted-photo': scriptedPhoto };
+const handlers = { admin, asset, copywriter, identities, projects, providers, results, standard, enrollments, 'enrollment-upload': enrollmentUpload, 'scripted-photo': scriptedPhoto, 'provider-consent': providerConsent };
 
 export default async function handler(req, res) {
   const pathname = new URL(req.url, 'https://video-os.invalid').pathname;

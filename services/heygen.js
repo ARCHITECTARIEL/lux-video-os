@@ -7,6 +7,8 @@ const IDENTITY_CONTENT_TYPES = new Set(['image/jpeg', 'image/png', 'audio/mpeg',
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,255}$/;
 const TERMINAL_READY = new Set(['complete', 'completed', 'ready', 'success', 'succeeded']);
 const TERMINAL_FAILED = new Set(['error', 'failed', 'failure', 'rejected']);
+const AVATAR_TYPES = new Set(['photo_avatar', 'prompt_avatar', 'digital_twin']);
+const GROUP_CONSENT_STATES = new Set(['pending', 'accepted', 'rejected']);
 
 export function assertHeygenConfigured(env = process.env) {
   const configured = Boolean(String(env.HEYGEN_API_KEY || env.HEYGEN_TOKEN || '').trim());
@@ -189,10 +191,11 @@ export function normalizeAvatarGroup(payload) {
   const data = payload?.data || payload || {};
   const failureCode = safeProviderErrorCode(data?.error?.code);
   const status = normalizeIdentityProviderStatus(data.status, { hasFailure: Boolean(failureCode || data?.error?.message) });
+  const rawConsent = typeof data.consent_status === 'string' ? data.consent_status.toLowerCase() : null;
   return {
     providerGroupId: typeof data.id === 'string' ? data.id : null,
     status,
-    consentStatus: typeof data.consent_status === 'string' ? data.consent_status.toLowerCase() : null,
+    consentStatus: rawConsent && !GROUP_CONSENT_STATES.has(rawConsent) ? 'unknown' : rawConsent,
     ready: status === 'completed',
     failureCode,
     failureMessage: status === 'failed' ? 'HeyGen avatar processing failed.' : null,
@@ -208,6 +211,7 @@ export function normalizeAvatarLook(payload) {
   return {
     providerLookId: typeof data.id === 'string' ? data.id : null,
     providerGroupId: typeof data.group_id === 'string' ? data.group_id : null,
+    avatarType: AVATAR_TYPES.has(data.avatar_type) ? data.avatar_type : 'unknown',
     status,
     ready: status === 'completed' && typeof data.id === 'string',
     supportedEngines: Array.isArray(data.supported_api_engines) ? data.supported_api_engines.filter((item) => typeof item === 'string').slice(0, 10) : [],
@@ -216,6 +220,13 @@ export function normalizeAvatarLook(payload) {
     failureCode,
     failureMessage: status === 'failed' ? 'HeyGen avatar look processing failed.' : null,
   };
+}
+
+export function avatarGroupConsentEligible(avatarGroup, avatarLook, expectedGroupId) {
+  if (!expectedGroupId || avatarGroup?.providerGroupId !== expectedGroupId || avatarLook?.providerGroupId !== expectedGroupId
+    || avatarGroup.ready !== true || avatarLook.ready !== true || avatarLook.avatarType === 'unknown') return false;
+  return avatarGroup.consentStatus === 'accepted'
+    || (avatarGroup.consentStatus === null && avatarLook.avatarType === 'photo_avatar');
 }
 
 export function normalizeVoice(payload) {
@@ -298,9 +309,49 @@ export async function getHeygenPhotoAvatarStatus({ groupId, lookId }) {
   return {
     avatarGroup,
     avatarLook,
-    ready: avatarGroup.ready && avatarLook.ready,
+    ready: avatarGroupConsentEligible(avatarGroup, avatarLook, groupReference),
     failed: avatarGroup.status === 'failed' || avatarLook.status === 'failed',
   };
+}
+
+export function buildHostedAvatarConsentRequest({ rerouteUrl, publicOrigin }) {
+  let origin;
+  let target;
+  try {
+    origin = new URL(String(publicOrigin || ''));
+    target = new URL(String(rerouteUrl || ''));
+  } catch {
+    throw Object.assign(new Error('HeyGen consent return URL is invalid.'), { statusCode: 400, failureCategory: 'VALIDATION' });
+  }
+  if (origin.protocol !== 'https:' || origin.username || origin.password || origin.port
+    || target.protocol !== 'https:' || target.origin !== origin.origin || target.username || target.password || target.port
+    || target.hash || target.href.length > 2048) {
+    throw Object.assign(new Error('HeyGen consent return URL is invalid.'), { statusCode: 400, failureCategory: 'VALIDATION' });
+  }
+  return { reroute_url: target.href };
+}
+
+export async function createHeygenHostedConsent({ groupId, rerouteUrl, publicOrigin, idempotencyKey }) {
+  const groupReference = cleanProviderId(groupId, 'HeyGen avatar group ID');
+  const requestKey = cleanProviderId(idempotencyKey, 'HeyGen idempotency key');
+  const body = buildHostedAvatarConsentRequest({ rerouteUrl, publicOrigin });
+  return postWithReceiptValidation(`/v3/avatars/${encodeURIComponent(groupReference)}/consent`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(timeoutMs()),
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Api-Key': key(), 'Idempotency-Key': requestKey },
+    body: JSON.stringify(body),
+  }, payload => {
+    const data = payload?.data || {};
+    const group = normalizeAvatarGroup(data.avatar_group);
+    let url;
+    try { url = new URL(String(data.url || '')); } catch { throw new Error('HeyGen consent URL is invalid.'); }
+    if (group.providerGroupId !== groupReference || group.consentStatus !== 'pending'
+      || url.protocol !== 'https:' || url.username || url.password || url.port
+      || !(url.hostname === 'heygen.com' || url.hostname.endsWith('.heygen.com')) || url.href.length > 2048) {
+      throw new Error('HeyGen consent response was invalid.');
+    }
+    return { providerGroupId: groupReference, consentStatus: group.consentStatus, url: url.href };
+  });
 }
 
 export async function cloneHeygenVoice({ accountId, assetId, name, language, removeBackgroundNoise }) {

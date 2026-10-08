@@ -637,6 +637,12 @@ legend { margin: 0 0 22px; padding: 0; font-size: 23px; font-weight: 650; letter
 .identity-provider-state[data-state="temporary_sources_pending_removal"], .identity-provider-state[data-state="removal_requested"] { border-color: #ead6a4; background: #fff9e8; }
 .identity-provider-state[data-state="needs_attention"] { border-color: #efc1bb; background: var(--danger-soft); }
 .provider-consent-hold { margin-top: 10px; color: var(--warning); font-size: 12px; line-height: 1.45; }
+.hosted-consent-panel { margin-top: 16px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-muted); }
+.hosted-consent-panel h4 { margin: 0 0 5px; font-size: 14px; }
+.hosted-consent-panel p { font-size: 12px; }
+.hosted-consent-form { display: grid; gap: 8px; margin-top: 12px; }
+.hosted-consent-form input { width: 100%; min-width: 0; min-height: 42px; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); }
+.hosted-consent-form .button { justify-self: start; }
 .wizard-actions {
   z-index: 4;
   display: grid;

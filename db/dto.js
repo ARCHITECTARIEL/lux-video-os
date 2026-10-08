@@ -127,6 +127,7 @@ export function projectDto(project, options = {}) {
 export function jobDto(job, options = {}) {
   const output = job.output || {};
   const outputAccepted = acceptedJobOutput(job);
+  const tier = renderTierForJob(job, { unknownLegacy: 'null' });
   const outputAvatar = sanitizePersistedIdentity(output.avatar, 'avatar', options);
   const inputAvatar = sanitizePersistedIdentity(job.input?.avatar, 'avatar', options);
   const outputVoice = sanitizePersistedIdentity(output.voice, 'voice', options);
@@ -134,8 +135,8 @@ export function jobDto(job, options = {}) {
   return {
     id: job.id,
     correlationId: job.correlationId,
-    provider: { id: job.provider, name: job.provider === 'heygen' ? 'HeyGen' : job.provider },
-    tier: renderTierForJob(job, { unknownLegacy: 'null' }),
+    provider: { id: job.provider, name: tier === 'standard' ? 'Standard' : 'The Render' },
+    tier,
     outputAccepted,
     title: job.title,
     format: job.format,
