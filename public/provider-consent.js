@@ -1,5 +1,11 @@
 const params = new URLSearchParams(location.search);
-const invitationToken = params.get('invite');
+const invitationToken = new URLSearchParams(location.hash.slice(1)).get('invite') || params.get('invite');
+if (invitationToken) {
+  const cleanUrl = new URL(location.href);
+  cleanUrl.searchParams.delete('invite');
+  cleanUrl.hash = '';
+  history.replaceState(null, '', `${cleanUrl.pathname}${cleanUrl.search}`);
+}
 const status = document.querySelector('#status');
 const checkbox = document.querySelector('#affirmative-notice');
 const button = document.querySelector('#continue');

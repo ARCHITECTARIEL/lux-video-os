@@ -69,7 +69,7 @@ test('owner issues one rate-limited email invitation without exposing its bearer
   const res = response();
   await handler(request({ action: 'issue-notice', identityId, subjectEmail: 'Subject@Example.test' }), res);
   assert.equal(res.statusCode, 201);
-  assert.ok(sentInvitation.url.startsWith(`${ORIGIN}/provider-consent?invite=`));
+  assert.ok(sentInvitation.url.startsWith(`${ORIGIN}/provider-consent#invite=`));
   assert.equal(res.body.invitation.delivered, true);
   assert.equal(JSON.stringify(res.body).includes('invite='), false);
   assert.equal(JSON.stringify(res.body).includes('private-group'), false);
@@ -104,7 +104,7 @@ test('affirmative notice requires the invited subject session', async () => {
   const issued = response();
   await issuer(request({ action: 'issue-notice', identityId, subjectEmail: 'subject@example.test' }), issued);
   invitationUrl = sentInvitation.url;
-  const invitationToken = new URL(invitationUrl).searchParams.get('invite');
+  const invitationToken = new URLSearchParams(new URL(invitationUrl).hash.slice(1)).get('invite');
   let accepted = false;
   const wrongActor = base({ acceptNoticeTx: async () => { accepted = true; } });
   const denied = response();
@@ -128,7 +128,7 @@ test('subject session reserves before one provider POST and receives only a loca
   const issuer = base({ issueNoticeTx: async () => {} });
   const issued = response();
   await issuer(request({ action: 'issue-notice', identityId, subjectEmail: 'subject@example.test' }), issued);
-  const invitationToken = new URL(sentInvitation.url).searchParams.get('invite');
+  const invitationToken = new URLSearchParams(new URL(sentInvitation.url).hash.slice(1)).get('invite');
   const order = [];
   let providerInput;
   const handler = base({
@@ -245,7 +245,7 @@ test('exact create-session retry keeps the return digest stable and reissues lau
   const issuer = base({ issueNoticeTx: async () => {} });
   const issued = response();
   await issuer(request({ action: 'issue-notice', identityId, subjectEmail: 'subject@example.test' }), issued);
-  const invitationToken = new URL(sentInvitation.url).searchParams.get('invite');
+  const invitationToken = new URLSearchParams(new URL(sentInvitation.url).hash.slice(1)).get('invite');
   const reservations = [];
   let providerPosts = 0;
   let providerUrlReads = 0;

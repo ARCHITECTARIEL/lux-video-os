@@ -228,7 +228,7 @@ export function createProviderConsentHandler(dependencies = {}) {
       accountId: actor.accountId, identityId: identity.id, subjectEmail,
       tokenHash: invitation.tokenHash, expiresAt,
     }));
-    const url = `${publicOrigin(env)}/provider-consent?invite=${encodeURIComponent(invitation.token)}`;
+    const url = `${publicOrigin(env)}/provider-consent#invite=${encodeURIComponent(invitation.token)}`;
     await sendInvitation({ email: subjectEmail, url, expiresAt: invitation.expiresAt }, { env });
     return send(res, 201, { ok: true, invitation: { delivered: true, expiresAt: invitation.expiresAt } });
   }

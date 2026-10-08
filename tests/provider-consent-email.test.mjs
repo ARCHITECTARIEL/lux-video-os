@@ -5,7 +5,7 @@ import { assertProviderConsentInvitationEmailConfigured, sendProviderConsentInvi
 const env = { RESEND_API_KEY: 'test-only', AUTH_FROM_EMAIL: 'Video OS <noreply@example.test>' };
 const invitation = {
   email: 'presenter@example.test',
-  url: 'https://video.example/provider-consent?invite=opaque-token',
+  url: 'https://video.example/provider-consent#invite=opaque-token',
   expiresAt: '2026-10-07T18:15:00.000Z',
 };
 
@@ -24,7 +24,7 @@ test('invitation email sends only the local subject link with a short expiry', a
   assert.equal(request.url, 'https://api.resend.com/emails');
   const body = JSON.parse(request.options.body);
   assert.deepEqual(body.to, ['presenter@example.test']);
-  assert.match(body.text, /https:\/\/video\.example\/provider-consent\?invite=opaque-token/);
+  assert.match(body.text, /https:\/\/video\.example\/provider-consent#invite=opaque-token/);
   assert.match(body.text, /15 minutes/);
   assert.equal(JSON.stringify(body).includes('heygen.com'), false);
   assert.equal(JSON.stringify(body).includes('providerGroupId'), false);
