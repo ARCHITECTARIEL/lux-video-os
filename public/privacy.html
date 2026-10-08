@@ -47,23 +47,24 @@
     for the specific photo and recording used in that render. Where hosted presenter verification is available,
     we record the subject's notice acceptance and the verification status returned by the provider. Returning from
     the provider's page does not mean the presenter is approved.</p>
-    <p><strong>Payment information.</strong> Purchases are handled directly by Stripe. We never see or store your
-    full card number — only what Stripe returns to confirm a purchase (amount, credits granted, transaction status).</p>
+    <p><strong>Payment information.</strong> Credit purchasing is currently disabled. If enabled after separate
+    review, Stripe will handle purchases. We will receive the purchase amount, credits granted, and transaction
+    status, but not your full card number.</p>
     <p><strong>Technical information.</strong> A session cookie that keeps you signed in, and standard operational
     logs (timestamps, error reports) used to keep the service running and to diagnose problems. Error reports are
     scrubbed of session tokens and authorization headers before they ever leave our systems.</p>
-    <p>We do not run advertising trackers or third-party analytics on this site.</p>
+    <p>We do not run advertising trackers. We use Vercel Analytics to measure site usage.</p>
 
     <h2>How we use your information</h2>
     <ul>
-      <li>To verify an authorized presenter where that feature is available, render the video you
+      <li>To create and verify an authorized presenter or voice where those features are available, render the video you
       request, and let you review, download, and manage it.</li>
-      <li>To operate your account: sign-in, credit balance, purchase history, and support requests.</li>
+      <li>To operate your account: sign-in, credit balance, support requests, and purchase history if billing is enabled.</li>
       <li>To detect and prevent abuse, and to keep the service secure and reliable.</li>
-      <li>To send you service email: render-ready notifications, sign-in links, and purchase receipts.</li>
+      <li>To send you service email: render-ready notifications, sign-in links, and purchase receipts if billing is enabled.</li>
     </ul>
-    <p>We do not sell your information. Authorized source media may be processed to verify a reusable presenter
-    for your account and to generate the videos you request.</p>
+    <p>We do not sell your information. Authorized source media may be processed to create and verify a reusable
+    presenter or voice for your account and to generate the videos you request.</p>
 
     <h2>Who we share information with</h2>
     <p>We use a small number of service providers to operate LUX, each of which only receives what it needs to do
@@ -71,10 +72,10 @@
     <ul>
       <li><strong>Google</strong> — if you choose to sign in with Google.</li>
       <li><strong>Resend</strong> — to deliver sign-in and notification email.</li>
-      <li><strong>Stripe</strong> — to process credit-pack purchases.</li>
+      <li><strong>Stripe</strong> — to process credit-pack purchases if billing is enabled.</li>
       <li><strong>HeyGen</strong> — for supported scripted Standard and Premium videos and, where enabled,
-      verification of reusable presenters. Depending on the feature you use, this can include an authorized photo
-      or recording, script, presenter and voice identifiers, and the resulting video. The subject may complete a
+      creation and verification of reusable presenters and voices. Depending on the feature you use, this can include
+      an authorized photo or recording, script, presenter and voice identifiers, and the resulting video. The subject may complete a
       separate consent recording on HeyGen's hosted page when required for that presenter.</li>
       <li><strong>RunPod</strong> — when selected for the portrait-and-narration Standard rendering path, to process
       the uploaded portrait and narration for that video.</li>
@@ -87,7 +88,7 @@
     <p>The portrait-and-narration Standard flow asks you to confirm your authority to use the specific photo and
     recording for that render. A reusable presenter or voice based on a real person requires that person's
     authorization for the source media and permitted uses. A provider may have additional verification requirements.
-    A photo or prompt avatar with no provider consent API step still requires the person's permission when it uses or
+    A photo avatar with no provider consent API step still requires the person's permission when it uses or
     imitates a real person's likeness. You can request withdrawal of a reusable identity by contacting us.</p>
 
     <h2>Data retention and deletion</h2>
