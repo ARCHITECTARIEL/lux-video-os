@@ -218,6 +218,19 @@ test('unavailable Identity Studio handoff is consumed without selecting private 
   expect(guard.renderRequests()).toBe(0);
 });
 
+test('a presenter awaiting verification stays visible but cannot be used', async ({ page }) => {
+  const pending = {
+    id: '6e5c233e-f798-4b74-8605-9e45e06fe880',
+    displayName: 'Presenter awaiting review',
+    overallStatus: 'PROCESSING', avatarStatus: 'PROCESSING', voiceStatus: 'READY', ready: false,
+  };
+  await installAppRoutes(page, { identities: [pending] });
+  await page.goto('/#identities');
+  const card = page.locator('#identity-library .identity-library-card').filter({ hasText: pending.displayName });
+  await expect(card).toBeVisible();
+  await expect(card.getByRole('button', { name: 'Use in Studio' })).toBeDisabled();
+});
+
 test('a stale saved private identity fails closed without a presenter fallback', async ({ page }) => {
   const staleId = '6e5c233e-f798-4b74-8605-9e45e06fe877';
   const project = {
