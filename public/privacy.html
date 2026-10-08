@@ -42,11 +42,11 @@
     <p><strong>Account information.</strong> The email address and name you sign in with — via Google, a magic-link
     email, or a workspace username/password — and a record of when you sign in.</p>
     <p><strong>Content you provide.</strong> This can include portrait photos, source recordings, narration audio,
-    scripts, descriptions used to generate a presenter, presenter and voice selections, and finished videos. If you
-    create a reusable presenter or voice from someone's likeness or speech, we also record the applicable source
-    authorization and identity verification state. The portrait-and-narration Standard flow records authorization for the specific photo and recording used
-    in that render. Where the separate subject capture flow is available, it can also collect a separate consent
-    recording and the subject's acknowledgments. Saving that recording does not mean an identity is approved.</p>
+    scripts, presenter and voice selections, and finished videos. For a reusable presenter, we record source
+    authorization and identity verification state. The portrait-and-narration Standard flow records authorization
+    for the specific photo and recording used in that render. Where hosted presenter verification is available,
+    we record the subject's notice acceptance and the verification status returned by the provider. Returning from
+    the provider's page does not mean the presenter is approved.</p>
     <p><strong>Payment information.</strong> Purchases are handled directly by Stripe. We never see or store your
     full card number — only what Stripe returns to confirm a purchase (amount, credits granted, transaction status).</p>
     <p><strong>Technical information.</strong> A session cookie that keeps you signed in, and standard operational
@@ -56,14 +56,14 @@
 
     <h2>How we use your information</h2>
     <ul>
-      <li>To create and verify an authorized presenter or voice where that feature is available, render the video you
+      <li>To verify an authorized presenter where that feature is available, render the video you
       request, and let you review, download, and manage it.</li>
       <li>To operate your account: sign-in, credit balance, purchase history, and support requests.</li>
       <li>To detect and prevent abuse, and to keep the service secure and reliable.</li>
       <li>To send you service email: render-ready notifications, sign-in links, and purchase receipts.</li>
     </ul>
-    <p>We do not sell your information. Authorized source media may be processed to create a reusable presenter or
-    voice for your account and to generate the videos you request.</p>
+    <p>We do not sell your information. Authorized source media may be processed to verify a reusable presenter
+    for your account and to generate the videos you request.</p>
 
     <h2>Who we share information with</h2>
     <p>We use a small number of service providers to operate LUX, each of which only receives what it needs to do
@@ -72,11 +72,10 @@
       <li><strong>Google</strong> — if you choose to sign in with Google.</li>
       <li><strong>Resend</strong> — to deliver sign-in and notification email.</li>
       <li><strong>Stripe</strong> — to process credit-pack purchases.</li>
-      <li><strong>HeyGen</strong> — for supported scripted Standard and Premium videos and, where enabled, creation
-      and verification of reusable presenters and voices. Depending on the feature you use, this can include an
-      authorized photo or recording, presenter description, script, presenter and voice identifiers, and the
-      resulting video. A separate subject consent recording would be sent only if the applicable verification path
-      is enabled.</li>
+      <li><strong>HeyGen</strong> — for supported scripted Standard and Premium videos and, where enabled,
+      verification of reusable presenters. Depending on the feature you use, this can include an authorized photo
+      or recording, script, presenter and voice identifiers, and the resulting video. The subject may complete a
+      separate consent recording on HeyGen's hosted page when required for that presenter.</li>
       <li><strong>RunPod</strong> — when selected for the portrait-and-narration Standard rendering path, to process
       the uploaded portrait and narration for that video.</li>
       <li><strong>Vercel and Neon</strong> — our hosting, storage, and database infrastructure.</li>
@@ -93,7 +92,7 @@
 
     <h2>Data retention and deletion</h2>
     <p>Account content and finished videos may remain available while your account is active. Temporary uploads and
-    separate verification recordings have their own expiry and cleanup process; withdrawal or deletion requests may
+    private hosted-verification links have their own expiry and cleanup process; withdrawal or deletion requests may
     also require us to remove provider-held identity assets. To request deletion of your account and associated data,
     or withdrawal of a reusable presenter or voice, email
     <a href="mailto:ariel@luxmarketingcompany.com">ariel@luxmarketingcompany.com</a> — we don't currently have a
