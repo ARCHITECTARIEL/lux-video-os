@@ -221,7 +221,6 @@ export const identityConsents = pgTable('identity_consents', {
     and ${table.archiveDeleteAcknowledgment}
     and ${table.audioExtractionAuthorization} = false
     and ${table.temporaryPublicProviderExposureAuthorization} = false
-    and ${table.consentPurpose} is not null
     and ${table.consentPurpose} = 'hosted-avatar-consent'
   ) or (
     ${table.policyVersion} <> 'identity-provider-subject-consent-v3'
@@ -230,6 +229,7 @@ export const identityConsents = pgTable('identity_consents', {
     and ${table.providerProcessingAuthorization}
     and ${table.archiveDeleteAcknowledgment}
   )`),
+  check('identity_consents_hosted_v3_purpose_ck', sql`${table.policyVersion} <> 'identity-provider-subject-consent-v3' or ${table.consentPurpose} is not distinct from 'hosted-avatar-consent'`),
   check('identity_consents_source_video_hash_ck', sql`${table.sourceVideoSha256} is null or ${table.sourceVideoSha256} ~ '^[a-f0-9]{64}$'`),
   check('identity_consents_bridge_v2_ck', sql`${table.policyVersion} <> 'identity-provider-bridge-v2' or (${table.audioExtractionAuthorization} and ${table.temporaryPublicProviderExposureAuthorization} and ${table.sourceVideoSha256} is not null and ${table.consentPurpose} is not null and ${table.consentPurpose} = 'identity-voice-enrollment')`),
 ]);
