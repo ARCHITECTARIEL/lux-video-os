@@ -1,5 +1,11 @@
 # Welcome pages and Video OS integration handoff
 
+## Local integration update — 2026-10-11 09:54 EDT (13:54 UTC)
+
+The Welcome/credit-policy slice below was selectively committed on `codex/welcome-integration-20261011` as `624fcbe519a0c5e9afec806233baeb27858b8179`, then this documentation branch was merged locally as `c33a5d100350410e7f0572097f4917889b1922b2`. The root checkout and other worktrees were not merged. The new integration branch starts at remote-main `7533caaa12fa5e13fbee0609aa4402a41392415a`; no push, PR merge, deployment, provider call, billing action, or feature enablement occurred.
+
+Checks on the isolated Welcome branch: `tests/no-free-video-policy.test.mjs` passed 1/1; landing Playwright passed 6/6; aggregate Node passed 751 with 47 live skips and zero failures; Vitest passed 4/4; import and client-privacy checks passed. The first aggregate attempt failed because this new worktree lacked the hardcoded local `node_modules/drizzle-kit/bin.cjs` path; a worktree-local junction to the existing repository dependencies resolved that test setup issue, and the full rerun passed. The junction is ignored local test plumbing, not a committed dependency. Browser tests used `/landing.html`; `/welcome` mapping was source-inspected in `vercel.json`, not verified on a deployed host. Media rights, captions, product claims, live DB, and production readback remain open review gates.
+
 **Prepared:** 2026-10-11 09:42 EDT (13:42 UTC). **Purpose:** a local commit and merge packet for the next Codex operator. This packet records observations, not a claim that the pages or other dirty work have been committed, merged, deployed, or accepted. Refresh all branch, worktree, test, and deployment evidence before acting.
 
 ## Exact starting point
