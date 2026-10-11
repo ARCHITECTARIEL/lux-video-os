@@ -28,9 +28,9 @@ At $0.06/credit, a 90-credit render (90 × $0.06 = $5.40) covers the 900-charact
 
 Projected, not measured -- the real SadTalker worker has never been deployed (`docs/runpod-standard-worker.md`); the checked-in image is infrastructure-only. RTX 4090 serverless (~$0.69-1.10/hr) against public SadTalker benchmarks (~4x realtime compute) projects to **~$0.07-0.15 per 60-second render**. At the same 90-credit flat charge as Premium, that's ~95%+ gross margin -- a real, deliberate cross-subsidy decision, worth revisiting once the GPU path is proven rather than before.
 
-## Free trial exposure
+## New-account credit policy — owner update 2026-10-08
 
-180 trial credits = 2 renders, no card required to sign up. Worst case today (Photo Avatar, 900-char cap): 2 x $3.03 = **$6.06** per free signup -- down from $25.98 before the cap existed.
+LUX does not offer a free video or automatic trial credits. Regular new accounts start with **zero** render credits; internal tester grants are separate. This change does not remove credits already held by existing accounts. The prior 180-credit trial exposure calculation was historical and is no longer an active offer.
 
 ## Open before this is fully real
 
