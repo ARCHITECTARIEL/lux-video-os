@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LUX Video OS — professional business videos, made from your own words</title>
-<meta name="description" content="Promote an offer, introduce your business, or answer a customer question with a real video. Use your own face and voice, or an AI presenter.">
+<meta name="description" content="Create a scripted business video with a ready enrolled presenter and reusable voice. Review workflow availability, format, and a server-issued credit quote in Studio before rendering.">
 <meta name="theme-color" content="#12219c">
 <link rel="icon" href="/favicon.svg">
 <link rel="stylesheet" href="/studio.css">
@@ -24,7 +24,7 @@
   </nav>
   <div class="lp-nav-actions">
     <a class="button quiet compact" href="/?signin=1">Log in</a>
-    <a class="button primary compact" href="/?signin=1">Create a video</a>
+    <a class="button primary compact" href="/?signin=1">Sign in to start</a>
   </div>
 </header>
 
@@ -36,16 +36,16 @@
       <div class="lp-hero-copy">
         <p class="lp-eyebrow">AI VIDEO FOR YOUR BUSINESS</p>
         <h1>Professional business videos.<br>Without the production headache.</h1>
-        <p class="lp-hero-sub">Promote your next offer. Explain what you do. Answer a customer question. Create a video using your own face and voice, or let an AI presenter deliver your message.</p>
+        <p class="lp-hero-sub">Create a scripted video with a ready enrolled presenter and reusable voice. Choose a format, enter your exact message, and review workflow availability and the current credit quote in Studio before rendering.</p>
         <div class="lp-hero-actions">
-          <a class="button primary" href="/?signin=1">Create a video</a>
+          <a class="button primary" href="/?signin=1">Sign in to start</a>
           <a class="button secondary" href="#lp-hero-video" data-play-target="lp-hero-video">Watch the product preview</a>
         </div>
-        <p class="lp-hero-note">Choose a tier and review the credit cost before rendering.</p>
+        <p class="lp-hero-note">Rendering requires credits; no complimentary render or automatic trial credits are included.</p>
       </div>
       <div class="lp-hero-media">
         <div class="lp-video-frame" id="lp-hero-video-frame">
-          <video id="lp-hero-video" controls playsinline preload="metadata" poster="/assets/showcase/product-preview.webp">
+          <video id="lp-hero-video" controls playsinline preload="metadata" poster="/assets/showcase/product-preview.webp" aria-label="Product preview video">
             <source src="/assets/showcase/product-preview.mp4" type="video/mp4">
           </video>
           <button class="lp-video-play" type="button" data-play="lp-hero-video" aria-label="Play product preview">
@@ -65,7 +65,7 @@
       <div class="lp-example-cards lp-example-cards-single">
         <article class="lp-example-card">
           <div class="lp-video-frame lp-video-frame-compact" id="lp-example-faq-frame">
-            <video id="lp-example-faq" controls playsinline preload="metadata" poster="/assets/showcase/customer-qa.webp">
+            <video id="lp-example-faq" controls playsinline preload="metadata" poster="/assets/showcase/customer-qa.webp" aria-label="Customer question and answer example video">
               <source src="/assets/showcase/customer-qa.mp4" type="video/mp4">
             </video>
             <button class="lp-video-play lp-video-play-compact" type="button" data-play="lp-example-faq" aria-label="Play customer question and answer example">
@@ -83,15 +83,15 @@
     <div class="lp-section-inner">
       <p class="lp-eyebrow">How it works</p>
       <h2 id="lp-how-heading">From &ldquo;I should make a video&rdquo; to making one.</h2>
-      <p class="lp-compare-sub">You bring the message. LUX helps turn it into a video.</p>
+      <p class="lp-compare-sub">Your enrolled presenter and reusable voice deliver the exact script you approve.</p>
       <ol class="lp-steps lp-steps-compact">
-        <li><span class="lp-step-num">1</span><h3>Choose who does the talking.</h3><p>Use your own face and voice, or choose an AI presenter.</p></li>
-        <li><span class="lp-step-num">2</span><h3>Add your message.</h3><p>Add your recording or script, depending on the option you choose. Need help with the words? Use the AI writing tools in the script-based workflow.</p></li>
-        <li><span class="lp-step-num">3</span><h3>Create, review, and download.</h3><p>Review the credit cost before creating your video. When it's ready, watch the result and download it.</p></li>
+        <li><span class="lp-step-num">1</span><h3>Choose a ready enrolled presenter.</h3><p>Use a presenter and reusable voice already available in your workspace.</p></li>
+        <li><span class="lp-step-num">2</span><h3>Enter your exact script.</h3><p>An optional AI Copywriter may be available separately in your workspace. Review every draft before using it.</p></li>
+        <li><span class="lp-step-num">3</span><h3>Review and confirm.</h3><p>Choose a format, then review workflow availability and the server-issued credit quote before confirming a render.</p></li>
       </ol>
       <div class="lp-walkthrough">
         <div class="lp-video-frame" id="lp-walkthrough-frame">
-          <video id="lp-walkthrough-video" controls playsinline preload="metadata" poster="/assets/showcase/how-to.webp">
+          <video id="lp-walkthrough-video" controls playsinline preload="metadata" poster="/assets/showcase/how-to.webp" aria-label="LUX Video OS how-to video">
             <source src="/assets/showcase/how-to.mp4" type="video/mp4">
           </video>
           <button class="lp-video-play" type="button" data-play="lp-walkthrough-video" aria-label="Play LUX Video OS how-to video">
@@ -105,19 +105,14 @@
 
   <section class="lp-section lp-tiers" aria-labelledby="lp-tiers-heading">
     <div class="lp-section-inner">
-      <p class="lp-eyebrow">Two ways to deliver your message</p>
-      <h2 id="lp-tiers-heading">Be the face of your business. Or choose a presenter.</h2>
-      <p class="lp-compare-sub">Two ways to deliver your message. Choose the one that fits.</p>
+      <p class="lp-eyebrow">Current presenter workflow</p>
+      <h2 id="lp-tiers-heading">Use the presenter and voice ready in your workspace.</h2>
+      <p class="lp-compare-sub">The current workflow turns the exact script you approve into a video. Additional presenter and voice choices are not available in this release.</p>
       <div class="lp-tier-cards">
         <article class="lp-tier-card">
-          <p class="lp-tier-label">Standard</p>
-          <h3>Make it personal.</h3>
-          <p>Use your own photo and voice to put yourself in the message.</p>
-        </article>
-        <article class="lp-tier-card lp-tier-card-premium">
-          <p class="lp-tier-label">Premium</p>
-          <h3>Let an AI presenter do the talking.</h3>
-          <p>Choose a presenter and voice, then add your script.</p>
+          <p class="lp-tier-label">Current workflow</p>
+          <h3>Scripted presenter video</h3>
+          <p>Choose a supported format, enter your script, then review availability and the current quote in Studio before rendering.</p>
         </article>
       </div>
     </div>
@@ -126,7 +121,7 @@
   <section class="lp-video-section" aria-labelledby="lp-video-heading">
     <div class="lp-section-inner lp-video-inner">
       <div class="lp-video-frame">
-        <video id="lp-ceo-video" controls playsinline preload="metadata" poster="/assets/showcase/owner-kristian.webp">
+        <video id="lp-ceo-video" controls playsinline preload="metadata" poster="/assets/showcase/owner-kristian.webp" aria-label="Kristian welcome video">
           <source src="/assets/showcase/owner-kristian.mp4" type="video/mp4">
           <track kind="captions" src="/assets/showcase/owner-kristian.vtt" srclang="en" label="English captions">
         </video>
@@ -135,8 +130,8 @@
         </button>
       </div>
       <div class="lp-video-copy">
-        <p class="lp-eyebrow">From Kristian, owner of LUX</p>
-        <h2 id="lp-video-heading">A personal welcome from Kristian</h2>
+        <p class="lp-eyebrow">From Kristian</p>
+        <h2 id="lp-video-heading">A welcome from Kristian</h2>
         <p>Hear why LUX Video OS exists and how it helps businesses show up on video.</p>
       </div>
     </div>
@@ -144,44 +139,21 @@
 
   <section class="lp-section lp-free-offer" aria-labelledby="lp-free-heading">
     <div class="lp-section-inner lp-free-offer-inner">
-      <p class="lp-eyebrow">Your first video</p>
+      <p class="lp-eyebrow">Start in Studio</p>
       <h2 id="lp-free-heading">Start with a message your business needs to share.</h2>
-      <p class="lp-compare-sub">Choose a message, build your video, review the credit cost, then create it.</p>
-      <a class="button primary" href="/?signin=1">Create a video</a>
-      <p class="lp-hero-note">Video creation uses credits.</p>
+      <p class="lp-compare-sub">Sign in, choose a supported format, enter your exact script, and review the server-issued quote before confirming a render.</p>
+      <a class="button primary" href="/?signin=1">Sign in to start</a>
+      <p class="lp-hero-note">Regular new accounts start with zero render credits.</p>
     </div>
   </section>
 
   <section id="pricing" class="lp-section lp-pricing" aria-labelledby="lp-pricing-heading">
     <div class="lp-section-inner">
-      <p class="lp-eyebrow">Choose your credits</p>
-      <h2 id="lp-pricing-heading">Pay for what you render</h2>
-      <p class="lp-compare-sub">Every render costs credits, not a seat. A Standard or Premium video is 90 credits. Buy a pack, use it whenever.</p>
-      <div class="lp-price-cards">
-        <article class="lp-price-card">
-          <h3>Starter</h3>
-          <p class="lp-price-amount">500 <span>credits</span></p>
-          <p class="lp-price-detail">≈ 5 videos</p>
-          <p class="lp-price-tag">$30</p>
-          <a class="button secondary compact" href="/?signin=1">Choose Starter</a>
-        </article>
-        <article class="lp-price-card lp-price-card-featured">
-          <p class="lp-price-badge">Most popular</p>
-          <h3>Growth</h3>
-          <p class="lp-price-amount">1,000 <span>credits</span></p>
-          <p class="lp-price-detail">≈ 11 videos</p>
-          <p class="lp-price-tag">$48</p>
-          <a class="button primary compact" href="/?signin=1">Choose Growth</a>
-        </article>
-        <article class="lp-price-card">
-          <h3>Studio</h3>
-          <p class="lp-price-amount">2,000 <span>credits</span></p>
-          <p class="lp-price-detail">≈ 22 videos</p>
-          <p class="lp-price-tag">$96</p>
-          <a class="button secondary compact" href="/?signin=1">Choose Studio</a>
-        </article>
-      </div>
-      <p class="lp-price-footnote">Buy a pack when you're ready to render. Unused credits stay on your account.</p>
+      <p class="lp-eyebrow">Credits and quotes</p>
+      <h2 id="lp-pricing-heading">Review the quote before you render</h2>
+      <p class="lp-compare-sub">Rendering requires credits; no complimentary render or automatic trial credits are included. Regular new accounts start with zero render credits. Studio shows a server-issued credit quote for the workflow and format you select before you confirm a render.</p>
+      <p class="lp-price-footnote">Credit purchasing is not available from this Welcome page.</p>
+      <a class="button primary" href="/?signin=1">Sign in to review your workspace</a>
     </div>
   </section>
 
@@ -192,27 +164,27 @@
       <div class="lp-accordion">
         <details class="lp-faq-item">
           <summary>What can I make with LUX Video OS?</summary>
-          <p>Create videos that introduce your business, explain a service, promote an offer, announce something new, or answer a customer question.</p>
+          <p>Create scripted presenter videos that introduce your business, explain a service, promote an offer, announce something new, or answer a customer question.</p>
         </details>
         <details class="lp-faq-item">
-          <summary>Do I have to appear in the video?</summary>
-          <p>No. You can use your own photo and voice, or choose an AI presenter to deliver your message.</p>
+          <summary>Which presenter and voice can I use?</summary>
+          <p>The current workflow uses a ready enrolled presenter and reusable voice already available in your workspace. Additional presenter and voice choices are not available in this release.</p>
         </details>
         <details class="lp-faq-item">
           <summary>Can LUX help me write the script?</summary>
-          <p>Yes. The script-based workflow includes AI writing help. Review and adjust the draft so it accurately reflects your business, your offer, and your voice.</p>
+          <p>An optional AI Copywriter may be available separately in your workspace. It is separate from the render form, and you review every draft before using it.</p>
         </details>
         <details class="lp-faq-item">
           <summary>How do credits work?</summary>
-          <p>Review the credit cost before you render. Buy a credit pack to create videos; unused credits stay on your account.</p>
+          <p>Rendering requires credits; no complimentary render or automatic trial credits are included. Regular new accounts start with zero render credits. Studio shows a server-issued quote before you confirm a render.</p>
         </details>
         <details class="lp-faq-item">
-          <summary>Do I own the videos I create?</summary>
-          <p>Yes. Every finished render is stored privately to your account and is yours to download. Nothing is shared, sold, or used to train other models.</p>
+          <summary>Can I download completed videos?</summary>
+          <p>Completed, accepted videos are available in your account for download. Creating a video sends the inputs needed for that workflow to configured service providers under their applicable terms. Review the <a href="/privacy">Privacy Policy</a> and <a href="/terms">Terms of Service</a> before use.</p>
         </details>
         <details class="lp-faq-item">
-          <summary>Is my photo or voice used for anything besides my own video?</summary>
-          <p>No. Standard-tier renders record your explicit consent for that specific portrait and narration, tied to that render only.</p>
+          <summary>How are my enrolled presenter and voice used?</summary>
+          <p>LUX asks for workflow-specific permission before processing. A reusable enrolled presenter and voice may be used for later scripts you authorize until you revoke them; legacy narration workflows may use render-specific inputs.</p>
         </details>
         <details class="lp-faq-item">
           <summary>How long does a render take?</summary>
@@ -220,7 +192,7 @@
         </details>
         <details class="lp-faq-item">
           <summary>What happens to unused credits?</summary>
-          <p>They stay on your account and roll forward — credits are only spent when you actually submit a render.</p>
+          <p>Studio shows your current credit balance and the server-issued quote for each render before confirmation.</p>
         </details>
       </div>
     </div>
@@ -230,7 +202,7 @@
     <div class="lp-section-inner">
       <h2 id="lp-cta-heading">You already have something worth saying.</h2>
       <p class="lp-compare-sub lp-cta-sub">An offer. An introduction. An answer your customers need. Start with one video.</p>
-      <a class="button primary" href="/?signin=1">Create a video</a>
+      <a class="button primary" href="/?signin=1">Sign in to start</a>
     </div>
   </section>
 
@@ -243,7 +215,7 @@
     </a>
     <nav aria-label="Footer">
       <a href="/?signin=1">Log in</a>
-      <a href="#pricing">Pricing</a>
+      <a href="#pricing">Credits</a>
       <a href="#faq">FAQ</a>
       <a href="/terms">Terms of Service</a>
       <a href="/privacy">Privacy Policy</a>
