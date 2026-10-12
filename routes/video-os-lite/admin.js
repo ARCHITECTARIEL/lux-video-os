@@ -11,6 +11,7 @@ import { captureRouteError } from '../../lib/video-os-observability.js';
 import { deletePrivateBlob, getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../../lib/video-os-private-blob.js';
 import { timingSafeMatch } from '../../lib/video-os-security.js';
 import { getP0JobAttestation, P0JobAttestationError } from '../../db/p0-job-attestation.js';
+import { handleHeygenRuntimeAttestation } from './heygen-attestation.js';
 import { reconcileStripePayments } from '../../lib/video-os-stripe-reconciliation.js';
 import { runWatchdogSweep } from '../../lib/video-os-watchdog.js';
 
@@ -303,6 +304,7 @@ export default async function handler(req, res) {
   const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
   const operation = url.searchParams.get('operation') || 'jobs';
   if (operation === 'p0-attestation') return handleP0AttestationRequest(req, res);
+  if (operation === 'heygen-runtime-attestation') return handleHeygenRuntimeAttestation(req, res);
   if (handleOptions(req, res)) return;
   if (!['GET', 'POST'].includes(req.method)) return send(res, 405, { ok: false, error: 'Use GET or POST for admin requests.' });
   try {
