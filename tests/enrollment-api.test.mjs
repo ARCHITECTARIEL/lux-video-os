@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import test from 'node:test';
@@ -14,6 +15,7 @@ const photoAssetId = '22222222-2222-4222-8222-222222222222';
 const operationKey = '33333333-3333-4333-8333-333333333333';
 const idempotencyKey = '44444444-4444-4444-8444-444444444444';
 const sessionSecret = 'enrollment-api-test-session-secret-32';
+const sha256 = value => createHash('sha256').update(value).digest('hex');
 
 function environment(enabled = true) {
   process.env.VIDEO_OS_PHONE_VIDEO_ENROLLMENT_ENABLED = enabled ? 'true' : '';
@@ -289,7 +291,7 @@ test('production canary hides enrollment from other accounts and denies their ne
 test('owner-only source preview streams exact private bytes without exposing a Blob URL', async () => {
   environment(false);
   const bytes = Buffer.from('private phone video');
-  const row = enrollment({ uploadEtag: 'etag-1', sourceBytes: bytes.length, sourceSha256: 'a'.repeat(64), status: ENROLLMENT_STATUSES.AWAITING_CONSENT });
+  const row = enrollment({ uploadEtag: 'etag-1', sourceBytes: bytes.length, sourceSha256: sha256(bytes), status: ENROLLMENT_STATUSES.AWAITING_CONSENT });
   const handler = createEnrollmentHandler({
     sessionFromRequest: () => ({ accountId }), getOwnedEnrollment: async () => row,
     getPrivateBlob: async () => ({ stream: Readable.from([bytes]), blob: { pathname: row.uploadPathname, etag: row.uploadEtag } }),
@@ -316,7 +318,7 @@ test('source preview cancels invalid streams and removes backpressure listeners'
   assert.equal(cancelled, 1);
 
   const bytes = Buffer.from('backpressured private video');
-  const row = enrollment({ uploadEtag: 'etag-2', sourceBytes: bytes.length, sourceSha256: 'b'.repeat(64), status: ENROLLMENT_STATUSES.AWAITING_CONSENT });
+  const row = enrollment({ uploadEtag: 'etag-2', sourceBytes: bytes.length, sourceSha256: sha256(bytes), status: ENROLLMENT_STATUSES.AWAITING_CONSENT });
   const handler = createEnrollmentHandler({
     sessionFromRequest: () => ({ accountId }), getOwnedEnrollment: async () => row,
     getPrivateBlob: async () => ({ stream: Readable.from([bytes.subarray(0, 5), bytes.subarray(5)]), blob: { pathname: row.uploadPathname, etag: row.uploadEtag } }),
