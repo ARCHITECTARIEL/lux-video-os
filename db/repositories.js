@@ -1,17 +1,33 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { database } from './client.js';
 import { acceptedJobOutput } from '../lib/video-os-output-acceptance.js';
 import { acceptStoredFinalOutput } from '../services/accept-stored-final-output.js';
 import { configuredPremiumIdentity, renderAuthorization, assertJobAuthorizationBinding, stableJson } from '../lib/video-os-render-authorization.js';
+import {
+  LUXIFY_CONTRACT_VERSION,
+  LUXIFY_PROVIDER_CAPABILITY,
+  LUXIFY_RENDER_MODE,
+  canonicalizeLuxifyIntent,
+  classifyLuxifyMarker,
+  isLuxifyRequest,
+  luxifyFormatForAspectRatio,
+} from '../lib/luxify-contract.js';
+import { assertPersistedLuxifyJob } from '../lib/luxify-job-binding.js';
+import {
+  configuredLuxifyCredits,
+  digestLuxifyLookBindings,
+  safeLuxifyQuoteProof,
+  verifyLuxifyQuote,
+} from '../lib/luxify-quote.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../lib/video-os-identity-policy.js';
 import { ENROLLMENT_CONSENT_POLICY_VERSION } from '../lib/enrollment-policy.js';
-import { SCRIPTED_PHOTO_CONTRACT_VERSION, assertScriptedPhotoJobActivation, isScriptedPhotoRequest, renderTierForJob, renderTierForReservation, scriptedPhotoActivation } from '../lib/scripted-photo-contract.js';
+import { PREMIUM_SCRIPTED_PHOTO_CREDITS, SCRIPTED_PHOTO_CONTRACT_VERSION, assertScriptedPhotoHeygenInput, assertScriptedPhotoJobActivation, isScriptedPhotoRequest, renderTierForJob, renderTierForReservation, scriptedPhotoActivation } from '../lib/scripted-photo-contract.js';
 import { digestScriptedPhotoSourceBinding, safeScriptedPhotoQuoteProof, verifyScriptedPhotoQuote } from '../lib/scripted-photo-quote.js';
 import { assertEnrollmentConsentRecord } from './enrollment-repository.js';
 import { acquireProviderLifecycleLock } from './provider-lifecycle-lock.js';
 import { assertHeygenProviderReceiptTx, withFreshHeygenSpaceBindingTransaction, withHeygenSpaceBindingReceiptTransaction } from './heygen-space-binding-repository.js';
-import { assertProviderIdentityReferencesActiveTx, assertProviderJobReferencesActiveTx, attachProviderConsumerReferenceTx, getExactProviderResourceTx, markProviderResourceReadyTx, markProviderVideoReadyTx, providerOperationRequestDigest, recordProviderJobSubmissionUnknownTx, recordProviderVideoResourceTx, releaseProviderVideoConsumerTx, reserveProviderOperationTx } from './provider-reconciliation-repository.js';
+import { assertProviderIdentityReferencesActiveTx, assertProviderJobLookReferencesActiveTx, assertProviderJobReferencesActiveTx, attachProviderConsumerReferenceTx, attachProviderJobLookReferencesTx, getExactProviderResourceTx, markProviderResourceReadyTx, markProviderVideoReadyTx, providerOperationRequestDigest, recordProviderJobSubmissionUnknownTx, recordProviderVideoResourceTx, releaseProviderVideoConsumerTx, reserveProviderOperationTx } from './provider-reconciliation-repository.js';
 import { authSessions, creditAccounts, creditTransactions, entitlements, identityConsents, identityEnrollmentEvents, identityVideoEnrollments, jobEvents, mediaAssets, projects, providerLifecycleEvents, rateLimits, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
 
 export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING', 'PROCESSING', 'READY', 'FAILED']);
@@ -184,22 +200,432 @@ function assertPersistedScriptedQuoteProof(job, intent) {
   return proof;
 }
 
-export async function reserveRender({ jobId, accountId, idempotencyKey, correlationId, provider, tier, title, format, costCredits, input, quoteToken }) {
-  const authorizationTier = renderTierForReservation({ provider, tier, input });
+const ALLOW_LUXIFY_TEST_AUTHORITY = String(process.env.NODE_TEST_CONTEXT || '').startsWith('child');
+const LUXIFY_FEATURE_FLAG = 'VIDEO_OS_LUXIFY_ENABLED';
+const LUXIFY_ACCOUNT_PIN_ENV = 'VIDEO_OS_LUXIFY_ACCOUNT_ID';
+const PREMIUM_PRESENTER_RENDER_MODE = 'premium_presenter_v1';
+const PREMIUM_PRESENTER_INPUT_KEYS = new Set([
+  'contractVersion', 'tier', 'renderMode', 'projectId', 'identityId', 'script',
+  'avatar', 'voice', 'sourceBinding', 'quoteProof', 'renderAuthorization',
+]);
+const LUXIFY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LUXIFY_PROVIDER_ID = /^[A-Za-z0-9_.:-]{1,255}$/;
+const LUXIFY_ELIGIBILITY_REVISION = /^[A-Za-z0-9_.:-]{1,160}$/;
+const LUXIFY_INPUT_KEYS = new Set([
+  'contractVersion', 'renderMode', 'providerCapability', 'projectId', 'idempotencyKey',
+  'title', 'prompt', 'lookIdentityIds', 'aspectRatio', 'resolution', 'durationSeconds',
+]);
+const LUXIFY_AUTHORITY_KEYS = new Set(['lookBindings', 'eligibilityRevision']);
+const LUXIFY_LOOK_BINDING_KEYS = new Set(['identityId', 'providerLookId']);
+const LUXIFY_PROJECT_SETTING_KEYS = new Set([
+  'contractVersion', 'renderMode', 'providerCapability', 'prompt',
+  'lookIdentityIds', 'aspectRatio', 'resolution', 'durationSeconds',
+]);
+
+function luxifyFailure(code, message, statusCode = 409, failureCategory = 'RECONCILIATION') {
+  return Object.assign(new Error(message), { code, statusCode, failureCategory });
+}
+
+function hasLuxifyMarker(input) {
+  return classifyLuxifyMarker(input) !== null;
+}
+
+function canonicalLuxifyReservationInput(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)
+    || Object.keys(input).length !== LUXIFY_INPUT_KEYS.size
+    || Object.keys(input).some(key => !LUXIFY_INPUT_KEYS.has(key))
+    || !isLuxifyRequest(input)
+    || input.renderMode !== LUXIFY_RENDER_MODE
+    || input.providerCapability !== LUXIFY_PROVIDER_CAPABILITY) {
+    throw luxifyFailure('LUXIFY_RESERVATION_INVALID', 'LUXIFY reservation input is invalid.', 400, 'VALIDATION');
+  }
+  try {
+    return canonicalizeLuxifyIntent({
+      contractVersion: input.contractVersion,
+      projectId: input.projectId,
+      idempotencyKey: input.idempotencyKey,
+      title: input.title,
+      prompt: input.prompt,
+      lookIdentityIds: input.lookIdentityIds,
+      aspectRatio: input.aspectRatio,
+      resolution: input.resolution,
+      durationSeconds: input.durationSeconds,
+    });
+  } catch {
+    throw luxifyFailure('LUXIFY_RESERVATION_INVALID', 'LUXIFY reservation input is invalid.', 400, 'VALIDATION');
+  }
+}
+
+function canonicalLuxifyStoredIntent(input) {
+  try {
+    return canonicalizeLuxifyIntent({
+      contractVersion: input?.contractVersion,
+      projectId: input?.projectId,
+      idempotencyKey: input?.idempotencyKey,
+      title: input?.title,
+      prompt: input?.prompt,
+      lookIdentityIds: input?.lookIdentityIds,
+      aspectRatio: input?.aspectRatio,
+      resolution: input?.resolution,
+      durationSeconds: input?.durationSeconds,
+    });
+  } catch {
+    throw luxifyFailure('LUXIFY_JOB_BINDING_INVALID', 'Persisted LUXIFY intent is invalid.');
+  }
+}
+
+function exactLuxifyAuthority(value, orderedIdentityIds) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).length !== LUXIFY_AUTHORITY_KEYS.size
+    || Object.keys(value).some(key => !LUXIFY_AUTHORITY_KEYS.has(key))
+    || !Array.isArray(value.lookBindings)
+    || value.lookBindings.length !== orderedIdentityIds.length
+    || !LUXIFY_ELIGIBILITY_REVISION.test(String(value.eligibilityRevision || ''))) {
+    throw luxifyFailure('LUXIFY_AUTHORITY_INVALID', 'LUXIFY look authority is invalid.', 409, 'CONSENT');
+  }
+  const lookBindings = value.lookBindings.map((binding, index) => {
+    if (!binding || typeof binding !== 'object' || Array.isArray(binding)
+      || Object.keys(binding).length !== LUXIFY_LOOK_BINDING_KEYS.size
+      || Object.keys(binding).some(key => !LUXIFY_LOOK_BINDING_KEYS.has(key))
+      || !LUXIFY_ID.test(String(binding.identityId || ''))
+      || binding.identityId.toLowerCase() !== orderedIdentityIds[index]
+      || !LUXIFY_PROVIDER_ID.test(String(binding.providerLookId || ''))) {
+      throw luxifyFailure('LUXIFY_AUTHORITY_INVALID', 'LUXIFY look authority is invalid.', 409, 'CONSENT');
+    }
+    return Object.freeze({ identityId: binding.identityId.toLowerCase(), providerLookId: binding.providerLookId });
+  });
+  if (new Set(lookBindings.map(item => item.identityId)).size !== lookBindings.length
+    || new Set(lookBindings.map(item => item.providerLookId)).size !== lookBindings.length) {
+    throw luxifyFailure('LUXIFY_AUTHORITY_INVALID', 'LUXIFY look authority is invalid.', 409, 'CONSENT');
+  }
+  return Object.freeze({
+    lookBindings: Object.freeze(lookBindings),
+    eligibilityRevision: value.eligibilityRevision,
+  });
+}
+
+async function unavailableLuxifyAuthority() {
+  throw luxifyFailure(
+    'LUXIFY_CINEMATIC_CONSENT_PERSISTENCE_UNAVAILABLE',
+    'Cinematic-specific LUXIFY consent and capability evidence are not persisted.',
+    503,
+    'CONSENT',
+  );
+}
+
+function luxifyAuthorityResolver(trusted = {}) {
+  if (!trusted || typeof trusted !== 'object' || Array.isArray(trusted)
+    || Object.keys(trusted).some(key => key !== 'resolveLuxifyAuthority')) {
+    throw new TypeError('LUXIFY repository dependencies are invalid.');
+  }
+  if (trusted.resolveLuxifyAuthority !== undefined) {
+    if (!ALLOW_LUXIFY_TEST_AUTHORITY || typeof trusted.resolveLuxifyAuthority !== 'function') {
+      throw luxifyFailure('LUXIFY_TEST_AUTHORITY_DENIED', 'LUXIFY authority injection is test-only.', 403, 'ENTITLEMENT');
+    }
+    return trusted.resolveLuxifyAuthority;
+  }
+  return unavailableLuxifyAuthority;
+}
+
+function assertLuxifyActivation({ accountId, provider, tier, title, format, costCredits, input }, env = process.env) {
+  const intent = canonicalLuxifyReservationInput(input);
+  if (provider !== 'heygen' || tier !== 'premium' || title !== intent.title
+    || format !== luxifyFormatForAspectRatio(intent.aspectRatio)
+    || input.idempotencyKey !== intent.idempotencyKey) {
+    throw luxifyFailure('LUXIFY_RESERVATION_INVALID', 'LUXIFY reservation binding is invalid.', 409);
+  }
+  if (String(env[LUXIFY_FEATURE_FLAG] || '').trim().toLowerCase() !== 'true') {
+    throw luxifyFailure('LUXIFY_DISABLED', 'LUXIFY rendering is disabled.', 503, 'CONFIG_MISSING');
+  }
+  if (!String(env[LUXIFY_ACCOUNT_PIN_ENV] || '').trim()
+    || String(env[LUXIFY_ACCOUNT_PIN_ENV]).trim() !== accountId) {
+    throw luxifyFailure('LUXIFY_ACCOUNT_NOT_PINNED', 'This account is not authorized for LUXIFY.', 403, 'ENTITLEMENT');
+  }
+  const configuredCost = configuredLuxifyCredits(intent.resolution, env);
+  if (costCredits !== configuredCost) {
+    throw luxifyFailure('LUXIFY_COST_MISMATCH', 'LUXIFY reservation cost changed.', 409);
+  }
+  return { intent, configuredCost };
+}
+
+async function assertCurrentLuxifyProjectIntent(tx, { accountId, intent }) {
+  const lockKey = [accountId, intent.projectId, 'luxify-project'].join(':');
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+  const [project] = await tx.select().from(projects).where(and(
+    eq(projects.id, intent.projectId),
+    eq(projects.accountId, accountId),
+  )).for('share').limit(1);
+  const settings = project?.settings;
+  if (!project || project.accountId !== accountId || project.id !== intent.projectId
+    || project.identityId !== null || project.script !== ''
+    || !settings || typeof settings !== 'object' || Array.isArray(settings)
+    || Object.keys(settings).length !== LUXIFY_PROJECT_SETTING_KEYS.size
+    || Object.keys(settings).some(key => !LUXIFY_PROJECT_SETTING_KEYS.has(key))
+    || settings.contractVersion !== LUXIFY_CONTRACT_VERSION
+    || settings.renderMode !== LUXIFY_RENDER_MODE
+    || settings.providerCapability !== LUXIFY_PROVIDER_CAPABILITY) {
+    throw luxifyFailure('LUXIFY_PROJECT_BINDING_CHANGED', 'Saved LUXIFY project binding changed.', 409);
+  }
+  let persisted;
+  try {
+    persisted = canonicalizeLuxifyIntent({
+      contractVersion: settings.contractVersion,
+      projectId: project.id,
+      idempotencyKey: intent.idempotencyKey,
+      title: project.title,
+      prompt: settings.prompt,
+      lookIdentityIds: settings.lookIdentityIds,
+      aspectRatio: settings.aspectRatio,
+      resolution: settings.resolution,
+      durationSeconds: settings.durationSeconds,
+    });
+  } catch {
+    throw luxifyFailure('LUXIFY_PROJECT_BINDING_CHANGED', 'Saved LUXIFY project binding changed.', 409);
+  }
+  const rawMatchesCanonical = project.title === persisted.title
+    && settings.prompt === persisted.prompt
+    && JSON.stringify(settings.lookIdentityIds) === JSON.stringify(persisted.lookIdentityIds)
+    && settings.aspectRatio === persisted.aspectRatio
+    && settings.resolution === persisted.resolution
+    && settings.durationSeconds === persisted.durationSeconds;
+  if (!rawMatchesCanonical
+    || JSON.stringify(stableJson(persisted)) !== JSON.stringify(stableJson(intent))) {
+    throw luxifyFailure('LUXIFY_PROJECT_BINDING_CHANGED', 'Saved LUXIFY project binding changed.', 409);
+  }
+  return project;
+}
+
+function luxifyQuoteBinding({ accountId, intent, authority }) {
+  return {
+    accountId,
+    projectId: intent.projectId,
+    idempotencyKey: intent.idempotencyKey,
+    title: intent.title,
+    prompt: intent.prompt,
+    lookBindings: authority.lookBindings,
+    eligibilityRevision: authority.eligibilityRevision,
+    aspectRatio: intent.aspectRatio,
+    resolution: intent.resolution,
+    durationSeconds: intent.durationSeconds,
+  };
+}
+
+function assertPersistedLuxifyQuoteProof(job, input) {
+  const intent = canonicalLuxifyStoredIntent(input);
+  const authority = exactLuxifyAuthority({
+    lookBindings: input?.lookBindings,
+    eligibilityRevision: input?.eligibilityRevision,
+  }, intent.lookIdentityIds);
+  let proof;
+  try { proof = safeLuxifyQuoteProof(input?.quoteProof); } catch {
+    throw luxifyFailure('LUXIFY_QUOTE_PROOF_INVALID', 'Persisted LUXIFY quote proof is invalid.');
+  }
+  if (proof.accountSha256 !== sha256Text(job.accountId)
+    || proof.projectId !== intent.projectId
+    || proof.idempotencyKeySha256 !== sha256Text(job.idempotencyKey)
+    || proof.titleSha256 !== sha256Text(intent.title)
+    || proof.promptSha256 !== sha256Text(intent.prompt)
+    || proof.lookBindingsSha256 !== digestLuxifyLookBindings(authority.lookBindings)
+    || proof.eligibilityRevisionSha256 !== sha256Text(authority.eligibilityRevision)
+    || proof.aspectRatio !== intent.aspectRatio
+    || proof.resolution !== intent.resolution
+    || proof.durationSeconds !== intent.durationSeconds
+    || proof.renderMode !== LUXIFY_RENDER_MODE
+    || proof.providerCapability !== LUXIFY_PROVIDER_CAPABILITY
+    || proof.luxCredits !== job.costCredits) {
+    throw luxifyFailure('LUXIFY_QUOTE_PROOF_INVALID', 'Persisted LUXIFY quote proof does not match the job.');
+  }
+  const eligibleLookIds = input?.eligibleLookIds;
+  if (!Array.isArray(eligibleLookIds)
+    || JSON.stringify(eligibleLookIds) !== JSON.stringify(authority.lookBindings.map(item => item.providerLookId))) {
+    throw luxifyFailure('LUXIFY_JOB_BINDING_INVALID', 'Persisted LUXIFY look binding is invalid.');
+  }
+  return { authority, intent, proof };
+}
+
+function assertPersistedLuxifyActivation(job, env = process.env) {
+  if (job?.provider !== 'heygen' || !isLuxifyRequest(job.input)
+    || job.input?.renderMode !== LUXIFY_RENDER_MODE
+    || job.input?.providerCapability !== LUXIFY_PROVIDER_CAPABILITY) {
+    throw luxifyFailure('LUXIFY_JOB_BINDING_INVALID', 'Persisted LUXIFY job binding is invalid.');
+  }
+  const persisted = assertPersistedLuxifyQuoteProof(job, job.input);
+  if (job.projectId !== persisted.intent.projectId
+    || job.idempotencyKey !== persisted.intent.idempotencyKey
+    || job.title !== persisted.intent.title
+    || job.format !== luxifyFormatForAspectRatio(persisted.intent.aspectRatio)) {
+    throw luxifyFailure('LUXIFY_JOB_BINDING_INVALID', 'Persisted LUXIFY job binding is invalid.');
+  }
+  if (String(env[LUXIFY_FEATURE_FLAG] || '').trim().toLowerCase() !== 'true') {
+    throw luxifyFailure('LUXIFY_DISABLED', 'LUXIFY rendering is disabled.', 503, 'CONFIG_MISSING');
+  }
+  if (!String(env[LUXIFY_ACCOUNT_PIN_ENV] || '').trim()
+    || String(env[LUXIFY_ACCOUNT_PIN_ENV]).trim() !== job.accountId) {
+    throw luxifyFailure('LUXIFY_ACCOUNT_NOT_PINNED', 'This account is not authorized for LUXIFY.', 403, 'ENTITLEMENT');
+  }
+  if (configuredLuxifyCredits(persisted.intent.resolution, env) !== job.costCredits) {
+    throw luxifyFailure('LUXIFY_COST_MISMATCH', 'Persisted LUXIFY cost changed.');
+  }
+  return persisted;
+}
+
+export function assertPersistedPremiumPresenterJob(job) {
+  const input = job?.input;
+  try {
+    if (!job || typeof job !== 'object' || Array.isArray(job)
+      || job.provider !== 'heygen'
+      || !input || typeof input !== 'object' || Array.isArray(input)
+      || Object.keys(input).length !== PREMIUM_PRESENTER_INPUT_KEYS.size
+      || Object.keys(input).some(key => !PREMIUM_PRESENTER_INPUT_KEYS.has(key))
+      || input.contractVersion !== SCRIPTED_PHOTO_CONTRACT_VERSION
+      || input.tier !== 'PREMIUM'
+      || input.renderMode !== PREMIUM_PRESENTER_RENDER_MODE
+      || job.projectId !== input.projectId
+      || job.costCredits !== PREMIUM_SCRIPTED_PHOTO_CREDITS) {
+      throw new Error('invalid');
+    }
+    assertScriptedPhotoHeygenInput(job);
+    assertPersistedScriptedQuoteProof(job, input);
+  } catch {
+    throw Object.assign(new Error('Persisted Premium Presenter job binding is invalid.'), {
+      statusCode: 409,
+      failureCategory: 'RECONCILIATION',
+      code: 'PREMIUM_PRESENTER_JOB_BINDING_INVALID',
+    });
+  }
+  return job;
+}
+
+export function providerVideoOperationRequestPayload(job) {
+  const marker = classifyLuxifyMarker(job?.input, { provider: job?.provider });
+  if (marker === 'unavailable') {
+    throw luxifyFailure('LUXIFY_JOB_BINDING_INVALID', 'Persisted LUXIFY job binding is invalid.');
+  }
+  if (marker === 'luxify') {
+    const persisted = assertPersistedLuxifyJob(job);
+    return Object.freeze({
+      version: 'provider-video-request/luxify-v1',
+      jobId: job.id,
+      accountId: job.accountId,
+      projectId: job.projectId,
+      title: job.title,
+      format: job.format,
+      renderMode: LUXIFY_RENDER_MODE,
+      providerCapability: LUXIFY_PROVIDER_CAPABILITY,
+      prompt: persisted.intent.prompt,
+      lookBindings: persisted.lookBindings.map(binding => ({ ...binding })),
+      eligibilityRevision: persisted.eligibilityRevision,
+      aspectRatio: persisted.intent.aspectRatio,
+      resolution: persisted.intent.resolution,
+      durationSeconds: persisted.intent.durationSeconds,
+    });
+  }
+  if (job?.input?.renderMode === PREMIUM_PRESENTER_RENDER_MODE) assertPersistedPremiumPresenterJob(job);
+  return Object.freeze({
+    version: 'provider-video-request/v1',
+    jobId: job.id,
+    accountId: job.accountId,
+    projectId: job.projectId,
+    title: job.title,
+    format: job.format,
+    identityId: job.input?.identityId || null,
+    script: job.input?.script || null,
+    avatarId: job.input?.avatar?.avatarId || null,
+    voiceId: job.input?.voice?.voiceId || null,
+  });
+}
+
+export function providerVideoOperationRequestDigest(job) {
+  return providerOperationRequestDigest(providerVideoOperationRequestPayload(job));
+}
+
+const reservationProofIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function exactRenderReservationProofId(events, { jobId, correlationId }) {
+  if (!Array.isArray(events) || events.length !== 1) {
+    throw Object.assign(new Error('Render reservation proof is missing or ambiguous.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  }
+  const [event] = events;
+  if (!reservationProofIdPattern.test(String(event?.id || ''))
+    || event.jobId !== jobId
+    || event.correlationId !== correlationId
+    || event.eventType !== 'render.reserved') {
+    throw Object.assign(new Error('Render reservation proof does not match the job.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+  }
+  return event.id;
+}
+
+export async function bindRenderReservationProofTx(tx, { job, costCredits, create }) {
+  if (create) {
+    await tx.insert(jobEvents).values({
+      id: randomUUID(),
+      jobId: job.id,
+      correlationId: job.correlationId,
+      eventType: 'render.reserved',
+      stageTo: 'reserved',
+      details: { costCredits },
+    });
+  }
+  const events = await tx.select({
+    id: jobEvents.id,
+    jobId: jobEvents.jobId,
+    correlationId: jobEvents.correlationId,
+    eventType: jobEvents.eventType,
+  }).from(jobEvents).where(and(
+    eq(jobEvents.jobId, job.id),
+    eq(jobEvents.eventType, 'render.reserved'),
+  )).limit(2);
+  return exactRenderReservationProofId(events, { jobId: job.id, correlationId: job.correlationId });
+}
+
+export async function getRenderReservationProof(job) {
+  return database().transaction(
+    (tx) => bindRenderReservationProofTx(tx, { job, costCredits: job.costCredits, create: false }),
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
+}
+
+export async function reserveRender({ jobId, accountId, idempotencyKey, correlationId, provider, tier, title, format, costCredits, input, quoteToken }, trusted = {}) {
+  const luxifyMarker = hasLuxifyMarker(input);
+  const luxify = isLuxifyRequest(input);
+  if (luxifyMarker && !luxify) throw luxifyFailure('LUXIFY_CONTRACT_INVALID', 'LUXIFY contract version is invalid.', 400, 'VALIDATION');
+  const resolveLuxifyAuthority = luxifyAuthorityResolver(trusted);
+  const luxifyActivation = luxify
+    ? assertLuxifyActivation({ accountId, provider, tier, title, format, costCredits, input })
+    : null;
+  if (luxify && (input.idempotencyKey !== idempotencyKey || input.projectId == null)) {
+    throw luxifyFailure('LUXIFY_RESERVATION_INVALID', 'LUXIFY reservation identity is invalid.', 409);
+  }
+  const authorizationTier = luxify ? 'premium' : renderTierForReservation({ provider, tier, input });
   const scripted = isScriptedPhotoRequest(input);
   return database().transaction(async (tx) => {
     await acquireProviderLifecycleLock(tx, accountId);
-    if (scripted) await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${accountId}:${idempotencyKey}:scripted-photo-reserve`}, 0))`);
+    if (scripted || luxify) await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${accountId}:${idempotencyKey}:${luxify ? 'luxify' : 'scripted-photo'}-reserve`}, 0))`);
     let account;
-    if (!scripted) {
+    if (!scripted && !luxify) {
       account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId)).for('update').limit(1))[0];
       if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
     }
     let existingQuery = tx.select().from(videoJobs).where(and(eq(videoJobs.accountId, accountId), eq(videoJobs.idempotencyKey, idempotencyKey)));
-    if (scripted) existingQuery = existingQuery.for('update');
+    if (scripted || luxify) existingQuery = existingQuery.for('update');
     const existing = await existingQuery.limit(1);
     if (existing[0]) {
       const job = existing[0];
+      if (luxify) {
+        if (job.provider !== 'heygen' || !isLuxifyRequest(job.input)
+          || job.input?.renderMode !== LUXIFY_RENDER_MODE
+          || job.input?.providerCapability !== LUXIFY_PROVIDER_CAPABILITY
+          || job.title !== title || job.format !== format || job.costCredits !== luxifyActivation.configuredCost) {
+          throw luxifyFailure('LUXIFY_IDEMPOTENCY_CONFLICT', 'Idempotency key belongs to a different LUXIFY request.');
+        }
+        const saved = assertPersistedLuxifyQuoteProof(job, job.input);
+        if (JSON.stringify(stableJson(saved.intent)) !== JSON.stringify(stableJson(luxifyActivation.intent))) {
+          throw luxifyFailure('LUXIFY_IDEMPOTENCY_CONFLICT', 'Idempotency key belongs to a different LUXIFY request.');
+        }
+        assertJobAuthorizationBinding(job, 'premium');
+        const proofId = await bindRenderReservationProofTx(tx, { job, costCredits: job.costCredits, create: false });
+        return { job, replayed: true, proofId };
+      }
       const savedInput = withoutServerRenderProof(job.input);
       const requestedInput = withoutServerRenderProof(input);
       if (job.provider !== provider || job.title !== title || job.format !== format || job.costCredits !== costCredits
@@ -209,11 +635,36 @@ export async function reserveRender({ jobId, accountId, idempotencyKey, correlat
       if (renderTierForJob(job) !== authorizationTier) throw Object.assign(new Error('Idempotency key belongs to a different render tier.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
       assertJobAuthorizationBinding(job, authorizationTier);
       if (scripted) assertPersistedScriptedQuoteProof(job, savedInput);
-      return { job, replayed: true };
+      const proofId = await bindRenderReservationProofTx(tx, { job, costCredits: job.costCredits, create: false });
+      return { job, replayed: true, proofId };
+    }
+    if (luxify) {
+      await assertCurrentLuxifyProjectIntent(tx, {
+        accountId,
+        intent: luxifyActivation.intent,
+      });
     }
     let reservedInput = input;
     let quoteProof;
-    if (scripted) {
+    let luxifyAuthority;
+    if (luxify) {
+      const resolved = await resolveLuxifyAuthority({
+        phase: 'reservation',
+        tx,
+        accountId,
+        projectId: luxifyActivation.intent.projectId,
+        lookIdentityIds: [...luxifyActivation.intent.lookIdentityIds],
+        intent: luxifyActivation.intent,
+      });
+      luxifyAuthority = exactLuxifyAuthority(resolved, luxifyActivation.intent.lookIdentityIds);
+      assertLuxifyActivation({ accountId, provider, tier, title, format, costCredits, input });
+      reservedInput = {
+        ...input,
+        lookBindings: luxifyAuthority.lookBindings.map(binding => ({ ...binding })),
+        eligibleLookIds: luxifyAuthority.lookBindings.map(binding => binding.providerLookId),
+        eligibilityRevision: luxifyAuthority.eligibilityRevision,
+      };
+    } else if (scripted) {
       const activation = scriptedPhotoActivation(input.tier);
       if (activation.tier !== authorizationTier || activation.provider !== provider || activation.costCredits !== costCredits) {
         throw Object.assign(new Error('Scripted-photo reservation does not match configured provider or cost.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
@@ -227,7 +678,19 @@ export async function reserveRender({ jobId, accountId, idempotencyKey, correlat
       reservedInput = resolved.input;
     }
     const authorization = await requirePersistedRenderAuthorization(accountId, authorizationTier, tx);
-    if (scripted) {
+    if (luxify) {
+      const claims = verifyLuxifyQuote(quoteToken, luxifyQuoteBinding({
+        accountId,
+        intent: luxifyActivation.intent,
+        authority: luxifyAuthority,
+      }));
+      quoteProof = safeLuxifyQuoteProof(claims);
+      if (quoteProof.luxCredits !== costCredits) {
+        throw luxifyFailure('LUXIFY_COST_MISMATCH', 'LUXIFY quote cost changed.');
+      }
+      account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, accountId)).for('update').limit(1))[0];
+      if (!account) throw Object.assign(new Error('Credit account not found.'), { statusCode: 404 });
+    } else if (scripted) {
       const activation = scriptedPhotoActivation(reservedInput.tier);
       if (activation.tier !== authorizationTier || activation.provider !== provider || activation.costCredits !== costCredits) {
         throw Object.assign(new Error('Scripted-photo reservation configuration changed while acquiring its locks.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
@@ -239,7 +702,7 @@ export async function reserveRender({ jobId, accountId, idempotencyKey, correlat
       quoteProof = safeScriptedPhotoQuoteProof(claims);
     }
     let providerResourcesForJob = [];
-    if (provider === 'heygen' && reservedInput?.identityId) {
+    if (!luxify && provider === 'heygen' && reservedInput?.identityId) {
       const lookId = reservedInput?.sourceBinding?.providerRenderableAvatarId || reservedInput?.avatar?.avatarId;
       const voiceId = reservedInput?.sourceBinding?.providerVoiceId || reservedInput?.voice?.voiceId;
       if (!lookId || !voiceId) throw Object.assign(new Error('Identity provider resources are missing.'), { statusCode: 409, failureCategory: 'PROVIDER_RESOURCE_UNVERIFIED' });
@@ -254,11 +717,15 @@ export async function reserveRender({ jobId, accountId, idempotencyKey, correlat
     if (account.balance - account.reserved < costCredits) throw Object.assign(new Error('Insufficient credits.'), { statusCode: 402, failureCategory: 'ENTITLEMENT' });
     await tx.update(creditAccounts).set({ reserved: account.reserved + costCredits, updatedAt: new Date() }).where(eq(creditAccounts.accountId, accountId));
     const [job] = await tx.insert(videoJobs).values({ id: jobId, accountId, projectId: reservedInput.projectId, idempotencyKey, correlationId, provider, status: 'reserved', title, format, costCredits, input: { ...reservedInput, ...(quoteProof ? { quoteProof } : {}), renderAuthorization: { ...authorization, jobId } } }).returning();
-    for (const resource of providerResourcesForJob) await attachProviderConsumerReferenceTx(tx, {
-      accountId, resourceId: resource.id, consumerKind: 'job', consumerId: job.id, originOperationId: resource.originOperationId,
-    });
-    await tx.insert(jobEvents).values({ jobId, correlationId, eventType: 'render.reserved', stageTo: 'reserved', details: { costCredits } });
-    return { job, replayed: false };
+    if (luxify) {
+      await attachProviderJobLookReferencesTx(tx, { accountId, jobId: job.id, lookBindings: luxifyAuthority.lookBindings });
+    } else {
+      for (const resource of providerResourcesForJob) await attachProviderConsumerReferenceTx(tx, {
+        accountId, resourceId: resource.id, consumerKind: 'job', consumerId: job.id, originOperationId: resource.originOperationId,
+      });
+    }
+    const proofId = await bindRenderReservationProofTx(tx, { job, costCredits, create: true });
+    return { job, replayed: false, proofId };
   });
 }
 
@@ -395,7 +862,8 @@ export async function reserveFailedRenderRecovery(jobId) {
   });
 }
 
-export async function transitionJob({ jobId, stageTo, eventType, providerJobId, providerBinding, providerSourceUrlDigest, output, failureCategory, details = {} }) {
+export async function transitionJob({ jobId, stageTo, eventType, providerJobId, providerBinding, providerSourceUrlDigest, output, failureCategory, details = {} }, trusted = {}) {
+  const resolveLuxifyAuthority = luxifyAuthorityResolver(trusted);
   if (stageTo === 'ready') throw Object.assign(new Error('Ready requires accepted finalization.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
   const bindingClaim = stageTo === 'provider_submitting' && providerBinding != null;
   const bindingReceipt = ['provider_submitted', 'provider_submit_unknown', 'provider_rendering', 'provider_ready', 'finishing', 'finish_contained'].includes(stageTo) && providerBinding != null;
@@ -443,10 +911,14 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
       && ['provider_ready', 'finish_contained', 'finishing', 'ready'].includes(current.status)) return { job: current };
     assertJobTransition(current.status, stageTo);
     if (stageTo === 'provider_submitting') {
-      const tier = renderTierForJob(current);
-      assertScriptedPhotoJobActivation(current);
+      const luxifyMarker = hasLuxifyMarker(current.input);
+      const luxify = isLuxifyRequest(current.input);
+      if (luxifyMarker && !luxify) throw luxifyFailure('LUXIFY_CONTRACT_INVALID', 'Persisted LUXIFY contract version is invalid.', 400, 'VALIDATION');
+      const tier = luxify ? 'premium' : renderTierForJob(current);
+      const persistedLuxify = luxify ? assertPersistedLuxifyActivation(current) : null;
+      if (!luxify) assertScriptedPhotoJobActivation(current);
       assertJobAuthorizationBinding(current, tier);
-      if (current.provider === 'heygen' && !current.input?.identityId) {
+      if (current.provider === 'heygen' && !current.input?.identityId && !luxify) {
         throw Object.assign(new Error('HeyGen stock talent is not bound to the verified provider-space ledger.'), {
           statusCode: 409,
           failureCategory: 'PROVIDER_RESOURCE_UNVERIFIED',
@@ -456,7 +928,29 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
       // lock serializes the claim with grant revocation; already claimed work
       // may finish, but a revocation committed first blocks a new claim.
       await requirePersistedRenderAuthorization(current.accountId, tier, tx);
-      if (isScriptedPhotoRequest(current.input)) await assertScriptedPhotoClaimBinding(tx, current);
+      if (luxify) {
+        const resolved = await resolveLuxifyAuthority({
+          phase: 'claim',
+          tx,
+          accountId: current.accountId,
+          projectId: current.projectId,
+          lookIdentityIds: [...persistedLuxify.intent.lookIdentityIds],
+          intent: persistedLuxify.intent,
+          job: structuredClone(current),
+          providerBinding,
+        });
+        const currentAuthority = exactLuxifyAuthority(resolved, persistedLuxify.intent.lookIdentityIds);
+        if (JSON.stringify(stableJson(currentAuthority)) !== JSON.stringify(stableJson(persistedLuxify.authority))) {
+          throw luxifyFailure('LUXIFY_AUTHORITY_CHANGED', 'LUXIFY look authority changed before provider submission.', 409, 'CONSENT');
+        }
+        await assertProviderJobLookReferencesActiveTx(tx, {
+          accountId: current.accountId,
+          jobId: current.id,
+          providerBinding,
+          lookBindings: persistedLuxify.authority.lookBindings,
+        });
+        details = { ...details, renderMode: LUXIFY_RENDER_MODE, providerCapability: LUXIFY_PROVIDER_CAPABILITY };
+      } else if (isScriptedPhotoRequest(current.input)) await assertScriptedPhotoClaimBinding(tx, current);
       else if (current.input?.identityId) {
         const linked = await activeLinkedEnrollment(tx, current.accountId, current.input.identityId, { lock: true });
         const [identity] = await tx.select().from(userIdentities).where(and(
@@ -470,7 +964,7 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
           throw Object.assign(new Error('Identity provider binding changed before submission.'), { statusCode: 409, failureCategory: 'CONSENT' });
         }
       }
-      if (current.input?.identityId) await assertProviderJobReferencesActiveTx(tx, {
+      if (!luxify && current.input?.identityId) await assertProviderJobReferencesActiveTx(tx, {
         accountId: current.accountId,
         jobId: current.id,
         providerBinding,
@@ -480,12 +974,7 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
         ],
       });
       if (current.provider === 'heygen') {
-        const requestDigest = providerOperationRequestDigest({
-          version: 'provider-video-request/v1', jobId: current.id, accountId: current.accountId,
-          projectId: current.projectId, title: current.title, format: current.format,
-          identityId: current.input?.identityId || null, script: current.input?.script || null,
-          avatarId: current.input?.avatar?.avatarId || null, voiceId: current.input?.voice?.voiceId || null,
-        });
+        const requestDigest = providerVideoOperationRequestDigest(current);
         const ledger = await reserveProviderOperationTx(tx, {
           accountId: current.accountId,
           providerBinding,
@@ -493,7 +982,7 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
           originOperationKey: current.id,
           correlationId: current.correlationId,
           enrollmentId: null,
-          identityId: current.input?.identityId || null,
+          identityId: luxify ? null : current.input?.identityId || null,
           jobId: current.id,
           requestDigest,
         });
@@ -1191,7 +1680,11 @@ function assertScriptedPhotoSourceAssets(photo, voice, linkedEnrollment) {
   }
 }
 
-async function resolveScriptedPhotoContext(tx, { accountId, projectId, identityId, title, script, tier }, { lock = false } = {}) {
+async function resolveScriptedPhotoContext(
+  tx,
+  { accountId, projectId, identityId, title, script, tier },
+  { lock = false, includePremiumRenderMode = true } = {},
+) {
   const project = (await withShareLock(tx.select().from(projects).where(and(eq(projects.id, projectId), eq(projects.accountId, accountId))), lock).limit(1))[0];
   if (!project) throw scriptedPhotoBindingError('Project not found.', 404, 'OWNERSHIP');
   if (project.settings?.contractVersion !== SCRIPTED_PHOTO_CONTRACT_VERSION || project.settings?.tier !== tier
@@ -1248,6 +1741,7 @@ async function resolveScriptedPhotoContext(tx, { accountId, projectId, identityI
     input: {
       contractVersion: SCRIPTED_PHOTO_CONTRACT_VERSION,
       tier,
+      ...(tier === 'PREMIUM' && includePremiumRenderMode ? { renderMode: PREMIUM_PRESENTER_RENDER_MODE } : {}),
       projectId,
       identityId,
       script,
@@ -1264,6 +1758,11 @@ export async function getScriptedPhotoReservationContext(request) {
 
 async function assertScriptedPhotoClaimBinding(tx, job) {
   if (job.projectId !== job.input?.projectId) throw scriptedPhotoBindingError('Scripted-photo project binding is invalid.');
+  const persistedRenderMode = job.input?.renderMode;
+  if ((job.input?.tier === 'PREMIUM' && persistedRenderMode !== undefined && persistedRenderMode !== PREMIUM_PRESENTER_RENDER_MODE)
+    || (job.input?.tier !== 'PREMIUM' && persistedRenderMode !== undefined)) {
+    throw scriptedPhotoBindingError('Scripted-photo render mode binding is invalid.');
+  }
   const resolved = await resolveScriptedPhotoContext(tx, {
     accountId: job.accountId,
     projectId: job.input.projectId,
@@ -1271,7 +1770,12 @@ async function assertScriptedPhotoClaimBinding(tx, job) {
     title: job.title,
     script: job.input.script,
     tier: job.input.tier,
-  }, { lock: true });
+  }, {
+    lock: true,
+    // Existing Premium jobs predate the explicit attestation marker. They
+    // remain claimable, while every new Premium reservation stores it.
+    includePremiumRenderMode: persistedRenderMode === PREMIUM_PRESENTER_RENDER_MODE,
+  });
   const storedInput = withoutServerRenderProof(job.input);
   if (JSON.stringify(stableJson(storedInput)) !== JSON.stringify(stableJson(resolved.input))) {
     throw scriptedPhotoBindingError('Scripted-photo source binding changed before provider submission.', 409, 'CONSENT');

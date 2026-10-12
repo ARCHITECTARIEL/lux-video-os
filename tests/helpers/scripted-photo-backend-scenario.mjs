@@ -42,6 +42,7 @@ if (scenario === 'repository') {
   const photo = { id: photoId, accountId, kind: 'identity-photo-source', contentType: 'image/png', privatePathname: `video-os/uploads/${accountId}/photo.png`, sha256: consent.photoSha256, quarantinedAt: null };
   const voice = { id: voiceId, accountId, kind: 'identity-voice-source', contentType: 'audio/wav', privatePathname: `video-os/uploads/${accountId}/voice.wav`, sha256: consent.voiceSha256, quarantinedAt: null };
   const jobs = [];
+  const jobEventRows = [];
   const lockOrder = [];
   let mediaReads = 0;
   let creditLockDelayMs = 0;
@@ -51,6 +52,7 @@ if (scenario === 'repository') {
     if (table === schema.users) return [{ id: accountId, email: null }];
     if (table === schema.creditAccounts) return [credit];
     if (table === schema.videoJobs) return jobs;
+    if (table === schema.jobEvents) return jobEventRows;
     if (table === schema.projects) return [project];
     if (table === schema.userIdentities) return [identity];
     if (table === schema.identityConsents) return consent.revokedAt ? [] : [consent];
@@ -89,6 +91,7 @@ if (scenario === 'repository') {
           jobs.push(values);
           return { returning: async () => [values] };
         }
+        if (table === schema.jobEvents) jobEventRows.push(values);
         return Promise.resolve(values);
       } };
     },
@@ -213,6 +216,7 @@ if (scenario === 'repository') {
   assert.equal(jobs.length, 0);
   const reserved = await repo.reserveRender(standardRequest);
   assert.equal(reserved.job.provider, 'heygen');
+  assert.equal(jobEventRows[0].id, reserved.proofId);
   assert.equal(reserved.job.input.tier, 'STANDARD');
   assert.equal(reserved.job.input.renderAuthorization.tier, 'standard');
   assert.deepEqual(attachedReferences.map(ref => [ref.resourceId, ref.consumerId]), providerResources.map(resource => [resource.id, reserved.job.id]));
@@ -257,6 +261,86 @@ if (scenario === 'repository') {
   await assert.rejects(repo.transitionJob({ jobId: jobs[0].id, stageTo: 'provider_submitting', eventType: 'test.revoked', providerBinding }), { failureCategory: 'CONSENT' });
   assert.equal(jobs[0].status, 'workflow_started');
   assert.equal(jobs[0].updatedAt, updatesBefore);
+
+  consent.revokedAt = null;
+  jobs.length = 0;
+  jobEventRows.length = 0;
+  attachedReferences.length = 0;
+  credit.reserved = 0;
+  mediaReads = 0;
+  project.settings = { ...savedSettings, tier: 'PREMIUM' };
+  grants = [{ accountId, entitlementKey: 'liveRendering', enabled: true, sourceType: 'test_fixture', sourceId: null }];
+  const premiumContext = await repo.getScriptedPhotoReservationContext({
+    accountId, projectId, identityId, title, script, tier: 'PREMIUM',
+  });
+  assert.equal(premiumContext.input.renderMode, 'premium_presenter_v1');
+  const premiumIdempotencyKey = randomUUID();
+  const premiumQuote = issueScriptedPhotoQuote({
+    accountId,
+    projectId,
+    identityId,
+    idempotencyKey: premiumIdempotencyKey,
+    title,
+    script,
+    format: 'vertical',
+    tier: 'PREMIUM',
+    sourceBinding: premiumContext.input.sourceBinding,
+    credits: 90,
+  }).token;
+  const premiumRequest = {
+    jobId: 'scripted-premium-job',
+    accountId,
+    idempotencyKey: premiumIdempotencyKey,
+    correlationId: 'scripted-premium-correlation',
+    provider: 'heygen',
+    tier: 'premium',
+    title,
+    format: 'vertical',
+    costCredits: 90,
+    input: premiumContext.input,
+    quoteToken: premiumQuote,
+  };
+  const premiumReserved = await repo.reserveRender(premiumRequest);
+  assert.equal(premiumReserved.job.input.renderMode, 'premium_presenter_v1');
+  assert.equal((await repo.reserveRender(premiumRequest)).job.input.renderMode, 'premium_presenter_v1');
+  assert.equal(repo.assertPersistedPremiumPresenterJob(premiumReserved.job), premiumReserved.job);
+  assert.equal(
+    repo.providerVideoOperationRequestDigest(premiumReserved.job),
+    providerLedger.providerOperationRequestDigest({
+      version: 'provider-video-request/v1',
+      jobId: premiumReserved.job.id,
+      accountId,
+      projectId,
+      title,
+      format: 'vertical',
+      identityId,
+      script,
+      avatarId: 'heygen-avatar',
+      voiceId: 'heygen-voice',
+    }),
+  );
+  assert.throws(
+    () => repo.assertPersistedPremiumPresenterJob({
+      ...premiumReserved.job,
+      input: { ...premiumReserved.job.input, clientProviderId: 'forbidden' },
+    }),
+    { code: 'PREMIUM_PRESENTER_JOB_BINDING_INVALID' },
+  );
+
+  // Historical Premium jobs have no renderMode. Same-key replay and the
+  // later claim remain compatible, while new reservations above are marked.
+  delete jobs[0].input.renderMode;
+  const legacyReplay = await repo.reserveRender(premiumRequest);
+  assert.equal(legacyReplay.replayed, true);
+  assert.equal(legacyReplay.job.input.renderMode, undefined);
+  await repo.claimWorkflowStart(legacyReplay.job.id);
+  await repo.transitionJob({
+    jobId: legacyReplay.job.id,
+    stageTo: 'provider_submitting',
+    eventType: 'test.legacy_premium_claim',
+    providerBinding,
+  });
+  assert.equal(jobs[0].status, 'provider_submitting');
   grants = [];
 } else if (scenario === 'workflow') {
   const providerBindings = new WeakSet();
@@ -611,6 +695,7 @@ if (scenario === 'repository') {
   let reserveCalls = 0;
   let recoveredRouteJob = null;
   let lastReservedJob = null;
+  const routeProofId = randomUUID();
   mock.module('../../db/repositories.js', { namedExports: {
     ...repo,
     consumeRateLimit: async () => true,
@@ -621,6 +706,7 @@ if (scenario === 'repository') {
       }
       return recoveredRouteJob;
     },
+    getRenderReservationProof: async () => routeProofId,
     requirePersistedRenderAuthorization: async (_accountId, tier) => { authorizedTier = tier; if (tier !== 'standard') throw Object.assign(new Error('Tier denied'), { statusCode: 403, failureCategory: 'ENTITLEMENT' }); return authority(tier, 'pending'); },
     getScriptedPhotoReservationContext: async () => ({ input, project: resolvedProject }),
     ensureAccount: async () => ({ user: { id: accountId, name: 'Owner', role: 'customer' }, credits: { balance: 500, reserved: 37 }, entitlements: { standardRendering: true } }),
@@ -647,7 +733,7 @@ if (scenario === 'repository') {
       persistedRouteStatus = 'reserved';
       const job = { id: request.jobId, accountId, projectId, provider: 'heygen', status: 'reserved', costCredits: request.costCredits, title: request.title, format: request.format, correlationId: request.correlationId, input: { ...persistedInput, renderAuthorization: authority('standard', request.jobId) } };
       lastReservedJob = job;
-      return { job, replayed: false };
+      return { job, replayed: false, proofId: routeProofId };
     },
     claimWorkflowStart: async id => {
       persistedRouteStatus = 'workflow_started';
@@ -674,16 +760,21 @@ if (scenario === 'repository') {
   const base = { contractVersion: SCRIPTED_PHOTO_CONTRACT_VERSION, tier: 'STANDARD', projectId, identityId, idempotencyKey: baseIdempotencyKey, quoteToken, title, script, format: 'vertical' };
   async function call(body, headers = {}) {
     const req = { method: 'POST', headers: { cookie, origin: 'https://video.example', 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', ...headers }, async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify(body)); } };
-    const res = { setHeader() {}, end(raw) { this.body = JSON.parse(raw); } };
+    const res = { headers: {}, setHeader(name, value) { this.headers[name] = value; }, end(raw) { this.body = JSON.parse(raw); } };
     await handler(req, res);
     return res;
   }
-  const accepted = await call(base);
+  const incomingDiagnosticRequestId = 'incoming-diagnostic-request';
+  const accepted = await call(base, { 'x-request-id': incomingDiagnosticRequestId });
   assert.equal(accepted.statusCode, 202, JSON.stringify(accepted.body));
+  assert.equal(accepted.headers['X-Request-Id'], incomingDiagnosticRequestId);
+  assert.equal(accepted.body.proofId, routeProofId);
   assert.equal(authorizedTier, 'standard');
   assert.equal(captured.provider, 'heygen');
   assert.equal(captured.tier, 'standard');
   assert.equal(captured.costCredits, 37);
+  assert.match(captured.correlationId, /^corr-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.notEqual(captured.correlationId, incomingDiagnosticRequestId);
   assert.equal(captured.input.productionKit, undefined);
   const reserveCallsBeforeInvalidQuotes = reserveCalls;
   const missingQuote = await call({ ...base, quoteToken: undefined });

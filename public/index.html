@@ -24,6 +24,7 @@
     <p class="nav-caption">YOUR STUDIO</p>
     <nav class="primary-nav" aria-label="Main navigation">
       <a href="#create" data-nav="create" aria-current="page"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 7v10M7 12h10"/></svg>Create video</a>
+      <a href="#luxify" data-nav="luxify"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6L12 3Z"/></svg>LUXIFY</a>
       <a href="#copywriter" data-nav="copywriter"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4M12 20h8"/></svg>AI Copywriter</a>
       <a href="#identities" data-nav="identities"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg>My identities</a>
       <a href="#videos" data-nav="videos"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4z"/></svg>My Videos</a>
@@ -223,6 +224,60 @@
       </section>
     </section>
 
+    <section id="luxify-view" class="view" aria-labelledby="luxify-title" hidden>
+      <div class="page-heading luxify-page-heading">
+        <div><p class="eyebrow">CINEMATIC MODE</p><h1 id="luxify-title">LUXIFY</h1><p>Direct a short cinematic scene with one to three eligible looks. LUXIFY remains separate from Premium Presenter and creates its own generated audio.</p></div>
+        <div class="luxify-capability-actions"><span id="luxify-availability" class="status-chip" data-state="checking">Checking availability</span><button id="luxify-refresh" class="button quiet compact" type="button">Check availability</button></div>
+      </div>
+
+      <div class="luxify-workspace">
+        <form id="luxify-form" class="luxify-form" novalidate>
+          <section class="premium-section luxify-section" aria-labelledby="luxify-brief-heading">
+            <div class="section-heading"><span class="step-number" aria-hidden="true">01</span><div><h2 id="luxify-brief-heading">Direct the scene</h2><p>Describe the setting, action, camera movement, lighting, mood, and sound you want.</p></div></div>
+            <label class="field-label" for="luxify-video-title">Video title</label>
+            <input id="luxify-video-title" type="text" maxlength="120" autocomplete="off" required aria-describedby="luxify-title-error" placeholder="Blue hour product reveal">
+            <p id="luxify-title-error" class="field-error" role="alert" hidden></p>
+            <label class="field-label" for="luxify-prompt">Cinematic prompt</label>
+            <textarea id="luxify-prompt" maxlength="1500" rows="9" required aria-describedby="luxify-prompt-help luxify-prompt-error" placeholder="A confident founder crosses a quiet rooftop at blue hour as the camera makes a slow orbit. Soft city ambience and a restrained cinematic score."></textarea>
+            <div class="field-meta"><span id="luxify-prompt-help">Prompt-led scene direction. This is not an exact spoken script.</span><span id="luxify-prompt-count">0 / 1500</span></div>
+            <p id="luxify-prompt-error" class="field-error" role="alert" hidden></p>
+          </section>
+
+          <section class="premium-section luxify-section" aria-labelledby="luxify-looks-heading">
+            <div class="section-heading"><span class="step-number" aria-hidden="true">02</span><div><h2 id="luxify-looks-heading">Choose eligible looks</h2><p>Select one to three looks. Selection order is preserved; the first look is primary.</p></div><span id="luxify-look-count" class="section-state">0 of 3</span></div>
+            <div id="luxify-look-list" class="luxify-look-list" aria-live="polite"><p class="inline-empty">Availability must be checked before eligible looks appear.</p></div>
+            <p id="luxify-look-error" class="field-error" role="alert" hidden></p>
+          </section>
+
+          <section class="premium-section luxify-section" aria-labelledby="luxify-output-heading">
+            <div class="section-heading"><span class="step-number" aria-hidden="true">03</span><div><h2 id="luxify-output-heading">Set the output</h2><p>Choose the exact frame, resolution, and duration that the server will quote.</p></div></div>
+            <div class="luxify-output-grid">
+              <label for="luxify-aspect">Aspect ratio<select id="luxify-aspect"><option value="16:9" selected>Landscape 16:9</option><option value="9:16">Vertical 9:16</option><option value="1:1">Square 1:1</option></select></label>
+              <label for="luxify-resolution">Resolution<select id="luxify-resolution"><option value="720p" selected>720p</option><option value="1080p">1080p</option></select></label>
+              <label for="luxify-duration">Duration<select id="luxify-duration"><option value="4">4 seconds</option><option value="5" selected>5 seconds</option><option value="6">6 seconds</option><option value="7">7 seconds</option><option value="8">8 seconds</option><option value="9">9 seconds</option><option value="10">10 seconds</option><option value="11">11 seconds</option><option value="12">12 seconds</option><option value="13">13 seconds</option><option value="14">14 seconds</option><option value="15">15 seconds</option></select></label>
+            </div>
+            <div class="luxify-audio-note"><strong>Generated audio</strong><span>LUXIFY creates scene audio from the prompt. It does not use the selected Premium Presenter voice or promise exact spoken wording.</span></div>
+            <div class="premium-submit-actions"><button id="luxify-submit" class="button primary" type="submit" disabled>Review LUXIFY price</button><button id="luxify-new-draft" class="button secondary" type="button" hidden>Prepare another LUXIFY video</button></div>
+            <p id="luxify-status" class="field-help" role="status" aria-live="polite">Sign in and wait for the LUXIFY capability check.</p>
+            <div id="luxify-recovery" class="uncertain-recovery" hidden><p class="field-error" role="alert">We could not confirm whether this LUXIFY render was accepted. Check the same request before retrying.</p><div class="uncertain-actions"><button id="luxify-check" class="button secondary" type="button">Check existing request</button><button id="luxify-retry" class="button quiet" type="button" disabled>Retry same request</button></div></div>
+          </section>
+        </form>
+
+        <aside class="luxify-summary" aria-labelledby="luxify-summary-title">
+          <div class="luxify-summary-heading"><p class="eyebrow">SUBMISSION SUMMARY</p><h2 id="luxify-summary-title">What will be quoted</h2></div>
+          <dl>
+            <div><dt>Looks</dt><dd id="luxify-summary-looks">None selected</dd></div>
+            <div><dt>Frame</dt><dd id="luxify-summary-aspect">Landscape 16:9</dd></div>
+            <div><dt>Resolution</dt><dd id="luxify-summary-resolution">720p</dd></div>
+            <div><dt>Duration</dt><dd id="luxify-summary-duration">5 seconds</dd></div>
+            <div><dt>Current price</dt><dd id="luxify-summary-price">Not quoted</dd></div>
+          </dl>
+          <div class="luxify-truth-note"><strong>No synthetic preview</strong><p>The provider-ready scene is not fabricated in this browser. Review the exact prompt and settings, then confirm the server quote before any render can start.</p></div>
+          <a class="button quiet wide" href="#videos">View My Videos</a>
+        </aside>
+      </div>
+    </section>
+
     <section id="copywriter-view" class="view" aria-labelledby="copywriter-title" hidden>
       <div class="page-heading">
         <div><p class="eyebrow">OPTIONAL WRITING TOOL</p><h1 id="copywriter-title">AI Copywriter</h1><p>Draft or refine the words first, then move them into the active Standard or Premium editor.</p></div>
@@ -318,7 +373,7 @@
     </section>
   </main>
 
-  <dialog id="mobile-menu" class="drawer" aria-labelledby="mobile-menu-title"><div class="dialog-heading"><h2 id="mobile-menu-title">Your studio</h2><button class="icon-button" type="button" data-menu-close aria-label="Close navigation">×</button></div><nav aria-label="Mobile navigation"><a href="#create" data-nav="create">Create video</a><a href="#copywriter" data-nav="copywriter">AI Copywriter</a><a href="#identities" data-nav="identities">My identities</a><a href="#videos" data-nav="videos">My Videos</a><a href="#account" data-nav="account">Account</a></nav></dialog>
+  <dialog id="mobile-menu" class="drawer" aria-labelledby="mobile-menu-title"><div class="dialog-heading"><h2 id="mobile-menu-title">Your studio</h2><button class="icon-button" type="button" data-menu-close aria-label="Close navigation">×</button></div><nav aria-label="Mobile navigation"><a href="#create" data-nav="create">Create video</a><a href="#luxify" data-nav="luxify">LUXIFY</a><a href="#copywriter" data-nav="copywriter">AI Copywriter</a><a href="#identities" data-nav="identities">My identities</a><a href="#videos" data-nav="videos">My Videos</a><a href="#account" data-nav="account">Account</a></nav></dialog>
 
   <dialog id="review-dialog" class="review-dialog" aria-labelledby="review-dialog-title"><div class="dialog-heading"><div><p class="eyebrow">REVIEW</p><h2 id="review-dialog-title">Review inputs</h2></div><button class="icon-button" type="button" data-dialog-close aria-label="Close review">×</button></div><div id="review-summary" class="review-summary"></div><div class="dialog-actions"><button id="review-complete" class="button secondary" type="button" data-dialog-close>Back to workspace</button></div></dialog>
 
@@ -327,6 +382,8 @@
   <dialog id="scripted-photo-quote-dialog" class="review-dialog" aria-labelledby="scripted-photo-quote-title" aria-describedby="scripted-photo-quote-detail"><div class="dialog-heading"><div><p class="eyebrow">CONFIRM RENDER</p><h2 id="scripted-photo-quote-title">Review current price</h2></div><button class="icon-button" type="button" data-scripted-quote-close aria-label="Cancel render">×</button></div><div id="scripted-photo-quote-summary" class="review-summary"></div><p id="scripted-photo-quote-detail">This confirmation uses the exact title, script, identity, tier, and format shown above.</p><p id="scripted-photo-quote-error" class="field-error" role="alert" hidden></p><div class="dialog-actions"><button class="button quiet" type="button" data-scripted-quote-close>Cancel</button><button id="scripted-photo-requote" class="button secondary" type="button" hidden>Get a new quote</button><button id="scripted-photo-quote-confirm" class="button primary" type="button">Confirm and start render</button></div></dialog>
 
   <dialog id="premium-handoff-dialog" class="review-dialog" aria-labelledby="premium-handoff-title"><div class="dialog-heading"><div><p class="eyebrow">CONFIRM HANDOFF</p><h2 id="premium-handoff-title">Replace this tier's script?</h2></div><button class="icon-button" type="button" data-handoff-cancel aria-label="Close script handoff">×</button></div><p>The active tier already contains text. Replace it with your current Copywriter draft?</p><div class="dialog-actions"><button class="button quiet" type="button" data-handoff-cancel>Keep current script</button><button id="premium-handoff-confirm" class="button primary" type="button">Replace and open editor</button></div></dialog>
+
+  <dialog id="luxify-quote-dialog" class="review-dialog" aria-labelledby="luxify-quote-title" aria-describedby="luxify-quote-detail"><div class="dialog-heading"><div><p class="eyebrow">CONFIRM CINEMATIC RENDER</p><h2 id="luxify-quote-title">Start this LUXIFY render?</h2></div><button class="icon-button" type="button" data-luxify-quote-close aria-label="Cancel LUXIFY render">&times;</button></div><div id="luxify-quote-summary" class="review-summary"></div><p id="luxify-quote-detail">This confirmation is bound to the exact prompt, ordered looks, aspect ratio, resolution, duration, and current LUX-credit price shown above.</p><p id="luxify-quote-error" class="field-error" role="alert" hidden></p><div class="dialog-actions"><button class="button quiet" type="button" data-luxify-quote-close>Cancel</button><button id="luxify-requote" class="button secondary" type="button" hidden>Get a new quote</button><button id="luxify-quote-confirm" class="button primary" type="button">Confirm and start LUXIFY</button></div></dialog>
 
   <dialog id="studio-preview-modal" class="studio-preview-modal" aria-labelledby="preview-modal-title" aria-modal="true">
     <div class="preview-modal-header">

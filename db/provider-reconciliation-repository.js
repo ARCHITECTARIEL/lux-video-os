@@ -608,6 +608,45 @@ export async function getExactProviderResourceTx(tx, { accountId, kind, provider
   return rows[0];
 }
 
+function luxifyProviderLookIds(lookBindings) {
+  if (!Array.isArray(lookBindings) || lookBindings.length < 1 || lookBindings.length > 3) {
+    throw failure('LUXIFY provider look binding count is invalid.', 400, 'VALIDATION');
+  }
+  const providerLookIds = lookBindings.map(binding => providerId(binding?.providerLookId, 'providerLookId'));
+  if (new Set(providerLookIds).size !== providerLookIds.length) {
+    throw failure('LUXIFY provider look bindings must be unique.', 400, 'VALIDATION');
+  }
+  return providerLookIds;
+}
+
+export async function attachProviderJobLookReferencesTx(tx, { accountId, jobId, lookBindings }) {
+  const providerLookIds = luxifyProviderLookIds(lookBindings);
+  const resources = [];
+  for (const providerLookId of providerLookIds) {
+    const resource = await getExactProviderResourceTx(tx, {
+      accountId, kind: 'avatar_look', providerResourceId: providerLookId, lock: true,
+    });
+    if (resource.state !== 'ready' || resource.tombstonedAt) {
+      throw failure('LUXIFY provider look requires reconciliation.', 409, 'PROVIDER_RESOURCE_TOMBSTONED');
+    }
+    resources.push(resource);
+  }
+  const [first] = resources;
+  if (resources.some(resource => resource.bindingId !== first.bindingId
+    || resource.originScopeKey !== first.originScopeKey
+    || resource.verifiedAccountScopeId !== first.verifiedAccountScopeId)) {
+    throw failure('LUXIFY provider looks belong to different provider spaces.', 409, 'PROVIDER_RESOURCE_SCOPE_CONFLICT');
+  }
+  for (const resource of resources) await attachProviderConsumerReferenceTx(tx, {
+    accountId,
+    resourceId: resource.id,
+    consumerKind: 'job',
+    consumerId: jobId,
+    originOperationId: resource.originOperationId,
+  });
+  return Object.freeze(resources.map(resource => Object.freeze({ ...resource })));
+}
+
 async function providerConsumerResourcesForBindingTx(tx, { accountId, providerBinding, consumerKind, consumerId, expectedResources }) {
   const authority = assertFreshHeygenProviderClaimTx(tx, { accountId, providerBinding });
   const expected = [...expectedResources].sort((left, right) => `${left.kind}:${left.providerResourceId}`.localeCompare(`${right.kind}:${right.providerResourceId}`));
@@ -638,6 +677,19 @@ export async function assertProviderJobReferencesActiveTx(tx, { accountId, jobId
     accountId, providerBinding, consumerKind: 'job', consumerId: jobId, expectedResources,
   });
   return true;
+}
+
+export async function assertProviderJobLookReferencesActiveTx(tx, { accountId, jobId, providerBinding, lookBindings }) {
+  const expectedResources = luxifyProviderLookIds(lookBindings).map(providerResourceId => ({
+    kind: 'avatar_look', providerResourceId,
+  }));
+  const resources = await providerConsumerResourcesForBindingTx(tx, {
+    accountId, providerBinding, consumerKind: 'job', consumerId: jobId, expectedResources,
+  });
+  if (resources.some(resource => resource.kind !== 'avatar_look' || resource.state !== 'ready' || resource.tombstonedAt)) {
+    throw failure('LUXIFY provider look requires reconciliation.', 409, 'PROVIDER_RESOURCE_TOMBSTONED');
+  }
+  return resources;
 }
 
 export async function assertProviderIdentityReferencesActiveTx(tx, { accountId, identityId, providerBinding, expectedResources }) {

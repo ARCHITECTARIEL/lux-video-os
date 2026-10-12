@@ -1,4 +1,5 @@
 import { FEATURED_CAST } from '../lib/video-os-featured-cast.js';
+import { classifyLuxifyMarker } from '../lib/luxify-contract.js';
 import { acceptedJobOutput } from '../lib/video-os-output-acceptance.js';
 import { renderTierForJob } from '../lib/scripted-photo-contract.js';
 
@@ -111,13 +112,16 @@ export function accountDto(record) {
 }
 
 export function projectDto(project, options = {}) {
+  const mode = classifyLuxifyMarker(project?.settings);
+  const privateMode = mode !== null;
   return {
     id: project.id,
+    ...(mode ? { mode } : {}),
     title: project.title,
-    script: project.script,
-    identityId: project.identityId || null,
-    avatar: sanitizePersistedIdentity(project.avatar, 'avatar', options),
-    voice: sanitizePersistedIdentity(project.voice, 'voice', options),
+    script: privateMode ? '' : project.script,
+    identityId: privateMode ? null : project.identityId || null,
+    avatar: privateMode ? null : sanitizePersistedIdentity(project.avatar, 'avatar', options),
+    voice: privateMode ? null : sanitizePersistedIdentity(project.voice, 'voice', options),
     settings: {},
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
@@ -125,30 +129,33 @@ export function projectDto(project, options = {}) {
 }
 
 export function jobDto(job, options = {}) {
+  const mode = classifyLuxifyMarker(job?.input, { provider: job?.provider });
+  const privateMode = mode !== null;
   const output = job.output || {};
   const outputAccepted = acceptedJobOutput(job);
-  const outputAvatar = sanitizePersistedIdentity(output.avatar, 'avatar', options);
-  const inputAvatar = sanitizePersistedIdentity(job.input?.avatar, 'avatar', options);
-  const outputVoice = sanitizePersistedIdentity(output.voice, 'voice', options);
-  const inputVoice = sanitizePersistedIdentity(job.input?.voice, 'voice', options);
+  const outputAvatar = privateMode ? null : sanitizePersistedIdentity(output.avatar, 'avatar', options);
+  const inputAvatar = privateMode ? null : sanitizePersistedIdentity(job.input?.avatar, 'avatar', options);
+  const outputVoice = privateMode ? null : sanitizePersistedIdentity(output.voice, 'voice', options);
+  const inputVoice = privateMode ? null : sanitizePersistedIdentity(job.input?.voice, 'voice', options);
   return {
     id: job.id,
+    ...(mode ? { mode } : {}),
     correlationId: job.correlationId,
     provider: { id: job.provider, name: job.provider === 'heygen' ? 'HeyGen' : job.provider },
-    tier: renderTierForJob(job, { unknownLegacy: 'null' }),
+    tier: mode === 'unavailable' ? null : renderTierForJob(job, { unknownLegacy: 'null' }),
     outputAccepted,
     title: job.title,
     format: job.format,
     projectId: job.projectId,
-    identityId: job.input?.identityId || null,
+    identityId: privateMode ? null : job.input?.identityId || null,
     avatar: outputAvatar || inputAvatar,
     voice: outputVoice || inputVoice,
-    productionKit: sanitizePresentationMetadata(job.input?.productionKit),
+    productionKit: privateMode ? {} : sanitizePresentationMetadata(job.input?.productionKit),
     cost: job.costCredits,
     status: job.status,
     stage: job.status,
-    filename: sanitizedFilename(output.filename),
-    effects: sanitizePresentationMetadata(output.effects),
+    filename: privateMode ? undefined : sanitizedFilename(output.filename),
+    effects: privateMode ? {} : sanitizePresentationMetadata(output.effects),
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     message: job.videoDeletedAt ? 'This video is no longer available.' : outputAccepted ? 'Final MP4 ready.' : job.status === 'ready' ? 'Output acceptance pending.' : job.status === 'failed' ? 'Render needs attention.' : 'Render workflow is running.',

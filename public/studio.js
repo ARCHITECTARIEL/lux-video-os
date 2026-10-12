@@ -4,6 +4,7 @@ import { createCopywriterController } from './copywriter.js';
 import { createStandardController } from './standard-contract.js';
 import { createStudioPreviewController } from './studio-preview-player.js';
 import { createScriptedPhotoClient } from './scripted-photo-client.js';
+import { createLuxifyClient } from './luxify-client.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -69,6 +70,17 @@ const state = {
       PREMIUM: { busy: false, job: null, pollingTimer: null, pollingAttempts: 0 },
     },
   },
+  luxify: {
+    capability: null,
+    loading: false,
+    error: null,
+    lookIdentityIds: [],
+    busy: false,
+    job: null,
+    pollingTimer: null,
+    pollingAttempts: 0,
+    message: '',
+  },
   fixtureResults: [],
   resultLimit: 6,
   selectedResultId: null,
@@ -80,6 +92,7 @@ let standardContractController = null;
 let standardContractJob = null;
 let studioPreviewController = null;
 let scriptedPhotoClient = null;
+let luxifyClient = null;
 
 const node = (tag, className, text) => {
   const element = document.createElement(tag);
@@ -164,6 +177,13 @@ scriptedPhotoClient = createScriptedPhotoClient({
   }),
   storage: scriptedSessionStorage,
 });
+luxifyClient = createLuxifyClient({
+  request: (url, options = {}) => getJson(url, {
+    ...options,
+    ...(options.body !== undefined ? { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } } : {}),
+  }),
+  storage: scriptedSessionStorage,
+});
 
 function scriptedTierState(tier) {
   return state.scripted.tiers[tier];
@@ -175,7 +195,10 @@ function activeScriptedTier() {
 
 function scriptedTierLocked(tier) {
   const normalized = tier.toLowerCase();
-  const activeResult = state.results.some(item => String(item.tier || '').toLowerCase() === normalized && liveStates.has(presentedJobStatus(item)));
+  const activeResult = state.results.some(item => String(item.tier || '').toLowerCase() === normalized
+    && !(normalized === 'premium' && isLuxifyResult(item))
+    && !isUnavailableMode(item)
+    && liveStates.has(presentedJobStatus(item)));
   return scriptedTierState(tier).busy || scriptedPhotoClient.publicState(tier).uncertain || activeResult;
 }
 
@@ -550,6 +573,410 @@ async function retryScriptedRequest(tier) {
   return confirmScriptedQuote({ recoveryFirst: true });
 }
 
+function isLuxifyResult(item = {}) {
+  return item.mode === 'luxify'
+    || item.product?.id === 'luxify'
+    || item.renderMode === 'luxify_cinematic_v1';
+}
+
+function isLuxifyProject(project = {}) {
+  return project.mode === 'luxify'
+    || project.product?.id === 'luxify'
+    || project.renderMode === 'luxify_cinematic_v1';
+}
+
+function isUnavailableMode(record = {}) {
+  return record.mode === 'unavailable';
+}
+
+function luxifyDraft() {
+  return {
+    title: $('#luxify-video-title').value,
+    prompt: $('#luxify-prompt').value,
+    lookIdentityIds: [...state.luxify.lookIdentityIds],
+    aspectRatio: $('#luxify-aspect').value,
+    resolution: $('#luxify-resolution').value,
+    durationSeconds: Number($('#luxify-duration').value),
+  };
+}
+
+function hydrateLuxifyDraft(restored) {
+  const draft = restored?.draft;
+  if (!draft) return;
+  $('#luxify-video-title').value = draft.title || '';
+  $('#luxify-prompt').value = draft.prompt || '';
+  $('#luxify-prompt-count').textContent = $('#luxify-prompt').value.length + ' / 1500';
+  state.luxify.lookIdentityIds = Array.isArray(draft.lookIdentityIds) ? [...draft.lookIdentityIds] : [];
+  if (['16:9', '9:16', '1:1'].includes(draft.aspectRatio)) $('#luxify-aspect').value = draft.aspectRatio;
+  if (['720p', '1080p'].includes(draft.resolution)) $('#luxify-resolution').value = draft.resolution;
+  if (Number.isInteger(draft.durationSeconds) && draft.durationSeconds >= 4 && draft.durationSeconds <= 15) {
+    $('#luxify-duration').value = String(draft.durationSeconds);
+  }
+}
+
+function luxifyReason(reasons = []) {
+  if (reasons.includes('feature_disabled')) return 'LUXIFY is not enabled for this workspace.';
+  if (reasons.includes('pricing_unconfigured')) return 'LUXIFY pricing is not configured.';
+  if (reasons.includes('provider_not_qualified')) return 'LUXIFY is awaiting provider qualification.';
+  if (reasons.includes('no_eligible_looks')) return 'No enrolled looks are currently eligible for LUXIFY.';
+  if (reasons.includes('contract_unavailable')) return 'LUXIFY capability data is unavailable.';
+  return 'LUXIFY is not currently available.';
+}
+
+async function loadLuxifyCapabilities({ force = false } = {}) {
+  if (state.luxify.loading) return state.luxify.capability;
+  if (state.luxify.capability && !force) return state.luxify.capability;
+  state.luxify.loading = true;
+  state.luxify.error = null;
+  state.luxify.message = '';
+  renderLuxifyStudio();
+  try {
+    state.luxify.capability = await luxifyClient.loadCapabilities();
+    const eligible = new Set(state.luxify.capability.eligibleLooks.map(item => item.identityId));
+    state.luxify.lookIdentityIds = state.luxify.lookIdentityIds.filter(id => eligible.has(id)).slice(0, 3);
+    return state.luxify.capability;
+  } catch (error) {
+    state.luxify.capability = null;
+    state.luxify.error = error;
+    throw error;
+  } finally {
+    state.luxify.loading = false;
+    renderLuxifyStudio();
+  }
+}
+
+function ensureLuxifyCapabilities() {
+  if (!state.signedIn || fixtureMode || state.luxify.loading || state.luxify.capability) return;
+  void loadLuxifyCapabilities().catch(() => {});
+}
+
+function luxifyLookChoice(look, locked) {
+  const selectedIndex = state.luxify.lookIdentityIds.indexOf(look.identityId);
+  const button = node('button', 'identity-choice luxify-look-choice');
+  button.type = 'button';
+  button.dataset.luxifyLookIdentityId = look.identityId;
+  button.setAttribute('aria-pressed', String(selectedIndex >= 0));
+  button.disabled = locked;
+  button.append(node('span', 'identity-fallback', initials(look.displayName)));
+  const copy = node('span');
+  const order = selectedIndex === 0 ? 'Selected 1 · Primary' : selectedIndex > 0 ? 'Selected ' + (selectedIndex + 1) : 'Eligible cinematic look';
+  copy.append(node('strong', null, look.displayName), node('small', null, order));
+  button.append(copy);
+  button.addEventListener('click', () => {
+    const current = state.luxify.lookIdentityIds.indexOf(look.identityId);
+    if (current >= 0) state.luxify.lookIdentityIds.splice(current, 1);
+    else if (state.luxify.lookIdentityIds.length >= 3) {
+      setFieldError($('#luxify-look-list'), $('#luxify-look-error'), 'Choose no more than three eligible looks.');
+      return;
+    } else state.luxify.lookIdentityIds.push(look.identityId);
+    setFieldError($('#luxify-look-list'), $('#luxify-look-error'));
+    luxifyIntentChanged();
+    announce(look.displayName + (current >= 0 ? ' removed from LUXIFY.' : ' selected for LUXIFY.'));
+  });
+  return button;
+}
+
+function renderLuxifyLooks(locked) {
+  const target = $('#luxify-look-list');
+  const capability = state.luxify.capability;
+  if (!state.signedIn) target.replaceChildren(node('p', 'inline-empty', 'Sign in to check eligible LUXIFY looks.'));
+  else if (state.luxify.loading) target.replaceChildren(node('p', 'inline-empty', 'Checking eligible looks.'));
+  else if (state.luxify.error) target.replaceChildren(node('p', 'inline-empty', 'Eligible looks could not be checked. Try availability again.'));
+  else if (!capability?.eligibleLooks?.length) target.replaceChildren(node('p', 'inline-empty', 'No eligible LUXIFY looks are available.'));
+  else target.replaceChildren(...capability.eligibleLooks.map(look => luxifyLookChoice(look, locked || capability.available !== true)));
+  $('#luxify-look-count').textContent = state.luxify.lookIdentityIds.length + ' of 3';
+}
+
+function luxifyInputsReady() {
+  const capability = state.luxify.capability;
+  const eligible = new Set(capability?.eligibleLooks?.map(item => item.identityId) || []);
+  return Boolean(
+    $('#luxify-video-title').value.trim()
+    && $('#luxify-prompt').value.trim()
+    && state.luxify.lookIdentityIds.length >= 1
+    && state.luxify.lookIdentityIds.length <= 3
+    && state.luxify.lookIdentityIds.every(id => eligible.has(id))
+  );
+}
+
+function renderLuxifySummary() {
+  const capability = state.luxify.capability;
+  const selected = state.luxify.lookIdentityIds
+    .map(id => capability?.eligibleLooks?.find(item => item.identityId === id)?.displayName)
+    .filter(Boolean);
+  $('#luxify-summary-looks').textContent = selected.length ? selected.join(', ') : 'None selected';
+  $('#luxify-summary-aspect').textContent = $('#luxify-aspect').selectedOptions[0]?.textContent || $('#luxify-aspect').value;
+  $('#luxify-summary-resolution').textContent = $('#luxify-resolution').value;
+  $('#luxify-summary-duration').textContent = $('#luxify-duration').value + ' seconds';
+  const quote = luxifyClient.publicState().quote;
+  $('#luxify-summary-price').textContent = quote ? Number(quote.credits).toLocaleString() + ' LUX credits' : 'Not quoted';
+}
+
+function renderLuxifyStudio() {
+  const capability = state.luxify.capability;
+  const clientState = luxifyClient.publicState();
+  const jobLive = Boolean(state.luxify.job && liveStates.has(presentedJobStatus(state.luxify.job)));
+  const locked = state.luxify.busy || clientState.uncertain || jobLive;
+  const availability = $('#luxify-availability');
+  if (!state.signedIn) {
+    availability.dataset.state = 'unavailable';
+    availability.textContent = 'Sign in to check LUXIFY';
+  } else if (fixtureMode) {
+    availability.dataset.state = 'unavailable';
+    availability.textContent = 'Unavailable in fixture mode';
+  } else if (state.luxify.loading) {
+    availability.dataset.state = 'checking';
+    availability.textContent = 'Checking availability';
+  } else if (state.luxify.error) {
+    availability.dataset.state = 'unavailable';
+    availability.textContent = 'Availability check failed';
+  } else if (capability?.available) {
+    availability.dataset.state = 'signed-in';
+    availability.textContent = 'LUXIFY available';
+  } else {
+    availability.dataset.state = 'unavailable';
+    availability.textContent = capability ? 'LUXIFY unavailable' : 'Availability not checked';
+  }
+  for (const control of [$('#luxify-video-title'), $('#luxify-prompt'), $('#luxify-aspect'), $('#luxify-resolution'), $('#luxify-duration')]) {
+    control.disabled = locked;
+  }
+  $('#luxify-refresh').disabled = state.luxify.loading || state.luxify.busy || !state.signedIn || fixtureMode;
+  renderLuxifyLooks(locked);
+  const submit = $('#luxify-submit');
+  submit.hidden = Boolean(state.luxify.job);
+  submit.disabled = locked || !state.signedIn || capability?.available !== true || !luxifyInputsReady();
+  submit.textContent = state.luxify.busy ? 'Working…' : 'Review LUXIFY price';
+  $('#luxify-new-draft').hidden = !state.luxify.job || jobLive;
+  $('#luxify-recovery').hidden = !clientState.uncertain;
+  $('#luxify-check').disabled = state.luxify.busy;
+  $('#luxify-retry').disabled = state.luxify.busy || !clientState.recoveryChecked;
+  const defaultMessage = !state.signedIn
+    ? 'Sign in to check LUXIFY availability.'
+    : state.luxify.error
+      ? 'Availability could not be checked. No render was submitted.'
+      : capability?.available !== true
+        ? luxifyReason(capability?.reasons)
+        : !luxifyInputsReady()
+          ? 'Add a title and prompt, then choose one to three eligible looks.'
+          : 'Ready to save this exact draft and review the current price.';
+  $('#luxify-status').textContent = state.luxify.message || defaultMessage;
+  renderLuxifySummary();
+}
+
+function luxifyIntentChanged() {
+  try {
+    const changed = luxifyClient.bindIntent(luxifyDraft());
+    if (changed && $('#luxify-quote-dialog').open) closeDialog($('#luxify-quote-dialog'));
+    state.luxify.message = '';
+  } catch (error) {
+    state.luxify.message = error.message;
+  }
+  renderLuxifyStudio();
+}
+
+function luxifyDraftValid({ focus = false } = {}) {
+  const title = $('#luxify-video-title');
+  const prompt = $('#luxify-prompt');
+  const eligible = new Set(state.luxify.capability?.eligibleLooks?.map(item => item.identityId) || []);
+  const looksValid = state.luxify.lookIdentityIds.length >= 1
+    && state.luxify.lookIdentityIds.length <= 3
+    && state.luxify.lookIdentityIds.every(id => eligible.has(id));
+  const checks = [
+    [Boolean(title.value.trim()), title, $('#luxify-title-error'), 'Enter a video title.'],
+    [Boolean(prompt.value.trim()), prompt, $('#luxify-prompt-error'), 'Enter a cinematic prompt.'],
+    [looksValid, $('#luxify-look-list'), $('#luxify-look-error'), 'Choose one to three eligible looks.'],
+  ];
+  for (const [valid, control, error, message] of checks) setFieldError(control, error, valid ? '' : message);
+  const first = checks.find(([valid]) => !valid);
+  if (focus && first) {
+    if (first[1] === $('#luxify-look-list')) (first[1].querySelector('button:not([disabled])') || first[1]).focus?.();
+    else first[1].focus?.();
+  }
+  return !first && state.luxify.capability?.available === true;
+}
+
+function showLuxifyQuote(prepared) {
+  const value = luxifyDraft();
+  const names = value.lookIdentityIds
+    .map(id => state.luxify.capability?.eligibleLooks?.find(item => item.identityId === id)?.displayName)
+    .filter(Boolean);
+  $('#luxify-quote-summary').replaceChildren(...[
+    ['Title', value.title.trim()],
+    ['Prompt', value.prompt.trim()],
+    ['Looks', names.join(', ')],
+    ['Aspect ratio', value.aspectRatio],
+    ['Resolution', value.resolution],
+    ['Duration', value.durationSeconds + ' seconds'],
+    ['Audio', 'Generated from the prompt'],
+    ['Current price', Number(prepared.quote.credits).toLocaleString() + ' LUX credits'],
+    ['Quote expires', new Date(prepared.quote.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })],
+  ].map(([label, text]) => {
+    const row = node('div');
+    row.append(node('span', null, label), node('strong', null, text));
+    return row;
+  }));
+  $('#luxify-quote-error').hidden = true;
+  $('#luxify-requote').hidden = true;
+  $('#luxify-quote-confirm').disabled = false;
+  openDialog($('#luxify-quote-dialog'), $('#luxify-quote-confirm'));
+}
+
+async function requestLuxifyQuote(event) {
+  event?.preventDefault?.();
+  if (!state.signedIn) {
+    openAuthModal();
+    return;
+  }
+  if (!luxifyDraftValid({ focus: true }) || state.luxify.busy) return;
+  state.luxify.busy = true;
+  state.luxify.message = 'Saving this exact LUXIFY draft and requesting the current price.';
+  renderLuxifyStudio();
+  try {
+    const prepared = await luxifyClient.prepareQuote(luxifyDraft());
+    if (prepared.recovered && prepared.existingJob) {
+      mergeLuxifyJob(prepared.existingJob, { recovered: true });
+      return;
+    }
+    showLuxifyQuote(prepared);
+    state.luxify.message = 'Price ready. Confirm the exact cinematic inputs in the dialog.';
+  } catch (error) {
+    state.luxify.message = error.message;
+    showToast(error.message);
+  } finally {
+    state.luxify.busy = false;
+    renderLuxifyStudio();
+  }
+}
+
+function stopLuxifyPolling() {
+  window.clearTimeout(state.luxify.pollingTimer);
+  state.luxify.pollingTimer = null;
+}
+
+function scheduleLuxifyPolling(jobId) {
+  if (state.luxify.pollingTimer || state.luxify.pollingAttempts >= 45) return;
+  state.luxify.pollingTimer = window.setTimeout(async () => {
+    state.luxify.pollingTimer = null;
+    state.luxify.pollingAttempts += 1;
+    try {
+      await loadResults();
+      const job = state.results.find(item => item.id === jobId);
+      if (job) state.luxify.job = job;
+      if (job && liveStates.has(presentedJobStatus(job))) scheduleLuxifyPolling(jobId);
+      else {
+        state.luxify.message = job ? statusCopy(presentedJobStatus(job), job) : 'The saved LUXIFY request remains available in My Videos.';
+        renderLuxifyStudio();
+      }
+    } catch {
+      state.luxify.message = 'Status checks paused. The saved LUXIFY request remains available in My Videos.';
+      renderLuxifyStudio();
+    }
+  }, Math.min(30_000, 5_000 + state.luxify.pollingAttempts * 1_000));
+}
+
+function mergeLuxifyJob(job, { recovered = false } = {}) {
+  if (!job?.id) throw new Error('The LUXIFY response did not include a recoverable job.');
+  state.luxify.job = job;
+  state.luxify.pollingAttempts = 0;
+  state.results = [job, ...state.results.filter(item => item.id !== job.id)];
+  state.resultsState = 'ready';
+  renderResults();
+  const status = presentedJobStatus(job);
+  state.luxify.message = recovered
+    ? 'Existing LUXIFY render found. Check My Videos for its current state.'
+    : 'LUXIFY render accepted. Check My Videos for progress.';
+  if (liveStates.has(status)) scheduleLuxifyPolling(job.id);
+  renderLuxifyStudio();
+}
+
+function reconcileLuxifyResultState() {
+  const projectId = luxifyClient.publicState().projectId;
+  const matching = state.results.find(item => isLuxifyResult(item) && item.projectId === projectId);
+  if (!matching) return;
+  state.luxify.job = matching;
+  if (liveStates.has(presentedJobStatus(matching))) scheduleLuxifyPolling(matching.id);
+}
+
+async function confirmLuxifyQuote({ recoveryFirst = false } = {}) {
+  const quote = luxifyClient.quoteStatus(luxifyDraft());
+  if (!quote.valid) {
+    $('#luxify-quote-error').textContent = quote.code === 'quote_expired'
+      ? 'This quote expired. Get a new quote; the same request key will be preserved.'
+      : 'These inputs changed. Review a new quote before submitting.';
+    $('#luxify-quote-error').hidden = false;
+    $('#luxify-requote').hidden = false;
+    $('#luxify-quote-confirm').disabled = true;
+    return;
+  }
+  state.luxify.busy = true;
+  state.luxify.message = recoveryFirst ? 'Checking the existing LUXIFY request before retrying.' : 'Submitting this quoted LUXIFY render.';
+  $('#luxify-quote-confirm').disabled = true;
+  renderLuxifyStudio();
+  try {
+    const result = await luxifyClient.submit(luxifyDraft(), { recoveryFirst });
+    closeDialog($('#luxify-quote-dialog'));
+    mergeLuxifyJob(result.job, { recovered: result.recovered });
+  } catch (error) {
+    if (error.code === 'submission_uncertain') {
+      closeDialog($('#luxify-quote-dialog'));
+      state.luxify.message = error.message;
+    } else if (error.quoteRejected || ['quote_expired', 'quote_missing'].includes(error.code)) {
+      $('#luxify-quote-error').textContent = error.message;
+      $('#luxify-quote-error').hidden = false;
+      $('#luxify-requote').hidden = false;
+    } else {
+      state.luxify.message = error.message;
+      showToast(error.message);
+    }
+  } finally {
+    state.luxify.busy = false;
+    $('#luxify-quote-confirm').disabled = false;
+    renderLuxifyStudio();
+  }
+}
+
+async function checkLuxifyRecovery() {
+  state.luxify.busy = true;
+  state.luxify.message = 'Checking the same LUXIFY request without creating new work.';
+  renderLuxifyStudio();
+  try {
+    const job = await luxifyClient.recover();
+    if (job) mergeLuxifyJob(job, { recovered: true });
+    else state.luxify.message = 'No existing render was found. You may retry the same request and request key.';
+  } catch (error) {
+    state.luxify.message = error.message;
+  } finally {
+    state.luxify.busy = false;
+    renderLuxifyStudio();
+  }
+}
+
+async function retryLuxifyRequest() {
+  const quote = luxifyClient.quoteStatus(luxifyDraft());
+  if (!quote.valid) return requestLuxifyQuote();
+  return confirmLuxifyQuote({ recoveryFirst: true });
+}
+
+function prepareAnotherLuxifyDraft() {
+  stopLuxifyPolling();
+  luxifyClient.resetCompletedIntent();
+  state.luxify.lookIdentityIds = [];
+  state.luxify.job = null;
+  state.luxify.pollingAttempts = 0;
+  state.luxify.message = '';
+  $('#luxify-video-title').value = '';
+  $('#luxify-prompt').value = '';
+  $('#luxify-prompt-count').textContent = '0 / 1500';
+  $('#luxify-aspect').value = '16:9';
+  $('#luxify-resolution').value = '720p';
+  $('#luxify-duration').value = '5';
+  setFieldError($('#luxify-video-title'), $('#luxify-title-error'));
+  setFieldError($('#luxify-prompt'), $('#luxify-prompt-error'));
+  setFieldError($('#luxify-look-list'), $('#luxify-look-error'));
+  renderLuxifyStudio();
+  $('#luxify-video-title').focus();
+}
+
 function rawJobStatus(item = {}) {
   const raw = String(item.status || item.stage || '').trim().toUpperCase();
   const legacy = {
@@ -642,7 +1069,7 @@ function closeDialog(dialog, { restore = true } = {}) {
   dialog.close();
 }
 
-for (const dialog of [$('#mobile-menu'), $('#review-dialog'), $('#premium-handoff-dialog'), $('#auth-modal'), $('#standard-quote-dialog'), $('#scripted-photo-quote-dialog')]) {
+for (const dialog of [$('#mobile-menu'), $('#review-dialog'), $('#premium-handoff-dialog'), $('#auth-modal'), $('#standard-quote-dialog'), $('#scripted-photo-quote-dialog'), $('#luxify-quote-dialog')]) {
   dialog.addEventListener('close', () => {
     if (dialog === $('#mobile-menu')) $('#open-menu').setAttribute('aria-expanded', 'false');
     if (dialog === $('#auth-modal')) $$('[aria-controls="auth-modal"]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
@@ -671,7 +1098,7 @@ for (const dialog of [$('#mobile-menu'), $('#review-dialog'), $('#premium-handof
 
 function activeView() {
   const requested = location.hash.slice(1) || 'create';
-  return ['create', 'copywriter', 'identities', 'videos', 'account'].includes(requested) ? requested : 'create';
+  return ['create', 'luxify', 'copywriter', 'identities', 'videos', 'account'].includes(requested) ? requested : 'create';
 }
 
 function navigate({ focus = true } = {}) {
@@ -682,6 +1109,10 @@ function navigate({ focus = true } = {}) {
     else link.removeAttribute('aria-current');
   });
   if ($('#mobile-menu').open) closeDialog($('#mobile-menu'), { restore: false });
+  if (view === 'luxify') {
+    renderLuxifyStudio();
+    ensureLuxifyCapabilities();
+  }
   if (focus) {
     $('#main').focus();
     window.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
@@ -2074,6 +2505,8 @@ async function submitPremium(event) {
 
 function safeProviderName(item) {
   if (item.fixture) return 'Local lifecycle fixture';
+  if (isUnavailableMode(item)) return 'Unavailable (reconciliation required)';
+  if (isLuxifyResult(item)) return 'LUXIFY';
   const tier = String(item.tier || '').toLowerCase();
   const providerId = String(typeof item.provider === 'object' ? item.provider.id : item.provider || '').toLowerCase();
   return tier === 'standard' || providerId === 'standard' ? 'Standard' : 'Premium';
@@ -2230,7 +2663,9 @@ async function loadTalent(generation = state.workspaceGeneration) {
 async function loadProjects(generation = state.workspaceGeneration) {
   const data = await getJson('/api/video-os-lite/projects');
   if (generation !== state.workspaceGeneration) return;
-  state.project = data.projects?.find(project => project.settings?.tier !== 'STANDARD') || null;
+  state.project = data.projects?.find(project => !isLuxifyProject(project)
+    && !isUnavailableMode(project)
+    && project.settings?.tier !== 'STANDARD') || null;
 }
 
 async function loadResults(generation = state.workspaceGeneration) {
@@ -2259,7 +2694,7 @@ async function loadResults(generation = state.workspaceGeneration) {
 function restoreLatestProject() {
   if (!fixtureMode && scriptedPhotoClient.publicState('PREMIUM').draft) return;
   const project = state.project;
-  if (!project) return;
+  if (!project || isLuxifyProject(project) || isUnavailableMode(project)) return;
   $('#premium-title').value = project.title || '';
   if (project.settings?.composition) {
     try {
@@ -2284,7 +2719,10 @@ function restoreLatestProject() {
     state.premium.voice = state.libraries.voice.find((item) => item.id === voiceId) || null;
     state.premium.voiceExplicit = Boolean(state.premium.voice);
   }
-  const active = state.results.find((item) => item.projectId === project.id && liveStates.has(presentedJobStatus(item)));
+  const active = state.results.find((item) => !isLuxifyResult(item)
+    && !isUnavailableMode(item)
+    && item.projectId === project.id
+    && liveStates.has(presentedJobStatus(item)));
   if (active) {
     state.premium.activeJobId = active.id;
     state.premium.controlsLocked = true;
@@ -2361,6 +2799,15 @@ function clearWorkspaceData() {
   state.premium.activeJobId = null;
   state.premium.controlsLocked = false;
   state.premium.terminal = false;
+  stopLuxifyPolling();
+  state.luxify.capability = null;
+  state.luxify.loading = false;
+  state.luxify.error = null;
+  state.luxify.lookIdentityIds = [];
+  state.luxify.busy = false;
+  state.luxify.job = null;
+  state.luxify.pollingAttempts = 0;
+  state.luxify.message = '';
   $('#premium-composition-enabled').checked = false;
   $('#premium-background').value = PREMIUM_COMPOSITION_CATALOG.defaults.backgroundId;
   $('#premium-layout').value = PREMIUM_COMPOSITION_CATALOG.defaults.layoutId;
@@ -2373,6 +2820,15 @@ function clearWorkspaceData() {
   setFieldError($('#avatar-search'), $('#premium-cast-error'));
   $('#premium-new-draft').hidden = true;
   $('#generate-video').hidden = false;
+  $('#luxify-video-title').value = '';
+  $('#luxify-prompt').value = '';
+  $('#luxify-prompt-count').textContent = '0 / 1500';
+  $('#luxify-aspect').value = '16:9';
+  $('#luxify-resolution').value = '720p';
+  $('#luxify-duration').value = '5';
+  setFieldError($('#luxify-video-title'), $('#luxify-title-error'));
+  setFieldError($('#luxify-prompt'), $('#luxify-prompt-error'));
+  setFieldError($('#luxify-look-list'), $('#luxify-look-error'));
   if (state.standard.portrait?.kind === 'identity') replaceStandardPortrait(null);
   $('#standard-permission').checked = false;
   state.standard.permission = false;
@@ -2384,6 +2840,7 @@ function clearWorkspaceData() {
   clearAcceptedPreview();
   stopPremiumPolling();
   syncPremiumControlLock();
+  renderLuxifyStudio();
 }
 
 function renderWorkspace() {
@@ -2393,6 +2850,7 @@ function renderWorkspace() {
   renderPremiumCast();
   renderPremiumAvailability();
   renderScriptedStudio();
+  renderLuxifyStudio();
   renderResults();
   configureStandardSubmit();
   copywriterController?.syncSession();
@@ -2433,6 +2891,9 @@ async function refreshWorkspace() {
       return;
     }
     hydrateScriptedDrafts(scriptedPhotoClient.setScope(nextAccountId));
+    state.luxify.capability = null;
+    state.luxify.error = null;
+    hydrateLuxifyDraft(luxifyClient.setScope(nextAccountId));
     renderConnection('signed-in', fixtureMode ? 'Local fixture workspace' : 'Signed-in workspace');
     const operations = [
       ['identities', loadIdentities(generation)],
@@ -2441,6 +2902,7 @@ async function refreshWorkspace() {
     ];
     if (fixtureMode) operations.push(['Premium availability', loadProviders(generation)], ['presenters and voices', loadTalent(generation)]);
     else operations.push(['scripted rendering availability', loadScriptedCapabilities()]);
+    if (!fixtureMode && activeView() === 'luxify') operations.push(['LUXIFY availability', loadLuxifyCapabilities()]);
     if (!fixtureMode) operations.push(['AI Copywriter', copywriterController.loadAvailability()]);
     const outcomes = await Promise.allSettled(operations.map((entry) => entry[1]));
     if (generation !== state.workspaceGeneration) return;
@@ -2449,6 +2911,7 @@ async function refreshWorkspace() {
     consumeIdentityHandoff();
     selectDefaultPremiumCast();
     reconcilePremiumResultState();
+    reconcileLuxifyResultState();
     renderWorkspace();
     if (failed.length) setNotice('Some workspace data could not be loaded: ' + failed.join(', ') + '.', 'error', true);
     consumeAuthReturn();
@@ -2735,11 +3198,17 @@ $('#standard-scripted-new-draft').addEventListener('click', () => prepareAnother
 
 $$('[data-dialog-close]').forEach((button) => button.addEventListener('click', () => closeDialog(button.closest('dialog'))));
 $$('[data-scripted-quote-close]').forEach((button) => button.addEventListener('click', () => closeDialog($('#scripted-photo-quote-dialog'))));
+$$('[data-luxify-quote-close]').forEach((button) => button.addEventListener('click', () => closeDialog($('#luxify-quote-dialog'))));
 $('#scripted-photo-quote-confirm').addEventListener('click', () => void confirmScriptedQuote());
 $('#scripted-photo-requote').addEventListener('click', () => {
   const tier = state.scripted.quoteTier;
   closeDialog($('#scripted-photo-quote-dialog'));
   if (tier) void requestScriptedQuote(tier);
+});
+$('#luxify-quote-confirm').addEventListener('click', () => void confirmLuxifyQuote());
+$('#luxify-requote').addEventListener('click', () => {
+  closeDialog($('#luxify-quote-dialog'));
+  void requestLuxifyQuote();
 });
 $('#close-login').addEventListener('click', () => closeDialog($('#auth-modal')));
 $$('[data-open-login]').forEach((button) => button.addEventListener('click', openAuthModal));
@@ -2748,6 +3217,27 @@ $('#magic-link-form').addEventListener('submit', requestMagicLink);
 $('#sign-out').addEventListener('click', signOut);
 $('#auth-retry').addEventListener('click', () => state.authRetry?.());
 $('#workspace-retry').addEventListener('click', refreshWorkspace);
+
+$('#luxify-form').addEventListener('submit', (event) => void requestLuxifyQuote(event));
+$('#luxify-video-title').addEventListener('input', () => {
+  if ($('#luxify-video-title').value.trim()) setFieldError($('#luxify-video-title'), $('#luxify-title-error'));
+  luxifyIntentChanged();
+});
+$('#luxify-prompt').addEventListener('input', () => {
+  $('#luxify-prompt-count').textContent = $('#luxify-prompt').value.length + ' / 1500';
+  if ($('#luxify-prompt').value.trim()) setFieldError($('#luxify-prompt'), $('#luxify-prompt-error'));
+  luxifyIntentChanged();
+});
+$$('#luxify-aspect, #luxify-resolution, #luxify-duration').forEach(control => control.addEventListener('change', luxifyIntentChanged));
+$('#luxify-refresh').addEventListener('click', () => {
+  void loadLuxifyCapabilities({ force: true }).catch(error => {
+    state.luxify.message = error.message;
+    renderLuxifyStudio();
+  });
+});
+$('#luxify-check').addEventListener('click', () => void checkLuxifyRecovery());
+$('#luxify-retry').addEventListener('click', () => void retryLuxifyRequest());
+$('#luxify-new-draft').addEventListener('click', prepareAnotherLuxifyDraft);
 
 $$('[data-auth-mode]').forEach((button) => button.addEventListener('click', () => setAuthMode(button.dataset.authMode)));
 $('#toggle-auth-password').addEventListener('click', () => {
@@ -2800,6 +3290,7 @@ window.addEventListener('beforeunload', () => {
   stopPremiumPolling();
   stopScriptedPolling('STANDARD');
   stopScriptedPolling('PREMIUM');
+  stopLuxifyPolling();
   state.standard.timers.forEach(window.clearTimeout);
   state.standard.objectUrls.forEach((url) => URL.revokeObjectURL(url));
 });
@@ -2825,6 +3316,7 @@ setTier('standard');
 renderMyCast();
 renderIdentityLibrary();
 renderPremiumCast();
+renderLuxifyStudio();
 renderResults();
 configureStandardSubmit();
 refreshWorkspace();
