@@ -212,14 +212,46 @@ export function assertIdentityProviderAccountAuthorized(accountId, env = process
   return true;
 }
 
-function inventoryCollection(payload) {
+function inventoryResponseError() {
+  return Object.assign(new Error('HeyGen inventory response was invalid.'), {
+    statusCode: 502,
+    failureCategory: 'PROVIDER_INVENTORY',
+  });
+}
+
+function inventoryCollection(payload, { requireExplicitPagination = false } = {}) {
+  if (requireExplicitPagination) {
+    if (!Array.isArray(payload?.data)
+      || payload.data.some((item) => !item || typeof item !== 'object' || Array.isArray(item))) {
+      throw inventoryResponseError();
+    }
+    return payload.data;
+  }
   const data = payload?.data ?? payload;
   if (Array.isArray(data)) return data;
   for (const field of ['avatars', 'voices', 'items', 'list']) if (Array.isArray(data?.[field])) return data[field];
   return [];
 }
 
-function inventoryPagination(payload) {
+function inventoryPagination(payload, { requireExplicitPagination = false } = {}) {
+  if (requireExplicitPagination) {
+    if (!Object.hasOwn(payload || {}, 'has_more')
+      || !Object.hasOwn(payload || {}, 'next_token')
+      || typeof payload.has_more !== 'boolean') {
+      throw inventoryResponseError();
+    }
+    if (payload.has_more) {
+      if (typeof payload.next_token !== 'string'
+        || !payload.next_token
+        || payload.next_token !== payload.next_token.trim()
+        || payload.next_token.length > 512) {
+        throw inventoryResponseError();
+      }
+      return { hasMore: true, nextToken: payload.next_token };
+    }
+    if (payload.next_token !== null) throw inventoryResponseError();
+    return { hasMore: false, nextToken: '' };
+  }
   const data = payload?.data;
   return {
     hasMore: Boolean(payload?.has_more ?? data?.has_more),
@@ -234,10 +266,59 @@ function inventoryUrl(value) {
   return url;
 }
 
-async function fetchHeygenInventoryPage(url, { fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(inventoryUrl(url).href, { signal: AbortSignal.timeout(8_000), headers: { Accept: 'application/json', 'X-Api-Key': key() } });
+function signalAbortReason(signal) {
+  return signal?.reason instanceof Error
+    ? signal.reason
+    : Object.assign(new Error('HeyGen inventory request timed out.'), {
+      statusCode: 503,
+      failureCategory: 'PROVIDER_INVENTORY_BUDGET',
+    });
+}
+
+async function promiseWithinSignal(start, signal) {
+  if (!signal) return start();
+  if (signal.aborted) throw signalAbortReason(signal);
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(signalAbortReason(signal));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    const value = await Promise.race([
+      Promise.resolve().then(start),
+      aborted,
+    ]);
+    if (signal.aborted) throw signalAbortReason(signal);
+    return value;
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
+async function responseJsonWithinSignal(response, signal) {
+  return promiseWithinSignal(() => response.json(), signal);
+}
+
+async function fetchHeygenInventoryPage(url, {
+  fetchImpl = fetch,
+  signal,
+  apiKey,
+  assertBudget,
+} = {}) {
+  const requestKey = String(apiKey || '').trim() || key();
+  const requestSignal = signal || AbortSignal.timeout(8_000);
+  const response = await promiseWithinSignal(
+    () => fetchImpl(inventoryUrl(url).href, {
+      redirect: 'error',
+      signal: requestSignal,
+      headers: { Accept: 'application/json', 'X-Api-Key': requestKey },
+    }),
+    requestSignal,
+  );
   if (!response.ok) throw new Error(`HeyGen inventory HTTP ${response.status}`);
-  return response.json();
+  const payload = await responseJsonWithinSignal(response, requestSignal);
+  assertBudget?.();
+  return payload;
 }
 
 export async function fetchHeygenCollection(url, options = {}) {
@@ -253,13 +334,13 @@ export async function fetchHeygenPaginatedCollection(url, options = {}) {
   const pageUrl = inventoryUrl(url);
   for (let page = 1; page <= maxPages; page += 1) {
     const payload = await fetchHeygenInventoryPage(pageUrl, options);
-    for (const item of inventoryCollection(payload)) {
+    for (const item of inventoryCollection(payload, options)) {
       const id = String(item?.id || item?.avatar_id || item?.avatarId || '').trim().slice(0, 160);
       if (id && itemIds.has(id)) continue;
       if (id) itemIds.add(id);
       items.push(item);
     }
-    const { hasMore, nextToken } = inventoryPagination(payload);
+    const { hasMore, nextToken } = inventoryPagination(payload, options);
     if (items.length >= maxItems) return { items: items.slice(0, maxItems), pages: page, complete: !hasMore, truncated: hasMore || items.length > maxItems };
     if (!hasMore) return { items, pages: page, complete: true, truncated: false };
     if (page === maxPages && options.allowTruncatedPageLimit === true) return { items, pages: page, complete: false, truncated: true };
