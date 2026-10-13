@@ -26,15 +26,33 @@ export const DIAGNOSTIC_PATHS = Object.freeze([
   'tools/db-binding-diagnostic-build-policy.mjs',
 ]);
 
-const DATABASE_CREDENTIAL_NAME = /^(?:DATABASE_URL|POSTGRES_URL|NEON_|PG)/;
+// Credential and connection variables only; harmless libpq settings such as
+// PGSSLMODE, PGCONNECT_TIMEOUT or PGAPPNAME are allowed.
+const DATABASE_CREDENTIAL_PREFIXES = Object.freeze(['DATABASE_URL', 'POSTGRES_URL', 'NEON_']);
+const DATABASE_CREDENTIAL_NAMES = new Set([
+  'POSTGRES_PASSWORD', 'POSTGRES_USER', 'POSTGRES_HOST', 'POSTGRES_DATABASE',
+  'PGPASSWORD', 'PGHOST', 'PGUSER', 'PGDATABASE', 'PGSERVICE', 'PGPASSFILE',
+  'DB_URL', 'SUPABASE_DB_URL',
+]);
 export function isDatabaseCredentialName(name) {
-  return DATABASE_CREDENTIAL_NAME.test(String(name).toUpperCase());
+  const upper = String(name).toUpperCase();
+  return DATABASE_CREDENTIAL_NAMES.has(upper) || DATABASE_CREDENTIAL_PREFIXES.some((prefix) => upper.startsWith(prefix));
 }
 
+const ENV_SCAN_SKIP = new Set(['node_modules', '.git']);
+// Any .env* anywhere in the working tree, tracked, untracked or gitignored.
+// Directory symlinks are not followed.
 export function localEnvironmentFiles(root) {
-  const envFiles = (dir) => (existsSync(join(root, dir)) ? readdirSync(join(root, dir)) : [])
-    .filter((name) => name.toLowerCase().startsWith('.env')).map((name) => (dir === '.' ? name : `${dir}/${name}`));
-  return [...envFiles('.'), ...envFiles('.vercel')];
+  const found = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
+      const path = dir ? `${dir}/${entry.name}` : entry.name;
+      if (entry.name.toLowerCase().startsWith('.env') && !entry.isDirectory()) found.push(path);
+      else if (entry.isDirectory() && !entry.isSymbolicLink() && !ENV_SCAN_SKIP.has(entry.name)) walk(path);
+    }
+  };
+  if (existsSync(root)) walk('');
+  return found;
 }
 
 export function diagnosticDatabaseEvidence() {
@@ -77,5 +95,19 @@ export function diagnosticChangedPaths(root, base = ACTIVE_APP_BASE) {
   // A reviewed path may be modified or added, never deleted: deleting an allowed
   // file (for example a build safeguard) would otherwise still match the scope.
   if (diff(['--diff-filter=D']).length) throw new Error('Diagnostic build source deletes a reviewed path.');
-  return diff([]);
+  // A file replaced by a symlink or submodule is a type change, not a reviewed edit.
+  if (diff(['--diff-filter=T']).length) throw new Error('Diagnostic build source changes the type of a reviewed path.');
+  const changed = diff([]);
+  if (changed.length) {
+    const tree = spawnSync('git', ['ls-tree', '-z', 'HEAD', '--', ...changed], { cwd: root, encoding: 'utf8' });
+    if (tree.status !== 0) throw new Error('Diagnostic build cannot verify reviewed path modes.');
+    const modes = new Map(tree.stdout.split('\0').filter(Boolean).map((line) => {
+      const tab = line.indexOf('\t');
+      return [line.slice(tab + 1), line.slice(0, line.indexOf(' '))];
+    }));
+    for (const path of changed) {
+      if (!['100644', '100755'].includes(modes.get(path))) throw new Error('Diagnostic build reviewed path is not a regular file.');
+    }
+  }
+  return changed;
 }

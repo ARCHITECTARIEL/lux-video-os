@@ -77,7 +77,8 @@ test('diagnostic scope is pinned to the reviewed vos-002 base and its exact 20-f
 function scratchRepo({ absentFromBase = [] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'diag-policy-'));
   const git = (...args) => {
-    const run = spawnSync('git', ['-c', 'user.name=policy-test', '-c', 'user.email=policy-test@local', '-c', 'core.autocrlf=false', ...args], { cwd: dir, encoding: 'utf8' });
+    const options = typeof args.at(-1) === 'object' ? args.pop() : {};
+    const run = spawnSync('git', ['-c', 'user.name=policy-test', '-c', 'user.email=policy-test@local', '-c', 'core.autocrlf=false', '-c', 'core.symlinks=false', ...args], { cwd: dir, encoding: 'utf8', ...options });
     assert.equal(run.status, 0, run.stderr);
     return run.stdout.trim();
   };
@@ -135,24 +136,72 @@ test('hidden deletion of the browser-client build safeguard is rejected', () => 
     } finally { repo.cleanup(); }
   }
 });
-
-test('any database connection variable family is rejected', () => {
+test('database credential and connection variables are rejected; harmless libpq settings are allowed', () => {
   for (const name of ['DATABASE_URL', 'DATABASE_URL_UNPOOLED', 'DATABASE_URL_POOLED', 'POSTGRES_URL', 'POSTGRES_URL_NON_POOLING', 'POSTGRES_URL_NO_SSL',
-    'NEON_API_KEY', 'NEON_PROJECT_ID', 'PGHOST', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGPORT', 'PGSSLMODE', 'pghost']) {
+    'POSTGRES_PASSWORD', 'POSTGRES_USER', 'POSTGRES_HOST', 'POSTGRES_DATABASE',
+    'PGPASSWORD', 'PGHOST', 'PGUSER', 'PGDATABASE', 'PGSERVICE', 'PGPASSFILE', 'pghost',
+    'NEON_API_KEY', 'NEON_PROJECT_ID', 'DB_URL', 'SUPABASE_DB_URL']) {
     assert.equal(isDatabaseCredentialName(name), true, name);
     assert.throws(() => assertDiagnosticBuildInputs(input({ env: { [name]: 'synthetic-secret' } })), /database credentials/, name);
   }
-  for (const name of ['PATH', 'NODE_ENV', 'VERCEL_ENV', 'VIDEO_OS_PUBLIC_ORIGIN']) assert.equal(isDatabaseCredentialName(name), false, name);
+  for (const name of ['PGSSLMODE', 'PGCONNECT_TIMEOUT', 'PGAPPNAME', 'PGPORT', 'PATH', 'NODE_ENV', 'VERCEL_ENV', 'VIDEO_OS_PUBLIC_ORIGIN', 'POSTGRES_VERSION']) {
+    assert.equal(isDatabaseCredentialName(name), false, name);
+    assert.doesNotThrow(() => assertDiagnosticBuildInputs(input({ env: { [name]: 'value' } })), name);
+  }
 });
 
-test('any root .env* or .vercel/.env* file is rejected', () => {
-  for (const path of ['.env', '.env.local', '.env.preview', '.env.development.local', '.env.staging', '.envrc', '.vercel/.env.production.local', '.vercel/.env.preview.local', '.vercel/.env']) {
+test('any .env* file anywhere in the working tree is rejected; node_modules and .git are skipped', () => {
+  for (const path of ['.env', '.env.local', '.env.staging', '.envrc', '.vercel/.env.production.local', '.vercel/.env',
+    'api/.env', 'api/video-os-lite/.env.local', 'config/deep/nested/.env.production', 'tools/.ENV']) {
     const root = mkdtempSync(join(tmpdir(), 'diag-env-'));
     try {
       assert.doesNotThrow(() => assertDiagnosticBuildInputs(input({ root })), 'empty root');
-      mkdirSync(join(root, '.vercel'), { recursive: true });
+      mkdirSync(dirname(join(root, path)), { recursive: true });
       writeFileSync(join(root, path), 'X=1\n');
       assert.throws(() => assertDiagnosticBuildInputs(input({ root })), /local environment file/, path);
     } finally { rmSync(root, { recursive: true, force: true }); }
   }
+  const root = mkdtempSync(join(tmpdir(), 'diag-env-skip-'));
+  try {
+    for (const path of ['node_modules/pkg/.env', '.git/.env', 'api/.environment-notes/readme.md']) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), 'X=1\n');
+    }
+    assert.doesNotThrow(() => assertDiagnosticBuildInputs(input({ root })));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a symlink or gitlink at a reviewed path is rejected (type change and added path)', () => {
+  const cases = [
+    { mode: '120000', target: 'tools/build-browser-clients.mjs', inBase: true },
+    { mode: '160000', target: 'tools/build-browser-clients.mjs', inBase: true },
+    { mode: '120000', target: 'lib/diagnostic-maintenance-gate.js', inBase: false },
+    { mode: '160000', target: 'lib/diagnostic-maintenance-gate.js', inBase: false },
+  ];
+  for (const { mode, target, inBase } of cases) {
+    const repo = scratchRepo({ absentFromBase: inBase ? [] : [target] });
+    try {
+      repo.modifyAllowedExcept(target);
+      repo.git('add', '-A');
+      if (inBase) repo.git('rm', '-q', '--cached', target);
+      const object = mode === '120000'
+        ? repo.git('hash-object', '-w', '--stdin', '--path=link', { input: '../lib/enrollment-dto.js' })
+        : repo.git('rev-parse', 'HEAD');
+      repo.git('update-index', '--add', '--cacheinfo', mode + ',' + object + ',' + target);
+      repo.git('commit', '-qm', 'candidate');
+      assert.match(repo.git('ls-tree', 'HEAD', '--', target), new RegExp('^' + mode + ' '));
+      assert.throws(() => accepts(repo.paths()), /type of a reviewed path|not a regular file/, mode + ' ' + target);
+    } finally { repo.cleanup(); }
+  }
+});
+
+test('an executable (100755) reviewed file is still accepted', () => {
+  const repo = scratchRepo();
+  try {
+    repo.modifyAllowedExcept();
+    repo.git('add', '-A');
+    repo.git('update-index', '--chmod=+x', 'tools/build-production.mjs');
+    repo.git('commit', '-qm', 'candidate');
+    assert.doesNotThrow(() => accepts(repo.paths()));
+  } finally { repo.cleanup(); }
 });
