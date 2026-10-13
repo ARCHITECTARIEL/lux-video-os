@@ -93,7 +93,7 @@
 
     <div id="studio" hidden>
       <section class="library-heading">
-        <div><p class="eyebrow">PRIVATE CAST</p><h2>Your authorized identities</h2><p>Review readiness, preview the saved voice, or continue with an identity that is ready.</p></div>
+        <div><p class="eyebrow">PRIVATE CAST</p><h2>Your authorized identities</h2><p>Review readiness, compare the extracted sample with the cloned voice from The Render, or continue with an identity that is ready.</p></div>
         <button id="create-button" class="button primary" type="button">Create Identity</button>
       </section>
 
@@ -251,6 +251,20 @@
         <h3 class="center">Enrollment is ready.</h3>
         <p id="ready-copy" class="center ready-copy">Your photo and reusable voice are prepared. Final presenter creation has not started.</p>
         <p id="ready-provider-status" class="provider-lifecycle-status center" hidden></p>
+        <section id="ready-media-review" class="identity-card ready-copy" aria-labelledby="ready-media-review-title" hidden>
+          <div class="identity-body">
+            <p class="eyebrow">PRIVATE MEDIA PREVIEW</p>
+            <h4 id="ready-media-review-title">Preview your exact saved media</h4>
+            <p class="fine-print">Preview the private photo, phone video, and extracted voice sample attached to this identity. Previewing does not grant new permission or start provider work.</p>
+            <div class="consent-media-review" aria-label="Exact identity media available for review">
+              <figure><img id="ready-photo-preview" alt="Saved appearance photo"><figcaption>Appearance photo</figcaption></figure>
+              <figure><video id="ready-video-preview" controls playsinline preload="metadata" aria-label="Saved phone video"></video><figcaption>Phone video</figcaption></figure>
+            </div>
+            <p class="fine-print"><strong>Extracted voice sample</strong></p>
+            <audio id="ready-extracted-voice-preview" controls preload="metadata" aria-label="Extracted voice sample" aria-describedby="ready-media-preview-status"></audio>
+            <p id="ready-media-preview-status" class="component-error" role="status" aria-live="polite" aria-atomic="true" hidden></p>
+          </div>
+        </section>
         <div class="center ready-actions"><button id="ready-done" class="button secondary" type="button">Back to My identities</button><a id="ready-use-link" class="button primary" href="/" aria-disabled="true">Use in Video OS</a></div>
       </fieldset>
 

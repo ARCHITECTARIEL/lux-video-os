@@ -31,10 +31,7 @@ const publicDemoAccount = {
 };
 
 const publicDemoProviders = [
-  { id: 'heygen', name: 'HeyGen', cost: 90 },
-  { id: 'argil', name: 'Argil', cost: 80 },
-  { id: 'tavus', name: 'Tavus', cost: 120 },
-  { id: 'did', name: 'D-ID', cost: 45 },
+  { id: 'heygen', name: 'The Render', label: 'The Render', cost: 90 },
 ];
 const panels = [...document.querySelectorAll('.wizard-panel')];
 const stepButtons = [...document.querySelectorAll('[data-step-jump]')];
@@ -374,7 +371,7 @@ async function loadTalent() {
     renderFeaturedCast();
     renderOptions('avatar');
     renderOptions('voice');
-    document.querySelector('#connection-pill').textContent = data.connection?.connected ? 'HeyGen talent connected' : 'HeyGen talent partially available';
+    document.querySelector('#connection-pill').textContent = data.connection?.connected ? 'The Render talent connected' : 'The Render talent partially available';
     selectDefaultDemoPresenter();
     appState.localEngine = true;
   } catch {
@@ -383,7 +380,7 @@ async function loadTalent() {
     renderFeaturedCast();
     renderOptions('avatar');
     renderOptions('voice');
-    document.querySelector('#connection-pill').textContent = canUseLocalApi() ? 'Browser demo mode' : 'HeyGen talent unavailable';
+    document.querySelector('#connection-pill').textContent = canUseLocalApi() ? 'Browser demo mode' : 'The Render talent unavailable';
   }
 }
 
@@ -551,7 +548,7 @@ function renderProductionKit(kit) {
     ['Language', data.language || 'English'],
     ['Brand', data.brandName || 'No brand name'],
     ['Captions', data.captions ? 'On' : 'Off'],
-    ['Render provider', selectedProvider()?.name || 'HeyGen'],
+    ['Render provider', selectedProvider()?.name || 'The Render'],
     ['Production kit', appState.productionKit ? 'Auto-selected' : 'Pending'],
   ];
   document.querySelector('#summary').replaceChildren(...rows.map(([label, value]) => {
@@ -644,7 +641,7 @@ async function generateVideo() {
   if (!requireCurrentStep()) return;
   if (!appState.signedIn) { showToast('Sign in before live rendering.'); openAuthModal(); return; }
   const privateIdentityReady = Boolean(appState.identityId && appState.avatar?.source === 'identity' && appState.voice);
-  if (!appState.avatar || !appState.voice || (!privateIdentityReady && (appState.avatar.source !== 'heygen' || appState.voice.source !== 'heygen'))) { showToast('Choose a connected HeyGen avatar and voice before rendering.'); return; }
+  if (!appState.avatar || !appState.voice || (!privateIdentityReady && (appState.avatar.source !== 'heygen' || appState.voice.source !== 'heygen'))) { showToast('Choose a connected avatar and voice from The Render before rendering.'); return; }
   const progress = document.querySelector('#progress');
   const bar = progress.querySelector('span');
   const payload = formData();
@@ -717,7 +714,7 @@ async function exportMp4() {
     link.textContent = `Download ${data.filename}`;
     link.hidden = false;
     renderExportEffects(data.effects);
-    status.textContent = data.voice === 'local-tts' ? 'MP4 draft ready with narration, music bed, and production kit effects. Real avatar render still requires HeyGen.' : 'MP4 draft ready with production kit effects.';
+    status.textContent = data.voice === 'local-tts' ? 'MP4 draft ready with narration, music bed, and production kit effects. A real avatar render still requires The Render.' : 'MP4 draft ready with production kit effects.';
   } catch (error) {
     renderExportEffects(null);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -735,13 +732,7 @@ function selectedProvider() {
 }
 
 function providerBuyerLabel(provider) {
-  const labels = {
-    heygen: 'Best Quality',
-    argil: 'Clone Studio',
-    tavus: 'Digital Twin',
-    did: 'Fast Talking Head',
-  };
-  return labels[provider?.id] || provider?.label || provider?.name || 'Provider';
+  return provider?.label || provider?.name || 'Provider';
 }
 
 function updateFinishCost() {
@@ -753,7 +744,7 @@ function updateFinishCost() {
   const countEl = document.querySelector('#finish-render-count');
   if (balanceEl) balanceEl.textContent = `${balance.toLocaleString()} credits`;
   if (costEl) costEl.textContent = cost ? `${cost} credits` : '-- credits';
-  if (countEl) countEl.textContent = cost ? `${Math.floor(balance / cost)} ${providerBuyerLabel(provider).toLowerCase()} render${Math.floor(balance / cost) === 1 ? '' : 's'}` : '-- renders';
+  if (countEl) countEl.textContent = cost ? `${Math.floor(balance / cost)} render${Math.floor(balance / cost) === 1 ? '' : 's'}` : '-- renders';
 }
 
 function renderProviderStatus() {
@@ -880,7 +871,7 @@ function resultCard(item) {
   body.className = 'result-body';
   const title = document.createElement('strong');
   title.textContent = item.title || item.scriptTitle || item.filename || 'Video OS render';
-  const providerName = item.provider?.name || item.provider || 'HeyGen';
+  const providerName = item.provider?.name || (item.provider === 'heygen' ? 'The Render' : item.provider) || 'The Render';
   const meta = document.createElement('span');
   meta.className = 'result-meta';
   meta.textContent = `${providerName} | ${item.format || 'vertical'} | ${item.cost || 0} credits | ${formatDate(item.updatedAt || item.createdAt)}`;
@@ -987,7 +978,7 @@ function renderPricing() {
   if (buyingPower) {
     const renderCost = heygen?.cost || cheapestReady || 90;
     const count = Math.floor(balance / renderCost);
-    buyingPower.textContent = count > 0 ? `Enough for ${count} ${heygen?.name || 'provider'} render${count === 1 ? '' : 's'}.` : 'Add credits to unlock live provider renders.';
+    buyingPower.textContent = count > 0 ? `Enough for ${count} render${count === 1 ? '' : 's'}.` : 'Add credits to unlock live provider renders.';
   }
   const renderCost = document.querySelector('#pricing-render-cost');
   if (renderCost) {
@@ -1009,11 +1000,11 @@ function renderPricing() {
   if (recommendation) recommendation.textContent = `${packageCredits.toLocaleString()} credits`;
   if (recommendationCopy) {
     const renderCost = heygen?.cost || cheapestReady || 90;
-    recommendationCopy.textContent = `Adds about ${Math.floor(packageCredits / renderCost)} ${heygen?.name || 'provider'} renders.`;
+    recommendationCopy.textContent = `Adds about ${Math.floor(packageCredits / renderCost)} renders.`;
   }
   const list = document.querySelector('#provider-cost-list');
   if (list) {
-    list.replaceChildren(...providers.map((provider) => {
+    list.replaceChildren(...providers.filter((provider) => provider.id === 'heygen').map((provider) => {
       const item = document.createElement('article');
       item.className = provider.configured ? 'is-ready' : 'needs-setup';
       const canRender = provider.cost ? Math.floor(balance / provider.cost) : 0;

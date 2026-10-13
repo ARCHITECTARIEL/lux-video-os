@@ -43,10 +43,10 @@ function fixtures(overrides = {}) {
     input: {
       contractVersion: 'scripted-photo-v1', tier: 'STANDARD', projectId, identityId, script,
       avatar: { avatarId: 'private-avatar' }, voice: { voiceId: 'private-voice' },
-      sourceBinding: { consentId: randomUUID(), photoSha256: 'a'.repeat(64), voiceSha256: 'b'.repeat(64), providerRenderableAvatarId: 'private-avatar', providerVoiceId: 'private-voice' },
+      sourceBinding: { consentId: randomUUID(), photoSha256: 'a'.repeat(64), voiceSha256: 'b'.repeat(64), providerAvatarGroupId: 'private-avatar-group', providerRenderableAvatarId: 'private-avatar', providerVoiceId: 'private-voice' },
     },
   };
-  const calls = { rate: [], save: [], authorize: [], context: [], recover: [] };
+  const calls = { rate: [], save: [], authorize: [], context: [], recover: [], binding: [], providerRead: [], providerStatus: [] };
   const existingJob = overrides.existingJob ?? null;
   const handler = createScriptedPhotoHandler({
     authenticate: () => ({ accountId, email: 'owner@example.test' }),
@@ -64,6 +64,23 @@ function fixtures(overrides = {}) {
       }
       return existingJob;
     },
+    resolveProviderBinding: async input => {
+      calls.binding.push(input);
+      return { applicationAccountId: accountId, bindingId: 'verified-binding', originScopeKey: 'a'.repeat(64), verifiedAccountScopeId: 'verified-account-scope' };
+    },
+    prepareProviderRead: async input => {
+      calls.providerRead.push(input);
+      return { accountId, identityId, component: 'avatar', providerAvatarGroupId: 'private-avatar-group', providerRenderableAvatarId: 'private-avatar' };
+    },
+    readProviderAvatarStatus: async input => {
+      calls.providerStatus.push(input);
+      return {
+        ready: true,
+        avatarGroup: { providerGroupId: 'private-avatar-group', status: 'completed', consentStatus: 'accepted', ready: true },
+        avatarLook: { providerLookId: 'private-avatar', providerGroupId: 'private-avatar-group', avatarType: 'photo_avatar', status: 'completed', ready: true },
+      };
+    },
+    providerObservationNow: () => Date.parse('2026-09-30T16:00:00.000Z'),
     quoteOptions: { secret, now: Date.parse('2026-09-30T16:00:00.000Z'), nonce: 'route-test-nonce-123456789' },
     ...overrides,
   });
@@ -139,13 +156,48 @@ test('quote loads the owned saved project and ready identity, authorizes its tie
   assert.equal(res.body.quote.credits, 37);
   assert.equal(res.body.quote.pricingVersion, 'scripted-photo-pricing-v1');
   assert.ok(res.body.quote.token);
+  assert.doesNotMatch(res.body.quote.token, /private-avatar-group|private-avatar/);
+  const quoteClaims = JSON.parse(Buffer.from(res.body.quote.token.split('.')[0], 'base64url').toString('utf8'));
+  assert.equal(Object.hasOwn(quoteClaims, 'providerAvatarGroupId'), false);
+  assert.equal(Object.hasOwn(quoteClaims, 'providerRenderableAvatarId'), false);
   assert.equal(res.body.project.provider, undefined);
   assert.equal(res.body.project.sourceBinding, undefined);
   assert.deepEqual(calls.authorize, [{ owner: accountId, tier: 'standard' }]);
   assert.deepEqual(calls.context, [{ accountId, projectId, identityId, title, script, tier: 'STANDARD' }]);
+  assert.deepEqual(calls.binding, [{ accountId }]);
+  assert.deepEqual(calls.providerStatus, [{ groupId: 'private-avatar-group', lookId: 'private-avatar' }]);
   assert.doesNotThrow(() => verifyScriptedPhotoQuote(res.body.quote.token, {
     accountId, projectId, identityId, idempotencyKey, title, script, format: 'vertical', tier: 'STANDARD', sourceBinding: context.input.sourceBinding, credits: 37,
   }, { secret, now: Date.parse('2026-09-30T16:01:00.000Z') }));
+});
+
+test('quote denies pending consent, group drift, and provider readback outage without issuing a token', async () => {
+  const quoteBody = { action: 'quote', projectId, tier: 'STANDARD', format: 'vertical', idempotencyKey };
+  const cases = [
+    {
+      readProviderAvatarStatus: async () => ({
+        ready: false,
+        avatarGroup: { providerGroupId: 'private-avatar-group', status: 'completed', consentStatus: 'pending', ready: true },
+        avatarLook: { providerLookId: 'private-avatar', providerGroupId: 'private-avatar-group', avatarType: 'photo_avatar', status: 'completed', ready: true },
+      }),
+      statusCode: 409,
+    },
+    {
+      prepareProviderRead: async () => ({ accountId, identityId, component: 'avatar', providerAvatarGroupId: 'different-group', providerRenderableAvatarId: 'private-avatar' }),
+      statusCode: 409,
+    },
+    {
+      readProviderAvatarStatus: async () => { throw new TypeError('provider read unavailable'); },
+      statusCode: 503,
+    },
+  ];
+  for (const fixture of cases) {
+    const { handler } = fixtures(fixture);
+    const res = response();
+    await handler(request('POST', { body: quoteBody }), res);
+    assert.equal(res.statusCode, fixture.statusCode, JSON.stringify(res.body));
+    assert.equal(res.body.quote, undefined);
+  }
 });
 
 test('quote rejects saved project tier or format drift before issuing a token', async () => {
@@ -157,6 +209,19 @@ test('quote rejects saved project tier or format drift before issuing a token', 
   assert.equal(res.statusCode, 409);
   assert.equal(res.body.quote, undefined);
   assert.equal(calls.context.length, 0);
+});
+
+test('disabled scripted-photo quoting fails before any provider consent read', async () => {
+  const { handler, calls } = fixtures({
+    environment: { VIDEO_OS_PUBLIC_ORIGIN: 'https://video.example', VIDEO_OS_STANDARD_SCRIPTED_CREDITS: '37' },
+  });
+  const res = response();
+  await handler(request('POST', { body: { action: 'quote', projectId, tier: 'STANDARD', format: 'vertical', idempotencyKey } }), res);
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.quote, undefined);
+  assert.equal(calls.binding.length, 0);
+  assert.equal(calls.providerRead.length, 0);
+  assert.equal(calls.providerStatus.length, 0);
 });
 
 test('same-key quote retry returns the exact existing job without authorizing or creating a second quote', async () => {
@@ -175,6 +240,7 @@ test('same-key quote retry returns the exact existing job without authorizing or
   assert.deepEqual(res.body.existingJob, existingJob);
   assert.equal(calls.authorize.length, 0);
   assert.equal(calls.context.length, 0);
+  assert.equal(calls.binding.length, 0);
   assert.deepEqual(calls.recover, [{ accountId, contractVersion: 'scripted-photo-v1', projectId, tier: 'STANDARD', format: 'vertical', idempotencyKey }]);
   const changedFormat = response();
   await handler(request('POST', { body: { action: 'quote', projectId, tier: 'STANDARD', format: 'landscape', idempotencyKey } }), changedFormat);

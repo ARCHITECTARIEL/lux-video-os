@@ -189,6 +189,7 @@ if (scenario === 'claim') {
   const schema = await import('../../db/schema.js');
   let grants = [{ accountId, entitlementKey: 'liveRendering', enabled: true, sourceType: 'admin_tester_grant' }];
   const jobs = [];
+  const events = [];
   let reservationUpdates = 0;
   const databaseOperations = [];
   const db = {
@@ -209,13 +210,18 @@ if (scenario === 'claim') {
       let table;
       const query = { from(value) { table = value; return this; }, where() { return this; }, for() { return this; }, limit() { return this; }, then(resolve, reject) {
         const values = table === schema.entitlements ? grants : table === schema.users ? [{ id: accountId, email }]
-          : table === schema.creditAccounts ? [{ accountId, balance: 5000, reserved: 0 }] : table === schema.videoJobs ? jobs : [];
+          : table === schema.creditAccounts ? [{ accountId, balance: 5000, reserved: 0 }] : table === schema.videoJobs ? jobs
+            : table === schema.jobEvents ? events : [];
         return Promise.resolve(values).then(resolve, reject);
       } };
       return query;
     },
     update(table) { return { set() { if (table === schema.creditAccounts) reservationUpdates++; return { where: async () => {} }; } }; },
-    insert(table) { return { values(value) { if (table === schema.videoJobs) { jobs.push(value); return { returning: async () => [value] }; } return Promise.resolve(); } }; },
+    insert(table) { return { values(value) {
+      if (table === schema.videoJobs) { jobs.push(value); return { returning: async () => [value] }; }
+      if (table === schema.jobEvents) events.push(value);
+      return Promise.resolve();
+    } }; },
   };
   mock.module('../../db/client.js', { namedExports: { database: () => db } });
   const repo = await import('../../db/repositories.js');
@@ -224,9 +230,12 @@ if (scenario === 'claim') {
   assert.equal(reserved.job.input.renderAuthorization.accountId, accountId);
   assert.equal(reserved.job.input.renderAuthorization.tier, 'premium');
   assert.equal(reserved.job.input.renderAuthorization.jobId, request.jobId);
+  assert.equal(events[0].id, reserved.proofId);
   REGISTERED_TESTER_ACCOUNTS.clear();
   await repo.requireJobRenderAuthorization(reserved.job, 'premium');
-  assert.equal((await repo.reserveRender(request)).replayed, true);
+  const replayed = await repo.reserveRender(request);
+  assert.equal(replayed.replayed, true);
+  assert.equal(replayed.proofId, reserved.proofId);
   assert.equal(reservationUpdates, 1);
   for (const changed of [{ provider: 'sadtalker' }, { title: 'Changed' }, { costCredits: 1 }, { format: 'square' }, { input: { projectId: randomUUID() } }]) {
     await assert.rejects(repo.reserveRender({ ...request, ...changed }), { statusCode: 409 }, 'changed input cannot replay a reserved job');
@@ -310,6 +319,12 @@ if (scenario === 'claim') {
     getOwnedJob: async (id, requestedJob) => { assert.equal(id, accountId); assert.equal(requestedJob, 'other-account-job'); return null; },
     getOwnedMediaAsset: async (id, requestedAsset) => { assert.equal(id, accountId); assert.equal(requestedAsset, 'other-account-asset'); return null; },
     getJob: async () => job,
+    prepareIdentityProviderRead: async ({ accountId: id, identityId, component }) => {
+      assert.equal(id, accountId);
+      assert.equal(identityId, job.input.identityId);
+      assert.equal(component, 'avatar');
+      return { accountId: id, identityId, providerAvatarGroupId: 'fixture-group', providerRenderableAvatarId: 'a' };
+    },
     claimWorkflowStart: async () => job,
     markJobFailedAndRelease: async (id, category) => { releasedCategory = category; },
     transitionJob: async ({ stageTo, providerJobId, providerBinding }) => {
@@ -342,8 +357,11 @@ if (scenario === 'claim') {
   } });
   mock.module('../../services/heygen.js', { namedExports: {
     assertHeygenConfigured: () => true,
+    getHeygenPhotoAvatarStatus: async ({ groupId, lookId }) => ({ ready: true, avatarGroup: { providerGroupId: groupId }, avatarLook: { providerLookId: lookId } }),
     submitHeygen: async () => { submissions++; return { providerJobId: 'synthetic-provider-job' }; },
     pollHeygen: async () => ({}),
+    submitHeygenLuxify: async () => { throw new Error('LUXIFY is outside the authorization repair fixture.'); },
+    pollHeygenLuxify: async () => { throw new Error('LUXIFY is outside the authorization repair fixture.'); },
   } });
   if (scenario.startsWith('worker')) {
     let submitProvider;

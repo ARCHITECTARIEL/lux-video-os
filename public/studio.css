@@ -225,6 +225,31 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .future-note { display: flex; justify-content: space-between; gap: 18px; padding: 15px 18px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--muted); }
 .future-note strong { color: var(--ink); }
 
+.luxify-capability-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.luxify-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 310px; align-items: start; gap: 28px; }
+.luxify-form { display: grid; gap: 14px; max-width: 980px; }
+.luxify-section { scroll-margin-block: 92px 110px; }
+.luxify-look-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 16px; }
+.luxify-look-list .identity-choice { grid-template-columns: 44px minmax(0, 1fr); }
+.luxify-look-list .identity-choice small { margin-top: 2px; }
+.luxify-output-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.luxify-output-grid label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 650; }
+.luxify-audio-note { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; margin: 18px 0; padding: 14px; border: 1px solid var(--line); border-left: 3px solid var(--primary); border-radius: 8px; background: var(--primary-soft); }
+.luxify-audio-note strong { color: var(--primary-strong); white-space: nowrap; }
+.luxify-audio-note span { color: var(--muted); font-size: 12px; }
+#luxify-status { min-height: 20px; }
+.luxify-summary { position: sticky; top: 24px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); }
+.luxify-summary-heading { padding: 18px 18px 10px; }
+.luxify-summary-heading h2 { margin: 0; font-size: 16px; }
+.luxify-summary dl { margin: 0; padding: 0 18px 15px; }
+.luxify-summary dl > div { display: flex; justify-content: space-between; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.luxify-summary dt { color: var(--muted); }
+.luxify-summary dd { margin: 0; font-weight: 650; text-align: right; overflow-wrap: anywhere; }
+.luxify-truth-note { margin: 0 18px 14px; padding: 13px; border-radius: 8px; background: var(--surface-muted); }
+.luxify-truth-note strong { display: block; margin-bottom: 4px; font-size: 12px; }
+.luxify-truth-note p { margin: 0; font-size: 11px; }
+.luxify-summary > .button { margin: 0 18px 18px; width: calc(100% - 36px); }
+
 .identity-library { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .identity-library-card { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
 .identity-library-card img, .identity-library-image { display: grid; place-items: center; width: 100%; aspect-ratio: 4 / 3; background: var(--surface-muted); color: var(--primary-strong); object-fit: cover; font-size: 28px; font-weight: 760; }
@@ -367,6 +392,8 @@ dialog::backdrop { background: rgba(17,24,39,.58); }
 
 @media (max-width: 900px) {
   .workspace-grid { grid-template-columns: 1fr; }
+  .luxify-workspace { grid-template-columns: 1fr; }
+  .luxify-summary { position: static; }
   .preview-panel { position: static; }
   .preview-stage { height: 360px; }
   .accepted-preview { grid-template-columns: minmax(160px, .8fr) minmax(240px, 1.2fr); }
@@ -394,6 +421,11 @@ dialog::backdrop { background: rgba(17,24,39,.58); }
   .output-note, .future-note { display: grid; }
   .preview-stage { height: 290px; }
   .premium-intro { align-items: flex-start; flex-direction: column; }
+  .luxify-capability-actions { justify-content: flex-start; }
+  .luxify-look-list, .luxify-output-grid { grid-template-columns: 1fr; }
+  .luxify-audio-note { grid-template-columns: 1fr; }
+  .luxify-audio-note strong { white-space: normal; }
+  .luxify-form .premium-submit-actions .button { width: 100%; min-height: 48px; }
   .accepted-preview { grid-template-columns: 1fr; }
   .accepted-preview > a { grid-column: auto; }
   .account-summary > div, .review-summary > div { display: grid; gap: 3px; }

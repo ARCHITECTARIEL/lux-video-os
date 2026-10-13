@@ -4,6 +4,7 @@ import test from 'node:test';
 import { jobDto, projectDto } from '../db/dto.js';
 import { FEATURED_CAST } from '../lib/video-os-featured-cast.js';
 import { projectRequestSchema } from '../lib/video-os-validation.js';
+import { providerList } from '../lib/video-os-account.js';
 
 const OWNED_AVATAR_ID = '11111111-2222-4333-8444-555555555555';
 const OWNED_VOICE_ID = '66666666-7777-4888-8999-aaaaaaaaaaaa';
@@ -39,6 +40,24 @@ function assertSerializedExcludes(value, forbidden) {
 function configuredIds() {
   return FEATURED_CAST.flatMap((item) => [item.avatarId, item.voiceId]);
 }
+
+test('ordinary render DTO labels and provider setup hints do not name processors', () => {
+  for (const provider of ['heygen', 'argil', 'tavus', 'did']) {
+    const dto = jobDto(baseJob({ provider }));
+    assert.equal(dto.provider.id, provider, 'machine ID remains compatible with existing clients');
+    assert.equal(dto.provider.name, 'The Render');
+  }
+  assert.equal(jobDto(baseJob({ provider: 'sadtalker' })).provider.name, 'Standard');
+
+  const listed = providerList();
+  assert.deepEqual(listed.map((provider) => provider.id), ['heygen']);
+  for (const provider of listed) {
+    assert.equal(provider.name, 'The Render');
+    assert.equal(provider.label, 'The Render');
+    assert.doesNotMatch(`${provider.name} ${provider.label} ${provider.missing.join(' ')}`, /heygen|argil|tavus|d-id|did[_-]|api[_-]?key/i);
+    assert.deepEqual(provider.missing, provider.configured ? [] : ['setup']);
+  }
+});
 
 test('legacy raw provider identities and polluted fallback metadata fail closed', () => {
   const [ariel, oso, kd] = FEATURED_CAST;
@@ -287,9 +306,9 @@ test('all externally reachable persisted identity responses use the common DTO b
 
   assert.match(results, /\.map\(jobDto\)/);
   assert.match(finalize, /const dto = jobDto\(job\)/);
-  // Legacy Standard, legacy Premium, and scripted-photo each have success and
-  // uncertain-dispatch responses, all using the same privacy boundary.
-  assert.equal((render.match(/job: jobDto\(reservedJob\)/g) || []).length, 6);
+  // Legacy Standard, legacy Premium, scripted-photo, and LUXIFY each have
+  // success and uncertain-dispatch responses using the same privacy boundary.
+  assert.equal((render.match(/job: jobDto\(reservedJob\)/g) || []).length, 8);
   assert.doesNotMatch(download, /avatar|voice|jobDto/);
   assert.match(projects, /\.map\(projectDto\)/);
   assert.match(projects, /project: projectDto\(project\)/);

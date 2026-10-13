@@ -16,6 +16,24 @@ const VOICE_HASH = 'd'.repeat(64);
 const phoneVideo = await readFile(new URL('../../public/assets/showcase/example-faq.mp4', import.meta.url));
 const photo = { name: 'portrait.png', mimeType: 'image/png', buffer: Buffer.from([137, 80, 78, 71, 1]) };
 const video = { name: 'phone-video.mp4', mimeType: 'video/mp4', buffer: phoneVideo };
+const voiceSample = (() => {
+  const samples = 1_600;
+  const buffer = Buffer.alloc(44 + samples * 2);
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(buffer.length - 8, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(16_000, 24);
+  buffer.writeUInt32LE(32_000, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(samples * 2, 40);
+  return buffer;
+})();
 
 const draft = {
   id: IDS.identity, displayName: 'Owner Studio', overallStatus: 'DRAFT', avatarStatus: 'DRAFT', voiceStatus: 'DRAFT',
@@ -39,7 +57,13 @@ function enrollment(status = 'AWAITING_UPLOAD', overrides = {}) {
       filename: 'phone-video.mp4',
       previewUrl: hashed ? `/api/video-os-lite/enrollments?enrollmentId=${IDS.enrollment}&preview=video` : null,
     },
-    derivedAudio: { state: status === 'IDENTITY_READY' ? 'READY' : ['EXTRACTION_QUEUED', 'EXTRACTING'].includes(status) ? status : 'PENDING', ...(status === 'IDENTITY_READY' ? { sha256: VOICE_HASH } : {}) },
+    derivedAudio: {
+      state: status === 'IDENTITY_READY' ? 'READY' : ['EXTRACTION_QUEUED', 'EXTRACTING'].includes(status) ? status : 'PENDING',
+      ...(status === 'IDENTITY_READY' ? {
+        sha256: VOICE_HASH,
+        previewUrl: '/api/video-os-lite/enrollments?enrollmentId=' + IDS.enrollment + '&preview=voice',
+      } : {}),
+    },
     consent: { required: status === 'AWAITING_EXTRACTION_CONSENT', status: status === 'AWAITING_EXTRACTION_CONSENT' ? 'MISSING' : 'PENDING', policyVersion: 'identity-provider-bridge-v2', purpose: 'identity-voice-enrollment' },
     providerBridgeConsent: {
       required: true,
@@ -76,6 +100,7 @@ async function mockApp(page, {
   initialEnrollment = null,
   autoAdvance = false,
   failUploadOnce = false,
+  failExtractedVoicePreview = false,
   swapHashOnConsent = false,
   callbackAdvanceOnReconcile = false,
   reconsentAbortAfterCommit = false,
@@ -109,6 +134,10 @@ async function mockApp(page, {
     await route.fulfill({ status: 201, json: { ok: true, assetId: IDS.photo, previewUrl: '/private-asset' } });
   });
   await page.route('**/api/video-os-lite/identities*', async route => {
+    const url = new URL(route.request().url());
+    if (route.request().method() === 'GET' && url.searchParams.has('voicePreview')) {
+      return route.fulfill({ status: 200, contentType: 'audio/wav', body: voiceSample });
+    }
     if (route.request().method() === 'GET') return route.fulfill({ json: { ok: true, identities, providerSubmissionEnabled: providerEnabled } });
     const body = route.request().postDataJSON();
     calls.push({ endpoint: 'identities', body });
@@ -121,6 +150,10 @@ async function mockApp(page, {
   await page.route('**/api/video-os-lite/enrollments*', async route => {
     const url = new URL(route.request().url());
     if (route.request().method() === 'GET') {
+      if (url.searchParams.get('preview') === 'voice') {
+        if (failExtractedVoicePreview) return route.fulfill({ status: 410, json: { ok: false, error: 'Extracted voice sample is unavailable.' } });
+        return route.fulfill({ status: 200, contentType: 'audio/wav', body: voiceSample });
+      }
       if (url.searchParams.has('enrollmentId') && currentEnrollment && autoAdvance) {
         enrollmentReads += 1;
         if (currentEnrollment.status === 'SOURCE_HASHING') currentEnrollment = enrollment('AWAITING_EXTRACTION_CONSENT', { stateVersion: currentEnrollment.stateVersion + 1 });
@@ -300,6 +333,13 @@ test('two captures and six unchecked consents create a v2 hash-bound enrollment 
   await expect(page.getByRole('heading', { name: 'Enrollment is ready.' })).toBeVisible({ timeout: 12_000 });
   await expect(page.locator('#ready-use-link')).toHaveAttribute('aria-disabled', 'true');
   await expect(page.locator('#ready-copy')).toContainText('Final presenter creation has not started');
+  await expect(page.locator('#ready-media-review')).toBeVisible();
+  await expect(page.locator('#ready-photo-preview')).toHaveAttribute('src', new RegExp('^/api/video-os-lite/asset'));
+  await expect(page.locator('#ready-video-preview')).toHaveAttribute('src', /preview=video/);
+  await expect(page.getByLabel('Extracted voice sample', { exact: true })).toHaveAttribute('src', /preview=voice/);
+  await expect(page.getByText(/transcript/i)).toHaveCount(0);
+  await page.getByLabel('Extracted voice sample', { exact: true }).dispatchEvent('error');
+  await expect(page.locator('#ready-media-preview-status')).toContainText('extracted voice sample could not be loaded');
 
   const create = mock.calls.find(call => call.endpoint === 'enrollments' && call.body.action === 'create').body;
   expect(Object.keys(create).sort()).toEqual(['action', 'bytes', 'contentType', 'contractVersion', 'displayName', 'filename', 'idempotencyKey', 'photoAssetId'].sort());
@@ -313,6 +353,64 @@ test('two captures and six unchecked consents create a v2 hash-bound enrollment 
   expect(await page.evaluate(() => window.__blobUploadCalls[0])).toMatchObject({ access: 'private', multipart: true, handleUploadUrl: '/api/video-os-lite/enrollment-upload', clientPayload: 'opaque-test-context' });
   await page.getByRole('button', { name: 'Back to My identities' }).click();
   await expect(page.getByRole('button', { name: 'Start creation' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Preview extracted voice sample' })).toBeVisible();
+});
+
+test('extracted and HeyGen cloned voice previews stay distinct and keyboard usable on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const readyIdentity = {
+    ...draft,
+    overallStatus: 'READY',
+    avatarStatus: 'READY',
+    voiceStatus: 'READY',
+    ready: true,
+    voicePreviewUrl: '/api/video-os-lite/identities?voicePreview=' + IDS.identity,
+  };
+  await mockApp(page, { providerEnabled: true, initialIdentities: [readyIdentity], initialEnrollment: enrollment('IDENTITY_READY') });
+  await page.goto('/identity.html');
+
+  const extracted = page.getByRole('button', { name: 'Preview extracted voice sample' });
+  const extractedAudioId = await extracted.getAttribute('aria-controls');
+  expect(extractedAudioId).toBe('identity-extracted-voice-' + IDS.identity);
+  await expect(page.locator('#' + extractedAudioId)).toBeHidden();
+  await extracted.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#' + extractedAudioId)).toHaveAttribute('src', /preview=voice/);
+  await expect(extracted).toHaveAttribute('aria-expanded', 'true');
+
+  const provider = page.getByRole('button', { name: 'Preview The Render cloned voice' });
+  const providerAudioId = await provider.getAttribute('aria-controls');
+  expect(providerAudioId).toBe('identity-provider-voice-' + IDS.identity);
+  await provider.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#' + providerAudioId)).toHaveAttribute('src', /voicePreview=/);
+  await expect(provider).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByLabel('Owner Studio extracted voice sample')).toBeHidden();
+
+  const layout = await page.evaluate(() => ({ viewport: innerWidth, documentWidth: document.documentElement.scrollWidth }));
+  expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewport + 1);
+});
+
+test('extracted voice load failures collapse the control and announce a live status', async ({ page }) => {
+  const readyIdentity = {
+    ...draft,
+    overallStatus: 'READY',
+    avatarStatus: 'READY',
+    voiceStatus: 'DRAFT',
+    ready: false,
+  };
+  await mockApp(page, {
+    initialIdentities: [readyIdentity],
+    initialEnrollment: enrollment('IDENTITY_READY'),
+    failExtractedVoicePreview: true,
+  });
+  await page.goto('/identity.html');
+  const control = page.getByRole('button', { name: 'Preview extracted voice sample' });
+  await control.click();
+  await expect(page.locator('#identity-voice-preview-status-' + IDS.identity)).toContainText('extracted voice sample could not be loaded');
+  await expect(control).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#identity-extracted-voice-' + IDS.identity)).toBeHidden();
+  await expect(control).toBeFocused();
 });
 
 test('failed direct upload persists only resume metadata and resumes after reload with the original video reselected', async ({ page }) => {

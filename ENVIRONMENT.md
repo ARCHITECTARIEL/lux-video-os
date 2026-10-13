@@ -23,6 +23,8 @@ http://127.0.0.1:8789/dashboard
 - `HEYGEN_SYNC_TALENT=1`: refreshes HeyGen avatar and voice inventory on startup.
 - `HEYGEN_AVATARS_URL`: override for HeyGen avatar inventory endpoint.
 - `HEYGEN_VOICES_URL`: override for HeyGen voice inventory endpoint.
+
+HeyGen inventory defaults use `GET /v3/avatars/looks?ownership=public&limit=50` and `GET /v3/voices?type=private&limit=100`. The active talent route also reads private looks from `GET /v3/avatars/looks?ownership=private&limit=50`. Hosted avatar consent uses `POST /v3/avatars/{group_id}/consent`; group readback uses `GET /v3/avatars/{group_id}`. These paths are already implemented in `api/video-os/talent.js` and `services/heygen.js`.
 - `VIDEO_OS_EMBEDDED_WORKER=0`: disables embedded worker loop.
 - `VIDEO_OS_WORKER_INTERVAL`: worker poll interval in seconds.
 - `VIDEO_OS_SCHEDULER=0`: disables scheduler loop.

@@ -458,7 +458,7 @@ test.describe('account data containment', () => {
     });
     await page.route('**/api/video-os-lite/providers', (route) => route.fulfill(json({
       ok: true,
-      providers: [{ id: 'heygen', name: 'HeyGen', configured: true, cost: 90 }],
+      providers: [{ id: 'heygen', name: 'The Render', configured: true, cost: 90 }],
       credits: SIGNED_IN_SESSION.credits,
       entitlements: SIGNED_IN_SESSION.entitlements,
     })));

@@ -1,5 +1,9 @@
 import { start } from 'workflow/api';
 import crypto from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { mkdtemp, open, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   createEnrollment,
   acceptEnrollmentUpload,
@@ -15,7 +19,7 @@ import {
   revokeEnrollment,
 } from '../../db/enrollment-repository.js';
 import { consumeRateLimit, ensureAccount, getOwnedIdentity, getOwnedMediaAsset, requireAnyPersistedRenderAuthorization } from '../../db/repositories.js';
-import { enrollmentCapabilitiesDto, enrollmentDto } from '../../lib/enrollment-dto.js';
+import { derivedVoicePreviewVerified, enrollmentCapabilitiesDto, enrollmentDto } from '../../lib/enrollment-dto.js';
 import {
   ENROLLMENT_EXTRACTION_FLAG,
   ENROLLMENT_MEDIA_LIMITS,
@@ -34,7 +38,6 @@ import {
 } from '../../lib/enrollment-policy.js';
 import { DEFAULT_TRIAL_CREDITS, handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { deletePrivateBlob, getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../../lib/video-os-private-blob.js';
-import { accountHash } from '../../lib/video-os-security.js';
 import { identityEnrollmentCleanupWorkflowMetadata, identityEnrollmentExpiryWorkflowMetadata, identityEnrollmentExtractionWorkflowMetadata, identityEnrollmentHashWorkflowMetadata } from '../../workflows/identity-enrollment-metadata.js';
 
 async function dtoFor(record, dependencies) {
@@ -46,16 +49,15 @@ async function dtoFor(record, dependencies) {
   const photo = byId.get(record?.photoAssetId);
   const source = byId.get(record?.sourceVideoAssetId);
   const voice = byId.get(record?.derivedVoiceAssetId);
-  const enrollmentPrefix = `video-os/enrollment-sources/${accountHash(record.accountId)}/${record.id}/`;
+  const voicePreviewVerified = derivedVoicePreviewVerified(record, identity, voice);
   const sourceMetadataVerified = Boolean(
     photo && !photo.quarantinedAt && photo.kind === 'identity-photo-source' && photo.sha256 === record.photoSha256
     && Number.isSafeInteger(photo.bytes) && photo.bytes > 0 && String(photo.privatePathname || '').startsWith('video-os/uploads/')
     && source && !source.quarantinedAt && source.kind === 'identity-phone-video-source' && source.sha256 === record.sourceSha256
     && source.bytes === record.sourceBytes && source.privatePathname === record.uploadPathname
-    && voice && !voice.quarantinedAt && voice.kind === 'identity-voice-source' && voice.sha256 === record.derivedAudioSha256
-    && voice.bytes === record.derivedAudioBytes && String(voice.privatePathname || '').startsWith(enrollmentPrefix)
+    && voicePreviewVerified
   );
-  return enrollmentDto(record, identity, { sourceMetadataVerified });
+  return enrollmentDto(record, identity, { sourceMetadataVerified, derivedVoicePreviewVerified: voicePreviewVerified });
 }
 
 async function cancelStream(stream) {
@@ -63,9 +65,99 @@ async function cancelStream(stream) {
   else if (typeof stream?.cancel === 'function') await stream.cancel().catch(() => {});
 }
 
+async function writeFileChunk(file, chunk) {
+  let offset = 0;
+  while (offset < chunk.length) {
+    const { bytesWritten } = await file.write(chunk, offset, chunk.length - offset);
+    if (!bytesWritten) throw new Error('Enrollment preview temp-file write stalled.');
+    offset += bytesWritten;
+  }
+}
+
+function verificationLifecycle(res, sourceStream) {
+  if (typeof res.once !== 'function' || typeof res.removeListener !== 'function') {
+    return { aborted: () => false, close: () => {} };
+  }
+  let aborted = false;
+  const abort = () => {
+    aborted = true;
+    void cancelStream(sourceStream).catch(() => {});
+  };
+  res.once('close', abort);
+  res.once('error', abort);
+  return {
+    aborted: () => aborted,
+    close: () => {
+      res.removeListener('close', abort);
+      res.removeListener('error', abort);
+    },
+  };
+}
+
+async function materializeVerifiedEnrollmentVideo(record, stored, res, dependencies, expectedBytes) {
+  const lifecycle = verificationLifecycle(res, stored.stream);
+  let directory = null;
+  let file = null;
+  let retainVerifiedFile = false;
+  try {
+    if (lifecycle.aborted()) return { aborted: true };
+    directory = await dependencies.createEnrollmentPreviewTempDirectory();
+    if (lifecycle.aborted()) return { aborted: true };
+    const pathname = join(directory, 'source-video');
+    file = await dependencies.openEnrollmentPreviewTempFile(pathname);
+    const hash = crypto.createHash('sha256');
+    let bytes = 0;
+    for await (const value of stored.stream) {
+      if (lifecycle.aborted()) return { aborted: true };
+      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+      bytes += chunk.length;
+      if (bytes > expectedBytes || bytes > ENROLLMENT_MEDIA_LIMITS.maxSourceBytes) return null;
+      hash.update(chunk);
+      await writeFileChunk(file, chunk);
+    }
+    if (lifecycle.aborted()) return { aborted: true };
+    if (bytes !== expectedBytes || hash.digest('hex') !== record.sourceSha256) return null;
+    await file.close();
+    file = null;
+    retainVerifiedFile = true;
+    return { aborted: false, directory, pathname };
+  } catch {
+    return lifecycle.aborted() ? { aborted: true } : null;
+  } finally {
+    lifecycle.close();
+    if (file) await file.close().catch(() => {});
+    if (!retainVerifiedFile) {
+      await cancelStream(stored.stream).catch(() => {});
+      if (directory) await dependencies.removeEnrollmentPreviewTempDirectory(directory);
+    }
+  }
+}
+
+async function readVerifiedEnrollmentBuffer(stored, { expectedBytes, expectedSha256, maximumBytes }) {
+  const chunks = [];
+  let bytes = 0;
+  let verified = false;
+  try {
+    for await (const value of stored.stream) {
+      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+      bytes += chunk.length;
+      if (bytes > expectedBytes || bytes > maximumBytes) return null;
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks, bytes);
+    if (bytes !== expectedBytes || crypto.createHash('sha256').update(buffer).digest('hex') !== expectedSha256) return null;
+    verified = true;
+    return buffer;
+  } catch {
+    return null;
+  } finally {
+    if (!verified) await cancelStream(stored.stream);
+  }
+}
+
 function responseLifecycle(res) {
   if (typeof res.once !== 'function' || typeof res.removeListener !== 'function') {
-    return { waitForDrain: async () => {}, close: () => {} };
+    return { waitForDrain: async () => {}, terminated: () => false, close: () => {} };
   }
   let terminalError;
   const drainWaiters = new Set();
@@ -97,6 +189,7 @@ function responseLifecycle(res) {
         res.once('drain', waiter.onDrain);
       });
     },
+    terminated: () => Boolean(terminalError),
     close: () => {
       res.removeListener('close', onClose);
       res.removeListener('error', onError);
@@ -106,20 +199,9 @@ function responseLifecycle(res) {
   };
 }
 
-async function streamEnrollmentVideo(record, res, dependencies) {
-  if (!record.uploadEtag || record.revokedAt || record.sourceDeletedAt || record.status === ENROLLMENT_STATUSES.AWAITING_UPLOAD) return send(res, 404, { ok: false, error: 'Enrollment video is unavailable.' });
-  const stored = await dependencies.getPrivateBlob(record.uploadPathname);
-  if (!stored?.stream || stored.blob?.pathname !== record.uploadPathname || stored.blob?.etag !== record.uploadEtag) {
-    await cancelStream(stored?.stream);
-    return send(res, 410, { ok: false, error: 'Enrollment video is unavailable.' });
-  }
-  const expectedBytes = Number(record.sourceBytes || record.declaredBytes);
-  if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || expectedBytes > ENROLLMENT_MEDIA_LIMITS.maxSourceBytes) {
-    await cancelStream(stored.stream);
-    return send(res, 410, { ok: false, error: 'Enrollment video is unavailable.' });
-  }
+async function streamEnrollmentMedia(stored, res, { contentType, expectedBytes, maximumBytes }) {
   res.statusCode = 200;
-  res.setHeader('Content-Type', record.sourceMetadata?.mimeType || record.declaredContentType);
+  res.setHeader('Content-Type', contentType);
   res.setHeader('Content-Length', String(expectedBytes));
   res.setHeader('Cache-Control', 'private, no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -128,9 +210,10 @@ async function streamEnrollmentVideo(record, res, dependencies) {
   const lifecycle = responseLifecycle(res);
   try {
     for await (const value of stored.stream) {
+      if (lifecycle.terminated()) { res.destroy?.(); return; }
       const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
       bytes += chunk.length;
-      if (bytes > expectedBytes || bytes > ENROLLMENT_MEDIA_LIMITS.maxSourceBytes) {
+      if (bytes > expectedBytes || bytes > maximumBytes) {
         res.destroy?.();
         return;
       }
@@ -145,6 +228,65 @@ async function streamEnrollmentVideo(record, res, dependencies) {
     lifecycle.close();
     if (!completed) await cancelStream(stored.stream);
   }
+}
+
+async function streamEnrollmentVideo(record, res, dependencies) {
+  if (!record.uploadEtag || record.revokedAt || record.sourceDeletedAt || record.status === ENROLLMENT_STATUSES.AWAITING_UPLOAD) return send(res, 404, { ok: false, error: 'Enrollment video is unavailable.' });
+  const stored = await dependencies.getPrivateBlob(record.uploadPathname);
+  if (!stored?.stream || stored.blob?.pathname !== record.uploadPathname || stored.blob?.etag !== record.uploadEtag) {
+    await cancelStream(stored?.stream);
+    return send(res, 410, { ok: false, error: 'Enrollment video is unavailable.' });
+  }
+  const expectedBytes = Number(record.sourceBytes || record.declaredBytes);
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || expectedBytes > ENROLLMENT_MEDIA_LIMITS.maxSourceBytes
+    || !/^[a-f0-9]{64}$/.test(String(record.sourceSha256 || ''))
+    || (stored.blob?.size !== undefined && Number(stored.blob.size) !== expectedBytes)) {
+    await cancelStream(stored.stream);
+    return send(res, 410, { ok: false, error: 'Enrollment video is unavailable.' });
+  }
+  const verified = await materializeVerifiedEnrollmentVideo(record, stored, res, dependencies, expectedBytes);
+  if (verified?.aborted) return;
+  if (!verified) return send(res, 410, { ok: false, error: 'Enrollment video is unavailable.' });
+  try {
+    return await streamEnrollmentMedia({ stream: dependencies.createEnrollmentPreviewReadStream(verified.pathname) }, res, {
+      contentType: record.sourceMetadata?.mimeType || record.declaredContentType,
+      expectedBytes,
+      maximumBytes: ENROLLMENT_MEDIA_LIMITS.maxSourceBytes,
+    });
+  } finally {
+    await dependencies.removeEnrollmentPreviewTempDirectory(verified.directory);
+  }
+}
+
+async function streamEnrollmentVoice(record, res, dependencies) {
+  const [identity, asset] = await Promise.all([
+    record?.identityId ? dependencies.getOwnedIdentity(record.accountId, record.identityId) : null,
+    record?.derivedVoiceAssetId ? dependencies.getOwnedMediaAsset(record.accountId, record.derivedVoiceAssetId) : null,
+  ]);
+  if (!derivedVoicePreviewVerified(record, identity, asset)) {
+    return send(res, 404, { ok: false, error: 'Extracted voice sample is unavailable.' });
+  }
+  const expectedPathname = asset.privatePathname;
+  const expectedBytes = Number(asset.bytes);
+  const stored = await dependencies.getPrivateBlob(expectedPathname);
+  if (!stored?.stream || stored.blob?.pathname !== expectedPathname
+    || (stored.blob?.size !== undefined && Number(stored.blob.size) !== expectedBytes)
+    || (stored.blob?.contentType && stored.blob.contentType !== 'audio/wav')) {
+    await cancelStream(stored?.stream);
+    return send(res, 410, { ok: false, error: 'Extracted voice sample is unavailable.' });
+  }
+  const buffer = await readVerifiedEnrollmentBuffer(stored, {
+    expectedBytes,
+    expectedSha256: asset.sha256,
+    maximumBytes: ENROLLMENT_MEDIA_LIMITS.maxAudioBytes,
+  });
+  if (!buffer) return send(res, 410, { ok: false, error: 'Extracted voice sample is unavailable.' });
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'audio/wav');
+  res.setHeader('Content-Length', String(expectedBytes));
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.end(buffer);
 }
 
 async function dispatch(record, dependencies) {
@@ -189,6 +331,8 @@ export function createEnrollmentHandler(overrides = {}) {
     acceptEnrollmentUpload,
     claimEnrollmentWorkflowDispatch,
     consumeRateLimit,
+    createEnrollmentPreviewReadStream: pathname => createReadStream(pathname),
+    createEnrollmentPreviewTempDirectory: () => mkdtemp(join(tmpdir(), 'lux-video-os-enrollment-preview-')),
     deletePrivateBlob,
     ensureAccount,
     expireEnrollment,
@@ -199,8 +343,10 @@ export function createEnrollmentHandler(overrides = {}) {
     grantProviderBridgeReconsent,
     grantEnrollmentConsent,
     listOwnedEnrollments,
+    openEnrollmentPreviewTempFile: pathname => open(pathname, 'wx', 0o600),
     recordEnrollmentCleanup,
     recordEnrollmentWorkflowRun,
+    removeEnrollmentPreviewTempDirectory: directory => rm(directory, { recursive: true, force: true, maxRetries: 2, retryDelay: 20 }),
     requireAnyPersistedRenderAuthorization,
     retryEnrollment,
     revokeEnrollment,
@@ -223,6 +369,7 @@ export function createEnrollmentHandler(overrides = {}) {
             const record = await dependencies.getOwnedEnrollment(session.accountId, enrollmentId);
             if (!record) return send(res, 404, { ok: false, error: 'Enrollment not found.' });
             if (url.searchParams.get('preview') === 'video') return streamEnrollmentVideo(record, res, dependencies);
+            if (url.searchParams.get('preview') === 'voice') return streamEnrollmentVoice(record, res, dependencies);
             return send(res, 200, { ok: true, ...capabilities, enrollment: await dtoFor(record, dependencies) });
           }
           const records = await dependencies.listOwnedEnrollments(session.accountId);

@@ -8,8 +8,10 @@ import {
   getOwnedScriptedPhotoJobByIdempotency,
   getOwnedProject,
   getScriptedPhotoReservationContext,
+  prepareIdentityProviderRead,
   requirePersistedRenderAuthorization,
 } from '../../db/repositories.js';
+import { resolveFreshHeygenSpaceBinding } from '../../db/heygen-space-binding-repository.js';
 import { projects, userIdentities } from '../../db/schema.js';
 import {
   DEFAULT_TRIAL_CREDITS,
@@ -30,11 +32,13 @@ import {
   SCRIPTED_PHOTO_QUOTE_TTL_MS,
   issueScriptedPhotoQuote,
 } from '../../lib/scripted-photo-quote.js';
+import { observeProviderAvatarConsent } from '../../lib/provider-avatar-consent.js';
 import {
   parseOrThrow,
   scriptedPhotoQuoteRequestSchema,
   scriptedPhotoSaveProjectRequestSchema,
 } from '../../lib/video-os-validation.js';
+import { getHeygenPhotoAvatarStatus } from '../../services/heygen.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -200,6 +204,11 @@ export function createScriptedPhotoHandler({
   getReservationContext = getScriptedPhotoReservationContext,
   authorizeTier = requirePersistedRenderAuthorization,
   recoverExistingJob = recoverOwnedJob,
+  observeProviderConsent = observeProviderAvatarConsent,
+  resolveProviderBinding = resolveFreshHeygenSpaceBinding,
+  prepareProviderRead = prepareIdentityProviderRead,
+  readProviderAvatarStatus = getHeygenPhotoAvatarStatus,
+  providerObservationNow = Date.now,
   quoteOptions = {},
 } = {}) {
   return async function scriptedPhotoHandler(req, res) {
@@ -277,6 +286,11 @@ export function createScriptedPhotoHandler({
           tier: payload.tier,
         });
         assertSavedProject(context.project, { accountId: session.accountId, projectId: payload.projectId, tier: payload.tier, format: payload.format });
+        await observeProviderConsent({
+          accountId: session.accountId,
+          identityId: project.identityId,
+          sourceBinding: context.input?.sourceBinding,
+        }, { resolveProviderBinding, prepareProviderRead, readProviderAvatarStatus, now: providerObservationNow });
         const quote = issueScriptedPhotoQuote({
           accountId: session.accountId,
           projectId: project.id,

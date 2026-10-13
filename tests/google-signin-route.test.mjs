@@ -25,6 +25,17 @@ try {
 
 const ORIGIN = 'https://video-os-google-test.invalid';
 const originalFetch = globalThis.fetch;
+
+function isGoogleEndpoint(value, pathname, hostname) {
+  const url = new URL(String(value));
+  return url.origin === `https://${hostname}` && url.pathname === pathname;
+}
+
+test('Google fetch stub matches only the exact HTTPS host and path', () => {
+  assert.equal(isGoogleEndpoint('https://openidconnect.googleapis.com/v1/userinfo', '/v1/userinfo', 'openidconnect.googleapis.com'), true);
+  assert.equal(isGoogleEndpoint('https://openidconnect.googleapis.com.evil.test/v1/userinfo', '/v1/userinfo', 'openidconnect.googleapis.com'), false);
+  assert.equal(isGoogleEndpoint('https://evil.test/openidconnect.googleapis.com/v1/userinfo', '/v1/userinfo', 'openidconnect.googleapis.com'), false);
+});
 const originalEnvironment = {
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
@@ -131,8 +142,8 @@ test(
     });
 
     globalThis.fetch = async (url) => {
-      if (String(url).includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
-      if (String(url).includes('openidconnect.googleapis.com/v1/userinfo')) return new Response(JSON.stringify({ email, email_verified: true, name: 'Google Test User', sub: 'google-sub-proof' }), { status: 200 });
+      if (isGoogleEndpoint(url, '/token', 'oauth2.googleapis.com')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
+      if (isGoogleEndpoint(url, '/v1/userinfo', 'openidconnect.googleapis.com')) return new Response(JSON.stringify({ email, email_verified: true, name: 'Google Test User', sub: 'google-sub-proof' }), { status: 200 });
       throw new Error(`unexpected fetch to ${url}`);
     };
 
@@ -170,8 +181,8 @@ test(
 
     async function signIn(email, state) {
       globalThis.fetch = async (url) => {
-        if (String(url).includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
-        if (String(url).includes('openidconnect.googleapis.com/v1/userinfo')) return new Response(JSON.stringify({ email, email_verified: true, name: 'Google Test User' }), { status: 200 });
+        if (isGoogleEndpoint(url, '/token', 'oauth2.googleapis.com')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
+        if (isGoogleEndpoint(url, '/v1/userinfo', 'openidconnect.googleapis.com')) return new Response(JSON.stringify({ email, email_verified: true, name: 'Google Test User' }), { status: 200 });
         throw new Error(`unexpected fetch to ${url}`);
       };
       const res = response();
@@ -209,8 +220,8 @@ test(
     });
 
     globalThis.fetch = async (url) => {
-      if (String(url).includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
-      if (String(url).includes('openidconnect.googleapis.com/v1/userinfo')) return new Response(JSON.stringify({ email: domainEmail, email_verified: true, name: 'Domain Test User' }), { status: 200 });
+      if (isGoogleEndpoint(url, '/token', 'oauth2.googleapis.com')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
+      if (isGoogleEndpoint(url, '/v1/userinfo', 'openidconnect.googleapis.com')) return new Response(JSON.stringify({ email: domainEmail, email_verified: true, name: 'Domain Test User' }), { status: 200 });
       throw new Error(`unexpected fetch to ${url}`);
     };
     const state = 'domain-allowed-state';
@@ -254,8 +265,8 @@ test(
     });
 
     globalThis.fetch = async (url) => {
-      if (String(url).includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
-      if (String(url).includes('openidconnect.googleapis.com/v1/userinfo')) return new Response(JSON.stringify({ email: domainEmail, email_verified: true, name: 'Domain Test User' }), { status: 200 });
+      if (isGoogleEndpoint(url, '/token', 'oauth2.googleapis.com')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
+      if (isGoogleEndpoint(url, '/v1/userinfo', 'openidconnect.googleapis.com')) return new Response(JSON.stringify({ email: domainEmail, email_verified: true, name: 'Domain Test User' }), { status: 200 });
       throw new Error(`unexpected fetch to ${url}`);
     };
 
@@ -292,8 +303,9 @@ test('google-callback rejects an unverified Google email without creating a sess
   process.env.GOOGLE_CLIENT_SECRET = 'client-secret';
   process.env.VIDEO_OS_PUBLIC_ORIGIN = ORIGIN;
   globalThis.fetch = async (url) => {
-    if (String(url).includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
-    return new Response(JSON.stringify({ email: 'unverified@example.com', email_verified: false }), { status: 200 });
+    if (isGoogleEndpoint(url, '/token', 'oauth2.googleapis.com')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
+    if (isGoogleEndpoint(url, '/v1/userinfo', 'openidconnect.googleapis.com')) return new Response(JSON.stringify({ email: 'unverified@example.com', email_verified: false }), { status: 200 });
+    throw new Error(`unexpected fetch to ${url}`);
   };
   const state = 'proof-state-value-2';
   const res = response();

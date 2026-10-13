@@ -23,6 +23,7 @@ const binding = {
   sourceBinding: {
     provider: 'heygen',
     consentId: '33333333-3333-4333-8333-333333333333',
+    providerAvatarGroupId: 'private-provider-avatar-group',
     providerVoiceId: 'private-provider-voice',
     photoSha256: 'a'.repeat(64),
     nested: { voiceSha256: 'b'.repeat(64), enrollment: { derivationVersion: 'enrollment-media-audio-v1' } },
@@ -57,6 +58,7 @@ test('source binding digest is canonical across object key order', () => {
   const reordered = {
     nested: { enrollment: { derivationVersion: 'enrollment-media-audio-v1' }, voiceSha256: 'b'.repeat(64) },
     photoSha256: 'a'.repeat(64),
+    providerAvatarGroupId: 'private-provider-avatar-group',
     providerVoiceId: 'private-provider-voice',
     consentId: '33333333-3333-4333-8333-333333333333',
     provider: 'heygen',
@@ -110,6 +112,7 @@ test('every account, project, identity, content, format, tier, source, and price
     { script: `${binding.script} changed` },
     { format: 'landscape' },
     { tier: 'PREMIUM' },
+    { sourceBinding: { ...binding.sourceBinding, providerAvatarGroupId: 'different-provider-avatar-group' } },
     { sourceBinding: { ...binding.sourceBinding, photoSha256: 'c'.repeat(64) } },
     { credits: 90 },
   ];

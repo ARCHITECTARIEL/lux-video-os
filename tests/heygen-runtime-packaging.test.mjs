@@ -16,6 +16,7 @@ test('packaged Workflow verification assets resolve inside the function and pres
     const root = join(directory, 'runtime-repository');
     assert.deepEqual(await migrationPlan(join(root, 'drizzle')), await migrationPlan());
     const schemaLock = JSON.parse(await readFile(join(root, 'config/database-schema.lock.json'), 'utf8'));
+    assert.equal(schemaLock.migrationSetSha256, (await migrationPlan()).sha256);
     assert.deepEqual(schemaLock.sourceHashes, await schemaSourceHashes());
     assert.deepEqual(files, await heygenRuntimeFiles(process.cwd()));
     assert.ok(files.every(file => !file.startsWith('docs/') && !file.includes('.env') && !file.includes('private')));

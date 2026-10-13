@@ -349,7 +349,7 @@ test('isolated live DB: provider ledger triggers enforce immutable scoped lifecy
           id, application_account_id, origin_scope_key, operation_id,
           resource_id, reference_id, event_type, correlation_id, path_template, details
         ) values ($1, $2, $3, $4, $5, $6, 'fixture.created', $7,
-                  '/v2/avatar_group/{id}', '{}'::jsonb)
+                  '/v3/avatars/{group_id}', '{}'::jsonb)
       `, [initialEventId, accountId, originScopeKey, groupOperationId, groupResourceId, referenceId, randomUUID()]);
     });
 

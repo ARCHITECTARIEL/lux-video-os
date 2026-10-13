@@ -2,11 +2,13 @@ import Stripe from 'stripe';
 import { ensureAccount } from '../../db/repositories.js';
 import { DEFAULT_TRIAL_CREDITS, handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { featureEnabled, publicOrigin } from '../../lib/video-os-security.js';
+import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 
 const PACKAGES = { 1: { packageId: 'credits_500', credits: 500 }, 2: { packageId: 'credits_1000', credits: 1000 }, 4: { packageId: 'credits_2000', credits: 2000 } };
 const priceFor = (pack) => String(process.env[`STRIPE_PRICE_ID_${pack.credits}`] || '').trim();
 
 export default async function handler(req, res) {
+  if (blockForDiagnosticMaintenance(req, res)) return;
   if (handleOptions(req, res)) return;
   if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST to start checkout.' });
   try {

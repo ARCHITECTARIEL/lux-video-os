@@ -513,3 +513,108 @@
 - Final verification: 722 Node tests and four Vitest tests passed; 47 explicit skips; four isolated DB/Blob suites passed. Runtime audit reports zero vulnerabilities. Review packaging passed 42 routes, 29 steps and six workflows; default deployable output is absent.
 - Isolated cleanup verified 27 empty tables and zero Blob objects. Handoff, execution prompts and evidence were updated. No production schema/configuration write, deployment, commit, push or HeyGen mutation occurred.
 - Next action is the documented migration rehearsal. Production activation and remaining provider/privacy release gates stay held. This entry refreshes the closure writeback requested by the hook; it does not repeat implementation or live operations.
+
+## 2026-10-13T14:08:23Z - [closure-writeback] [VOS-001]
+
+- In `talent.js`, the in-flight group-read cache now uses `WeakMap(fetchImpl) -> Map(raw provider key) -> Map(groupId -> promise)`, removing `54631d07`'s `createHmac`/`groupReadCacheSecret` read key. Settled reads remove their group entry and clean up empty maps only if the map is still current. The provider key is not hashed (CodeQL also treats `createHmac` as a sink). The regression test observes the key sent on each group read, along with same-key sharing, different-key isolation and a later re-read; `54631d07`'s credential-isolation/retry test is kept.
+- Google OAuth test stubs in two test files now match the parsed HTTPS origin and exact path, with spoofed-host checks.
+- The schema lock change was removed from this PR: `config/database-schema.lock.json` is unchanged from base and remains stale (`migrationSetSha256`, `schemaSha256`, `tableCount` and the 11-migration text predate `drizzle/0011_concerned_micromacro.sql`, and `sourceHashes` `db/schema.js` records `7c8b9175` vs actual `00685ce2`, partly from `4087746`). Lock recapture is deferred to VOS-002.
+- Base is `54631d07`. QA CodeQL CLI 2.27.2 `InsufficientPasswordHash` query: 0 results. QA Node 22 full suite: branch 808 pass / 1 fail / 49 skip vs base 806 / 1 / 49, no regressions; the only failure is the pre-existing packaging hash test (`tests/heygen-runtime-packaging.test.mjs`), and `tests/heygen-reconciliation-cli.test.mjs:321` fails only outside a `lux-video-os`-named path. Vitest: 4/4 passed. QA: code and tests pass; wiki corrected in follow-up.
+- Work is committed as `aa90bd40` on `codex/vos-001`, rebased onto `54631d07`, and pushed for review. No database connection, migration, provider call, deploy or merge occurred.
+
+## 2026-10-13T14:24:09Z - [closure-writeback] [INT-001] [voice-merge]
+
+- Resolved all 23 merge conflict hunks across the 10 owned files in `codex/int-001-voice` on base `7146f87474fa01aa1a05e6242433523f18ac32d9`. Preserved the v3 private voice inventory, budgeted sequential reads, raw-key in-flight avatar-group map and cleanup, consent eligibility, and degraded group-read handling. Kept LUXIFY and scripted-photo authorization, consent, resource and reservation-proof checks. Chose `credential_missing` for absent HeyGen credentials.
+- Marker search, `git diff --check`, nine JavaScript syntax checks, `vercel.json` parse, and `npm run check:imports` passed. Live-code search under api, lib, services, workflows, routes, server, public and db found no `/v2/voices` references. Scripted-photo focused tests passed 11/11; Vitest passed 4/4.
+- The five failures above describe the merge checkpoint, not the current branch. INT-001b supplied consent evidence in the v3 fixtures, a no-consent-not-ready test, and route-scenario/LUXIFY mock fixes; INT-001c scoped avatar consent preclaim to presenter jobs. At the INT-001d checkpoint, the remaining local full-suite failure is the pre-existing `db/schema.js` packaging hash mismatch; see the dated closure entry below for counts.
+- The merge checkpoint performed no staging, commit, push, deploy, database access, migration, provider call or secret read. Subsequent INT-001b/c fixes were committed locally by the Delivery Lead; INT-001d was committed locally as well. Nothing is pushed.
+
+## 2026-10-13T15:12:43Z - [closure-writeback] [INT-001b/c/d]
+
+- INT-001b (`509df39`) fixed only tests: v3 voice fixtures now include accepted group-consent evidence, a complete private voice inventory without group consent is explicitly not ready, and the route-scenario and LUXIFY workflow mocks cover the merged paths.
+- INT-001c (`d6c2244`) limits avatar consent preclaim to presenter jobs. The LUXIFY path uses a preclaim skip list; unknown workflow modes fail closed with `PROVIDER_WORKFLOW_MODE_INVALID`.
+- INT-001d keeps production `timeout.unref()` unchanged. Two never-resolving test fakes could empty the event loop before the unref'd deadline fired, cancelling the rest of the test file. Each affected test now holds a ref'd interval through the awaited deadline and clears it in `finally`. Ariel chose the user-facing provider label `The Render`; some display names and labels were aligned while provider IDs remain unchanged.
+- Local Node 24.14.1: voice inventory 22 passed, 0 cancelled; full `node --test tests/*.test.mjs` 1,005 passed, 1 failed, 48 skipped, 0 cancelled. The sole failure is the existing `db/schema.js` packaging hash mismatch in `tests/heygen-runtime-packaging.test.mjs`. Vitest: 4/4 passed. Node 22.23.3 (Delivery Lead): voice inventory 22/22, 0 cancelled; full suite 1,054 tests, 1,005 passed, 1 failed (same packaging hash test), 48 skipped, 0 cancelled; Vitest 4/4.
+- INT-001b/c/d are committed locally on `codex/int-001-voice`, not pushed. No push, deployment, database operation or provider call was performed.
+
+## 2026-10-13T15:41:14Z - [INT-001e] [provider display]
+
+- The public provider catalogue and signed-out fallback now expose only the unchanged `heygen` ID, named and labeled `The Render`. The cost list shows that provider only. Scoped UI status, preview, talent, identity failure, and local control-plane copy uses `The Render`; machine identifiers, API paths, and provider routing contracts remain intact.
+- The two voice-inventory keep-alive tests have 2000 ms test timeouts. Provider-list and identity-preview test expectations reflect the display change. Ariel decided on 2026-10-13 that consent/privacy pages show `The Render (processed by HeyGen)` while preserving the processor disclosure; INT-001f applies that decision.
+- Local runner Node v24.14.1 full suite at the INT-001e checkpoint: 1005 passed, 1 failed, 48 skipped, 0 cancelled. QA Node 22: 1004 passed, 1 failed (VOS-002 packaging hash), 0 cancelled, 49 skipped. The local failure is the same existing VOS-002 `db/schema.js` packaging hash mismatch. Vitest: 4 passed, 0 failed. Import check and JavaScript syntax checks passed. INT-001e is committed locally as `e4801252` on `codex/int-001-voice`; no push, deploy, migration, provider call, or secret read occurred.
+
+## 2026-10-13T15:41:14Z - [closure-writeback] [INT-001e]
+
+- Completed the local provider-display and test changes recorded above. Final readback confirms only `heygen` appears in the public provider catalogue. The named consent/legal copy was deferred to INT-001f by Ariel's 2026-10-13 decision, and the sole Node failure is the existing VOS-002 packaging hash mismatch. INT-001e is committed locally as `e4801252`; no external operation occurred.
+
+## 2026-10-13T15:54:22Z - [INT-001f] [provider copy follow-up]
+
+- Restored the operator-only HeyGen support placeholder, simplified three render-count strings, and applied Ariel's `The Render (processed by HeyGen)` wording decision to the named consent/privacy surfaces without changing consent meaning. Added focused consent copy assertions.
+- Local Node v24.14.1 full suite: 1007 passed, 1 failed (existing VOS-002 `db/schema.js` packaging hash mismatch), 0 cancelled, 48 skipped. Vitest: 4 passed, 0 failed.
+- INT-001f is committed locally on `codex/int-001-voice` as the INT-001f commit (SHA in the run report). No push, deploy, migration, network/provider call, or secret read occurred.
+
+## 2026-10-13T15:55:19Z - [closure-writeback] [INT-001f]
+
+- Confirmed the scoped public copy, focused consent assertions, and INT-001e commit correction in this worktree. Node v24.14.1: 1007 passed, 1 failed (pre-existing VOS-002 packaging hash), 0 cancelled, 48 skipped; Vitest: 4 passed. Syntax and import checks passed; `git diff --check` passed. INT-001f is committed locally on `codex/int-001-voice`; no external action.
+
+## 2026-10-13T16:10:00Z - [INT-001g]
+
+- Ariel decided at 12:10 PM ET on 2026-10-13 that the provider-consent authorization sentence must name HeyGen as the provider behind The Render, the following identity-check and consent-clip sentence must begin with HeyGen, and the privacy third-party list entry must use the same HeyGen-first attribution. Other consent copy stays unchanged.
+- INT-001f is committed locally as `e31b29e5` on `codex/int-001-voice`.
+- INT-001g is committed locally on `codex/int-001-voice` as `f1755018`; not pushed.
+- Verification: local Node v24.14.1 focused consent test 5 passed; full suite 1,008 passed, 1 failed, 48 skipped (existing VOS-002 `db/schema.js` packaging hash mismatch); Vitest 4 passed. QA Node 22: 1,007 passed, 1 failed (VOS-002 packaging hash), 0 cancelled, 49 skipped.
+
+## 2026-10-13T16:14:24Z - [closure-writeback] [INT-001g]
+
+- This session updated only `public/provider-consent.html`, `public/privacy.html`, `tests/provider-consent-browser.test.mjs`, and this log. The requested HeyGen-first consent attribution is covered by the focused test and all 11 named consent lines; other consent wording remains unchanged.
+- Verification readback: local Node v24.14.1 focused test 5 passed; full suite 1,008 passed, 1 failed on the existing VOS-002 `db/schema.js` packaging hash, 48 skipped; Vitest 4 passed; import check and `git diff --check` passed. QA Node 22: 1,007 passed, 1 failed (VOS-002 packaging hash), 0 cancelled, 49 skipped. Parent `e31b29e5`; INT-001g committed as `f1755018` on `codex/int-001-voice`.
+
+## 2026-10-13T16:44:00Z - [INT-001h]
+
+- Corrected the INT-001g commit reference and local runner attribution, and recorded the separate QA Node 22 result. Hardened consent disclosure coverage to check each `The Render` occurrence in `provider-consent.html`, `provider-consent.js`, `identity.js` consent strings, and `privacy.html`; a regression case removes HeyGen from only the second mention on one line and requires failure.
+- Verification: local Node v24.14.1 focused consent test 6 passed; full suite 1,009 passed, 1 failed (existing VOS-002 `db/schema.js` packaging hash mismatch), 0 cancelled, 48 skipped; Vitest 4 passed. QA Node 22: 1,007 passed, 1 failed (VOS-002 packaging hash), 0 cancelled, 49 skipped.
+- INT-001h is committed locally on `codex/int-001-voice`, not pushed (SHA in the run report).
+
+## 2026-10-13T16:46:20Z - [closure-writeback] [INT-001h]
+
+- This session changed only `tests/provider-consent-browser.test.mjs` and `wiki/log.md`. Per-mention consent attribution covers the four named public files, including the second `The Render` occurrence on one HTML line.
+- Local Node v24.14.1: focused 6 passed; full suite 1,009 passed, 1 failed (existing VOS-002 packaging hash), 0 cancelled, 48 skipped. Vitest 4 passed. Syntax, import, and `git diff --check` checks passed. The QA Node 22 counts in the INT-001h entry were supplied for the log and were not rerun here.
+- Parent `f1755018`; INT-001h is committed locally on `codex/int-001-voice` (SHA in the run report); not pushed.
+
+## 2026-10-13T17:40:00Z - [VOS-003]
+
+- Replaced HeyGen v2 inventory defaults in the legacy Python paths and corrected hosted-consent lifecycle event templates to the v3 paths already used by the provider client. Updated two test fixtures, documented the v3 inventory and consent endpoints, and added a source scan that rejects HeyGen v1/v2 endpoints while permitting unrelated providers.
+- The ledger templates are persisted as immutable `provider_lifecycle_events.path_template` facts. Replay and readback do not match on that column, and the existing schema accepts the v3 templates, so no migration or historical-row rewrite is needed. Historical rows retain their recorded path. Intentional v2 rejection and unsafe-template test cases remain.
+- Local branch `codex/vos-003` is based on `da6909067e9c19cbacee7a6451181ab7e58ed0ee`. VOS-003 is committed locally on `codex/vos-003` (`686428ed`); not pushed.
+- Verification: focused endpoint guard 2/2, Python public-rendering contracts 12/12, Vitest 4/4. Codex's sandboxed full Node run had extra failures only because this new worktree lacked installed dependencies (`drizzle-kit`, `@workflow/builders`); the full suite was re-run with the identical-lockfile dependencies (see run report, `VOS-003-nodetest.log`).
+- Closure readback: this dated entry is present in this worktree's `wiki/log.md`; no external repository log was changed.
+
+## 2026-10-13T17:55:00Z - [VOS-003b]
+
+- Widened the source guard to reject HeyGen v1/v2 photo avatar, talking photo, template, quota, and existing endpoint nouns. HeyGen-context files now reject any v1/v2 path and split route literals, while unrelated provider URLs and Vercel workflow paths remain excluded. Synthetic source cases cover each rule and exclusion; the real repository scan found no new hits.
+- Verification: focused guard 4/4; full Node suite 1,013 passed, 1 failed on the existing `db/schema.js` packaging hash mismatch, 48 skipped; Vitest 4/4.
+- VOS-003b is committed locally on `codex/vos-003` (parent `686428ed`; SHA in the run report); not pushed.
+
+## 2026-10-13T17:58:15Z - [closure-writeback] [VOS-003b]
+
+- This session changed only `tests/heygen-no-legacy-endpoints.test.mjs` and this worktree's `wiki/log.md`. The widened guard passes against repository source with no new hits; focused Node 4/4 and Vitest 4/4 pass. The full Node suite has 1,013 passes, 1 existing packaging-hash failure, and 48 skips.
+- Closure readback: the VOS-003b entry and this tagged writeback are present in this worktree. VOS-003b is committed locally (parent `686428ed`); no push, deploy, migration, database access, or provider call occurred.
+
+## 2026-10-13T18:34:00Z - [VOS-002]
+
+- Owner (Ariel) chose option (c) on 2026-10-13: `identity_consents_hosted_v3_purpose_ck` stays out of the Drizzle journal, consistent with the Oct 8 decision in commit `2dd491c` (optional 0012-0015 lineage not yet reconciled). The reviewed proposal remains in `docs/hosted-v3-purpose-guard.proposed.sql`, unchanged. No migration 0012 was added; `drizzle/` is identical to base.
+- `config/database-schema.lock.json` was recaptured for 12 migrations (0000-0011) on a local throwaway PostgreSQL 18.6 container via `psql`, using the repository functions `migrationPlan`, `schemaSourceHashes`, `readSchemaCatalogue`, and `schemaDigest` from `tools/check-migrations.mjs`. Values: `migrationSetSha256` `414d884abacd185c72e744b5c8858791df5d7bbcb2bf6931ac03bab1e09916ea` (matches `docs/core-schema-qualification-20261008.md`), `schemaSha256` `d3eed48b8d840a431e2d963a9a0d32d47693554767b19d171f975481ae7de527`, `tableCount` 27, and `db/schema.js` `00685ce24bfe9baeaf3ea4b5742298e2ca1dffe21c022804f836420cf050c87f`. The previous lock (2026-10-01, 11 migrations) had `migrationSetSha256` `4fd5ed31...`, `schemaSha256` `f599f7f1...`, and `db/schema.js` `7c8b9175...`. Control: applying 0000-0010 reproduced `f599f7f1...` exactly.
+- `tests/heygen-runtime-packaging.test.mjs` now asserts `lock.migrationSetSha256 === migrationPlan().sha256` (previously false-green); it now passes. Local runner: Node v24.14.1. Full results are in the run report (`logs/VOS-002-*.log`).
+- VOS-002 is committed locally on `codex/vos-002` (`c2e0c383`), not pushed. No Neon, production DB, or provider call.
+
+## 2026-10-13T18:51:00Z - [VOS-002b]
+
+- QA found that PostgreSQL 18.6 produced different `schemaSha256` values for LF and CRLF copies of migrations 0000-0011 (for example, `02d4d057...` versus `d3eed48b...`). `readSchemaCatalogue` now recursively normalizes CRLF and lone CR to LF in every catalogue string before digesting; non-string values are preserved. The SQL query is unchanged.
+- Added `tests/schema-catalogue-line-endings.test.mjs` with synthetic routine definitions, column defaults, check definitions, and nested non-string values. On local Node v24.14.1, `node --test tests/schema-catalogue-line-endings.test.mjs tests/check-migrations.test.mjs` passed 11/11.
+- The lock was recaptured on the local throwaway PostgreSQL 18.6 (major 18) from both LF and CRLF copies of 0000-0011; both give `schemaSha256` `02d4d057495b821e9ddbcb4d246f74adbd96a7b6b050d07a5bca1c1e94935240` (migrationSetSha256 `414d884a...` and tableCount 27 unchanged). Full suite on Node v24.14.1: 1,015 passed, 0 failed, 0 cancelled, 48 skipped; Vitest 4/4; Playwright 124 passed, 5 skipped. QA also observed that the digest differs on PostgreSQL 17, so the PostgreSQL major version remains part of the baseline context.
+- VOS-002b is committed locally on `codex/vos-002` (parent `c2e0c383`; SHA in the run report), not pushed.
+
+## 2026-10-13T18:52:54Z - [closure-writeback] [VOS-002b]
+
+- Session readback confirms the recursive catalogue line-ending normalization, the new synthetic regression test, and the VOS-002 SHA correction in this worktree. The focused Node command passed 11/11; syntax checks and `git diff --check` passed.
+- The schema lock recapture was performed outside the Codex session against the throwaway container only. No push, deploy, Neon/production database, or secret access.

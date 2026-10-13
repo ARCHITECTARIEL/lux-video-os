@@ -8,7 +8,7 @@ import {
   assertIdentityProviderReadClaim,
   createIdentityProviderBindingBoundary,
 } from '../routes/video-os-lite/identities.js';
-import { assertProviderVideoReadClaim } from '../workflows/video-render.js';
+import { assertProviderAvatarConsentClaim, assertProviderVideoReadClaim } from '../workflows/video-render.js';
 
 const ACCOUNT_ID = 'runtime-binding-account';
 
@@ -164,7 +164,10 @@ test('actual route and Workflow keep bindings local to each Node mutation bounda
   const claimedStatusGuard = workflowSource.indexOf("if (job.status === 'provider_submitting'");
   const legacyHold = workflowSource.indexOf("code: 'LEGACY_PROVIDER_RESOURCE_UNREGISTERED'");
   const freshClaim = workflowSource.indexOf('providerBinding = await resolveFreshHeygenSpaceBinding');
+  const identityConsentRead = workflowSource.indexOf('await prepareIdentityProviderRead', freshClaim);
+  const providerConsentRead = workflowSource.indexOf('await getHeygenPhotoAvatarStatus', identityConsentRead);
   const databaseClaim = workflowSource.indexOf("stageTo: 'provider_submitting'", freshClaim);
+  assert.ok(freshClaim < identityConsentRead && identityConsentRead < providerConsentRead && providerConsentRead < databaseClaim, 'exact group consent readback must precede the paid provider claim');
   const freshAssertion = workflowSource.indexOf('assertFreshHeygenSpaceBinding(providerBinding)', databaseClaim);
   const providerSubmit = workflowSource.indexOf('submitHeygen(claimedJob)', freshAssertion);
   assert.equal(providerJobGuard > 0 && providerJobGuard < freshClaim, true);
@@ -201,4 +204,19 @@ test('runtime dependency injection is unavailable outside the captured Node test
   });
   assert.equal(child.status, 0, child.stderr);
   assert.deepEqual(JSON.parse(child.stdout), ['CONFIG_MISSING']);
+});
+
+test('provider avatar consent claim requires the exact owned group and look before paid submission', () => {
+  const job = { accountId: ACCOUNT_ID, input: { identityId: 'identity-1', avatar: { avatarId: 'look-1' } } };
+  const readClaim = { accountId: ACCOUNT_ID, identityId: 'identity-1', providerAvatarGroupId: 'group-1', providerRenderableAvatarId: 'look-1' };
+  const provider = { ready: true, avatarGroup: { providerGroupId: 'group-1' }, avatarLook: { providerLookId: 'look-1' } };
+  assert.equal(assertProviderAvatarConsentClaim(job, readClaim, provider), true);
+  for (const [claim, status] of [
+    [readClaim, { ...provider, ready: false }],
+    [{ ...readClaim, accountId: 'other-account' }, provider],
+    [{ ...readClaim, providerRenderableAvatarId: 'other-look' }, provider],
+    [readClaim, { ...provider, avatarGroup: { providerGroupId: 'other-group' } }],
+  ]) {
+    assert.throws(() => assertProviderAvatarConsentClaim(job, claim, status), { failureCategory: 'CONSENT' });
+  }
 });

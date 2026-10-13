@@ -46,7 +46,7 @@ async function installAppRoutes(page, { results = [], project = null, identities
   await page.route('https://images.example/**', (route) => route.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100"><rect width="160" height="100" fill="#d9c8a9"/></svg>' }));
   await page.route('**/api/video-os/talent', (route) => { talentRequests += 1; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, talent: { avatars, voices }, connection: { connected: true } }) }); });
   await page.route('**/api/video-os-lite/session', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, signedIn: true, email: 'proof@example.test', account: { accountId: 'acct-proof', name: 'CEO Proof' }, credits: { accountId: 'acct-proof', balance: 180, reserved: 0 }, entitlements: { fullAccess: true } }) }));
-  await page.route('**/api/video-os-lite/providers', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, providers: [{ id: 'heygen', name: 'HeyGen', configured: true, cost: 90 }], credits: { accountId: 'acct-proof', balance: 180, reserved: 0 }, entitlements: { fullAccess: true } }) }));
+  await page.route('**/api/video-os-lite/providers', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, providers: [{ id: 'heygen', name: 'The Render', configured: true, cost: 90 }], credits: { accountId: 'acct-proof', balance: 180, reserved: 0 }, entitlements: { fullAccess: true } }) }));
   await page.route('**/api/video-os-lite/results*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, results }) }));
   await page.route('**/api/video-os-lite/identities*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, identities }) }));
   await page.route('**/api/video-os-lite/projects', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, projects: project ? [project] : [] }) }));
@@ -216,6 +216,19 @@ test('unavailable Identity Studio handoff is consumed without selecting private 
   await expect(page.locator('#scripted-standard-identity-list [aria-pressed="true"]')).toHaveCount(0);
   await expect(page.locator('#premium-identity-list [aria-pressed="true"]')).toHaveCount(0);
   expect(guard.renderRequests()).toBe(0);
+});
+
+test('a presenter awaiting verification stays visible but cannot be used', async ({ page }) => {
+  const pending = {
+    id: '6e5c233e-f798-4b74-8605-9e45e06fe880',
+    displayName: 'Presenter awaiting review',
+    overallStatus: 'PROCESSING', avatarStatus: 'PROCESSING', voiceStatus: 'READY', ready: false,
+  };
+  await installAppRoutes(page, { identities: [pending] });
+  await page.goto('/#identities');
+  const card = page.locator('#identity-library .identity-library-card').filter({ hasText: pending.displayName });
+  await expect(card).toBeVisible();
+  await expect(card.getByRole('button', { name: 'Use in Studio' })).toBeDisabled();
 });
 
 test('a stale saved private identity fails closed without a presenter fallback', async ({ page }) => {

@@ -1,19 +1,26 @@
 import { FatalError, sleep } from 'workflow';
 import { createHash } from 'node:crypto';
-import { finalizeReadyJob, getJob, prepareProviderVideoFinish, prepareProviderVideoRead, requireJobRenderAuthorization, markJobFailedAndRelease, transitionJob } from '../db/repositories.js';
+import { finalizeReadyJob, getJob, prepareProviderVideoFinish, prepareProviderVideoRead, prepareIdentityProviderRead, requireJobRenderAuthorization, markJobFailedAndRelease, transitionJob } from '../db/repositories.js';
 import { featureEnabled } from '../lib/video-os-security.js';
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
 import { notifyRenderReady } from '../lib/video-os-render-notify.js';
-import { assertHeygenConfigured, pollHeygen, submitHeygen } from '../services/heygen.js';
+import { assertHeygenConfigured, getHeygenPhotoAvatarStatus, pollHeygen, pollHeygenLuxify, submitHeygen, submitHeygenLuxify } from '../services/heygen.js';
 import {
   assertFreshHeygenSpaceBinding,
   resolveFreshHeygenSpaceBinding,
 } from '../db/heygen-space-binding-repository.js';
 import { providerCreationActivationStatus } from '../db/provider-reconciliation-repository.js';
 import { finishMedia } from '../services/media-finisher.js';
-import { finishMediaWithHyperframes } from '../services/hyperframes-finisher.js';
+import { finishMediaWithHyperframes } from '../services/hyperframes-client.js';
+import { assertHyperframesMvpReady } from '../services/hyperframes-contract.js';
 import { finishMediaWithRemotion } from '../services/remotion-finisher.js';
+import {
+  LUXIFY_PROVIDER_CAPABILITY,
+  LUXIFY_RENDER_MODE,
+  classifyLuxifyMarker,
+  luxifyFormatForAspectRatio,
+} from '../lib/luxify-contract.js';
 import { assertScriptedPhotoHeygenInput, assertScriptedPhotoJobActivation, durableHeygenPreclaimMessage, durableProviderSubmissionPossibleMessage, parseDurableRenderFailure, renderTierForJob } from '../lib/scripted-photo-contract.js';
 
 export function finishingEngine(env = process.env) {
@@ -25,6 +32,28 @@ export function finishingEngine(env = process.env) {
   return 'hyperframes';
 }
 
+export function finishingEngineForJob(job, env = process.env) {
+  const configured = finishingEngine(env);
+  const selected = job?.input?.productionKit?.composition;
+  if (!selected) return configured === 'hyperframes' ? 'ffmpeg' : configured;
+  if (job?.provider !== 'heygen' || job?.format !== 'landscape' || renderTierForJob(job) !== 'premium') {
+    throw Object.assign(new Error('The selected composition requires a Premium landscape job.'), { failureCategory: 'CONFIG_MISSING' });
+  }
+  if (configured !== 'hyperframes') {
+    throw Object.assign(new Error('The selected HyperFrames composition is not enabled.'), { failureCategory: 'CONFIG_MISSING' });
+  }
+  if (!String(env.VIDEO_OS_HYPERFRAMES_SNAPSHOT_ID || '').trim()) {
+    throw Object.assign(new Error('HyperFrames Sandbox snapshot is not configured.'), { failureCategory: 'CONFIG_MISSING' });
+  }
+  return 'hyperframes';
+}
+
+export function requireReadyFinishingEngineForJob(job, env = process.env) {
+  const engine = finishingEngineForJob(job, env);
+  if (engine === 'hyperframes') assertHyperframesMvpReady();
+  return engine;
+}
+
 function heygenPreclaimFailure(error) {
   return new FatalError(durableHeygenPreclaimMessage(classifyFailure(error, 'RECONCILIATION')));
 }
@@ -33,11 +62,77 @@ function providerSubmissionPossibleFailure() {
   return new FatalError(durableProviderSubmissionPossibleMessage());
 }
 
+export function providerWorkflowMode(job) {
+  const marker = classifyLuxifyMarker(job?.input, { provider: job?.provider });
+  if (marker === 'unavailable') {
+    throw Object.assign(new Error('Persisted LUXIFY workflow mode is invalid.'), {
+      statusCode: 409,
+      failureCategory: 'RECONCILIATION',
+      code: 'LUXIFY_JOB_BINDING_INVALID',
+    });
+  }
+  if (marker === 'luxify') return 'luxify';
+  if (job?.provider === 'heygen' && (job?.input?.renderMode == null || job.input.renderMode === 'premium_presenter_v1')) return 'presenter';
+  throw Object.assign(new Error('Persisted provider workflow mode is invalid.'), {
+    statusCode: 409,
+    failureCategory: 'RECONCILIATION',
+    code: 'PROVIDER_WORKFLOW_MODE_INVALID',
+  });
+}
+
+const LUXIFY_WORKFLOW_INPUT_KEYS = new Set([
+  'contractVersion', 'renderMode', 'providerCapability', 'projectId', 'idempotencyKey',
+  'title', 'prompt', 'lookIdentityIds', 'aspectRatio', 'resolution', 'durationSeconds',
+  'lookBindings', 'eligibleLookIds', 'eligibilityRevision', 'quoteProof', 'renderAuthorization',
+]);
+const PROVIDER_ID = /^[A-Za-z0-9_.:-]{1,255}$/;
+
+export function luxifyProviderSubmission(job) {
+  const input = job?.input;
+  if (providerWorkflowMode(job) !== 'luxify'
+    || !input || typeof input !== 'object' || Array.isArray(input)
+    || Object.keys(input).length !== LUXIFY_WORKFLOW_INPUT_KEYS.size
+    || Object.keys(input).some(key => !LUXIFY_WORKFLOW_INPUT_KEYS.has(key))
+    || input.renderMode !== LUXIFY_RENDER_MODE
+    || input.providerCapability !== LUXIFY_PROVIDER_CAPABILITY
+    || job.projectId !== input.projectId
+    || job.idempotencyKey !== input.idempotencyKey
+    || job.title !== input.title
+    || job.format !== luxifyFormatForAspectRatio(input.aspectRatio)
+    || typeof input.prompt !== 'string' || input.prompt !== input.prompt.trim() || !input.prompt
+    || !Number.isSafeInteger(input.durationSeconds) || input.durationSeconds < 4 || input.durationSeconds > 15
+    || !['720p', '1080p'].includes(input.resolution)
+    || !Array.isArray(input.lookBindings)
+    || !Array.isArray(input.eligibleLookIds)
+    || input.lookBindings.length < 1 || input.lookBindings.length > 3
+    || input.lookBindings.length !== input.eligibleLookIds.length
+    || input.lookBindings.some((binding, index) => binding?.providerLookId !== input.eligibleLookIds[index]
+      || !PROVIDER_ID.test(String(binding?.providerLookId || '')))
+    || new Set(input.eligibleLookIds).size !== input.eligibleLookIds.length) {
+    throw Object.assign(new Error('Persisted LUXIFY provider submission binding is invalid.'), {
+      statusCode: 409,
+      failureCategory: 'RECONCILIATION',
+      code: 'LUXIFY_JOB_BINDING_INVALID',
+    });
+  }
+  return Object.freeze({
+    idempotencyKey: job.id,
+    prompt: input.prompt,
+    eligibleLookIds: Object.freeze([...input.eligibleLookIds]),
+    duration: input.durationSeconds,
+    resolution: input.resolution,
+    aspectRatio: input.aspectRatio,
+    title: input.title,
+  });
+}
+
 function assertRenderProviderClaim(claimedJob, providerBinding, { jobId, accountId }) {
+  const mode = providerWorkflowMode(claimedJob);
   const proof = claimedJob?.providerClaimProof;
   if (!claimedJob || !Object.isFrozen(claimedJob) || !proof || !Object.isFrozen(proof)
     || claimedJob.id !== jobId || claimedJob.accountId !== accountId || claimedJob.accountId !== providerBinding?.applicationAccountId
-    || claimedJob.provider !== 'heygen' || claimedJob.status !== 'provider_submitting' || !claimedJob.input?.identityId
+    || claimedJob.provider !== 'heygen' || claimedJob.status !== 'provider_submitting'
+    || (mode === 'presenter' && !claimedJob.input?.identityId)
     || proof.version !== 'heygen-render-provider-claim/v1' || proof.operationState !== 'pending'
     || !/^[A-Za-z0-9_.:-]{1,255}$/.test(String(proof.operationId || ''))
     || !/^[a-f0-9]{64}$/.test(String(proof.requestDigest || ''))
@@ -52,7 +147,19 @@ function assertRenderProviderClaim(claimedJob, providerBinding, { jobId, account
   return claimedJob;
 }
 
+export function assertProviderAvatarConsentClaim(job, readClaim, provider) {
+  if (!job?.accountId || !job.input?.identityId || !job.input?.avatar?.avatarId
+    || readClaim?.accountId !== job.accountId || readClaim?.identityId !== job.input.identityId
+    || !readClaim?.providerAvatarGroupId || readClaim?.providerRenderableAvatarId !== job.input.avatar.avatarId
+    || provider?.ready !== true || provider.avatarGroup?.providerGroupId !== readClaim.providerAvatarGroupId
+    || provider.avatarLook?.providerLookId !== readClaim.providerRenderableAvatarId) {
+    throw Object.assign(new Error('Provider avatar subject consent is not verified.'), { statusCode: 409, failureCategory: 'CONSENT' });
+  }
+  return true;
+}
+
 export function assertProviderVideoReadClaim(readClaim, providerBinding, { jobId, providerJobId = null }) {
+  const mode = providerWorkflowMode(readClaim?.job);
   const readyState = ['provider_ready', 'finishing'].includes(readClaim?.job?.status);
   if (!readClaim || !Object.isFrozen(readClaim) || readClaim.version !== 'heygen-video-read-claim/v1'
     || !readClaim.job || !Object.isFrozen(readClaim.job)
@@ -86,10 +193,22 @@ export async function submitProvider(jobId) {
   if (job.providerJobId) return { providerJobId: job.providerJobId };
   if (job.status === 'provider_submitting' || job.status === 'provider_submit_unknown') throw providerSubmissionPossibleFailure();
   let tier;
+  let mode;
   try {
-    tier = renderTierForJob(job);
-    assertScriptedPhotoJobActivation(job);
-    assertScriptedPhotoHeygenInput(job);
+    mode = providerWorkflowMode(job);
+    if (mode === 'luxify' && !featureEnabled('VIDEO_OS_HOSTED_FINISHING_ENABLED')) {
+      throw Object.assign(new Error('LUXIFY hosted finishing is disabled.'), {
+        statusCode: 503,
+        failureCategory: 'CONFIG_MISSING',
+        code: 'LUXIFY_HOSTED_FINISHING_DISABLED',
+      });
+    }
+    tier = mode === 'luxify' ? 'premium' : renderTierForJob(job);
+    if (mode === 'presenter') {
+      assertScriptedPhotoJobActivation(job);
+      assertScriptedPhotoHeygenInput(job);
+      requireReadyFinishingEngineForJob(job);
+    }
     assertHeygenConfigured();
     await requireJobRenderAuthorization(job, tier);
     if (providerCreationActivationStatus().enabled !== true) {
@@ -99,7 +218,7 @@ export async function submitProvider(jobId) {
         code: 'PROVIDER_CREATION_DISABLED',
       });
     }
-    if (!job.input?.identityId) {
+    if (mode === 'presenter' && !job.input?.identityId) {
       throw Object.assign(new Error('Provider resources are not registered to an owned identity.'), {
         statusCode: 409,
         failureCategory: 'RECONCILIATION',
@@ -114,11 +233,20 @@ export async function submitProvider(jobId) {
   let claimedJob;
   try {
     providerBinding = await resolveFreshHeygenSpaceBinding({ accountId: job.accountId });
+    if (!['luxify'].includes(mode)) {
+      const avatarRead = await prepareIdentityProviderRead({ accountId: job.accountId, identityId: job.input.identityId, component: 'avatar', providerBinding });
+      const avatarStatus = await getHeygenPhotoAvatarStatus({ groupId: avatarRead.providerAvatarGroupId, lookId: avatarRead.providerRenderableAvatarId });
+      assertProviderAvatarConsentClaim(job, avatarRead, avatarStatus);
+    }
     const transitionedJob = await transitionJob({ jobId, stageTo: 'provider_submitting', eventType: 'provider.submit_started', providerBinding });
     submissionClaimed = true;
     claimedJob = assertRenderProviderClaim(transitionedJob, providerBinding, { jobId, accountId: job.accountId });
     assertFreshHeygenSpaceBinding(providerBinding);
-    const submitted = await submitHeygen(claimedJob);
+    const claimedMode = providerWorkflowMode(claimedJob);
+    if (claimedMode !== mode) throw Object.assign(new Error('Persisted provider workflow mode changed after claim.'), { failureCategory: 'RECONCILIATION' });
+    const submitted = claimedMode === 'luxify'
+      ? await submitHeygenLuxify(luxifyProviderSubmission(claimedJob))
+      : await submitHeygen(claimedJob);
     await transitionJob({ jobId, stageTo: 'provider_submitted', eventType: 'provider.submitted', providerJobId: submitted.providerJobId, providerBinding });
     return submitted;
   } catch (error) {
@@ -149,7 +277,9 @@ export async function pollProvider(jobId, providerJobId) {
       { jobId, providerJobId },
     );
     assertFreshHeygenSpaceBinding(providerBinding);
-    const status = await pollHeygen(readClaim.providerJobId);
+    const status = providerWorkflowMode(readClaim.job) === 'luxify'
+      ? await pollHeygenLuxify(readClaim.providerJobId)
+      : await pollHeygen(readClaim.providerJobId);
     if (['provider_ready', 'finishing'].includes(readClaim.job.status) && !status.ready) {
       throw Object.assign(new FatalError('Provider state regressed after media became ready.'), { failureCategory: 'RECONCILIATION' });
     }
@@ -196,11 +326,19 @@ export async function finishProviderMedia(jobId, sourceUrl) {
   } catch {
     throw providerSubmissionPossibleFailure();
   }
-  const artifact = finishingEngine() === 'hyperframes'
-    ? await finishMediaWithHyperframes(readClaim.job, sourceUrl)
-    : finishingEngine() === 'remotion'
-    ? await finishMediaWithRemotion(readClaim.job, sourceUrl)
-    : await finishMedia(readClaim.job, sourceUrl);
+  const mode = providerWorkflowMode(readClaim.job);
+  let artifact;
+  if (mode === 'luxify') {
+    const { finishLuxifyMedia } = await import('../services/luxify-finisher.js');
+    artifact = await finishLuxifyMedia(readClaim.job, sourceUrl);
+  } else {
+    const engine = requireReadyFinishingEngineForJob(readClaim.job);
+    artifact = engine === 'hyperframes'
+      ? await finishMediaWithHyperframes(readClaim.job, sourceUrl)
+      : engine === 'remotion'
+      ? await finishMediaWithRemotion(readClaim.job, sourceUrl)
+      : await finishMedia(readClaim.job, sourceUrl);
+  }
   const finalized = await finalizeReadyJob(jobId, artifact, { providerBinding });
   await notifyRenderReady(readClaim.job, finalized);
   return artifact;
