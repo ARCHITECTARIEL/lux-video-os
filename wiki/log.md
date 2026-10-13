@@ -1,5 +1,15 @@
 # Work Log
 
+## 2026-10-13T22:19:38Z - [closure-writeback] [ID-001]
+
+- Confirmed the ID-001 account-scoped provider activation change and its eight changed files are present in this worktree. Full Node suite: 1,049 passed, 0 failed, 48 skipped; Vitest: 4 passed, 0 failed; import check and diff whitespace check passed.
+- No commit, push, merge, deploy, migration, or external provider/database call was made.
+
+## 2026-10-13 - [ID-001]
+
+- Scoped provider creation to the exact pinned enrollment canary account when `VIDEO_OS_PROVIDER_CREATION_ENABLED=true`. Identity, Luxify, and render submission pass their authenticated or persisted account ID; calls without an account remain blocked while a canary is pinned. Other provider, consent, entitlement, cost, binding, and diagnostic gates remain in place.
+- Added canary, mismatch, missing-account, switch-off, and no-canary regression coverage. No provider call, deployment, migration, or repository publication was performed.
+
 ## 2026-10-01 - [p0-proof-scoping]
 
 - Investigated the P0 production proof's actual prerequisites before starting it. Found two substantial unbuilt pieces: the P0 evidence collector is permanently disabled by design (needs real browser-session automation, not a script), and private storage migration was explicitly found "not ready to execute" on Sept 30 (26/77 production Blob objects unclassified; its own procedure needs 4 separately-approved phases).

@@ -168,6 +168,7 @@ function enabledRuntimeFlag(env, name) {
 
 export async function defaultLuxifyRuntimePreflight({
   env = process.env,
+  accountId,
   now = new Date(),
   loadQualificationEvidence = loadPinnedHeygenSpaceAnchorProjection,
   assertQualificationEvidence = assertPinnedHeygenSpaceAnchorProjection,
@@ -185,7 +186,7 @@ export async function defaultLuxifyRuntimePreflight({
   }
   if (!privateStorageConfigured(env)) reasons.push('private_storage_unavailable');
   if (!mediaAllowlistConfigured(env)) reasons.push('provider_media_allowlist_unavailable');
-  if (providerCreationActivationStatus(env).enabled !== true) reasons.push('provider_creation_disabled');
+  if (providerCreationActivationStatus(env, accountId).enabled !== true) reasons.push('provider_creation_disabled');
   if (!enabledRuntimeFlag(env, 'VIDEO_OS_DURABLE_WORKFLOW_ENABLED')) reasons.push('durable_workflow_disabled');
   if (!enabledRuntimeFlag(env, 'VIDEO_OS_HOSTED_FINISHING_ENABLED')) reasons.push('hosted_finishing_disabled');
 

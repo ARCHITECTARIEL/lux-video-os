@@ -45,14 +45,23 @@ test('providerCreationActivationStatus returns a frozen object', () => {
   assert.ok(Object.isFrozen(status));
 });
 
-test('configured private enrollment canary prevents provider creation and rendering even if their switch is on', () => {
+test('configured private enrollment canary permits only the exact requesting account with the creation switch on', () => {
   const env = {
     VERCEL_ENV: 'production', VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: 'owner-account',
     VIDEO_OS_PROVIDER_CREATION_ENABLED: 'true',
   };
-  assert.deepEqual(providerCreationActivationStatus(env), {
-    enabled: false, reason: 'private_enrollment_canary_active',
+  assert.deepEqual(providerCreationActivationStatus(env, 'owner-account'), {
+    enabled: true, reason: 'owner_authorized_contained_activation',
+  });
+  for (const accountId of ['other-account', undefined, null, '', ' ', ' owner-account ', 123]) {
+    assert.deepEqual(providerCreationActivationStatus(env, accountId), {
+      enabled: false, reason: 'private_enrollment_canary_active',
+    });
+  }
+  assert.deepEqual(providerCreationActivationStatus({ ...env, VIDEO_OS_PROVIDER_CREATION_ENABLED: 'false' }, 'owner-account'), {
+    enabled: false, reason: 'verified_provider_account_binding_not_wired',
   });
   assert.equal(providerCreationActivationStatus({ ...env, VERCEL_ENV: 'preview' }).enabled, false);
   assert.equal(providerCreationActivationStatus({ VERCEL_ENV: 'preview', VIDEO_OS_PROVIDER_CREATION_ENABLED: 'true' }).enabled, true);
+  assert.equal(providerCreationActivationStatus({ ...env, VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: ' ' }).enabled, true);
 });

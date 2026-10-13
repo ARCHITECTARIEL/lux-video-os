@@ -211,7 +211,7 @@ export async function submitProvider(jobId) {
     }
     assertHeygenConfigured();
     await requireJobRenderAuthorization(job, tier);
-    if (providerCreationActivationStatus().enabled !== true) {
+    if (providerCreationActivationStatus(process.env, job.accountId).enabled !== true) {
       throw Object.assign(new Error('HeyGen provider creation is not activated.'), {
         statusCode: 503,
         failureCategory: 'CONFIG_MISSING',

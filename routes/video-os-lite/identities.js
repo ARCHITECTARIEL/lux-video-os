@@ -345,7 +345,7 @@ export function assertIdentitySubmissionAllowed(accountId) {
   assertIdentityProviderMutationEnabled();
   assertIdentityProviderAccountAuthorized(accountId);
   assertHeygenConfigured();
-  if (providerCreationActivationStatus().enabled !== true) {
+  if (providerCreationActivationStatus(process.env, accountId).enabled !== true) {
     throw Object.assign(new Error('Identity provider creation is not activated.'), {
       statusCode: 503,
       failureCategory: 'IDENTITY_PROVIDER_DISABLED',
