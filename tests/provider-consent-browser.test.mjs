@@ -5,6 +5,36 @@ import test from 'node:test';
 
 const script = readFileSync(new URL('../public/provider-consent.js', import.meta.url), 'utf8');
 
+test('returned consent status names the display provider and discloses HeyGen processing', () => {
+  const location = new URL('https://video.example/provider-consent?returned=1');
+  const elements = new Map();
+  for (const selector of ['#status', '#notice-panel', '#signin-help', '#intro']) {
+    elements.set(selector, { hidden: false, textContent: '' });
+  }
+  runInNewContext(script, {
+    location,
+    history: { replaceState() {} },
+    document: { querySelector: selector => elements.get(selector) },
+    URL,
+    URLSearchParams,
+  });
+  assert.equal(
+    elements.get('#status').textContent,
+    'Consent through The Render (processed by HeyGen) is being checked. Returning here does not mean it has been accepted; the inviting account will see the verified status.',
+  );
+});
+
+test('consent and privacy copy retain the named processor disclosure', () => {
+  const consent = readFileSync(new URL('../public/provider-consent.html', import.meta.url), 'utf8');
+  const privacy = readFileSync(new URL('../public/privacy.html', import.meta.url), 'utf8');
+  const identity = readFileSync(new URL('../public/identity.js', import.meta.url), 'utf8');
+  assert.match(consent, /authorizing LUX Video OS and The Render \(processed by HeyGen\) to process your likeness/);
+  assert.match(consent, /does not authorize a reusable voice clone/);
+  assert.match(privacy, /<strong>The Render \(processed by HeyGen\)<\/strong>/);
+  assert.match(privacy, /separate consent recording on the hosted page of The Render \(processed by HeyGen\)/);
+  assert.match(identity, /The Render \(processed by HeyGen\) has accepted this presenter’s consent/);
+});
+
 for (const link of [
   'https://video.example/provider-consent#invite=private-token',
   'https://video.example/provider-consent?invite=private-token',

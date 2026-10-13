@@ -231,11 +231,11 @@ function appendHostedConsent(container, identity) {
   const detail = document.createElement('p');
   const status = result.consent?.providerConsentStatus;
   detail.textContent = status === 'ACCEPTED'
-    ? 'HeyGen has accepted this presenter’s consent.'
+    ? 'The Render (processed by HeyGen) has accepted this presenter’s consent.'
     : status === 'REJECTED'
-      ? 'HeyGen rejected the consent recording. Contact support before another attempt.'
+      ? 'The Render (processed by HeyGen) rejected the consent recording. Contact support before another attempt.'
       : result.consent?.hostedSessionState === 'RETURNED'
-        ? 'The presenter returned. HeyGen consent is still being checked.'
+        ? 'The presenter returned. Consent through The Render (processed by HeyGen) is still being checked.'
         : result.consent?.hostedSessionState === 'ISSUED'
           ? 'The presenter can finish the one-time recording through the invitation.'
           : 'Invite the person shown to review a separate notice and record consent once.';

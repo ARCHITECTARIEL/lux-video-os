@@ -537,12 +537,22 @@
 - Local Node 24.14.1: voice inventory 22 passed, 0 cancelled; full `node --test tests/*.test.mjs` 1,005 passed, 1 failed, 48 skipped, 0 cancelled. The sole failure is the existing `db/schema.js` packaging hash mismatch in `tests/heygen-runtime-packaging.test.mjs`. Vitest: 4/4 passed. Node 22.23.3 (Delivery Lead): voice inventory 22/22, 0 cancelled; full suite 1,054 tests, 1,005 passed, 1 failed (same packaging hash test), 48 skipped, 0 cancelled; Vitest 4/4.
 - INT-001b/c/d are committed locally on `codex/int-001-voice`, not pushed. No push, deployment, database operation or provider call was performed.
 
-## 2026-10-13 - [INT-001e] [provider display]
+## 2026-10-13T15:41:14Z - [INT-001e] [provider display]
 
 - The public provider catalogue and signed-out fallback now expose only the unchanged `heygen` ID, named and labeled `The Render`. The cost list shows that provider only. Scoped UI status, preview, talent, identity failure, and local control-plane copy uses `The Render`; machine identifiers, API paths, and provider routing contracts remain intact.
-- The two voice-inventory keep-alive tests have 2000 ms test timeouts. Provider-list and identity-preview test expectations reflect the display change. Consent/legal pages and the consent status copy in `public/identity.js` remain untouched pending an owner decision on their wording.
-- Local Node full suite: 1005 passed, 1 failed, 48 skipped, 0 cancelled. The only failure is the existing VOS-002 `db/schema.js` packaging hash mismatch. Vitest: 4 passed, 0 failed. Import check and JavaScript syntax checks passed. No commit, push, deploy, migration, provider call, or secret read occurred.
+- The two voice-inventory keep-alive tests have 2000 ms test timeouts. Provider-list and identity-preview test expectations reflect the display change. Ariel decided on 2026-10-13 that consent/privacy pages show `The Render (processed by HeyGen)` while preserving the processor disclosure; INT-001f applies that decision.
+- Local runner Node v24.14.1 full suite at the INT-001e checkpoint: 1005 passed, 1 failed, 48 skipped, 0 cancelled. QA Node 22: 1004 passed, 1 failed (VOS-002 packaging hash), 0 cancelled, 49 skipped. The local failure is the same existing VOS-002 `db/schema.js` packaging hash mismatch. Vitest: 4 passed, 0 failed. Import check and JavaScript syntax checks passed. INT-001e is committed locally as `e4801252` on `codex/int-001-voice`; no push, deploy, migration, provider call, or secret read occurred.
 
 ## 2026-10-13T15:41:14Z - [closure-writeback] [INT-001e]
 
-- Completed the local provider-display and test changes recorded above. Final readback confirms only `heygen` appears in the public provider catalogue, the named consent/legal copy remains deferred, and the sole Node failure is the existing VOS-002 packaging hash mismatch. The worktree has no commit or external operation from this task.
+- Completed the local provider-display and test changes recorded above. Final readback confirms only `heygen` appears in the public provider catalogue. The named consent/legal copy was deferred to INT-001f by Ariel's 2026-10-13 decision, and the sole Node failure is the existing VOS-002 packaging hash mismatch. INT-001e is committed locally as `e4801252`; no external operation occurred.
+
+## 2026-10-13T15:54:22Z - [INT-001f] [provider copy follow-up]
+
+- Restored the operator-only HeyGen support placeholder, simplified three render-count strings, and applied Ariel's `The Render (processed by HeyGen)` wording decision to the named consent/privacy surfaces without changing consent meaning. Added focused consent copy assertions.
+- Local Node v24.14.1 full suite: 1007 passed, 1 failed (existing VOS-002 `db/schema.js` packaging hash mismatch), 0 cancelled, 48 skipped. Vitest: 4 passed, 0 failed.
+- INT-001f is committed locally on `codex/int-001-voice` as the INT-001f commit (SHA in the run report). No push, deploy, migration, network/provider call, or secret read occurred.
+
+## 2026-10-13T15:55:19Z - [closure-writeback] [INT-001f]
+
+- Confirmed the scoped public copy, focused consent assertions, and INT-001e commit correction in this worktree. Node v24.14.1: 1007 passed, 1 failed (pre-existing VOS-002 packaging hash), 0 cancelled, 48 skipped; Vitest: 4 passed. Syntax and import checks passed; `git diff --check` passed. INT-001f is committed locally on `codex/int-001-voice`; no external action.

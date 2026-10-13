@@ -744,7 +744,7 @@ function updateFinishCost() {
   const countEl = document.querySelector('#finish-render-count');
   if (balanceEl) balanceEl.textContent = `${balance.toLocaleString()} credits`;
   if (costEl) costEl.textContent = cost ? `${cost} credits` : '-- credits';
-  if (countEl) countEl.textContent = cost ? `${Math.floor(balance / cost)} ${providerBuyerLabel(provider).toLowerCase()} render${Math.floor(balance / cost) === 1 ? '' : 's'}` : '-- renders';
+  if (countEl) countEl.textContent = cost ? `${Math.floor(balance / cost)} render${Math.floor(balance / cost) === 1 ? '' : 's'}` : '-- renders';
 }
 
 function renderProviderStatus() {
@@ -978,7 +978,7 @@ function renderPricing() {
   if (buyingPower) {
     const renderCost = heygen?.cost || cheapestReady || 90;
     const count = Math.floor(balance / renderCost);
-    buyingPower.textContent = count > 0 ? `Enough for ${count} ${heygen?.name || 'provider'} render${count === 1 ? '' : 's'}.` : 'Add credits to unlock live provider renders.';
+    buyingPower.textContent = count > 0 ? `Enough for ${count} render${count === 1 ? '' : 's'}.` : 'Add credits to unlock live provider renders.';
   }
   const renderCost = document.querySelector('#pricing-render-cost');
   if (renderCost) {
@@ -1000,7 +1000,7 @@ function renderPricing() {
   if (recommendation) recommendation.textContent = `${packageCredits.toLocaleString()} credits`;
   if (recommendationCopy) {
     const renderCost = heygen?.cost || cheapestReady || 90;
-    recommendationCopy.textContent = `Adds about ${Math.floor(packageCredits / renderCost)} ${heygen?.name || 'provider'} renders.`;
+    recommendationCopy.textContent = `Adds about ${Math.floor(packageCredits / renderCost)} renders.`;
   }
   const list = document.querySelector('#provider-cost-list');
   if (list) {
