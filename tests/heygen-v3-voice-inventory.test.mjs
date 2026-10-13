@@ -42,6 +42,15 @@ function look(item) {
   };
 }
 
+function consentedLook(item) {
+  return { ...look(item), group_id: `group-${item.key}`, avatar_type: 'digital_twin' };
+}
+
+function acceptedGroup(url) {
+  const groupId = url.pathname.split('/').pop();
+  return response({ data: { id: groupId, status: 'completed', consent_status: 'accepted' } });
+}
+
 async function loadWithVoicePayload(payload) {
   return loadTalentInventory({
     env: { HEYGEN_API_KEY: 'unit-test-provider-key' },
@@ -170,6 +179,7 @@ test('Presenter voice inventory follows v3 opaque cursors before loading looks a
     fetchImpl: async (value, options) => {
       const url = new URL(value);
       requests.push(url.href);
+      if (url.pathname.startsWith('/v3/avatars/group-')) return acceptedGroup(url);
       signals.push(options.signal);
       assert.equal(options.redirect, 'error');
       assert.equal(options.headers['X-Api-Key'], 'unit-test-provider-key');
@@ -186,7 +196,7 @@ test('Presenter voice inventory follows v3 opaque cursors before loading looks a
         }
       }
       if (url.pathname === '/v3/avatars/looks' && url.searchParams.get('ownership') === 'private') {
-        return response({ data: FEATURED_CAST.map(look), has_more: false, next_token: null });
+        return response({ data: FEATURED_CAST.map(consentedLook), has_more: false, next_token: null });
       }
       if (url.pathname === '/v3/avatars/looks' && url.searchParams.get('ownership') === 'public') {
         return response({ data: [], has_more: false, next_token: null });
@@ -271,8 +281,9 @@ test('a complete private inventory keeps every existing featured voice available
       if (url.pathname === '/v3/voices') {
         return response({ data: FEATURED_CAST.map((item) => voice(item)), has_more: false, next_token: null });
       }
+      if (url.pathname.startsWith('/v3/avatars/group-')) return acceptedGroup(url);
       if (url.searchParams.get('ownership') === 'private') {
-        return response({ data: FEATURED_CAST.map(look), has_more: false, next_token: null });
+        return response({ data: FEATURED_CAST.map(consentedLook), has_more: false, next_token: null });
       }
       return response({ data: [], has_more: false, next_token: null });
     },
@@ -291,6 +302,29 @@ test('a complete private inventory keeps every existing featured voice available
       avatarId: featured.avatarId,
       voiceId: featured.voiceId,
     });
+  }
+});
+
+test('complete private voices without featured group consent are not ready', async () => {
+  const result = await loadWithVoicePayload({
+    data: FEATURED_CAST.map((item) => voice(item)),
+    has_more: false,
+    next_token: null,
+  });
+
+  assert.equal(result.connection.status, 'empty_inventory');
+  assert(result.talent.avatars.every((item) => item.providerReady === false));
+  for (const featured of FEATURED_CAST) {
+    const avatar = result.talent.avatars.find((item) => item.id === `featured:${featured.key}`);
+    const voiceItem = result.talent.voices.find((item) => item.id === `featured:${featured.key}:voice`);
+    assert.throws(
+      () => assertTalentSelectionsAvailable(
+        { avatars: [avatar], voices: [voiceItem] },
+        { avatar: { avatarId: avatar.id }, voice: { voiceId: voiceItem.id } },
+      ),
+      /unavailable/i,
+      featured.key,
+    );
   }
 });
 

@@ -178,7 +178,7 @@ mock.module('../db/repositories.js', {
       };
       jobsByKey.set(input.idempotencyKey, job);
       jobsById.set(job.id, job);
-      return { job, replayed: false };
+      return { job, replayed: false, proofId: '88888888-8888-4888-8888-888888888888' };
     },
     claimWorkflowStart: async jobId => {
       const job = jobsById.get(jobId);
@@ -187,6 +187,10 @@ mock.module('../db/repositories.js', {
       return job;
     },
     getJob: async jobId => jobsById.get(jobId) || null,
+    getRenderReservationProof: async job => {
+      assert.strictEqual(jobsById.get(job.id), job);
+      return '88888888-8888-4888-8888-888888888888';
+    },
     setWorkflowRun: async (jobId, runId) => {
       const job = jobsById.get(jobId);
       if (!job) return null;
@@ -199,6 +203,18 @@ mock.module('../db/repositories.js', {
 
 mock.module('../db/heygen-space-binding-repository.js', {
   namedExports: {
+    assertFreshHeygenProviderClaimTx: (tx, { accountId, providerBinding: binding }) => {
+      assert.ok(tx);
+      assert.equal(accountId, ACCOUNT_ID);
+      assert.strictEqual(binding, providerBinding);
+      return binding;
+    },
+    assertHeygenProviderReceiptTx: (tx, { accountId, providerBinding: binding }) => {
+      assert.ok(tx);
+      assert.equal(accountId, ACCOUNT_ID);
+      assert.strictEqual(binding, providerBinding);
+      return binding;
+    },
     resolveFreshHeygenSpaceBinding: async ({ accountId }) => {
       assert.equal(accountId, ACCOUNT_ID);
       return providerBinding;

@@ -197,6 +197,13 @@ if (runFixture) {
       assert.equal(providerJobId, currentJob.providerJobId);
       return providerReadClaim(currentJob, ['provider_ready', 'finishing'].includes(currentJob.status));
     },
+    prepareIdentityProviderRead: async ({ accountId, identityId, component, providerBinding }) => {
+      assert.equal(accountId, ACCOUNT);
+      assert.equal(identityId, currentJob.input.identityId);
+      assert.equal(component, 'avatar');
+      assert.strictEqual(providerBinding, PROVIDER_BINDING);
+      return { accountId, identityId, providerAvatarGroupId: 'presenter_group', providerRenderableAvatarId: 'presenter_look' };
+    },
     requireJobRenderAuthorization: async (job, tier) => {
       calls.authorizations.push({ jobId: job.id, tier });
       return { tier };
@@ -225,6 +232,16 @@ if (runFixture) {
   } });
   mock.module('../services/heygen.js', { namedExports: {
     assertHeygenConfigured: () => true,
+    getHeygenPhotoAvatarStatus: async ({ groupId, lookId }) => {
+      assert.equal(groupId, 'presenter_group');
+      assert.equal(lookId, 'presenter_look');
+      return {
+        avatarGroup: { providerGroupId: groupId, status: 'completed', consentStatus: 'accepted', ready: true },
+        avatarLook: { providerLookId: lookId, providerGroupId: groupId, avatarType: 'digital_twin', status: 'completed', ready: true },
+        ready: true,
+        failed: false,
+      };
+    },
     submitHeygenLuxify: async input => {
       calls.luxifySubmissions.push(input);
       if (failLuxifySubmit) {
