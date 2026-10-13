@@ -1,8 +1,9 @@
+import { LUXIFY_PROMPT_MAX_CHARS } from '../lib/luxify-contract.js';
 import { parseOrThrow, providerStatusSchema, providerSubmitSchema } from '../lib/video-os-validation.js';
 import { logEvent, timingSafeMatch } from '../lib/video-os-security.js';
 
 const API_ORIGIN = 'https://api.heygen.com';
-const timeoutMs = () => Number(process.env.HEYGEN_TIMEOUT_MS || 20_000);
+const timeoutMs = (env = process.env) => Number(env.HEYGEN_TIMEOUT_MS || 20_000);
 const IDENTITY_CONTENT_TYPES = new Set(['image/jpeg', 'image/png', 'audio/mpeg', 'audio/wav', 'audio/x-wav']);
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,255}$/;
 const TERMINAL_READY = new Set(['complete', 'completed', 'ready', 'success', 'succeeded']);
@@ -16,9 +17,9 @@ export function assertHeygenConfigured(env = process.env) {
   return true;
 }
 
-function key() {
-  assertHeygenConfigured();
-  return String(process.env.HEYGEN_API_KEY || process.env.HEYGEN_TOKEN).trim();
+function key(env = process.env) {
+  assertHeygenConfigured(env);
+  return String(env.HEYGEN_API_KEY || env.HEYGEN_TOKEN).trim();
 }
 
 async function responseJson(response, category) {
@@ -36,11 +37,11 @@ async function responseJson(response, category) {
   return data;
 }
 
-async function postWithReceiptValidation(path, options, validate) {
+async function postWithReceiptValidation(path, options, validate, fetchImpl = fetch) {
   // Once a POST is sent, an exception is not evidence that no resource exists.
   // Never automatically replay uploads/clones after a lost or unusable reply.
   try {
-    const response = await fetch(`${API_ORIGIN}${path}`, options);
+    const response = await fetchImpl(`${API_ORIGIN}${path}`, options);
     return await validate(await responseJson(response, 'PROVIDER_SUBMIT_UNKNOWN'));
   } catch (error) {
     const status = Number(error?.providerHttpStatus);
@@ -90,6 +91,106 @@ export function safeProviderErrorCode(value) {
   return /^[a-z0-9_-]{1,80}$/.test(code) ? code : null;
 }
 
+const LUXIFY_REQUEST_KEYS = new Set(['prompt', 'eligibleLookIds', 'duration', 'resolution', 'aspectRatio', 'title']);
+const LUXIFY_SUBMISSION_KEYS = new Set([...LUXIFY_REQUEST_KEYS, 'idempotencyKey']);
+const LUXIFY_RESOLUTIONS = new Set(['720p', '1080p']);
+const LUXIFY_ASPECT_RATIOS = new Set(['16:9', '9:16', '1:1']);
+const LUXIFY_STATUSES = new Set(['pending', 'processing', 'completed', 'failed']);
+const LUXIFY_TITLE_MAX_CHARS = 120;
+
+function luxifyRequestError() {
+  return Object.assign(new Error('LUXIFY Cinematic Avatar request was invalid.'), {
+    statusCode: 400,
+    failureCategory: 'VALIDATION',
+    code: 'LUXIFY_REQUEST_INVALID',
+  });
+}
+
+function luxifyResponseError() {
+  return Object.assign(new Error('HeyGen LUXIFY response was invalid.'), {
+    statusCode: 502,
+    failureCategory: 'PROVIDER_RESPONSE',
+    code: 'LUXIFY_PROVIDER_RESPONSE_INVALID',
+  });
+}
+
+function plainRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function exactLuxifyProviderId(value, errorFactory) {
+  if (typeof value !== 'string' || value !== value.trim() || !PROVIDER_ID_PATTERN.test(value)) throw errorFactory();
+  return value;
+}
+
+function boundedLuxifyText(value, maximum, { optional = false } = {}) {
+  if (value === undefined && optional) return undefined;
+  if (typeof value !== 'string') throw luxifyRequestError();
+  const text = value.trim();
+  if (!text || text.length > maximum) throw luxifyRequestError();
+  return text;
+}
+
+// eligibleLookIds is a server-verified capability input; never populate it from raw client IDs.
+export function buildLuxifyCinematicRequest(input) {
+  if (!plainRecord(input)
+    || Reflect.ownKeys(input).some((field) => typeof field !== 'string' || !LUXIFY_REQUEST_KEYS.has(field))) {
+    throw luxifyRequestError();
+  }
+  if (!Array.isArray(input.eligibleLookIds)
+    || input.eligibleLookIds.length < 1
+    || input.eligibleLookIds.length > 3) {
+    throw luxifyRequestError();
+  }
+  const avatarIds = input.eligibleLookIds.map((value) => exactLuxifyProviderId(value, luxifyRequestError));
+  if (new Set(avatarIds).size !== avatarIds.length) throw luxifyRequestError();
+  if (!Number.isSafeInteger(input.duration) || input.duration < 4 || input.duration > 15
+    || !LUXIFY_RESOLUTIONS.has(input.resolution)
+    || !LUXIFY_ASPECT_RATIOS.has(input.aspectRatio)) {
+    throw luxifyRequestError();
+  }
+  const prompt = boundedLuxifyText(input.prompt, LUXIFY_PROMPT_MAX_CHARS);
+  const title = boundedLuxifyText(input.title, LUXIFY_TITLE_MAX_CHARS, { optional: true });
+  return Object.freeze({
+    type: 'cinematic_avatar',
+    prompt,
+    avatar_id: Object.freeze([...avatarIds]),
+    aspect_ratio: input.aspectRatio,
+    resolution: input.resolution,
+    duration: input.duration,
+    ...(title ? { title } : {}),
+  });
+}
+
+export function normalizeLuxifySubmitResponse(payload) {
+  if (!plainRecord(payload) || !plainRecord(payload.data)) throw luxifyResponseError();
+  return Object.freeze({
+    providerJobId: exactLuxifyProviderId(payload.data.video_id, luxifyResponseError),
+  });
+}
+
+export function normalizeLuxifyStatusResponse(payload) {
+  if (!plainRecord(payload) || !plainRecord(payload.data)) throw luxifyResponseError();
+  const rawStatus = payload.data.status;
+  if (typeof rawStatus !== 'string' || rawStatus !== rawStatus.trim() || rawStatus !== rawStatus.toLowerCase()
+    || !LUXIFY_STATUSES.has(rawStatus)) {
+    throw luxifyResponseError();
+  }
+  const failureCode = rawStatus === 'failed'
+    ? safeProviderErrorCode(payload.data.failure_code || payload.data?.error?.code)
+    : null;
+  if (rawStatus === 'completed') {
+    const candidate = payload.data.video_url;
+    if (typeof candidate !== 'string' || candidate !== candidate.trim() || candidate.length > 2048) throw luxifyResponseError();
+    const sourceUrl = safeHttpsUrl(candidate);
+    if (!sourceUrl) throw luxifyResponseError();
+    return Object.freeze({ ready: true, status: rawStatus, sourceUrl, failureCode: null });
+  }
+  return Object.freeze({ ready: false, status: rawStatus, sourceUrl: null, failureCode });
+}
+
 export function normalizeIdentityProviderStatus(value, { hasPreview = false, hasFailure = false } = {}) {
   const rawStatus = String(value || '').trim().toLowerCase();
   if (hasFailure || TERMINAL_FAILED.has(rawStatus)) return 'failed';
@@ -113,14 +214,46 @@ export function assertIdentityProviderAccountAuthorized(accountId, env = process
   return true;
 }
 
-function inventoryCollection(payload) {
+function inventoryResponseError() {
+  return Object.assign(new Error('HeyGen inventory response was invalid.'), {
+    statusCode: 502,
+    failureCategory: 'PROVIDER_INVENTORY',
+  });
+}
+
+function inventoryCollection(payload, { requireExplicitPagination = false } = {}) {
+  if (requireExplicitPagination) {
+    if (!Array.isArray(payload?.data)
+      || payload.data.some((item) => !item || typeof item !== 'object' || Array.isArray(item))) {
+      throw inventoryResponseError();
+    }
+    return payload.data;
+  }
   const data = payload?.data ?? payload;
   if (Array.isArray(data)) return data;
   for (const field of ['avatars', 'voices', 'items', 'list']) if (Array.isArray(data?.[field])) return data[field];
   return [];
 }
 
-function inventoryPagination(payload) {
+function inventoryPagination(payload, { requireExplicitPagination = false } = {}) {
+  if (requireExplicitPagination) {
+    if (!Object.hasOwn(payload || {}, 'has_more')
+      || !Object.hasOwn(payload || {}, 'next_token')
+      || typeof payload.has_more !== 'boolean') {
+      throw inventoryResponseError();
+    }
+    if (payload.has_more) {
+      if (typeof payload.next_token !== 'string'
+        || !payload.next_token
+        || payload.next_token !== payload.next_token.trim()
+        || payload.next_token.length > 512) {
+        throw inventoryResponseError();
+      }
+      return { hasMore: true, nextToken: payload.next_token };
+    }
+    if (payload.next_token !== null) throw inventoryResponseError();
+    return { hasMore: false, nextToken: '' };
+  }
   const data = payload?.data;
   return {
     hasMore: Boolean(payload?.has_more ?? data?.has_more),
@@ -135,10 +268,59 @@ function inventoryUrl(value) {
   return url;
 }
 
-async function fetchHeygenInventoryPage(url, { fetchImpl = fetch } = {}) {
-  const response = await fetchImpl(inventoryUrl(url).href, { signal: AbortSignal.timeout(8_000), headers: { Accept: 'application/json', 'X-Api-Key': key() } });
+function signalAbortReason(signal) {
+  return signal?.reason instanceof Error
+    ? signal.reason
+    : Object.assign(new Error('HeyGen inventory request timed out.'), {
+      statusCode: 503,
+      failureCategory: 'PROVIDER_INVENTORY_BUDGET',
+    });
+}
+
+async function promiseWithinSignal(start, signal) {
+  if (!signal) return start();
+  if (signal.aborted) throw signalAbortReason(signal);
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(signalAbortReason(signal));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    const value = await Promise.race([
+      Promise.resolve().then(start),
+      aborted,
+    ]);
+    if (signal.aborted) throw signalAbortReason(signal);
+    return value;
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
+async function responseJsonWithinSignal(response, signal) {
+  return promiseWithinSignal(() => response.json(), signal);
+}
+
+async function fetchHeygenInventoryPage(url, {
+  fetchImpl = fetch,
+  signal,
+  apiKey,
+  assertBudget,
+} = {}) {
+  const requestKey = String(apiKey || '').trim() || key();
+  const requestSignal = signal || AbortSignal.timeout(8_000);
+  const response = await promiseWithinSignal(
+    () => fetchImpl(inventoryUrl(url).href, {
+      redirect: 'error',
+      signal: requestSignal,
+      headers: { Accept: 'application/json', 'X-Api-Key': requestKey },
+    }),
+    requestSignal,
+  );
   if (!response.ok) throw new Error(`HeyGen inventory HTTP ${response.status}`);
-  return response.json();
+  const payload = await responseJsonWithinSignal(response, requestSignal);
+  assertBudget?.();
+  return payload;
 }
 
 export async function fetchHeygenCollection(url, options = {}) {
@@ -154,13 +336,13 @@ export async function fetchHeygenPaginatedCollection(url, options = {}) {
   const pageUrl = inventoryUrl(url);
   for (let page = 1; page <= maxPages; page += 1) {
     const payload = await fetchHeygenInventoryPage(pageUrl, options);
-    for (const item of inventoryCollection(payload)) {
+    for (const item of inventoryCollection(payload, options)) {
       const id = String(item?.id || item?.avatar_id || item?.avatarId || '').trim().slice(0, 160);
       if (id && itemIds.has(id)) continue;
       if (id) itemIds.add(id);
       items.push(item);
     }
-    const { hasMore, nextToken } = inventoryPagination(payload);
+    const { hasMore, nextToken } = inventoryPagination(payload, options);
     if (items.length >= maxItems) return { items: items.slice(0, maxItems), pages: page, complete: !hasMore, truncated: hasMore || items.length > maxItems };
     if (!hasMore) return { items, pages: page, complete: true, truncated: false };
     if (page === maxPages && options.allowTruncatedPageLimit === true) return { items, pages: page, complete: false, truncated: true };
@@ -371,6 +553,97 @@ export async function cloneHeygenVoice({ accountId, assetId, name, language, rem
 export async function getHeygenVoiceStatus(voiceId) {
   const reference = cleanProviderId(voiceId, 'HeyGen voice ID');
   return normalizeVoice(await heygenGet(`/v3/voices/${encodeURIComponent(reference)}`, 'VOICE_CLONE_POLL'));
+}
+
+function luxifyConfigError() {
+  return Object.assign(new Error('HeyGen LUXIFY adapter configuration was invalid.'), {
+    statusCode: 503,
+    failureCategory: 'CONFIG_INVALID',
+    code: 'LUXIFY_CONFIG_INVALID',
+  });
+}
+
+function luxifyDependencies(options = {}) {
+  const allowed = new Set(['env', 'fetchImpl']);
+  if (!plainRecord(options)
+    || Reflect.ownKeys(options).some((field) => typeof field !== 'string' || !allowed.has(field))) {
+    throw luxifyConfigError();
+  }
+  const env = options.env ?? process.env;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const timeout = timeoutMs(env);
+  if (!env || typeof env !== 'object' || typeof fetchImpl !== 'function'
+    || !Number.isSafeInteger(timeout) || timeout <= 0 || timeout > 2_147_483_647) {
+    throw luxifyConfigError();
+  }
+  return { fetchImpl, timeout, apiKey: key(env) };
+}
+
+function luxifyPollTransportError(error) {
+  const status = Number(error?.providerHttpStatus);
+  const providerHttpStatus = Number.isInteger(status) && status >= 400 && status <= 599 ? status : undefined;
+  return Object.assign(new Error(providerHttpStatus
+    ? `HeyGen request failed with HTTP ${providerHttpStatus}.`
+    : 'HeyGen LUXIFY status request failed.'), {
+    statusCode: 502,
+    failureCategory: 'PROVIDER_POLL',
+    ...(providerHttpStatus ? { providerHttpStatus } : {}),
+    providerErrorCode: safeProviderErrorCode(error?.providerErrorCode),
+  });
+}
+
+export async function submitHeygenLuxify(submission, options = {}) {
+  if (!plainRecord(submission) || !Object.hasOwn(submission, 'idempotencyKey')
+    || Reflect.ownKeys(submission).some((field) => typeof field !== 'string' || !LUXIFY_SUBMISSION_KEYS.has(field))) {
+    throw luxifyRequestError();
+  }
+  const { idempotencyKey, ...input } = submission;
+  const requestKey = exactLuxifyProviderId(idempotencyKey, luxifyRequestError);
+  const request = buildLuxifyCinematicRequest(input);
+  const { fetchImpl, timeout, apiKey } = luxifyDependencies(options);
+  return postWithReceiptValidation('/v3/videos', {
+    method: 'POST',
+    redirect: 'error',
+    signal: AbortSignal.timeout(timeout),
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-Api-Key': apiKey,
+      'Idempotency-Key': requestKey,
+    },
+    body: JSON.stringify(request),
+  }, normalizeLuxifySubmitResponse, fetchImpl);
+}
+
+export async function pollHeygenLuxify(providerJobId, options = {}) {
+  const reference = exactLuxifyProviderId(providerJobId, luxifyRequestError);
+  const { fetchImpl, timeout, apiKey } = luxifyDependencies(options);
+  let response;
+  try {
+    response = await fetchImpl(`${API_ORIGIN}/v3/videos/${encodeURIComponent(reference)}`, {
+      method: 'GET',
+      redirect: 'error',
+      signal: AbortSignal.timeout(timeout),
+      headers: { Accept: 'application/json', 'X-Api-Key': apiKey },
+    });
+  } catch (error) {
+    throw luxifyPollTransportError(error);
+  }
+  let payload;
+  try {
+    payload = await responseJson(response, 'PROVIDER_POLL');
+  } catch (error) {
+    throw luxifyPollTransportError(error);
+  }
+  const status = normalizeLuxifyStatusResponse(payload);
+  if (status.status === 'failed') {
+    throw Object.assign(new Error('HeyGen LUXIFY render failed.'), {
+      failureCategory: 'PROVIDER_REJECTED',
+      providerErrorCode: status.failureCode,
+    });
+  }
+  if (status.ready) logEvent('provider.media_ready', { providerHostname: providerMediaHostname(status.sourceUrl) });
+  return status;
 }
 
 export async function submitHeygen(job) {

@@ -304,9 +304,9 @@ test('all externally reachable persisted identity responses use the common DTO b
 
   assert.match(results, /\.map\(jobDto\)/);
   assert.match(finalize, /const dto = jobDto\(job\)/);
-  // Legacy Standard, legacy Premium, and scripted-photo each have success and
-  // uncertain-dispatch responses, all using the same privacy boundary.
-  assert.equal((render.match(/job: jobDto\(reservedJob\)/g) || []).length, 6);
+  // Legacy Standard, legacy Premium, scripted-photo, and LUXIFY each have
+  // success and uncertain-dispatch responses using the same privacy boundary.
+  assert.equal((render.match(/job: jobDto\(reservedJob\)/g) || []).length, 8);
   assert.doesNotMatch(download, /avatar|voice|jobDto/);
   assert.match(projects, /\.map\(projectDto\)/);
   assert.match(projects, /project: projectDto\(project\)/);

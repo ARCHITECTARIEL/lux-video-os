@@ -6,10 +6,18 @@ import * as schema from '../../db/schema.js';
 let grants = [];
 const user = { id: 'authorized-account', email: 'owner@example.test' };
 let databaseFailure = false;
+let rateLimitBlocked = false;
 const db = { select() {
   if (databaseFailure) throw new Error('private connection failure');
   let table;
   return { from(value) { table = value; return this; }, where() { return this; }, for() { return this; }, limit() { return this; }, then(resolve, reject) { return Promise.resolve(table === schema.entitlements ? grants : [user]).then(resolve, reject); } };
+}, insert(table) {
+  assert.equal(table, schema.rateLimits);
+  return {
+    values() { return this; },
+    onConflictDoUpdate() { return this; },
+    async returning() { return [{ count: rateLimitBlocked ? 7 : 1 }]; },
+  };
 } };
 mock.module('../../db/client.js', { namedExports: { database: () => db } });
 const { default: talentHandler } = await import('../../api/video-os/talent.js');
@@ -53,6 +61,13 @@ assert.equal(unavailable.status, 503);
 assert.equal(JSON.stringify(unavailable.body).includes('private connection failure'), false);
 assert.equal(fetches, 0);
 databaseFailure = false; grants = [grant];
+rateLimitBlocked = true; fetches = 0;
+const limited = await invoke(headers);
+assert.equal(limited.status, 429);
+assert.equal(limited.body.code, 'rate_limited');
+assert.equal(fetches, 0);
+assert.equal(JSON.stringify(limited.body).includes(user.id), false);
+rateLimitBlocked = false;
 const providerRequests = [];
 globalThis.fetch = async (url) => {
   const value = String(url);
@@ -63,7 +78,11 @@ globalThis.fetch = async (url) => {
   if (value.includes('ownership=public')) {
     return response({ data: Array.from({ length: 30 }, (_, index) => ({ id: `shared-${index}`, name: `Shared ${index}`, status: 'completed', preview_image_url: `https://media.example/shared-${index}.jpg`, supported_api_engines: ['avatar_iv'] })), has_more: false });
   }
-  return response({ data: { voices: FEATURED_CAST.map((item) => ({ voice_id: item.voiceId, voice_name: item.label, status: 'active' })) } });
+  return response({
+    data: FEATURED_CAST.map((item) => ({ voice_id: item.voiceId, voice_name: item.label, status: 'active' })),
+    has_more: false,
+    next_token: null,
+  });
 };
 const result = await invoke({ cookie: `vos_session=${encodeURIComponent(token)}` });
 const serialized = JSON.stringify(result.body);
@@ -71,6 +90,7 @@ const serialized = JSON.stringify(result.body);
 assert.equal(result.status, 200);
 assert.equal(result.body.talent.avatars.length, 20);
 assert.deepEqual(result.body.talent.avatars.slice(0, 3).map((item) => item.id), ['featured:ariel', 'featured:oso', 'featured:kd']);
+assert.equal(result.body.talent.voices.filter((item) => item.providerReady === true).length, FEATURED_CAST.length);
 assert.equal('privateLookCount' in result.body.connection, false);
 assert.equal('privateLooksPages' in (result.body.connection.pagination || {}), false);
 for (const item of FEATURED_CAST) {

@@ -9,6 +9,11 @@ import {
   OUTPUT_ACCEPTANCE_VERSION,
   finalOutputPath,
 } from '../lib/video-os-output-acceptance.js';
+import {
+  LUXIFY_PROVIDER_CAPABILITY,
+  LUXIFY_RENDER_MODE,
+} from '../lib/luxify-contract.js';
+import { assertPersistedLuxifyJob, hasLuxifyJobMarker } from '../lib/luxify-job-binding.js';
 
 const MAX_FINAL_BYTES = 100 * 1024 * 1024;
 const MAX_DURATION_MS = 180_000;
@@ -21,6 +26,18 @@ const DIMENSIONS = Object.freeze({
   vertical: Object.freeze([1080, 1920]),
   square: Object.freeze([1080, 1080]),
 });
+const LUXIFY_DIMENSIONS = Object.freeze({
+  '720p': Object.freeze({
+    '16:9': Object.freeze([1280, 720]),
+    '9:16': Object.freeze([720, 1280]),
+    '1:1': Object.freeze([720, 720]),
+  }),
+  '1080p': Object.freeze({
+    '16:9': Object.freeze([1920, 1080]),
+    '9:16': Object.freeze([1080, 1920]),
+    '1:1': Object.freeze([1080, 1080]),
+  }),
+});
 
 let ffmpegVersionPromise;
 
@@ -30,6 +47,34 @@ function validationError(code, message) {
     failureCategory: 'FINAL_MEDIA_VALIDATION',
     validationCode: code,
   });
+}
+
+export function luxifyMediaExpectations(job) {
+  if (!hasLuxifyJobMarker(job)) return null;
+  const binding = assertPersistedLuxifyJob(job);
+  const dimensions = LUXIFY_DIMENSIONS[binding.intent.resolution]?.[binding.intent.aspectRatio];
+  if (!dimensions) throw validationError('LUXIFY_FORMAT_INVALID', 'LUXIFY final media format or resolution is invalid.');
+  return Object.freeze({
+    expectedDimensions: dimensions,
+    expectedDurationMs: binding.intent.durationSeconds * 1_000,
+    acceptance: Object.freeze({
+      renderMode: LUXIFY_RENDER_MODE,
+      providerCapability: LUXIFY_PROVIDER_CAPABILITY,
+      resolution: binding.intent.resolution,
+      aspectRatio: binding.intent.aspectRatio,
+    }),
+  });
+}
+
+function finalMediaExpectations(job, expectedDurationMs) {
+  const luxify = luxifyMediaExpectations(job);
+  if (luxify) return luxify;
+  const expectedDimensions = DIMENSIONS[job.format];
+  if (!expectedDimensions) throw validationError('FORMAT_INVALID', 'Final media format is invalid.');
+  if (!Number.isFinite(expectedDurationMs) || expectedDurationMs <= 0) {
+    throw validationError('EXPECTED_DURATION_REQUIRED', 'Expected media duration is required.');
+  }
+  return { expectedDimensions, expectedDurationMs, acceptance: null };
 }
 
 function localFilePath(filePath) {
@@ -318,11 +363,9 @@ export async function validateFinalMedia(filePath, { job, expectedDurationMs } =
     || !['heygen', 'sadtalker'].includes(job.provider)) {
     throw validationError('JOB_BINDING_INVALID', 'Final media job binding is invalid.');
   }
-  const expectedDimensions = DIMENSIONS[job.format];
-  if (!expectedDimensions) throw validationError('FORMAT_INVALID', 'Final media format is invalid.');
-  if (!Number.isFinite(expectedDurationMs) || expectedDurationMs <= 0) {
-    throw validationError('EXPECTED_DURATION_REQUIRED', 'Expected media duration is required.');
-  }
+  const expectations = finalMediaExpectations(job, expectedDurationMs);
+  const expectedDimensions = expectations.expectedDimensions;
+  const policyDurationMs = expectations.expectedDurationMs;
 
   const inspected = await inspectMedia(filePath);
   if (inspected.videoCodec !== 'h264' || inspected.audioCodec !== 'aac') {
@@ -331,8 +374,8 @@ export async function validateFinalMedia(filePath, { job, expectedDurationMs } =
   if (inspected.width !== expectedDimensions[0] || inspected.height !== expectedDimensions[1]) {
     throw validationError('DIMENSIONS_MISMATCH', 'Final media dimensions do not match the requested format.');
   }
-  const toleranceMs = Math.max(500, expectedDurationMs * 0.05);
-  if (Math.abs(inspected.durationMs - expectedDurationMs) > toleranceMs) {
+  const toleranceMs = Math.max(500, policyDurationMs * 0.05);
+  if (Math.abs(inspected.durationMs - policyDurationMs) > toleranceMs) {
     throw validationError('DURATION_MISMATCH', 'Final media duration does not match its source.');
   }
 
@@ -344,6 +387,7 @@ export async function validateFinalMedia(filePath, { job, expectedDurationMs } =
     status: 'accepted',
     jobId: job.id,
     accountId: job.accountId,
+    ...(expectations.acceptance || {}),
     privatePathname,
     bytes: inspected.bytes,
     sha256: inspected.sha256,
@@ -357,7 +401,7 @@ export async function validateFinalMedia(filePath, { job, expectedDurationMs } =
       width: inspected.width,
       height: inspected.height,
       durationMs: inspected.durationMs,
-      expectedDurationMs,
+      expectedDurationMs: policyDurationMs,
       durationToleranceMs: toleranceMs,
     },
     checks: {

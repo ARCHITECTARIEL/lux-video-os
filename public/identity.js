@@ -287,6 +287,58 @@ function appendHostedConsent(container, identity) {
   container.append(panel);
 }
 
+function createCardAudioPreview({ id, kind, label }) {
+  const audio = document.createElement('audio');
+  audio.id = id;
+  audio.controls = true;
+  audio.preload = 'none';
+  audio.dataset.previewKind = kind;
+  audio.setAttribute('aria-label', label);
+  audio.hidden = true;
+  return audio;
+}
+
+function toggleCardAudioPreview(card, previewButton, { audio, failureMessage, src, statusElement }) {
+  if (!audio.hidden) {
+    audio.onerror = null;
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load?.();
+    audio.hidden = true;
+    previewButton.setAttribute('aria-expanded', 'false');
+    statusElement.textContent = '';
+    statusElement.hidden = true;
+    return;
+  }
+  for (const candidate of card.querySelectorAll('audio[data-preview-kind]')) {
+    candidate.onerror = null;
+    candidate.pause();
+    candidate.removeAttribute('src');
+    candidate.load?.();
+    candidate.hidden = true;
+  }
+  for (const control of card.querySelectorAll('[data-preview-toggle]')) control.setAttribute('aria-expanded', 'false');
+  audio.preload = 'metadata';
+  statusElement.textContent = '';
+  statusElement.hidden = true;
+  audio.onerror = () => {
+    if (audio.hidden) return;
+    const restoreTriggerFocus = document.activeElement === audio;
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load?.();
+    audio.hidden = true;
+    previewButton.setAttribute('aria-expanded', 'false');
+    statusElement.textContent = failureMessage;
+    statusElement.hidden = false;
+    if (restoreTriggerFocus && previewButton.isConnected && !previewButton.disabled) previewButton.focus();
+  };
+  audio.src = src;
+  audio.hidden = false;
+  previewButton.setAttribute('aria-expanded', 'true');
+  audio.focus();
+}
+
 function renderIdentity(identity) {
   const linkedEnrollment = linkedEnrollmentForIdentity(identity.id);
   const card = document.createElement('article');
@@ -327,6 +379,14 @@ function renderIdentity(identity) {
   created.textContent = `Created ${new Date(identity.createdAt).toLocaleDateString()}`;
   const actions = document.createElement('div');
   actions.className = 'identity-actions';
+  const previewMedia = [];
+  const previewStatus = document.createElement('p');
+  previewStatus.id = 'identity-voice-preview-status-' + identity.id;
+  previewStatus.className = 'component-error';
+  previewStatus.setAttribute('role', 'status');
+  previewStatus.setAttribute('aria-live', 'polite');
+  previewStatus.setAttribute('aria-atomic', 'true');
+  previewStatus.hidden = true;
   if (identity.ready) {
     const use = document.createElement('a');
     use.className = 'button primary';
@@ -334,22 +394,48 @@ function renderIdentity(identity) {
     use.textContent = 'Use in Video OS';
     actions.append(use);
   }
-  if (identity.voicePreviewUrl) {
-    const previewButton = button('Preview voice', 'secondary', () => {
-      const existing = card.querySelector('audio');
-      if (existing) {
-        existing.remove();
-        previewButton.setAttribute('aria-expanded', 'false');
-        return;
-      }
-      const audio = document.createElement('audio');
-      audio.controls = true;
-      audio.setAttribute('aria-label', `${identity.displayName} saved voice preview`);
-      audio.src = identity.voicePreviewUrl;
-      body.insertBefore(audio, actions);
-      previewButton.setAttribute('aria-expanded', 'true');
-      audio.focus();
+  const extractedVoicePreviewUrl = safeOwnedPreview(linkedEnrollment?.derivedAudio?.previewUrl, 'voice');
+  if (extractedVoicePreviewUrl) {
+    const audioId = 'identity-extracted-voice-' + identity.id;
+    const extractedAudio = createCardAudioPreview({
+      id: audioId,
+      kind: 'extracted',
+      label: identity.displayName + ' extracted voice sample',
     });
+    previewMedia.push(extractedAudio);
+    const extractedPreviewButton = button('Preview extracted voice sample', 'secondary', () => {
+      toggleCardAudioPreview(card, extractedPreviewButton, {
+        audio: extractedAudio,
+        failureMessage: 'The extracted voice sample could not be loaded. Try again or reload this page.',
+        src: extractedVoicePreviewUrl,
+        statusElement: previewStatus,
+      });
+    });
+    extractedPreviewButton.dataset.previewToggle = 'extracted';
+    extractedPreviewButton.setAttribute('aria-controls', audioId);
+    extractedPreviewButton.setAttribute('aria-describedby', previewStatus.id);
+    extractedPreviewButton.setAttribute('aria-expanded', 'false');
+    actions.append(extractedPreviewButton);
+  }
+  if (identity.voicePreviewUrl) {
+    const audioId = 'identity-provider-voice-' + identity.id;
+    const providerAudio = createCardAudioPreview({
+      id: audioId,
+      kind: 'provider',
+      label: identity.displayName + ' HeyGen cloned voice preview',
+    });
+    previewMedia.push(providerAudio);
+    const previewButton = button('Preview HeyGen cloned voice', 'secondary', () => {
+      toggleCardAudioPreview(card, previewButton, {
+        audio: providerAudio,
+        failureMessage: 'The HeyGen cloned voice preview could not be loaded. Try again or reload this page.',
+        src: identity.voicePreviewUrl,
+        statusElement: previewStatus,
+      });
+    });
+    previewButton.dataset.previewToggle = 'provider';
+    previewButton.setAttribute('aria-controls', audioId);
+    previewButton.setAttribute('aria-describedby', previewStatus.id);
     previewButton.setAttribute('aria-expanded', 'false');
     actions.append(previewButton);
   }
@@ -378,7 +464,8 @@ function renderIdentity(identity) {
   if (identity.voiceFailure?.message) {
     const error = document.createElement('p'); error.className = 'component-error'; error.textContent = `Voice: ${identity.voiceFailure.message}`; body.append(error);
   }
-  body.append(actions);
+  body.append(...previewMedia, actions);
+  if (extractedVoicePreviewUrl || identity.voicePreviewUrl) body.append(previewStatus);
   if (identity.avatarStatus === 'DRAFT' && identity.voiceStatus === 'DRAFT' && !state.providerSubmissionEnabled) {
     const held = document.createElement('p');
     held.className = 'provider-hold';
@@ -641,6 +728,7 @@ function resetWizard() {
   $('#consent-photo-preview').removeAttribute('src');
   $('#consent-video-preview').pause?.();
   $('#consent-video-preview').removeAttribute('src');
+  syncReadyMediaReview(null);
   resetVideoPresentation();
   clearValidation();
   clearConsentChecks();
@@ -690,8 +778,15 @@ function videoSignature(file = state.videoFile) {
 
 function safeOwnedPreview(value, kind) {
   const normalized = String(value || '');
-  const prefix = kind === 'photo' ? '/api/video-os-lite/asset?' : '/api/video-os-lite/enrollments?';
-  return normalized.startsWith(prefix) ? normalized : '';
+  if (kind === 'photo') return normalized.startsWith('/api/video-os-lite/asset?') ? normalized : '';
+  if (!['video', 'voice'].includes(kind) || !normalized.startsWith('/api/video-os-lite/enrollments?')) return '';
+  try {
+    const url = new URL(normalized, 'https://video-os.invalid');
+    if (url.pathname !== '/api/video-os-lite/enrollments' || !url.searchParams.get('enrollmentId') || url.searchParams.get('preview') !== kind) return '';
+  } catch {
+    return '';
+  }
+  return normalized;
 }
 
 function syncConsentMediaReview() {
@@ -708,6 +803,40 @@ function syncConsentMediaReview() {
     ? `${state.videoMetadata.width} × ${state.videoMetadata.height}`
     : source?.width && source?.height ? `${source.width} × ${source.height}` : '';
   $('#consent-video-caption').textContent = ['Phone video', duration ? `${duration.toFixed(duration < 10 ? 1 : 0)} seconds` : '', dimensions].filter(Boolean).join(' · ');
+}
+
+function syncReadyMediaReview(enrollment) {
+  const panel = $('#ready-media-review');
+  const photoUrl = safeOwnedPreview(enrollment?.photo?.previewUrl, 'photo');
+  const videoUrl = safeOwnedPreview(enrollment?.sourceVideo?.previewUrl, 'video');
+  const voiceUrl = safeOwnedPreview(enrollment?.derivedAudio?.previewUrl, 'voice');
+  const available = Boolean(enrollment?.status === 'IDENTITY_READY' && photoUrl && videoUrl && voiceUrl);
+  panel.hidden = !available;
+
+  const photo = $('#ready-photo-preview');
+  const video = $('#ready-video-preview');
+  const audio = $('#ready-extracted-voice-preview');
+  const status = $('#ready-media-preview-status');
+  if (!available) {
+    photo.removeAttribute('src');
+    video.pause?.();
+    video.removeAttribute('src');
+    audio.pause?.();
+    audio.removeAttribute('src');
+    status.textContent = '';
+    status.hidden = true;
+    return;
+  }
+  const sourcesChanged = photo.getAttribute('src') !== photoUrl
+    || video.getAttribute('src') !== videoUrl
+    || audio.getAttribute('src') !== voiceUrl;
+  if (sourcesChanged) {
+    status.textContent = '';
+    status.hidden = true;
+  }
+  if (photo.getAttribute('src') !== photoUrl) photo.src = photoUrl;
+  if (video.getAttribute('src') !== videoUrl) video.src = videoUrl;
+  if (audio.getAttribute('src') !== voiceUrl) audio.src = voiceUrl;
 }
 
 function validateStep() {
@@ -1122,6 +1251,7 @@ function updateProgress() {
   $('#ready-copy').textContent = identity?.ready
     ? 'Your authorized presenter and reusable voice are ready for Standard and Premium scripts.'
     : 'Your photo and reusable voice are prepared. Final presenter creation has not started.';
+  syncReadyMediaReview(linkedEnrollment);
   const lifecycleStatus = $('#ready-provider-status');
   const lifecycle = providerLifecyclePresentation(linkedEnrollment?.providerLifecycle);
   lifecycleStatus.hidden = !lifecycle;
@@ -1632,6 +1762,18 @@ menu.addEventListener('close', () => {
   if (opener?.isConnected) opener.focus();
 });
 menu.querySelectorAll('a').forEach(link => link.addEventListener('click', () => menu.close()));
+
+for (const [selector, label] of [
+  ['#ready-photo-preview', 'The saved appearance photo'],
+  ['#ready-video-preview', 'The saved phone video'],
+  ['#ready-extracted-voice-preview', 'The extracted voice sample'],
+]) {
+  $(selector).addEventListener('error', () => {
+    const status = $('#ready-media-preview-status');
+    status.textContent = label + ' could not be loaded. Try again or reload this page.';
+    status.hidden = false;
+  });
+}
 
 $('#ready-use-link').addEventListener('click', event => { if ($('#ready-use-link').getAttribute('aria-disabled') === 'true') event.preventDefault(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) cleanupCapture({ invalidate: true }); });

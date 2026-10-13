@@ -5,13 +5,15 @@ import {
   HYPERFRAMES_SANDBOX_VCPUS,
   HYPERFRAMES_MVP_SUPPORTED,
   HYPERFRAMES_VERSION,
-  finishMediaWithHyperframes,
+  finishMediaWithHyperframes as finishMediaWithHyperframesRuntime,
   hyperframesRenderCommand,
   hyperframesComposition,
   hyperframesSnapshotId,
   sandboxCreateOptions,
 } from '../services/hyperframes-finisher.js';
-import { finishingEngine } from '../workflows/video-render.js';
+import { finishMediaWithHyperframes } from '../services/hyperframes-client.js';
+import { hyperframesMvpReadiness } from '../services/hyperframes-contract.js';
+import { finishingEngine, requireReadyFinishingEngineForJob } from '../workflows/video-render.js';
 import { classifyFailure } from '../lib/video-os-operations.js';
 
 test('FFmpeg remains the default finishing engine', () => {
@@ -75,7 +77,7 @@ test('the optional HyperFrames runtime is held before media, storage, or Sandbox
   let sandboxCalls = 0;
   for (const format of ['landscape', 'portrait', 'square']) {
     await assert.rejects(
-      finishMediaWithHyperframes(
+      finishMediaWithHyperframesRuntime(
         { id: 'job-proof', format },
         'https://example.test/source.mp4',
         { createSandbox: async () => { sandboxCalls += 1; } },
@@ -91,8 +93,49 @@ test('the optional HyperFrames runtime is held before media, storage, or Sandbox
 test('workflow does not silently fall back after selecting HyperFrames', async () => {
   const source = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../workflows/video-render.js', import.meta.url), 'utf8'));
   const finishingBody = source.slice(source.indexOf('async function finishProviderMedia'), source.indexOf('async function failWorkflow'));
-  assert.match(source, /finishingEngine\(\) === 'hyperframes'/);
+  assert.match(source, /from ['"]\.\.\/services\/hyperframes-client\.js['"]/);
+  assert.doesNotMatch(source, /from ['"]\.\.\/services\/hyperframes-finisher\.js['"]/);
+  assert.match(source, /requireReadyFinishingEngineForJob\(readClaim\.job\)/);
   assert.match(source, /await finishMediaWithHyperframes\(readClaim\.job, sourceUrl\)/);
-  const selectedFinisher = finishingBody.slice(finishingBody.indexOf('const artifact = finishingEngine()'));
+  const selectedFinisher = finishingBody.slice(finishingBody.indexOf('const engine = requireReadyFinishingEngineForJob'));
   assert.doesNotMatch(selectedFinisher, /catch/);
+});
+
+test('Workflow-safe HyperFrames admission remains default-off before external effects', async () => {
+  assert.deepEqual(hyperframesMvpReadiness(), {
+    version: 'hyperframes-mvp-readiness/v1',
+    ready: false,
+    code: 'HYPERFRAMES_MVP_UNSUPPORTED',
+    failureCategory: 'CONFIG_MISSING',
+    reason: 'HyperFrames finishing is unavailable in the initial MVP release.',
+  });
+  let externalCalls = 0;
+  await assert.rejects(
+    finishMediaWithHyperframes(
+      { id: 'job-proof', format: 'landscape' },
+      'https://example.test/source.mp4',
+      {
+        createSandbox: async () => { externalCalls += 1; },
+        downloadProviderMedia: async () => { externalCalls += 1; },
+        putPrivateBlob: async () => { externalCalls += 1; },
+      },
+    ),
+    error => error?.code === 'HYPERFRAMES_MVP_UNSUPPORTED' && error?.failureCategory === 'CONFIG_MISSING',
+  );
+  assert.equal(externalCalls, 0);
+
+  const compositionJob = {
+    provider: 'heygen',
+    format: 'landscape',
+    input: { productionKit: { composition: { contractVersion: 'premium-composition-v1' } } },
+  };
+  assert.throws(
+    () => requireReadyFinishingEngineForJob(compositionJob, {
+      VIDEO_OS_COMPOSITION_ENGINE: 'hyperframes',
+      VIDEO_OS_HYPERFRAMES_ENABLED: 'true',
+      VIDEO_OS_HYPERFRAMES_SNAPSHOT_ID: 'snap-proof',
+    }),
+    error => error?.code === 'HYPERFRAMES_MVP_UNSUPPORTED' && error?.failureCategory === 'CONFIG_MISSING',
+  );
+  assert.equal(requireReadyFinishingEngineForJob({ ...compositionJob, input: {} }, {}), 'ffmpeg');
 });

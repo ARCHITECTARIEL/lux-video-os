@@ -22,6 +22,10 @@
             "dest": "/api/video-os-lite/workspace.js"
         },
         {
+            "src": "/api/video-os-lite/luxify",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
             "src": "/api/video-os/talent",
             "dest": "/api/video-os/talent.js"
         },
