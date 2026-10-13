@@ -513,3 +513,11 @@
 - Final verification: 722 Node tests and four Vitest tests passed; 47 explicit skips; four isolated DB/Blob suites passed. Runtime audit reports zero vulnerabilities. Review packaging passed 42 routes, 29 steps and six workflows; default deployable output is absent.
 - Isolated cleanup verified 27 empty tables and zero Blob objects. Handoff, execution prompts and evidence were updated. No production schema/configuration write, deployment, commit, push or HeyGen mutation occurred.
 - Next action is the documented migration rehearsal. Production activation and remaining provider/privacy release gates stay held. This entry refreshes the closure writeback requested by the hook; it does not repeat implementation or live operations.
+
+## 2026-10-13 - [closure-writeback] [VOS-001]
+
+- In `talent.js`, the in-flight group-read cache now uses `WeakMap(fetchImpl) -> Map(raw provider key) -> Map(groupId -> promise)`. Settled reads remove their group entry and clean up empty maps. The run 2 HMAC was removed because CodeQL also treats `createHmac` as a sink; the provider key is not hashed. The regression test observes the key sent on each group read, along with same-key sharing, different-key isolation and a later re-read.
+- Google OAuth test stubs in two test files now match the parsed HTTPS origin and exact path, with spoofed-host checks.
+- The schema lock change was removed from this PR: `config/database-schema.lock.json` is unchanged from base and remains stale (`migrationSetSha256`, `schemaSha256`, `tableCount` and the 11-migration text predate `drizzle/0011_concerned_micromacro.sql`). Lock recapture is deferred to VOS-002.
+- QA CodeQL CLI 2.27.2 `InsufficientPasswordHash` query: 0 results. Node 22 full suite: no regressions; the only failures are the pre-existing packaging hash test (`tests/heygen-runtime-packaging.test.mjs`, which fails on base and fails here because the lock change was dropped) and the path-dependent `tests/heygen-reconciliation-cli.test.mjs:321`. Vitest: 4/4 passed. QA: PASS.
+- Work remains uncommitted at base SHA `4425a713a51edbb3b907000d27226e2cba16e330`. No database connection, migration, provider call, deploy, push or commit occurred.

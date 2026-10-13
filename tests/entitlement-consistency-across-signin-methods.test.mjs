@@ -52,6 +52,17 @@ const originalEnvironment = {
 };
 const originalFetch = globalThis.fetch;
 
+function isGoogleEndpoint(value, pathname, hostname) {
+  const url = new URL(String(value));
+  return url.origin === `https://${hostname}` && url.pathname === pathname;
+}
+
+test('Google fetch stub matches only the exact HTTPS host and path', () => {
+  assert.equal(isGoogleEndpoint('https://oauth2.googleapis.com/token', '/token', 'oauth2.googleapis.com'), true);
+  assert.equal(isGoogleEndpoint('https://oauth2.googleapis.com.evil.test/token', '/token', 'oauth2.googleapis.com'), false);
+  assert.equal(isGoogleEndpoint('https://evil.test/oauth2.googleapis.com/token', '/token', 'oauth2.googleapis.com'), false);
+});
+
 function restoreEnvironment() {
   globalThis.fetch = originalFetch;
   for (const [name, value] of Object.entries(originalEnvironment)) {
@@ -84,8 +95,8 @@ async function verifyMagicLink(email) {
 
 async function signInWithGoogle(email, state) {
   globalThis.fetch = async (url) => {
-    if (String(url).includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
-    if (String(url).includes('openidconnect.googleapis.com/v1/userinfo')) return new Response(JSON.stringify({ email, email_verified: true, name: 'Google Test User' }), { status: 200 });
+    if (isGoogleEndpoint(url, '/token', 'oauth2.googleapis.com')) return new Response(JSON.stringify({ access_token: 'access-token-proof' }), { status: 200 });
+    if (isGoogleEndpoint(url, '/v1/userinfo', 'openidconnect.googleapis.com')) return new Response(JSON.stringify({ email, email_verified: true, name: 'Google Test User' }), { status: 200 });
     throw new Error(`unexpected fetch to ${url}`);
   };
   const res = response();

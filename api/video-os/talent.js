@@ -10,7 +10,6 @@ const itemSchema = z.record(z.string(), z.unknown());
 const compact = (value, max = 160) => String(value || '').trim().slice(0, max);
 const PROVIDER_TALENT_ID = Symbol('providerTalentId');
 const groupReadInflight = new WeakMap();
-const groupReadCacheSecret = crypto.randomBytes(32);
 
 function sharedTalentReference(providerId, kind) {
   const normalized = compact(providerId);
@@ -143,11 +142,11 @@ async function eligiblePrivateFeaturedLooks(accountAvatars, { fetchImpl, key }) 
   for (let offset = 0; offset < groupIds.length; offset += 4) {
     const batch = groupIds.slice(offset, offset + 4);
     const results = await Promise.all(batch.map((groupId) => {
-      let reads = groupReadInflight.get(fetchImpl);
-      if (!reads) { reads = new Map(); groupReadInflight.set(fetchImpl, reads); }
-      const readKey = crypto.createHmac('sha256', groupReadCacheSecret)
-        .update(JSON.stringify(['featured-group-consent', key, groupId]))
-        .digest('hex');
+      let byKey = groupReadInflight.get(fetchImpl);
+      if (!byKey) { byKey = new Map(); groupReadInflight.set(fetchImpl, byKey); }
+      let reads = byKey.get(key);
+      if (!reads) { reads = new Map(); byKey.set(key, reads); }
+      const readKey = groupId;
       if (reads.has(readKey)) return reads.get(readKey);
       const read = (async () => {
         try {
@@ -161,7 +160,10 @@ async function eligiblePrivateFeaturedLooks(accountAvatars, { fetchImpl, key }) 
         } catch {
           return null;
         }
-      })().finally(() => reads.delete(readKey));
+      })().finally(() => {
+        reads.delete(readKey);
+        if (!reads.size && byKey.get(key) === reads) byKey.delete(key);
+      });
       reads.set(readKey, read);
       return read;
     }));

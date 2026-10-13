@@ -196,23 +196,31 @@ test('unconfigured provider cannot present curated private avatars as ready', as
 test('concurrent inventory requests share only in-flight group consent reads', async (t) => {
   withInventoryEnvironment(t);
   const featured = FEATURED_CAST[0];
-  let groupReads = 0;
-  const fetchImpl = async (url) => {
+  const groupReads = [];
+  const fetchImpl = async (url, options) => {
     if (url.includes('ownership=private')) return response({ data: [
       { id: featured.avatarId, group_id: 'group-shared', avatar_type: 'digital_twin', status: 'completed', preview_image_url: 'https://media.example/featured.jpg' },
     ] });
     if (url.includes('ownership=public') || url.includes('/voices')) return response({ data: [] });
     if (url.endsWith('/group-shared')) {
-      groupReads += 1;
+      groupReads.push(options.headers['X-Api-Key']);
       await new Promise(resolve => setTimeout(resolve, 20));
       return response({ data: { id: 'group-shared', status: 'completed', consent_status: 'accepted' } });
     }
     throw new Error('Unexpected provider inventory request');
   };
   await Promise.all([loadTalentInventory({ fetchImpl }), loadTalentInventory({ fetchImpl })]);
-  assert.equal(groupReads, 1);
+  assert.deepEqual(groupReads, ['unit-test-provider-key'], 'the same provider key shares one in-flight read');
   await loadTalentInventory({ fetchImpl });
-  assert.equal(groupReads, 2, 'a later request must recheck provider consent');
+  assert.deepEqual(groupReads, ['unit-test-provider-key', 'unit-test-provider-key'], 'a settled read must be removed');
+  await Promise.all([
+    loadTalentInventory({ fetchImpl, env: { HEYGEN_API_KEY: 'provider-key-one' } }),
+    loadTalentInventory({ fetchImpl, env: { HEYGEN_API_KEY: 'provider-key-one' } }),
+    loadTalentInventory({ fetchImpl, env: { HEYGEN_API_KEY: 'provider-key-two' } }),
+  ]);
+  assert.deepEqual(groupReads.slice(2).sort(), ['provider-key-one', 'provider-key-two'], 'different keys make separate reads with their own credentials');
+  await loadTalentInventory({ fetchImpl, env: { HEYGEN_API_KEY: 'provider-key-one' } });
+  assert.equal(groupReads.filter(key => key === 'provider-key-one').length, 2, 'a later call must re-read after the key map is cleared');
 });
 
 test('in-flight group consent reads stay isolated by credential and failed reads are retried', async (t) => {
