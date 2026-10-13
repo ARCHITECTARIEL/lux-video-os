@@ -65,3 +65,14 @@ test('configured private enrollment canary permits only the exact requesting acc
   assert.equal(providerCreationActivationStatus({ VERCEL_ENV: 'preview', VIDEO_OS_PROVIDER_CREATION_ENABLED: 'true' }).enabled, true);
   assert.equal(providerCreationActivationStatus({ ...env, VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: ' ' }).enabled, true);
 });
+
+test('pinned account comparison rejects case-variant account IDs', () => {
+  const env = {
+    VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: 'Owner-Account',
+    VIDEO_OS_PROVIDER_CREATION_ENABLED: 'true',
+  };
+  assert.equal(providerCreationActivationStatus(env, 'Owner-Account').enabled, true);
+  assert.deepEqual(providerCreationActivationStatus(env, 'owner-account'), {
+    enabled: false, reason: 'private_enrollment_canary_active',
+  });
+});

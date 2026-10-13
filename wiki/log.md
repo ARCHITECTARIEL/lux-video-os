@@ -1,14 +1,15 @@
 # Work Log
 
-## 2026-10-13T22:19:38Z - [closure-writeback] [ID-001]
-
-- Confirmed the ID-001 account-scoped provider activation change and its eight changed files are present in this worktree. Full Node suite: 1,049 passed, 0 failed, 48 skipped; Vitest: 4 passed, 0 failed; import check and diff whitespace check passed.
-- No commit, push, merge, deploy, migration, or external provider/database call was made.
-
 ## 2026-10-13 - [ID-001]
 
 - Scoped provider creation to the exact pinned enrollment canary account when `VIDEO_OS_PROVIDER_CREATION_ENABLED=true`. Identity, Luxify, and render submission pass their authenticated or persisted account ID; calls without an account remain blocked while a canary is pinned. Other provider, consent, entitlement, cost, binding, and diagnostic gates remain in place.
-- Added canary, mismatch, missing-account, switch-off, and no-canary regression coverage. No provider call, deployment, migration, or repository publication was performed.
+- Added canary, mismatch, missing-account, switch-off, and no-canary regression coverage. Full Node suite: 1,049 passed, 0 failed, 48 skipped; Vitest: 4 passed, 0 failed; import and diff whitespace checks passed. No provider call, deployment, migration, or repository publication was performed.
+
+## 2026-10-13T22:33:39Z - [ID-001b]
+
+- Corrected the production DB binding diagnostic to distinguish the existing no-account `providerCreationDisabled` field from canary-scoped creation, and to reject containment attestation when the pinned account can create. The response does not reveal the account ID.
+- Added direct render workflow gate tests for a pinned account, another account, and a missing account ID, plus a case-variant account regression. Updated current guidance and added a dated correction note for historical execution records.
+- Verification: full Node suite 1,052 passed, 0 failed, 48 skipped; Vitest 4 passed, 0 failed; import check, client privacy scan and diff whitespace check passed. No commit, push, merge, deploy, migration or external provider/database call was made.
 
 ## 2026-10-01 - [p0-proof-scoping]
 
