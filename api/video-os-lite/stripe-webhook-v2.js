@@ -5,6 +5,7 @@ import { handleOptions, readRaw, send } from '../../lib/video-os-account.js';
 import { featureEnabled } from '../../lib/video-os-security.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { parseOrThrow, stripeCheckoutSessionSchema } from '../../lib/video-os-validation.js';
+import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 
 // Exported so lib/video-os-stripe-reconciliation.js checks the same
 // package->credits mapping this handler actually grants against, instead of
@@ -12,6 +13,7 @@ import { parseOrThrow, stripeCheckoutSessionSchema } from '../../lib/video-os-va
 export const PACKAGE_CREDITS = { credits_500: 500, credits_1000: 1000, credits_2000: 2000 };
 
 export default async function handler(req, res) {
+  if (blockForDiagnosticMaintenance(req, res)) return;
   if (handleOptions(req, res)) return;
   if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST for Stripe webhooks.' });
   try {

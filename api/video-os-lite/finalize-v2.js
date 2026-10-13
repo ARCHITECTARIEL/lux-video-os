@@ -2,8 +2,10 @@ import { jobDto } from '../../db/dto.js';
 import { getOwnedJob } from '../../db/repositories.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { finishRequestSchema, parseOrThrow } from '../../lib/video-os-validation.js';
+import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 
 export default async function handler(req, res) {
+  if (blockForDiagnosticMaintenance(req, res)) return;
   if (handleOptions(req, res)) return;
   if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST to check a render.' });
   try {

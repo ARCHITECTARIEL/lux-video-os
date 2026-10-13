@@ -2,6 +2,7 @@ import { readVerifiedFinalBytes } from '../../lib/video-os-final-bytes.js';
 import { getOwnedJob } from '../../db/repositories.js';
 import { sessionFromRequest } from '../../lib/video-os-account.js';
 import { acceptedJobOutput } from '../../lib/video-os-output-acceptance.js';
+import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 
 function failure(res, status, error) { res.statusCode = status; res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify({ ok: false, error })); }
 
@@ -10,6 +11,7 @@ export function mediaDisposition(requestUrl, filename) {
 }
 
 export default async function handler(req, res) {
+  if (blockForDiagnosticMaintenance(req, res)) return;
   if (req.method !== 'GET') return failure(res, 405, 'Use GET to download.');
   try {
     const session = sessionFromRequest(req);

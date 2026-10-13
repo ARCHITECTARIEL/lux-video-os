@@ -12,10 +12,12 @@ import scriptedPhoto from '../../routes/video-os-lite/scripted-photo.js';
 import providerConsent from '../../routes/video-os-lite/provider-consent.js';
 import luxify from '../../routes/video-os-lite/luxify.js';
 import { send } from '../../lib/video-os-account.js';
+import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 
 const handlers = { admin, asset, copywriter, identities, projects, providers, results, standard, enrollments, luxify, 'enrollment-upload': enrollmentUpload, 'scripted-photo': scriptedPhoto, 'provider-consent': providerConsent };
 
 export default async function handler(req, res) {
+  if (blockForDiagnosticMaintenance(req, res, { allowDiagnostic: true })) return;
   const pathname = new URL(req.url, 'https://video-os.invalid').pathname;
   const route = pathname.split('/').filter(Boolean).pop();
   const selected = handlers[route];
