@@ -25,6 +25,8 @@ for (const file of result.outputFiles) {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
-  if (!existing?.equals(file.contents)) await writeFile(file.path, file.contents);
+  const sameSourceText = existing?.toString('utf8').replaceAll('\r\n', '\n')
+    === Buffer.from(file.contents).toString('utf8').replaceAll('\r\n', '\n');
+  if (!sameSourceText) await writeFile(file.path, file.contents);
 }
 console.log(`Bundled private-upload browser client from @vercel/blob ${sdk.version}.`);
