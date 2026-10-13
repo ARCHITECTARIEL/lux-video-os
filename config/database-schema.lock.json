@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "provenance": "recaptured 2026-10-13 (VOS-002): fresh isolated PostgreSQL 18.6 throwaway instance with all 12 migrations (0000-0011) applied from empty via psql; catalogue hashed with tools/check-migrations.mjs readSchemaCatalogue/schemaDigest, migration set via migrationPlan(), sources via schemaSourceHashes(). Control: 0000-0010 reproduces the 2026-10-01 schemaSha256. identity_consents_hosted_v3_purpose_ck is intentionally excluded (deferred per 2dd491c; proposal in docs/hosted-v3-purpose-guard.proposed.sql). Supersedes the 2026-10-01 capture (11 migrations).",
-  "capturedAt": "2026-10-13T18:34:48.418Z",
+  "provenance": "recaptured 2026-10-13 (VOS-002b): fresh isolated PostgreSQL 18.6 (major version 18) throwaway instance with all 12 migrations (0000-0011) applied from empty via psql, captured twice (LF and CRLF copies of the migration SQL) with identical results after catalogue line-ending normalization (tools/check-migrations.mjs normalizeCatalogueLineEndings). Hashed with readSchemaCatalogue/schemaDigest, migration set via migrationPlan(), sources via schemaSourceHashes(). The schemaSha256 depends on the PostgreSQL major version (catalogue text such as pg_get_functiondef differs, e.g. PG 17); compare only against a PostgreSQL 18 database. identity_consents_hosted_v3_purpose_ck is intentionally excluded (deferred per 2dd491c; proposal in docs/hosted-v3-purpose-guard.proposed.sql). Supersedes the 2026-10-01 capture (11 migrations, pre-normalization).",
+  "capturedAt": "2026-10-13T18:57:03.744Z",
   "migrationSetSha256": "414d884abacd185c72e744b5c8858791df5d7bbcb2bf6931ac03bab1e09916ea",
   "sourceHashes": {
     "db/schema.js": "00685ce24bfe9baeaf3ea4b5742298e2ca1dffe21c022804f836420cf050c87f",
     "db/standard-narration-schema.js": "be1b5caa8040685ddae706b0e3c7d7357deb8753d917528d3defb88af11b0efd",
     "db/provider-lifecycle-guards.sql": "dbbfe7a06b596283e62f58d3cb050a30d42e489dcd781d1523547aacc897c3df"
   },
-  "schemaSha256": "d3eed48b8d840a431e2d963a9a0d32d47693554767b19d171f975481ae7de527",
+  "schemaSha256": "02d4d057495b821e9ddbcb4d246f74adbd96a7b6b050d07a5bca1c1e94935240",
   "tableCount": 27
 }

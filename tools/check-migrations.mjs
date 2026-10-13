@@ -14,6 +14,9 @@ const digest = value => createHash('sha256').update(value).digest('hex');
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 export const schemaDigest = value => digest(JSON.stringify(canonical(value)));
+export const normalizeCatalogueLineEndings = value => typeof value === 'string' ? value.replace(/\r\n?/g, '\n')
+  : Array.isArray(value) ? value.map(normalizeCatalogueLineEndings)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, normalizeCatalogueLineEndings(item)])) : value;
 function fail(code, message) { return Object.assign(new Error(message), { code, verificationFailure: true }); }
 
 export async function checkMigrationFiles(directory = drizzleDir) {
@@ -149,7 +152,7 @@ export async function readSchemaCatalogue(client) {
     'routines', (select coalesce(jsonb_agg(jsonb_build_object('name',p.proname,'definition',pg_get_functiondef(p.oid)) order by p.proname,pg_get_function_identity_arguments(p.oid)),'[]') from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind in ('f','p')),
     'sequences', (select coalesce(jsonb_agg(jsonb_build_object('name',sequencename,'type',data_type::text,'start',start_value,'min',min_value,'max',max_value,'increment',increment_by,'cycle',cycle,'cache',cache_size) order by sequencename),'[]') from pg_sequences where schemaname='public')
   ) as catalogue`);
-  return result.rows[0].catalogue;
+  return normalizeCatalogueLineEndings(result.rows[0].catalogue);
 }
 
 export async function verifyConnectedDatabase(client, { target, plan, schemaLock, sourceHashes, capture = false, validatedTarget = null, validatedCanonicalTarget = null, validatedUnpooledTarget = null, targetManifestSha256 = null, targetManifestBinding = null, schemaLockSha256 = null, schemaLockBinding = null }) {
