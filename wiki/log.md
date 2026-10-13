@@ -556,3 +556,15 @@
 ## 2026-10-13T15:55:19Z - [closure-writeback] [INT-001f]
 
 - Confirmed the scoped public copy, focused consent assertions, and INT-001e commit correction in this worktree. Node v24.14.1: 1007 passed, 1 failed (pre-existing VOS-002 packaging hash), 0 cancelled, 48 skipped; Vitest: 4 passed. Syntax and import checks passed; `git diff --check` passed. INT-001f is committed locally on `codex/int-001-voice`; no external action.
+
+## 2026-10-13T16:10:00Z - [INT-001g]
+
+- Ariel decided at 12:10 PM ET on 2026-10-13 that the provider-consent authorization sentence must name HeyGen as the provider behind The Render, the following identity-check and consent-clip sentence must begin with HeyGen, and the privacy third-party list entry must use the same HeyGen-first attribution. Other consent copy stays unchanged.
+- INT-001f is committed locally as `e31b29e5` on `codex/int-001-voice`.
+- INT-001g is committed locally on `codex/int-001-voice` (SHA in the run report); not pushed.
+- Verification: focused consent test 5 passed; full Node suite 1,008 passed, 1 failed, 48 skipped (existing `db/schema.js` packaging hash mismatch); Vitest 4 passed.
+
+## 2026-10-13T16:14:24Z - [closure-writeback] [INT-001g]
+
+- This session updated only `public/provider-consent.html`, `public/privacy.html`, `tests/provider-consent-browser.test.mjs`, and this log. The requested HeyGen-first consent attribution is covered by the focused test and all 11 named consent lines; other consent wording remains unchanged.
+- Verification readback: focused Node 5 passed; full Node 1,008 passed, 1 failed on the existing `db/schema.js` packaging hash, 48 skipped; Vitest 4 passed; import check and `git diff --check` passed. HEAD is `e31b29e5780f81cd0a9062f41b1571407196e742` on `codex/int-001-voice`.
