@@ -36,22 +36,43 @@ test('consent and privacy copy retain the named processor disclosure', () => {
   assert.match(identity, /The Render \(processed by HeyGen\) has accepted this presenter’s consent/);
 });
 
-test('every named consent string discloses HeyGen alongside The Render', () => {
+function assertNamedConsentMentions(source, file, consentLine, expectedCount) {
+  const lines = source.split(/\r?\n/).filter(line => consentLine.test(line));
+  const mentions = lines.flatMap(line => [...line.matchAll(/The Render/g)].map(match => ({ line, index: match.index })));
+  assert.equal(mentions.length, expectedCount, `${file}: consent mention coverage changed`);
+  for (const { line, index } of mentions) {
+    const before = line.slice(0, index);
+    const after = line.slice(index + 'The Render'.length);
+    assert.ok(
+      before.endsWith('HeyGen, the provider behind ') || after.startsWith(' (processed by HeyGen)'),
+      `${file}: The Render mention lacks HeyGen attribution: ${line.trim()}`,
+    );
+  }
+}
+
+test('every named consent mention discloses HeyGen alongside The Render', () => {
   const files = [
     ['provider-consent.html', /The Render/],
     ['provider-consent.js', /The Render/],
     ['identity.js', /(?:consent|presenter returned).*The Render|The Render.*consent/i],
     ['privacy.html', /The Render/],
   ];
-  const expectedCounts = [3, 3, 3, 2];
+  const expectedCounts = [4, 3, 3, 2];
   files.forEach(([file, consentLine], index) => {
     const source = readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
-    const lines = source.split(/\r?\n/).filter(line => consentLine.test(line));
-    assert.equal(lines.length, expectedCounts[index], `${file}: consent string coverage changed`);
-    for (const line of lines) {
-      assert.match(line, /HeyGen/, `${file}: ${line.trim()}`);
-    }
+    assertNamedConsentMentions(source, file, consentLine, expectedCounts[index]);
   });
+});
+
+test('a second Render mention on the same consent line still needs HeyGen attribution', () => {
+  const source = readFileSync(new URL('../public/provider-consent.html', import.meta.url), 'utf8');
+  const changed = source.replace(
+    'after The Render (processed by HeyGen) confirms consent',
+    'after The Render confirms consent',
+  );
+  assert.notEqual(changed, source, 'consent fixture must contain the second mention');
+  assert.throws(() => assertNamedConsentMentions(changed, 'provider-consent.html', /The Render/, 4),
+    /The Render mention lacks HeyGen attribution/);
 });
 
 for (const link of [
