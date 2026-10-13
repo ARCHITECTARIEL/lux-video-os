@@ -599,3 +599,10 @@
 
 - This session changed only `tests/heygen-no-legacy-endpoints.test.mjs` and this worktree's `wiki/log.md`. The widened guard passes against repository source with no new hits; focused Node 4/4 and Vitest 4/4 pass. The full Node suite has 1,013 passes, 1 existing packaging-hash failure, and 48 skips.
 - Closure readback: the VOS-003b entry and this tagged writeback are present in this worktree. VOS-003b is committed locally (parent `686428ed`); no push, deploy, migration, database access, or provider call occurred.
+
+## 2026-10-13T18:34:00Z - [VOS-002]
+
+- Owner (Ariel) chose option (c) on 2026-10-13: `identity_consents_hosted_v3_purpose_ck` stays out of the Drizzle journal, consistent with the Oct 8 decision in commit `2dd491c` (optional 0012-0015 lineage not yet reconciled). The reviewed proposal remains in `docs/hosted-v3-purpose-guard.proposed.sql`, unchanged. No migration 0012 was added; `drizzle/` is identical to base.
+- `config/database-schema.lock.json` was recaptured for 12 migrations (0000-0011) on a local throwaway PostgreSQL 18.6 container via `psql`, using the repository functions `migrationPlan`, `schemaSourceHashes`, `readSchemaCatalogue`, and `schemaDigest` from `tools/check-migrations.mjs`. Values: `migrationSetSha256` `414d884abacd185c72e744b5c8858791df5d7bbcb2bf6931ac03bab1e09916ea` (matches `docs/core-schema-qualification-20261008.md`), `schemaSha256` `d3eed48b8d840a431e2d963a9a0d32d47693554767b19d171f975481ae7de527`, `tableCount` 27, and `db/schema.js` `00685ce24bfe9baeaf3ea4b5742298e2ca1dffe21c022804f836420cf050c87f`. The previous lock (2026-10-01, 11 migrations) had `migrationSetSha256` `4fd5ed31...`, `schemaSha256` `f599f7f1...`, and `db/schema.js` `7c8b9175...`. Control: applying 0000-0010 reproduced `f599f7f1...` exactly.
+- `tests/heygen-runtime-packaging.test.mjs` now asserts `lock.migrationSetSha256 === migrationPlan().sha256` (previously false-green); it now passes. Local runner: Node v24.14.1. Full results are in the run report (`logs/VOS-002-*.log`).
+- VOS-002 is committed locally on `codex/vos-002` (SHA in the run report), not pushed. No Neon, production DB, or provider call.

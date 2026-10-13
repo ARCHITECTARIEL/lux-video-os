@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "provenance": "recaptured 2026-10-01: independently verified byte-identical across production (live, real history) and a fresh isolated PostgreSQL 18 instance with all 11 migrations applied from empty -- see docs/execution-notes/20261001-schema-lock-recapture.md. Supersedes the 2026-09-30 capture, which could not be reproduced by either environment.",
-  "capturedAt": "2026-10-01T19:13:05.458Z",
-  "migrationSetSha256": "4fd5ed310bd07fb23e4c67b48f0c50a8cbd5087d6cc55b51c5f5dee1a6cc961d",
+  "provenance": "recaptured 2026-10-13 (VOS-002): fresh isolated PostgreSQL 18.6 throwaway instance with all 12 migrations (0000-0011) applied from empty via psql; catalogue hashed with tools/check-migrations.mjs readSchemaCatalogue/schemaDigest, migration set via migrationPlan(), sources via schemaSourceHashes(). Control: 0000-0010 reproduces the 2026-10-01 schemaSha256. identity_consents_hosted_v3_purpose_ck is intentionally excluded (deferred per 2dd491c; proposal in docs/hosted-v3-purpose-guard.proposed.sql). Supersedes the 2026-10-01 capture (11 migrations).",
+  "capturedAt": "2026-10-13T18:34:48.418Z",
+  "migrationSetSha256": "414d884abacd185c72e744b5c8858791df5d7bbcb2bf6931ac03bab1e09916ea",
   "sourceHashes": {
-    "db/schema.js": "7c8b91750d894910ee15b4dc6d2fb82ea6b2df5eeac46f99e0d46f0c174e18d9",
+    "db/schema.js": "00685ce24bfe9baeaf3ea4b5742298e2ca1dffe21c022804f836420cf050c87f",
     "db/standard-narration-schema.js": "be1b5caa8040685ddae706b0e3c7d7357deb8753d917528d3defb88af11b0efd",
     "db/provider-lifecycle-guards.sql": "dbbfe7a06b596283e62f58d3cb050a30d42e489dcd781d1523547aacc897c3df"
   },
-  "schemaSha256": "f599f7f1f428cf966e3f7c111aef926e4991efe5fd2664258570e992a6472c36",
+  "schemaSha256": "d3eed48b8d840a431e2d963a9a0d32d47693554767b19d171f975481ae7de527",
   "tableCount": 27
 }
