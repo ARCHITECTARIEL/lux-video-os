@@ -48,8 +48,8 @@ LAST30DAYS_SCRIPT = Path(os.environ.get("LAST30DAYS_SCRIPT_PATH") or DEFAULT_LAS
 VIDEO_HELPER_ROOT = Path.home() / "OneDrive" / "Desktop" / "VIDEO HELPER"
 HEYGEN_SUBMISSIONS_DIR = VIDEO_HELPER_ROOT / "heygen_submissions"
 HEYGEN_KEY_FILE = Path(os.environ.get("HEYGEN_KEY_FILE") or (VIDEO_HELPER_ROOT / "HeyGen.txt"))
-HEYGEN_AVATARS_URL = os.environ.get("HEYGEN_AVATARS_URL") or "https://api.heygen.com/v2/avatars"
-HEYGEN_VOICES_URL = os.environ.get("HEYGEN_VOICES_URL") or "https://api.heygen.com/v2/voices"
+HEYGEN_AVATARS_URL = os.environ.get("HEYGEN_AVATARS_URL") or "https://api.heygen.com/v3/avatars/looks?ownership=public&limit=50"
+HEYGEN_VOICES_URL = os.environ.get("HEYGEN_VOICES_URL") or "https://api.heygen.com/v3/voices?type=private&limit=100"
 PINNED_PRIVATE_HEYGEN_AVATARS = [
     {
         "id": "880ad1223ca84f9590f21a0df4bf66b2",

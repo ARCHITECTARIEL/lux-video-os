@@ -101,6 +101,6 @@ assert(providerRequests.every((url) => {
   const normalizedUrl = url.toLowerCase();
   return !normalizedUrl.includes('video/generate')
     && !normalizedUrl.includes('video/create')
-    && !normalizedUrl.endsWith('/v2/video');
+    && !normalizedUrl.endsWith('/v3/videos');
 }), 'inventory must never submit a video job');
 

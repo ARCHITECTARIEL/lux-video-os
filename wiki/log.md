@@ -580,3 +580,11 @@
 - This session changed only `tests/provider-consent-browser.test.mjs` and `wiki/log.md`. Per-mention consent attribution covers the four named public files, including the second `The Render` occurrence on one HTML line.
 - Local Node v24.14.1: focused 6 passed; full suite 1,009 passed, 1 failed (existing VOS-002 packaging hash), 0 cancelled, 48 skipped. Vitest 4 passed. Syntax, import, and `git diff --check` checks passed. The QA Node 22 counts in the INT-001h entry were supplied for the log and were not rerun here.
 - Parent `f1755018`; INT-001h is committed locally on `codex/int-001-voice` (SHA in the run report); not pushed.
+
+## 2026-10-13T17:40:00Z - [VOS-003]
+
+- Replaced HeyGen v2 inventory defaults in the legacy Python paths and corrected hosted-consent lifecycle event templates to the v3 paths already used by the provider client. Updated two test fixtures, documented the v3 inventory and consent endpoints, and added a source scan that rejects HeyGen v1/v2 endpoints while permitting unrelated providers.
+- The ledger templates are persisted as immutable `provider_lifecycle_events.path_template` facts. Replay and readback do not match on that column, and the existing schema accepts the v3 templates, so no migration or historical-row rewrite is needed. Historical rows retain their recorded path. Intentional v2 rejection and unsafe-template test cases remain.
+- Local branch `codex/vos-003` is based on `da6909067e9c19cbacee7a6451181ab7e58ed0ee`. VOS-003 is committed locally on `codex/vos-003` (SHA in the run report); not pushed.
+- Verification: focused endpoint guard 2/2, Python public-rendering contracts 12/12, Vitest 4/4. Codex's sandboxed full Node run had extra failures only because this new worktree lacked installed dependencies (`drizzle-kit`, `@workflow/builders`); the full suite was re-run with the identical-lockfile dependencies (see run report, `VOS-003-nodetest.log`).
+- Closure readback: this dated entry is present in this worktree's `wiki/log.md`; no external repository log was changed.

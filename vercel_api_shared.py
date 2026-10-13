@@ -220,7 +220,7 @@ def supports_avatar_iv(item):
 
 def hosted_talent_inventory():
     avatars_url = os.environ.get("HEYGEN_AVATARS_URL") or "https://api.heygen.com/v3/avatars/looks?ownership=public&limit=50"
-    voices_url = os.environ.get("HEYGEN_VOICES_URL") or "https://api.heygen.com/v2/voices"
+    voices_url = os.environ.get("HEYGEN_VOICES_URL") or "https://api.heygen.com/v3/voices?type=private&limit=100"
     if not heygen_key():
         return {
             "talent": {"source": "missing-key", "avatars": [], "voices": []},

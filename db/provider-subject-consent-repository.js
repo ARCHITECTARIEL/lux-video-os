@@ -467,7 +467,7 @@ export async function reserveHostedAvatarConsentAttemptTx(tx, input) {
     eventType: 'provider.avatar_consent_authority_bound',
     correlationId,
     method: 'POST',
-    pathTemplate: '/v2/avatar_group/create_consent',
+    pathTemplate: '/v3/avatars/{group_id}/consent',
     observedResourceKind: 'avatar_group',
     observedProviderResourceId: providerGroupId,
     details: {
@@ -534,7 +534,7 @@ export async function recordHostedAvatarConsentIssuedTx(tx, input) {
     eventType: issued ? 'provider.avatar_consent_session_reissued' : 'provider.avatar_consent_session_issued',
     correlationId: operation.correlationId,
     method: 'POST',
-    pathTemplate: '/v2/avatar_group/create_consent',
+    pathTemplate: '/v3/avatars/{group_id}/consent',
     evidenceDigest: providerUrlDigest,
     privateEvidenceRef: privateUrlEvidenceRef,
     details: {
@@ -668,7 +668,7 @@ export async function recordHostedAvatarConsentReadbackTx(tx, input) {
     eventType: 'provider.avatar_consent_readback',
     correlationId: operation.correlationId,
     method: 'GET',
-    pathTemplate: '/v2/avatar_group/:group_id',
+    pathTemplate: '/v3/avatars/{group_id}',
     observedResourceKind: 'avatar_group',
     observedProviderResourceId: providerGroupId,
     evidenceDigest,
