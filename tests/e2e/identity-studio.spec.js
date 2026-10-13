@@ -378,7 +378,7 @@ test('extracted and HeyGen cloned voice previews stay distinct and keyboard usab
   await expect(page.locator('#' + extractedAudioId)).toHaveAttribute('src', /preview=voice/);
   await expect(extracted).toHaveAttribute('aria-expanded', 'true');
 
-  const provider = page.getByRole('button', { name: 'Preview HeyGen cloned voice' });
+  const provider = page.getByRole('button', { name: 'Preview The Render cloned voice' });
   const providerAudioId = await provider.getAttribute('aria-controls');
   expect(providerAudioId).toBe('identity-provider-voice-' + IDS.identity);
   await provider.focus();

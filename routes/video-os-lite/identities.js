@@ -202,10 +202,10 @@ async function ownedAssetBytes(accountId, assetId, component) {
 function safeFailure(error) {
   const code = String(error.failureCategory || 'PROVIDER_REJECTED').replace(/[^A-Z0-9_-]/gi, '_').slice(0, 80);
   const known = {
-    PROVIDER_REJECTED: 'HeyGen rejected this component.',
-    PROVIDER_RESPONSE: 'HeyGen returned an unusable response.',
-    PLAN_REQUIRED: 'The connected HeyGen plan does not support this component.',
-    RESOURCE_LIMIT: 'The connected HeyGen account reached its resource limit.',
+    PROVIDER_REJECTED: 'The Render rejected this component.',
+    PROVIDER_RESPONSE: 'The Render returned an unusable response.',
+    PLAN_REQUIRED: 'The connected The Render plan does not support this component.',
+    RESOURCE_LIMIT: 'The connected The Render account reached its resource limit.',
   };
   return { code, message: known[code] || 'This component could not be created.' };
 }
@@ -471,7 +471,7 @@ async function refreshComponent(accountId, identity, component) {
       ? (provider.avatarLook.status === 'failed' ? provider.avatarLook : provider.avatarGroup)
       : provider;
     if (provider.failed || provider.status === 'failed') {
-      return markIdentityComponentFailed({ accountId, identityId: identity.id, component, operationKey: readClaim.operationKey, failureCode: componentFailure.failureCode || 'PROVIDER_REJECTED', failureMessage: componentFailure.failureMessage || `HeyGen ${component} creation failed.`, providerBinding });
+      return markIdentityComponentFailed({ accountId, identityId: identity.id, component, operationKey: readClaim.operationKey, failureCode: componentFailure.failureCode || 'PROVIDER_REJECTED', failureMessage: componentFailure.failureMessage || `The Render ${component} creation failed.`, providerBinding });
     }
     if (!provider.ready) return identity;
     return markIdentityComponentReady({

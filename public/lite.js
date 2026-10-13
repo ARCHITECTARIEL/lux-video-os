@@ -31,10 +31,7 @@ const publicDemoAccount = {
 };
 
 const publicDemoProviders = [
-  { id: 'heygen', name: 'The Render', cost: 90 },
-  { id: 'argil', name: 'Argil', cost: 80 },
-  { id: 'tavus', name: 'Tavus', cost: 120 },
-  { id: 'did', name: 'D-ID', cost: 45 },
+  { id: 'heygen', name: 'The Render', label: 'The Render', cost: 90 },
 ];
 const panels = [...document.querySelectorAll('.wizard-panel')];
 const stepButtons = [...document.querySelectorAll('[data-step-jump]')];
@@ -374,7 +371,7 @@ async function loadTalent() {
     renderFeaturedCast();
     renderOptions('avatar');
     renderOptions('voice');
-    document.querySelector('#connection-pill').textContent = data.connection?.connected ? 'HeyGen talent connected' : 'HeyGen talent partially available';
+    document.querySelector('#connection-pill').textContent = data.connection?.connected ? 'The Render talent connected' : 'The Render talent partially available';
     selectDefaultDemoPresenter();
     appState.localEngine = true;
   } catch {
@@ -383,7 +380,7 @@ async function loadTalent() {
     renderFeaturedCast();
     renderOptions('avatar');
     renderOptions('voice');
-    document.querySelector('#connection-pill').textContent = canUseLocalApi() ? 'Browser demo mode' : 'HeyGen talent unavailable';
+    document.querySelector('#connection-pill').textContent = canUseLocalApi() ? 'Browser demo mode' : 'The Render talent unavailable';
   }
 }
 
@@ -644,7 +641,7 @@ async function generateVideo() {
   if (!requireCurrentStep()) return;
   if (!appState.signedIn) { showToast('Sign in before live rendering.'); openAuthModal(); return; }
   const privateIdentityReady = Boolean(appState.identityId && appState.avatar?.source === 'identity' && appState.voice);
-  if (!appState.avatar || !appState.voice || (!privateIdentityReady && (appState.avatar.source !== 'heygen' || appState.voice.source !== 'heygen'))) { showToast('Choose a connected HeyGen avatar and voice before rendering.'); return; }
+  if (!appState.avatar || !appState.voice || (!privateIdentityReady && (appState.avatar.source !== 'heygen' || appState.voice.source !== 'heygen'))) { showToast('Choose a connected avatar and voice from The Render before rendering.'); return; }
   const progress = document.querySelector('#progress');
   const bar = progress.querySelector('span');
   const payload = formData();
@@ -717,7 +714,7 @@ async function exportMp4() {
     link.textContent = `Download ${data.filename}`;
     link.hidden = false;
     renderExportEffects(data.effects);
-    status.textContent = data.voice === 'local-tts' ? 'MP4 draft ready with narration, music bed, and production kit effects. Real avatar render still requires HeyGen.' : 'MP4 draft ready with production kit effects.';
+    status.textContent = data.voice === 'local-tts' ? 'MP4 draft ready with narration, music bed, and production kit effects. A real avatar render still requires The Render.' : 'MP4 draft ready with production kit effects.';
   } catch (error) {
     renderExportEffects(null);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -735,13 +732,7 @@ function selectedProvider() {
 }
 
 function providerBuyerLabel(provider) {
-  const labels = {
-    heygen: 'Best Quality',
-    argil: 'Clone Studio',
-    tavus: 'Digital Twin',
-    did: 'Fast Talking Head',
-  };
-  return labels[provider?.id] || provider?.label || provider?.name || 'Provider';
+  return provider?.label || provider?.name || 'Provider';
 }
 
 function updateFinishCost() {
@@ -1013,7 +1004,7 @@ function renderPricing() {
   }
   const list = document.querySelector('#provider-cost-list');
   if (list) {
-    list.replaceChildren(...providers.map((provider) => {
+    list.replaceChildren(...providers.filter((provider) => provider.id === 'heygen').map((provider) => {
       const item = document.createElement('article');
       item.className = provider.configured ? 'is-ready' : 'needs-setup';
       const canRender = provider.cost ? Math.floor(balance / provider.cost) : 0;

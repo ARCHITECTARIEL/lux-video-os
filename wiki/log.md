@@ -532,7 +532,17 @@
 ## 2026-10-13T15:12:43Z - [closure-writeback] [INT-001b/c/d]
 
 - INT-001b (`509df39`) fixed only tests: v3 voice fixtures now include accepted group-consent evidence, a complete private voice inventory without group consent is explicitly not ready, and the route-scenario and LUXIFY workflow mocks cover the merged paths.
-- INT-001c (`d6c2244`) limits avatar consent preclaim to presenter jobs. The LUXIFY path uses its explicit workflow allowlist; unknown workflow modes fail closed with `PROVIDER_WORKFLOW_MODE_INVALID`.
-- INT-001d keeps production `timeout.unref()` unchanged. Two never-resolving test fakes could empty the event loop before the unref'd deadline fired, cancelling the rest of the test file. Each affected test now holds a ref'd interval through the awaited deadline and clears it in `finally`. Ariel chose the user-facing provider label `The Render`; display names and labels were aligned while provider IDs remain unchanged.
+- INT-001c (`d6c2244`) limits avatar consent preclaim to presenter jobs. The LUXIFY path uses a preclaim skip list; unknown workflow modes fail closed with `PROVIDER_WORKFLOW_MODE_INVALID`.
+- INT-001d keeps production `timeout.unref()` unchanged. Two never-resolving test fakes could empty the event loop before the unref'd deadline fired, cancelling the rest of the test file. Each affected test now holds a ref'd interval through the awaited deadline and clears it in `finally`. Ariel chose the user-facing provider label `The Render`; some display names and labels were aligned while provider IDs remain unchanged.
 - Local Node 24.14.1: voice inventory 22 passed, 0 cancelled; full `node --test tests/*.test.mjs` 1,005 passed, 1 failed, 48 skipped, 0 cancelled. The sole failure is the existing `db/schema.js` packaging hash mismatch in `tests/heygen-runtime-packaging.test.mjs`. Vitest: 4/4 passed. Node 22.23.3 (Delivery Lead): voice inventory 22/22, 0 cancelled; full suite 1,054 tests, 1,005 passed, 1 failed (same packaging hash test), 48 skipped, 0 cancelled; Vitest 4/4.
 - INT-001b/c/d are committed locally on `codex/int-001-voice`, not pushed. No push, deployment, database operation or provider call was performed.
+
+## 2026-10-13 - [INT-001e] [provider display]
+
+- The public provider catalogue and signed-out fallback now expose only the unchanged `heygen` ID, named and labeled `The Render`. The cost list shows that provider only. Scoped UI status, preview, talent, identity failure, and local control-plane copy uses `The Render`; machine identifiers, API paths, and provider routing contracts remain intact.
+- The two voice-inventory keep-alive tests have 2000 ms test timeouts. Provider-list and identity-preview test expectations reflect the display change. Consent/legal pages and the consent status copy in `public/identity.js` remain untouched pending an owner decision on their wording.
+- Local Node full suite: 1005 passed, 1 failed, 48 skipped, 0 cancelled. The only failure is the existing VOS-002 `db/schema.js` packaging hash mismatch. Vitest: 4 passed, 0 failed. Import check and JavaScript syntax checks passed. No commit, push, deploy, migration, provider call, or secret read occurred.
+
+## 2026-10-13T15:41:14Z - [closure-writeback] [INT-001e]
+
+- Completed the local provider-display and test changes recorded above. Final readback confirms only `heygen` appears in the public provider catalogue, the named consent/legal copy remains deferred, and the sole Node failure is the existing VOS-002 packaging hash mismatch. The worktree has no commit or external operation from this task.

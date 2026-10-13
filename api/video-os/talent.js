@@ -217,10 +217,10 @@ export function buildFeaturedAvatars(accountAvatars = []) {
     const raw = byId.get(featured.avatarId);
     const id = `featured:${featured.key}`;
     const matchedVoiceId = `featured:${featured.key}:voice`;
-    if (!raw) return { id, name: featured.label, source: 'heygen', shared: false, featured: true, featuredKey: featured.key, matchedVoiceId, active: false, providerReady: false, archived: false, blocked: false, providerOrder, unavailableReason: 'This configured LUX presenter is not currently available from HeyGen.' };
+    if (!raw) return { id, name: featured.label, source: 'heygen', shared: false, featured: true, featuredKey: featured.key, matchedVoiceId, active: false, providerReady: false, archived: false, blocked: false, providerOrder, unavailableReason: 'This configured LUX presenter is not currently available from The Render.' };
     const item = normalizeTalentItem(raw, 'avatar', { featured: true, providerOrder });
     const ready = Boolean(item.previewUrl && item.active && !item.archived && !item.blocked);
-    return withProviderIdentity({ ...item, name: featured.label, featuredKey: featured.key, matchedVoiceId, providerReady: ready, ...(ready ? {} : { unavailableReason: 'HeyGen returned this presenter without a usable active preview.' }) }, id, raw.id || raw.avatar_id || raw.avatarId);
+    return withProviderIdentity({ ...item, name: featured.label, featuredKey: featured.key, matchedVoiceId, providerReady: ready, ...(ready ? {} : { unavailableReason: 'The Render returned this presenter without a usable active preview.' }) }, id, raw.id || raw.avatar_id || raw.avatarId);
   });
 }
 
@@ -339,7 +339,7 @@ export async function loadTalentInventory(options = {}) {
         archived: false,
         blocked: false,
         providerOrder,
-        unavailableReason: 'HeyGen presenter inventory requires a configured provider credential.',
+        unavailableReason: 'The Render presenter inventory requires a configured provider credential.',
       };
     });
     const fallbackVoices = FEATURED_CAST.map((featured, providerOrder) => {
@@ -358,7 +358,7 @@ export async function loadTalentInventory(options = {}) {
         archived: false,
         blocked: false,
         providerOrder,
-        unavailableReason: 'HeyGen voice inventory requires a configured provider credential.',
+        unavailableReason: 'The Render voice inventory requires a configured provider credential.',
       };
     });
     return {
@@ -461,7 +461,7 @@ export async function loadTalentInventory(options = {}) {
         archived: false,
         blocked: false,
         providerOrder: normalizedVoices.length,
-        unavailableReason: 'This configured LUX voice is not currently available from HeyGen.',
+        unavailableReason: 'This configured LUX voice is not currently available from The Render.',
       });
     }
   }

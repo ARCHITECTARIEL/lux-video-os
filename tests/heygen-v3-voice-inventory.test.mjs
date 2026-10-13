@@ -467,7 +467,7 @@ test('a voice page that finishes after the whole-request clock deadline is rejec
   assert.equal(result.talent.voices.find((item) => item.id === 'featured:oso:voice').providerReady, false);
 });
 
-test('the shared deadline aborts a stalled response body and rejects the page', async () => {
+test('the shared deadline aborts a stalled response body and rejects the page', { timeout: 2000 }, async () => {
   let providerCalls = 0;
   const startedAt = Date.now();
   const keepAlive = setInterval(() => {}, 1000);
@@ -493,7 +493,7 @@ test('the shared deadline aborts a stalled response body and rejects the page', 
   }
 });
 
-test('the shared deadline races a stalled fetch transport that ignores AbortSignal', async () => {
+test('the shared deadline races a stalled fetch transport that ignores AbortSignal', { timeout: 2000 }, async () => {
   let providerCalls = 0;
   const startedAt = Date.now();
   const keepAlive = setInterval(() => {}, 1000);

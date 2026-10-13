@@ -63,8 +63,8 @@ function setModeBanner(isLocal) {
   banner.classList.toggle('local-mode', isLocal);
   banner.querySelector('strong').textContent = isLocal ? 'Local Control Plane' : 'Hosted MVP Mode';
   banner.querySelector('span').textContent = isLocal
-    ? 'Durable persistence, workers, HeyGen actions, trend scans, archive, and feedback storage are available on this local server.'
-    : 'Projects and scripts created on this Vercel page are saved in this browser only. Local workers, HeyGen, archive, trend scans, and durable persistence run in the local Video OS control plane.';
+    ? 'Durable persistence, workers, rendering actions, trend scans, archive, and feedback storage are available on this local server.'
+    : 'Projects and scripts created on this Vercel page are saved in this browser only. Local workers, rendering, archive, trend scans, and durable persistence run in the local Video OS control plane.';
 }
 
 function unlockOs() {
@@ -490,15 +490,15 @@ function renderTalentConnection(videoOs) {
   boxes.forEach((box) => {
     if (box.id === 'admin-talent-status') {
       box.replaceChildren(
-        adminItem(connected ? 'Connected to HeyGen' : 'Local fallback inventory', detail, null),
+        adminItem(connected ? 'The Render connected' : 'Local fallback inventory', detail, null),
         adminItem('Inventory counts', `${inventory.avatars?.length ?? 0} avatar options, ${inventory.voices?.length ?? 0} voice options | ${privateAvatars.length || connection.privateAvatarCount || 0} private avatar(s) pinned | source: ${inventory.source || connection.source || 'unknown'}`, null),
         ...(privateAvatars.length ? [adminItem('Private avatars', privateAvatars.map((item) => `${item.name || item.id} (${item.id})`).join(' | '), null)] : []),
-        ...(connection.keyFileConfigured ? [adminItem('HeyGen credential', `${connection.keySource || 'local key file'} configured`, null)] : []),
+        ...(connection.keyFileConfigured ? [adminItem('The Render credential', `${connection.keySource || 'local key file'} configured`, null)] : []),
         ...(connection.lastSyncError ? [adminItem('Last sync error', connection.lastSyncError, null)] : [])
       );
     } else {
       box.className = `health-card ${connected ? 'ok' : 'warn'}`;
-      box.querySelector('strong').textContent = connected ? 'HeyGen talent connected' : 'Generic fallback talent';
+      box.querySelector('strong').textContent = connected ? 'The Render talent connected' : 'Generic fallback talent';
       box.querySelector('span').textContent = privateAvatars.length
         ? `${detail} Private avatar pinned: ${privateAvatars.map((item) => item.name || item.id).join(', ')}.`
         : detail;
@@ -785,16 +785,16 @@ async function runDueScans() {
 async function refreshHeyGenTalent() {
   const status = document.querySelector('#admin-status');
   if (!canUseLocalApi()) {
-    status.textContent = 'HeyGen talent refresh requires the local Video OS control plane.';
+    status.textContent = 'The Render talent refresh requires the local Video OS control plane.';
     return;
   }
   try {
-    status.textContent = 'Refreshing HeyGen talent inventory...';
+    status.textContent = 'Refreshing The Render talent inventory...';
     const data = await api('/talent/refresh', {});
     const connection = data.connection ?? {};
     status.textContent = connection.status === 'connected'
-      ? `HeyGen talent connected: ${connection.avatarCount} avatar(s), ${connection.voiceCount} voice(s).`
-      : `Talent refresh did not connect to HeyGen. ${connection.lastSyncError || connection.detail || ''}`;
+      ? `The Render talent connected: ${connection.avatarCount} avatar(s), ${connection.voiceCount} voice(s).`
+      : `Talent refresh did not connect to The Render. ${connection.lastSyncError || connection.detail || ''}`;
     await load().then(render);
   } catch (error) {
     status.textContent = error.message;
@@ -849,7 +849,7 @@ function queueButton(project, type, label, payload = {}, variant = '') {
       }
       if (!canUseLocalApi()) {
         button.textContent = 'Local only';
-        button.title = 'Hosted MVP supports browser-local project and script drafts only. Use the local app for workers, HeyGen, archive, and feedback persistence.';
+        button.title = 'Hosted MVP supports browser-local project and script drafts only. Use the local app for workers, rendering, archive, and feedback persistence.';
         setTimeout(() => { button.textContent = original; }, 1400);
         return;
       }
@@ -870,9 +870,9 @@ function actionUnavailableReason(project, type) {
   const hasProviderJob = Boolean(project.providerJobId);
   const hasRenderableStatus = ['approved', 'render_queued', 'rendering', 'rendered', 'qc_required'].includes(project.status);
   if (type === 'script_generation' && project.status === 'rendering') return 'Script generation is locked while a render is in progress.';
-  if (type === 'heygen_submit' && project.status !== 'approved') return 'Approve script and scene plan before queuing HeyGen.';
+  if (type === 'heygen_submit' && project.status !== 'approved') return 'Approve script and scene plan before queuing The Render.';
   if (type === 'heygen_submit' && !hasScript) return 'Generate or paste a script before render submission.';
-  if (type === 'heygen_poll' && !hasProviderJob) return 'Polling requires a HeyGen provider job id.';
+  if (type === 'heygen_poll' && !hasProviderJob) return 'Polling requires a provider job ID.';
   if (type === 'artifact_archive' && !hasRenderableStatus && !hasScript) return 'Archive unlocks after a script or render exists.';
   if (type === 'post_production_handoff' && !['rendered', 'qc_required'].includes(project.status)) return 'Post-production handoff unlocks after a rendered or QC-ready video.';
   return '';
@@ -927,10 +927,10 @@ function mergeProjectIntoState(project) {
 
 function visibleNextAction(project) {
   if (!canUseLocalApi() && project.status === 'approved') {
-    return 'Approved. Rendering is locked on Vercel; open the local Video OS control plane to submit to HeyGen.';
+    return 'Approved. Rendering is locked on Vercel; open the local Video OS control plane to submit through The Render.';
   }
   if (canUseLocalApi() && project.status === 'approved') {
-    return 'Approved. Submit the HeyGen dry run or prepare post-production handoff.';
+    return 'Approved. Submit a dry run with The Render or prepare post-production handoff.';
   }
   return project.nextActions?.[0] ?? 'Review current state and choose the next production step.';
 }
@@ -940,7 +940,7 @@ function localControlLink() {
   link.href = 'http://127.0.0.1:8789/dashboard';
   link.target = '_blank';
   link.rel = 'noreferrer';
-  link.title = 'Run the local Video OS server, then open the local control plane for HeyGen and worker actions.';
+  link.title = 'Run the local Video OS server, then open the local control plane for rendering and worker actions.';
   return link;
 }
 
@@ -955,8 +955,8 @@ async function approveProjectReview(project, button) {
     reviewState: canUseLocalApi() ? 'approved_for_render_gate' : 'approved_for_local_handoff',
     nextActions: [
       canUseLocalApi()
-        ? 'Approved. Queue HeyGen dry run or prepare post-production handoff.'
-        : 'Approved in this browser. Use the local Video OS control plane to submit to HeyGen or prepare post-production handoff.',
+        ? 'Approved. Queue a dry run with The Render or prepare post-production handoff.'
+        : 'Approved in this browser. Use the local Video OS control plane to submit through The Render or prepare post-production handoff.',
     ],
     updatedAt: new Date().toISOString(),
   };
@@ -1033,8 +1033,8 @@ function reviewRoom(project) {
     el('small', null, 'Approval Decision'),
     el('strong', 'review-decision-title', 'Approve the script, scene timing, and OS-selected asset route.'),
     el('p', 'review-decision-copy', canUseLocalApi()
-      ? 'Approval moves this project to the render gate so the team can queue a HeyGen dry run, poll the provider, archive artifacts, and prepare post-production.'
-      : 'Approval is saved in this browser. HeyGen rendering, polling, archive, and handoff stay locked until the local Video OS control plane is running.'),
+      ? 'Approval moves this project to the render gate so the team can queue a dry run with The Render, poll the provider, archive artifacts, and prepare post-production.'
+      : 'Approval is saved in this browser. Rendering with The Render, polling, archive, and handoff stay locked until the local Video OS control plane is running.'),
     tags([
       script ? 'script visible' : 'script missing',
       scenes.length ? 'scene plan visible' : 'scene plan missing',
@@ -1084,7 +1084,7 @@ function statusTimeline(project) {
     ['Script', hasScript],
     ['Scenes', hasScenes],
     ['Review', reviewDone],
-    ['HeyGen', hasRender || Boolean(project.providerJobId) || ['render_queued', 'rendering', 'qc_required', 'rendered', 'published'].includes(project.status)],
+    ['The Render', hasRender || Boolean(project.providerJobId) || ['render_queued', 'rendering', 'qc_required', 'rendered', 'published'].includes(project.status)],
     ['Publish', ['published'].includes(project.status)],
   ];
   const row = el('div', 'status-timeline');
@@ -1163,9 +1163,9 @@ function renderElapsedText(project, now = Date.now()) {
     return `Video duration ${formatElapsed(duration * 1000)}`;
   }
   const started = renderStartedAt(project);
-  if (!started) return 'Timer starts after HeyGen accepts the job.';
+  if (!started) return 'Timer starts after The Render accepts the job.';
   const startMs = new Date(started).getTime();
-  if (Number.isNaN(startMs)) return 'Timer starts after HeyGen accepts the job.';
+  if (Number.isNaN(startMs)) return 'Timer starts after The Render accepts the job.';
   const label = ['rendered', 'qc_required', 'published'].includes(project.status) ? 'Completed after' : 'Elapsed';
   return `${label} ${formatElapsed(now - startMs)}`;
 }
@@ -1186,7 +1186,7 @@ function renderProgress(project) {
   const head = el('div', 'render-progress-head');
   const percent = renderProgressPercent(project);
   head.append(
-    el('span', null, ['rendered', 'qc_required', 'published'].includes(project.status) ? 'HeyGen complete' : 'HeyGen build timer'),
+    el('span', null, ['rendered', 'qc_required', 'published'].includes(project.status) ? 'The Render complete' : 'Render build timer'),
     el('strong', 'render-elapsed', renderElapsedText(project))
   );
   const track = el('div', 'render-progress-track');
@@ -1194,10 +1194,10 @@ function renderProgress(project) {
   bar.style.width = `${percent}%`;
   track.append(bar);
   const foot = el('p', null, project.status === 'rendering'
-    ? 'This is a live elapsed timer with estimated progress. HeyGen only confirms the exact state when polled.'
+    ? 'This is a live elapsed timer with estimated progress. The Render only confirms the exact state when polled.'
     : project.status === 'rendered' || project.status === 'qc_required'
-      ? 'HeyGen returned the video. Review it before publishing or post-production.'
-      : 'Progress appears here after HeyGen accepts the render.');
+      ? 'The Render returned the video. Review it before publishing or post-production.'
+      : 'Progress appears here after The Render accepts the render.');
   wrap.append(head, track, foot);
   return wrap;
 }
@@ -1262,19 +1262,19 @@ function renderCurrentProject(project) {
     tags([
       projectStatusText(project),
       project.avatar?.name ? `Avatar: ${project.avatar.name}` : 'Avatar not set',
-      provider === 'not submitted' ? provider : `HeyGen: ${provider}`,
+      provider === 'not submitted' ? provider : `The Render: ${provider}`,
     ])
   );
   const status = el('div', 'current-render-status');
   status.append(
     el('span', projectStatusClass(project), projectStatusText(project)),
     el('strong', null, project.status === 'rendering'
-      ? 'Rendering in HeyGen'
+      ? 'Rendering with The Render'
       : videoUrl
-        ? 'HeyGen render is ready'
+        ? 'Render is ready'
         : visibleNextAction(project)),
     el('p', null, project.status === 'rendering'
-      ? 'The video has been submitted. Poll HeyGen until the video URL appears, then move it to QC.'
+      ? 'The video has been submitted. Poll The Render until the video URL appears, then move it to QC.'
       : videoUrl
         ? 'The MP4 is available. Open it, review quality, then move to post-production.'
       : visibleNextAction(project))
@@ -1289,7 +1289,7 @@ function renderCurrentProject(project) {
   }
   status.append(renderProgress(project));
   actions.append(
-    queueButton(project, 'heygen_poll', 'Poll HeyGen', {}, 'primary-action'),
+    queueButton(project, 'heygen_poll', 'Poll The Render', {}, 'primary-action'),
     queueButton(project, 'artifact_archive', 'Archive', {}, 'secondary-action')
   );
   hero.append(copy, status, actions);
@@ -1297,10 +1297,10 @@ function renderCurrentProject(project) {
 }
 
 function projectSummaryLine(project) {
-  if (project.status === 'rendering') return 'Submitted to HeyGen. Waiting for provider video URL.';
+  if (project.status === 'rendering') return 'Submitted through The Render. Waiting for provider video URL.';
   if (project.status === 'rendered' || project.status === 'qc_required') return 'Render is available. Review it before publishing or post-production.';
   if (project.status === 'review_required') return 'Script and scene plan are ready. Approve before render spend.';
-  if (project.status === 'approved') return 'Approved and ready for HeyGen submission.';
+  if (project.status === 'approved') return 'Approved and ready to submit through The Render.';
   if (project.status === 'quarantined' || project.status === 'failed') return 'Needs manual review before the next production action.';
   return visibleNextAction(project);
 }
@@ -1339,7 +1339,7 @@ function renderProjects(videoOs) {
     const meta = el('div', 'project-meta');
     [
       ['Avatar', project.avatar?.name || project.avatar?.avatarId || 'not selected'],
-      ['HeyGen ID', project.providerJobId || 'not submitted'],
+      ['Render Job ID', project.providerJobId || 'not submitted'],
       ['Render', latestVideoUrl(project) ? 'video URL ready' : project.telemetry?.providerStatus ?? project.status ?? 'unknown'],
       ['Updated', project.updatedAt ? new Date(project.updatedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'n/a'],
     ].forEach(([label, value]) => {
@@ -1352,16 +1352,16 @@ function renderProjects(videoOs) {
     const recommended = !canUseLocalApi() && project.status === 'approved'
       ? localControlLink()
       : canUseLocalApi() && project.status === 'approved'
-        ? queueButton(project, 'heygen_submit', 'Submit HeyGen Dry Run', { allowLive: false }, 'primary-action')
+        ? queueButton(project, 'heygen_submit', 'Submit Dry Run with The Render', { allowLive: false }, 'primary-action')
         : project.status === 'rendered' || project.status === 'qc_required'
           ? queueButton(project, 'post_production_handoff', 'Prepare Handoff', {}, 'primary-action')
           : queueButton(project, 'script_generation', 'Generate Script', {}, 'primary-action');
     actions.append(actionMode, recommended);
     if (!(canUseLocalApi() && project.status === 'approved')) {
-      actions.append(queueButton(project, 'heygen_submit', 'HeyGen Dry Run', { allowLive: false }, 'secondary-action'));
+      actions.append(queueButton(project, 'heygen_submit', 'Dry Run with The Render', { allowLive: false }, 'secondary-action'));
     }
     actions.append(
-      queueButton(project, 'heygen_poll', 'Poll HeyGen', {}, 'secondary-action'),
+      queueButton(project, 'heygen_poll', 'Poll The Render', {}, 'secondary-action'),
       queueButton(project, 'artifact_archive', 'Archive', {}, 'secondary-action')
     );
     const next = el('div', 'next-action');

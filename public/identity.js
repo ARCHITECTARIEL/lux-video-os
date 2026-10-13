@@ -422,13 +422,13 @@ function renderIdentity(identity) {
     const providerAudio = createCardAudioPreview({
       id: audioId,
       kind: 'provider',
-      label: identity.displayName + ' HeyGen cloned voice preview',
+      label: identity.displayName + ' The Render cloned voice preview',
     });
     previewMedia.push(providerAudio);
-    const previewButton = button('Preview HeyGen cloned voice', 'secondary', () => {
+    const previewButton = button('Preview The Render cloned voice', 'secondary', () => {
       toggleCardAudioPreview(card, previewButton, {
         audio: providerAudio,
-        failureMessage: 'The HeyGen cloned voice preview could not be loaded. Try again or reload this page.',
+        failureMessage: 'The Render cloned voice preview could not be loaded. Try again or reload this page.',
         src: identity.voicePreviewUrl,
         statusElement: previewStatus,
       });

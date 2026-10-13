@@ -50,6 +50,7 @@ test('ordinary render DTO labels and provider setup hints do not name processors
   assert.equal(jobDto(baseJob({ provider: 'sadtalker' })).provider.name, 'Standard');
 
   const listed = providerList();
+  assert.deepEqual(listed.map((provider) => provider.id), ['heygen']);
   for (const provider of listed) {
     assert.equal(provider.name, 'The Render');
     assert.equal(provider.label, 'The Render');
