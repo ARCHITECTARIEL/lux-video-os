@@ -585,6 +585,17 @@
 
 - Replaced HeyGen v2 inventory defaults in the legacy Python paths and corrected hosted-consent lifecycle event templates to the v3 paths already used by the provider client. Updated two test fixtures, documented the v3 inventory and consent endpoints, and added a source scan that rejects HeyGen v1/v2 endpoints while permitting unrelated providers.
 - The ledger templates are persisted as immutable `provider_lifecycle_events.path_template` facts. Replay and readback do not match on that column, and the existing schema accepts the v3 templates, so no migration or historical-row rewrite is needed. Historical rows retain their recorded path. Intentional v2 rejection and unsafe-template test cases remain.
-- Local branch `codex/vos-003` is based on `da6909067e9c19cbacee7a6451181ab7e58ed0ee`. VOS-003 is committed locally on `codex/vos-003` (SHA in the run report); not pushed.
+- Local branch `codex/vos-003` is based on `da6909067e9c19cbacee7a6451181ab7e58ed0ee`. VOS-003 is committed locally on `codex/vos-003` (`686428ed`); not pushed.
 - Verification: focused endpoint guard 2/2, Python public-rendering contracts 12/12, Vitest 4/4. Codex's sandboxed full Node run had extra failures only because this new worktree lacked installed dependencies (`drizzle-kit`, `@workflow/builders`); the full suite was re-run with the identical-lockfile dependencies (see run report, `VOS-003-nodetest.log`).
 - Closure readback: this dated entry is present in this worktree's `wiki/log.md`; no external repository log was changed.
+
+## 2026-10-13T17:55:00Z - [VOS-003b]
+
+- Widened the source guard to reject HeyGen v1/v2 photo avatar, talking photo, template, quota, and existing endpoint nouns. HeyGen-context files now reject any v1/v2 path and split route literals, while unrelated provider URLs and Vercel workflow paths remain excluded. Synthetic source cases cover each rule and exclusion; the real repository scan found no new hits.
+- Verification: focused guard 4/4; full Node suite 1,013 passed, 1 failed on the existing `db/schema.js` packaging hash mismatch, 48 skipped; Vitest 4/4.
+- VOS-003b is committed locally on `codex/vos-003` (parent `686428ed`; SHA in the run report); not pushed.
+
+## 2026-10-13T17:58:15Z - [closure-writeback] [VOS-003b]
+
+- This session changed only `tests/heygen-no-legacy-endpoints.test.mjs` and this worktree's `wiki/log.md`. The widened guard passes against repository source with no new hits; focused Node 4/4 and Vitest 4/4 pass. The full Node suite has 1,013 passes, 1 existing packaging-hash failure, and 48 skips.
+- Closure readback: the VOS-003b entry and this tagged writeback are present in this worktree. VOS-003b is committed locally (parent `686428ed`); no push, deploy, migration, database access, or provider call occurred.
