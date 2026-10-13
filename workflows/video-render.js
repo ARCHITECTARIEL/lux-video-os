@@ -72,7 +72,12 @@ export function providerWorkflowMode(job) {
     });
   }
   if (marker === 'luxify') return 'luxify';
-  return 'presenter';
+  if (job?.provider === 'heygen' && (job?.input?.renderMode == null || job.input.renderMode === 'premium_presenter_v1')) return 'presenter';
+  throw Object.assign(new Error('Persisted provider workflow mode is invalid.'), {
+    statusCode: 409,
+    failureCategory: 'RECONCILIATION',
+    code: 'PROVIDER_WORKFLOW_MODE_INVALID',
+  });
 }
 
 const LUXIFY_WORKFLOW_INPUT_KEYS = new Set([
@@ -228,9 +233,11 @@ export async function submitProvider(jobId) {
   let claimedJob;
   try {
     providerBinding = await resolveFreshHeygenSpaceBinding({ accountId: job.accountId });
-    const avatarRead = await prepareIdentityProviderRead({ accountId: job.accountId, identityId: job.input.identityId, component: 'avatar', providerBinding });
-    const avatarStatus = await getHeygenPhotoAvatarStatus({ groupId: avatarRead.providerAvatarGroupId, lookId: avatarRead.providerRenderableAvatarId });
-    assertProviderAvatarConsentClaim(job, avatarRead, avatarStatus);
+    if (!['luxify'].includes(mode)) {
+      const avatarRead = await prepareIdentityProviderRead({ accountId: job.accountId, identityId: job.input.identityId, component: 'avatar', providerBinding });
+      const avatarStatus = await getHeygenPhotoAvatarStatus({ groupId: avatarRead.providerAvatarGroupId, lookId: avatarRead.providerRenderableAvatarId });
+      assertProviderAvatarConsentClaim(job, avatarRead, avatarStatus);
+    }
     const transitionedJob = await transitionJob({ jobId, stageTo: 'provider_submitting', eventType: 'provider.submit_started', providerBinding });
     submissionClaimed = true;
     claimedJob = assertRenderProviderClaim(transitionedJob, providerBinding, { jobId, accountId: job.accountId });

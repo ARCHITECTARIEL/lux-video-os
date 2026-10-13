@@ -141,8 +141,11 @@ if (runFixture) {
 
   let currentJob = luxifyJob();
   let failLuxifySubmit = false;
+  let avatarConsentReady = true;
   const calls = {
     authorizations: [],
+    avatarReads: [],
+    avatarStatuses: [],
     transitions: [],
     luxifySubmissions: [],
     presenterSubmissions: [],
@@ -198,6 +201,7 @@ if (runFixture) {
       return providerReadClaim(currentJob, ['provider_ready', 'finishing'].includes(currentJob.status));
     },
     prepareIdentityProviderRead: async ({ accountId, identityId, component, providerBinding }) => {
+      calls.avatarReads.push({ accountId, identityId });
       assert.equal(accountId, ACCOUNT);
       assert.equal(identityId, currentJob.input.identityId);
       assert.equal(component, 'avatar');
@@ -233,12 +237,13 @@ if (runFixture) {
   mock.module('../services/heygen.js', { namedExports: {
     assertHeygenConfigured: () => true,
     getHeygenPhotoAvatarStatus: async ({ groupId, lookId }) => {
+      calls.avatarStatuses.push({ groupId, lookId });
       assert.equal(groupId, 'presenter_group');
       assert.equal(lookId, 'presenter_look');
       return {
-        avatarGroup: { providerGroupId: groupId, status: 'completed', consentStatus: 'accepted', ready: true },
+        avatarGroup: { providerGroupId: groupId, status: 'completed', consentStatus: avatarConsentReady ? 'accepted' : 'pending', ready: avatarConsentReady },
         avatarLook: { providerLookId: lookId, providerGroupId: groupId, avatarType: 'digital_twin', status: 'completed', ready: true },
-        ready: true,
+        ready: avatarConsentReady,
         failed: false,
       };
     },
@@ -287,10 +292,14 @@ if (runFixture) {
 
   test('persisted LUXIFY mode selects only the cinematic submit, poll, and finishing adapters', async () => {
     currentJob = luxifyJob();
+    const avatarReadsBefore = calls.avatarReads.length;
+    const avatarStatusesBefore = calls.avatarStatuses.length;
     const submitted = await workflow.submitProvider(currentJob.id);
     assert.equal(submitted.providerJobId, 'luxify_provider_video');
     assert.equal(calls.luxifySubmissions.length, 1);
     assert.equal(calls.presenterSubmissions.length, 0);
+    assert.equal(calls.avatarReads.length, avatarReadsBefore);
+    assert.equal(calls.avatarStatuses.length, avatarStatusesBefore);
     assert.deepEqual(calls.luxifySubmissions[0], {
       idempotencyKey: currentJob.id,
       prompt: currentJob.input.prompt,
@@ -317,15 +326,60 @@ if (runFixture) {
 
   test('Premium Presenter keeps the existing submit, poll, and finishing adapters', async () => {
     currentJob = presenterJob();
+    const avatarReadsBefore = calls.avatarReads.length;
+    const avatarStatusesBefore = calls.avatarStatuses.length;
     const submitted = await workflow.submitProvider(currentJob.id);
     assert.equal(submitted.providerJobId, 'presenter_provider_video');
     assert.equal(calls.presenterSubmissions.length, 1);
+    assert.equal(calls.avatarReads.length, avatarReadsBefore + 1);
+    assert.equal(calls.avatarStatuses.length, avatarStatusesBefore + 1);
     const status = await workflow.pollProvider(currentJob.id, submitted.providerJobId);
     assert.equal(status.ready, true);
     assert.deepEqual(calls.presenterPolls, ['presenter_provider_video']);
     const artifact = await workflow.finishProviderMedia(currentJob.id, status.sourceUrl);
     assert.equal(artifact.privatePathname, 'presenter-final.mp4');
     assert.equal(calls.presenterFinishes.length, 1);
+  });
+
+  test('Presenter without avatar consent evidence is rejected before submit', async () => {
+    currentJob = presenterJob({ id: 'job-presenter-consent-pending' });
+    const submissionsBefore = calls.presenterSubmissions.length;
+    const transitionsBefore = calls.transitions.length;
+    avatarConsentReady = false;
+    try {
+      await assert.rejects(workflow.submitProvider(currentJob.id), /VIDEO_OS_HEYGEN_PRECLAIM_V1:CONSENT/);
+    } finally {
+      avatarConsentReady = true;
+    }
+    assert.equal(calls.presenterSubmissions.length, submissionsBefore);
+    assert.equal(calls.transitions.length, transitionsBefore);
+  });
+
+  test('missing mode still requires Presenter avatar consent before submit', async () => {
+    const base = presenterJob({ id: 'job-presenter-missing-mode' });
+    currentJob = { ...base, input: { ...base.input, renderMode: undefined } };
+    const avatarReadsBefore = calls.avatarReads.length;
+    const submissionsBefore = calls.presenterSubmissions.length;
+    avatarConsentReady = false;
+    try {
+      await assert.rejects(workflow.submitProvider(currentJob.id), /VIDEO_OS_HEYGEN_PRECLAIM_V1:CONSENT/);
+    } finally {
+      avatarConsentReady = true;
+    }
+    assert.equal(calls.avatarReads.length, avatarReadsBefore + 1);
+    assert.equal(calls.presenterSubmissions.length, submissionsBefore);
+  });
+
+  test('unknown provider workflow mode fails before either provider submit', async () => {
+    const base = presenterJob({ id: 'job-unknown-mode' });
+    currentJob = { ...base, input: { ...base.input, renderMode: 'unknown_mode' } };
+    const presenterBefore = calls.presenterSubmissions.length;
+    const luxifyBefore = calls.luxifySubmissions.length;
+    const transitionsBefore = calls.transitions.length;
+    await assert.rejects(workflow.submitProvider(currentJob.id), /VIDEO_OS_HEYGEN_PRECLAIM_V1:RECONCILIATION/);
+    assert.equal(calls.presenterSubmissions.length, presenterBefore);
+    assert.equal(calls.luxifySubmissions.length, luxifyBefore);
+    assert.equal(calls.transitions.length, transitionsBefore);
   });
 
   test('LUXIFY hosted-finishing drift blocks provider claim and spend', async () => {
@@ -376,6 +430,12 @@ if (runFixture) {
       title: job.title,
     });
     assert.equal(workflow.providerWorkflowMode(presenterJob()), 'presenter');
+    const presenter = presenterJob();
+    assert.equal(workflow.providerWorkflowMode({ ...presenter, input: { ...presenter.input, renderMode: undefined } }), 'presenter');
+    assert.throws(
+      () => workflow.providerWorkflowMode({ ...presenter, input: { ...presenter.input, renderMode: 'unknown_mode' } }),
+      { code: 'PROVIDER_WORKFLOW_MODE_INVALID', failureCategory: 'RECONCILIATION' },
+    );
     for (const input of [
       { providerCapability: 'cinematic_avatar_v2' },
       { contractVersion: ' LUXIFY-CINEMATIC-V2 ' },
