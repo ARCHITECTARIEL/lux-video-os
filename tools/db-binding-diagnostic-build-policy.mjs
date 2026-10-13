@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -26,6 +26,17 @@ export const DIAGNOSTIC_PATHS = Object.freeze([
   'tools/db-binding-diagnostic-build-policy.mjs',
 ]);
 
+const DATABASE_CREDENTIAL_NAME = /^(?:DATABASE_URL|POSTGRES_URL|NEON_|PG)/;
+export function isDatabaseCredentialName(name) {
+  return DATABASE_CREDENTIAL_NAME.test(String(name).toUpperCase());
+}
+
+export function localEnvironmentFiles(root) {
+  const envFiles = (dir) => (existsSync(join(root, dir)) ? readdirSync(join(root, dir)) : [])
+    .filter((name) => name.toLowerCase().startsWith('.env')).map((name) => (dir === '.' ? name : `${dir}/${name}`));
+  return [...envFiles('.'), ...envFiles('.vercel')];
+}
+
 export function diagnosticDatabaseEvidence() {
   return {
     verified: false,
@@ -46,19 +57,25 @@ export function assertDiagnosticBuildInputs({ root, env, changedPaths, source })
   if (source.project?.name !== 'lux-video-os' || source.project?.id !== 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW') throw new Error('Diagnostic build project differs from the reviewed production project.');
   const allowed = new Set(DIAGNOSTIC_PATHS);
   if (changedPaths.length !== allowed.size || changedPaths.some(path => !allowed.has(path))) throw new Error('Diagnostic build source differs from the reviewed path scope.');
-  if (env.DATABASE_URL || env.DATABASE_URL_UNPOOLED || env.VIDEO_OS_DB_TARGET_MANIFEST) throw new Error('Diagnostic build must not load production database credentials.');
+  if (env.VIDEO_OS_DB_TARGET_MANIFEST || Object.keys(env).some(isDatabaseCredentialName)) throw new Error('Diagnostic build must not load production database credentials.');
   if (env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN || (env.VIDEO_OS_DIAGNOSTIC_MAINTENANCE && env.VIDEO_OS_DIAGNOSTIC_MAINTENANCE !== 'false')) {
     throw new Error('Diagnostic build must not load an operator token or active maintenance setting.');
   }
-  for (const name of ['.env', '.env.local', '.env.production', '.env.production.local', '.vercel/.env.production.local']) {
-    if (existsSync(join(root, name))) throw new Error('Diagnostic build found a local environment file; remove it from this isolated worktree before packaging.');
-  }
+  if (localEnvironmentFiles(root).length) throw new Error('Diagnostic build found a local environment file; remove it from this isolated worktree before packaging.');
 }
 
-export function diagnosticChangedPaths(root) {
-  const ancestor = spawnSync('git', ['merge-base', 'HEAD', ACTIVE_APP_BASE], { cwd: root, encoding: 'utf8' });
-  if (ancestor.status !== 0 || ancestor.stdout.trim() !== ACTIVE_APP_BASE) throw new Error('Diagnostic build is not based on the recorded active source.');
-  const run = spawnSync('git', ['diff', '--name-only', ACTIVE_APP_BASE, 'HEAD'], { cwd: root, encoding: 'utf8' });
-  if (run.status !== 0) throw new Error('Diagnostic build cannot verify the recorded active source base.');
-  return run.stdout.trim().split(/\r?\n/).filter(Boolean);
+export function diagnosticChangedPaths(root, base = ACTIVE_APP_BASE) {
+  const ancestor = spawnSync('git', ['merge-base', 'HEAD', base], { cwd: root, encoding: 'utf8' });
+  if (ancestor.status !== 0 || ancestor.stdout.trim() !== base) throw new Error('Diagnostic build is not based on the recorded active source.');
+  // Rename detection would report only the destination of a moved file and hide
+  // the deleted source path, so compare raw paths with renames disabled.
+  const diff = (extra) => {
+    const run = spawnSync('git', ['diff', '--no-renames', '--no-ext-diff', '-z', '--name-only', ...extra, base, 'HEAD'], { cwd: root, encoding: 'utf8' });
+    if (run.status !== 0) throw new Error('Diagnostic build cannot verify the recorded active source base.');
+    return run.stdout.split('\0').filter(Boolean);
+  };
+  // A reviewed path may be modified or added, never deleted: deleting an allowed
+  // file (for example a build safeguard) would otherwise still match the scope.
+  if (diff(['--diff-filter=D']).length) throw new Error('Diagnostic build source deletes a reviewed path.');
+  return diff([]);
 }
