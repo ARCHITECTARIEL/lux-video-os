@@ -323,7 +323,7 @@ export async function handleLuxifyRender(req, res, session, body, diagnosticRequ
       ...accountDto(account),
       recovered: reserved.replayed,
       proofId,
-      provider: { id: 'heygen', name: 'HeyGen', configured: true },
+      provider: { id: 'heygen', name: 'The Render', configured: true },
       job: jobDto(reservedJob),
       workflowRunId: reservedJob.workflowRunId,
       correlationId: reservedJob.correlationId,

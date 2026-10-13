@@ -470,39 +470,49 @@ test('a voice page that finishes after the whole-request clock deadline is rejec
 test('the shared deadline aborts a stalled response body and rejects the page', async () => {
   let providerCalls = 0;
   const startedAt = Date.now();
-  const result = await loadTalentInventory({
-    env: { HEYGEN_API_KEY: 'unit-test-provider-key' },
-    inventoryTimeoutMs: 25,
-    fetchImpl: async () => {
-      providerCalls += 1;
-      return {
-        ok: true,
-        status: 200,
-        async json() { return new Promise(() => {}); },
-      };
-    },
-  });
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    const result = await loadTalentInventory({
+      env: { HEYGEN_API_KEY: 'unit-test-provider-key' },
+      inventoryTimeoutMs: 25,
+      fetchImpl: async () => {
+        providerCalls += 1;
+        return {
+          ok: true,
+          status: 200,
+          async json() { return new Promise(() => {}); },
+        };
+      },
+    });
 
-  assert.equal(providerCalls, 1);
-  assert(Date.now() - startedAt < 500);
-  assertVoiceInventoryUnavailable(result);
+    assert.equal(providerCalls, 1);
+    assert(Date.now() - startedAt < 500);
+    assertVoiceInventoryUnavailable(result);
+  } finally {
+    clearInterval(keepAlive);
+  }
 });
 
 test('the shared deadline races a stalled fetch transport that ignores AbortSignal', async () => {
   let providerCalls = 0;
   const startedAt = Date.now();
-  const result = await loadTalentInventory({
-    env: { HEYGEN_API_KEY: 'unit-test-provider-key' },
-    inventoryTimeoutMs: 25,
-    fetchImpl: async () => {
-      providerCalls += 1;
-      return new Promise(() => {});
-    },
-  });
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    const result = await loadTalentInventory({
+      env: { HEYGEN_API_KEY: 'unit-test-provider-key' },
+      inventoryTimeoutMs: 25,
+      fetchImpl: async () => {
+        providerCalls += 1;
+        return new Promise(() => {});
+      },
+    });
 
-  assert.equal(providerCalls, 1);
-  assert(Date.now() - startedAt < 500);
-  assertVoiceInventoryUnavailable(result);
+    assert.equal(providerCalls, 1);
+    assert(Date.now() - startedAt < 500);
+    assertVoiceInventoryUnavailable(result);
+  } finally {
+    clearInterval(keepAlive);
+  }
 });
 
 test('failed v3 voice reads degrade and never fabricate a ready configured voice', async () => {

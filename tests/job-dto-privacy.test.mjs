@@ -51,7 +51,8 @@ test('ordinary render DTO labels and provider setup hints do not name processors
 
   const listed = providerList();
   for (const provider of listed) {
-    assert.equal(provider.name, 'Managed');
+    assert.equal(provider.name, 'The Render');
+    assert.equal(provider.label, 'The Render');
     assert.doesNotMatch(`${provider.name} ${provider.label} ${provider.missing.join(' ')}`, /heygen|argil|tavus|d-id|did[_-]|api[_-]?key/i);
     assert.deepEqual(provider.missing, provider.configured ? [] : ['setup']);
   }

@@ -31,7 +31,7 @@ const publicDemoAccount = {
 };
 
 const publicDemoProviders = [
-  { id: 'heygen', name: 'HeyGen', cost: 90 },
+  { id: 'heygen', name: 'The Render', cost: 90 },
   { id: 'argil', name: 'Argil', cost: 80 },
   { id: 'tavus', name: 'Tavus', cost: 120 },
   { id: 'did', name: 'D-ID', cost: 45 },
@@ -551,7 +551,7 @@ function renderProductionKit(kit) {
     ['Language', data.language || 'English'],
     ['Brand', data.brandName || 'No brand name'],
     ['Captions', data.captions ? 'On' : 'Off'],
-    ['Render provider', selectedProvider()?.name || 'HeyGen'],
+    ['Render provider', selectedProvider()?.name || 'The Render'],
     ['Production kit', appState.productionKit ? 'Auto-selected' : 'Pending'],
   ];
   document.querySelector('#summary').replaceChildren(...rows.map(([label, value]) => {
@@ -880,7 +880,7 @@ function resultCard(item) {
   body.className = 'result-body';
   const title = document.createElement('strong');
   title.textContent = item.title || item.scriptTitle || item.filename || 'Video OS render';
-  const providerName = item.provider?.name || item.provider || 'HeyGen';
+  const providerName = item.provider?.name || (item.provider === 'heygen' ? 'The Render' : item.provider) || 'The Render';
   const meta = document.createElement('span');
   meta.className = 'result-meta';
   meta.textContent = `${providerName} | ${item.format || 'vertical'} | ${item.cost || 0} credits | ${formatDate(item.updatedAt || item.createdAt)}`;
