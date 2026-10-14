@@ -41,6 +41,9 @@ test('FAILURE_CATEGORIES includes every category this codebase actually throws w
   // regression of.
   assert.ok(FAILURE_CATEGORIES.includes('PROVIDER_SUBMIT_UNKNOWN'));
   assert.ok(FAILURE_CATEGORIES.includes('FINISH_REMOTION'));
+  for (const category of ['PROVIDER_CANCEL_UNKNOWN', 'PROVIDER_RETRYABLE', 'PROVIDER_RETRY_DEFERRED', 'PROVIDER_RETRY_EXHAUSTED']) {
+    assert.equal(classifyFailure({ failureCategory: category }), category);
+  }
 });
 
 test('classifyFailure regression: a Remotion-engine FFmpeg failure is classified as FINISH_REMOTION, not the INTERNAL fallback -- otherwise the render-driver.js/es reconciliation dashboards would be showing generic INTERNAL for every real Remotion finishing failure', () => {

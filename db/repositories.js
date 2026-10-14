@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { database } from './client.js';
 import { acceptedJobOutput } from '../lib/video-os-output-acceptance.js';
+import { HEYGEN_ACTIVE_STATUSES, HEYGEN_ADMISSION_LOCK_KEY, heygenCapacityAvailable, heygenLimits, heygenSubmissionIdentity } from '../lib/heygen-provider-safety.js';
 import { acceptStoredFinalOutput } from '../services/accept-stored-final-output.js';
 import { configuredPremiumIdentity, renderAuthorization, assertJobAuthorizationBinding, stableJson } from '../lib/video-os-render-authorization.js';
 import {
@@ -28,7 +29,7 @@ import { assertFreshProviderAvatarConsentObservation } from '../lib/provider-ava
 import { assertEnrollmentConsentRecord } from './enrollment-repository.js';
 import { acquireProviderLifecycleLock } from './provider-lifecycle-lock.js';
 import { assertHeygenProviderReceiptTx, withFreshHeygenSpaceBindingTransaction, withHeygenSpaceBindingReceiptTransaction } from './heygen-space-binding-repository.js';
-import { assertProviderIdentityReferencesActiveTx, assertProviderJobLookReferencesActiveTx, assertProviderJobReferencesActiveTx, attachProviderConsumerReferenceTx, attachProviderJobLookReferencesTx, getExactProviderResourceTx, markProviderResourceReadyTx, markProviderVideoReadyTx, providerOperationRequestDigest, recordProviderJobSubmissionUnknownTx, recordProviderVideoResourceTx, releaseProviderVideoConsumerTx, reserveProviderOperationTx } from './provider-reconciliation-repository.js';
+import { assertProviderIdentityReferencesActiveTx, assertProviderJobLookReferencesActiveTx, assertProviderJobReferencesActiveTx, attachProviderConsumerReferenceTx, attachProviderJobLookReferencesTx, getExactProviderResourceTx, markProviderResourceReadyTx, markProviderVideoReadyTx, providerOperationRequestDigest, recordProviderJobSubmissionUnknownTx, recordProviderJobDefinitiveRetryTx, recordProviderVideoResourceTx, releaseProviderVideoConsumerTx, reserveProviderOperationTx } from './provider-reconciliation-repository.js';
 import { authSessions, creditAccounts, creditTransactions, entitlements, identityConsents, identityEnrollmentEvents, identityVideoEnrollments, jobEvents, mediaAssets, projects, providerLifecycleEvents, rateLimits, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
 
 export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING', 'PROCESSING', 'READY', 'FAILED']);
@@ -744,7 +745,7 @@ const ALLOWED_JOB_TRANSITIONS = Object.freeze({
   workflow_starting: ['workflow_started', 'failed'],
   workflow_started: ['provider_submitting', 'failed'],
   provider_submitting: ['provider_submitted', 'provider_submit_unknown', 'failed'],
-  provider_submit_unknown: [],
+  provider_submit_unknown: ['provider_submitted'],
   provider_submitted: ['provider_rendering', 'provider_ready', 'failed'],
   provider_rendering: ['provider_rendering', 'provider_ready', 'failed'],
   provider_ready: ['finish_contained', 'finishing', 'failed'],
@@ -784,6 +785,28 @@ export async function claimWorkflowStart(jobId) {
 
 export async function getJob(jobId) {
   return (await database().select().from(videoJobs).where(eq(videoJobs.id, jobId)).limit(1))[0] || null;
+}
+
+export async function listHeygenUnknownJobs(limit = 20) {
+  return database().select().from(videoJobs).where(and(eq(videoJobs.provider, 'heygen'), eq(videoJobs.status, 'provider_submit_unknown')))
+    .orderBy(videoJobs.updatedAt).limit(Math.min(100, Math.max(1, limit)));
+}
+
+export async function releaseHeygenUnknownForRetry(jobId, { providerBinding, graceMs, now = new Date() }) {
+  return withHeygenSpaceBindingReceiptTransaction({ accountId: providerBinding.applicationAccountId, providerBinding }, async tx => {
+    const [job] = await tx.select().from(videoJobs).where(and(eq(videoJobs.id, jobId), eq(videoJobs.accountId, providerBinding.applicationAccountId))).for('update').limit(1);
+    if (!job || job.status !== 'provider_submit_unknown' || job.providerJobId) return null;
+    const metadata = job.output?.heygenSubmission;
+    const claimedAt = Date.parse(metadata?.claimedAt);
+    const firstClaimedAt = Date.parse(metadata?.firstClaimedAt || metadata?.claimedAt);
+    if (!metadata?.idempotencyKey || !Number.isFinite(claimedAt) || !Number.isFinite(firstClaimedAt)
+      || now.getTime() - claimedAt < graceMs || now.getTime() - firstClaimedAt >= 24 * 60 * 60_000) return null;
+    const next = { ...metadata, retryCount: (metadata.retryCount ?? 0) + 1, nextAttemptAt: now.toISOString() };
+    const [released] = await tx.update(videoJobs).set({ status: 'workflow_started', output: { ...job.output, heygenSubmission: next },
+      failureCategory: null, updatedAt: now }).where(eq(videoJobs.id, jobId)).returning();
+    await tx.insert(jobEvents).values({ jobId, correlationId: job.correlationId, eventType: 'provider.unknown_released_after_inventory', stageFrom: job.status, stageTo: 'workflow_started', details: { retryCount: next.retryCount } });
+    return released;
+  });
 }
 
 function deepFreezeProviderProof(value) {
@@ -889,6 +912,11 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
       return callback(tx);
     });
   const result = await runTransaction(async (tx) => {
+    // All HeyGen claimers take this transaction-scoped lock before counting.
+    // The count and status write below commit together across every worker.
+    if (stageTo === 'provider_submitting' && providerBinding != null) {
+      await tx.execute(sql`select pg_advisory_xact_lock(${HEYGEN_ADMISSION_LOCK_KEY})`);
+    }
     let providerClaimProof = null;
     const current = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
     if (!current) throw Object.assign(new Error('Video job not found.'), { statusCode: 404 });
@@ -901,6 +929,33 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
     }
     if (stageTo === 'provider_submitting' && PROVIDER_SUBMISSION_CLAIMED_STATUSES.has(current.status)) {
       throw Object.assign(new Error('Provider submission is already claimed and requires reconciliation.'), { statusCode: 409, failureCategory: 'PROVIDER_SUBMIT_UNKNOWN', providerSubmissionPossible: true });
+    }
+    if (current.status === 'provider_submit_unknown' && stageTo === 'provider_submitted'
+      && (current.provider !== 'heygen' || !providerBinding || eventType !== 'provider.reconciled_found' || !providerJobId)) {
+      throw Object.assign(new Error('Held submission requires a verified HeyGen reconciliation receipt.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
+    }
+    if (stageTo === 'provider_submitting') assertJobTransition(current.status, stageTo);
+    if (stageTo === 'provider_submitting' && current.provider === 'heygen') {
+      const metadata = current.output?.heygenSubmission;
+      if (metadata?.nextAttemptAt && Date.now() < Date.parse(metadata.nextAttemptAt)) return { job: current, admissionDeferred: true };
+      const limits = heygenLimits();
+      const countResult = await tx.execute(sql`select account_id, count(*)::int as count from video_jobs
+        where provider = 'heygen' and ${inArray(videoJobs.status, HEYGEN_ACTIVE_STATUSES)} group by account_id`);
+      const counts = countResult.rows ?? countResult;
+      if (!heygenCapacityAvailable(counts, current.accountId, limits)) {
+        const now = new Date();
+        const nextAttemptAt = new Date(now.getTime() + 5_000).toISOString();
+        const configuredInterval = Number(process.env.VIDEO_OS_HEYGEN_ADMISSION_EVENT_INTERVAL_MS);
+        const intervalMs = Number.isSafeInteger(configuredInterval) && configuredInterval > 0 ? configuredInterval : 300_000;
+        const lastEventAt = Date.parse(metadata?.lastDeferralEventAt);
+        const logDeferral = !Number.isFinite(lastEventAt) || now.getTime() - lastEventAt >= intervalMs;
+        const [deferred] = await tx.update(videoJobs).set({
+          output: { ...current.output, heygenSubmission: { ...metadata, nextAttemptAt,
+            ...(logDeferral ? { lastDeferralEventAt: now.toISOString() } : {}) } }, updatedAt: now,
+        }).where(eq(videoJobs.id, jobId)).returning();
+        if (logDeferral) await tx.insert(jobEvents).values({ jobId, correlationId: current.correlationId, eventType: 'provider.admission_deferred', stageFrom: current.status, stageTo: current.status, details: { nextAttemptAt } });
+        return { job: deferred, admissionDeferred: true };
+      }
     }
     // Finishing retries may overlap; each uses its own temporary files and the
     // final transaction arbitrates one artifact/debit. Do not fail the live job.
@@ -997,6 +1052,7 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
           identityId: luxify ? null : current.input?.identityId || null,
           jobId: current.id,
           requestDigest,
+          attempt: (current.output?.heygenSubmission?.retryCount ?? 0) + 1,
         });
         details = { ...details, providerLifecycleOperationId: ledger.operation.id };
         providerClaimProof = Object.freeze({
@@ -1035,11 +1091,22 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
     const terminal = ['ready', 'failed', 'cancelled'];
     const actualStage = ledgerConflict ? 'provider_submit_unknown' : stageTo;
     const actualFailure = ledgerConflict ? 'PROVIDER_SUBMIT_UNKNOWN' : failureCategory || null;
-    const [job] = await tx.update(videoJobs).set({ status: actualStage, providerJobId: providerJobId || current.providerJobId, output: output || current.output, failureCategory: actualFailure, updatedAt: new Date(), completedAt: terminal.includes(actualStage) ? new Date() : null }).where(eq(videoJobs.id, jobId)).returning();
+    const identity = stageTo === 'provider_submitting' && current.provider === 'heygen'
+      ? { ...heygenSubmissionIdentity(current.id, current.output?.heygenSubmission?.attempt ?? 0), attempt: current.output?.heygenSubmission?.attempt ?? 0,
+        retryCount: current.output?.heygenSubmission?.retryCount ?? 0, claimedAt: new Date().toISOString(),
+        firstClaimedAt: current.output?.heygenSubmission?.firstClaimedAt || current.output?.heygenSubmission?.claimedAt || new Date().toISOString(),
+        ...(current.output?.heygenSubmission?.lastDeferralEventAt ? { lastDeferralEventAt: current.output.heygenSubmission.lastDeferralEventAt } : {}) }
+      : null;
+    const nextOutput = identity ? { ...current.output, heygenSubmission: identity }
+      : stageTo === 'provider_submitting' && current.provider === 'sadtalker'
+        ? { ...current.output, runpodSubmissionStartedAt: new Date().toISOString() }
+        : output || current.output;
+    const [job] = await tx.update(videoJobs).set({ status: actualStage, providerJobId: providerJobId || current.providerJobId, output: nextOutput, failureCategory: actualFailure, updatedAt: new Date(), completedAt: terminal.includes(actualStage) ? new Date() : null }).where(eq(videoJobs.id, jobId)).returning();
     await tx.insert(jobEvents).values({ jobId, correlationId: current.correlationId, eventType: ledgerConflict ? 'provider.receipt_conflict' : eventType, stageFrom: current.status, stageTo: actualStage, failureCategory: actualFailure, details });
     return { job, ledgerConflict, providerClaimProof };
   });
   if (result.ledgerConflict) throw Object.assign(new Error('Provider result requires lifecycle reconciliation.'), { statusCode: 409, failureCategory: 'PROVIDER_SUBMIT_UNKNOWN', providerSubmissionPossible: true });
+  if (result.admissionDeferred) return Object.freeze({ ...result.job, admissionDeferred: true });
   return result.providerClaimProof
     ? Object.freeze({ ...result.job, providerClaimProof: result.providerClaimProof })
     : result.job;
@@ -1882,7 +1949,50 @@ const IN_FLIGHT_JOB_STATUSES = Object.freeze(['workflow_started', 'provider_subm
 // pending manual reconciliation, not something a poll loop should keep
 // hammering.
 export async function listInFlightJobs(limit = 50) {
-  return database().select().from(videoJobs).where(inArray(videoJobs.status, IN_FLIGHT_JOB_STATUSES)).orderBy(videoJobs.updatedAt).limit(Math.min(200, limit));
+  return database().select().from(videoJobs).where(and(inArray(videoJobs.status, IN_FLIGHT_JOB_STATUSES),
+    sql`coalesce((${videoJobs.output}->'heygenSubmission'->>'nextAttemptAt')::timestamptz, '-infinity'::timestamptz) <= now()`))
+    .orderBy(videoJobs.updatedAt).limit(Math.min(200, limit));
+}
+
+export async function requeueHeygenSubmission(jobId, { retryDelayMs, providerBinding, maxRetries = heygenLimits().maxRetries }) {
+  if (!Number.isSafeInteger(retryDelayMs) || retryDelayMs < 0 || retryDelayMs > 900_000) throw new TypeError('Invalid HeyGen retry delay.');
+  const result = await withHeygenSpaceBindingReceiptTransaction({ accountId: providerBinding.applicationAccountId, providerBinding }, async tx => {
+    const current = (await tx.select().from(videoJobs).where(and(eq(videoJobs.id, jobId), eq(videoJobs.accountId, providerBinding.applicationAccountId))).for('update').limit(1))[0];
+    if (!current || current.status !== 'provider_submitting' || current.providerJobId) return null;
+    const metadata = current.output?.heygenSubmission;
+    if (!metadata?.idempotencyKey) throw new Error('HeyGen submission identity was not persisted.');
+    const retryCount = (metadata.retryCount ?? 0) + 1;
+    await recordProviderJobDefinitiveRetryTx(tx, { accountId: current.accountId, jobId, providerBinding });
+    const exhausted = retryCount > maxRetries;
+    if (exhausted) {
+      const charged = await tx.select({ id: creditTransactions.id }).from(creditTransactions).where(and(eq(creditTransactions.sourceType, 'render'), eq(creditTransactions.sourceId, `render:${jobId}`))).limit(1);
+      if (!charged.length) {
+        const account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, current.accountId)).for('update').limit(1))[0];
+        if (account) await tx.update(creditAccounts).set({ reserved: Math.max(0, account.reserved - current.costCredits), updatedAt: new Date() }).where(eq(creditAccounts.accountId, current.accountId));
+      }
+    }
+    const nextAttemptAt = new Date(Date.now() + retryDelayMs).toISOString();
+    const status = exhausted ? 'failed' : 'workflow_started';
+    const [job] = await tx.update(videoJobs).set({ status, failureCategory: exhausted ? 'PROVIDER_RETRY_EXHAUSTED' : null,
+      output: { ...current.output, heygenSubmission: { ...metadata, retryCount, nextAttemptAt } },
+      updatedAt: new Date(), completedAt: exhausted ? new Date() : null }).where(eq(videoJobs.id, jobId)).returning();
+    await tx.insert(jobEvents).values({ jobId, correlationId: current.correlationId, eventType: exhausted ? 'provider.retry_exhausted' : 'provider.retry_queued', stageFrom: current.status, stageTo: status,
+      failureCategory: exhausted ? 'PROVIDER_RETRY_EXHAUSTED' : null, details: { retryCount, nextAttemptAt } });
+    return { job, exhausted };
+  });
+  return result?.job || null;
+}
+
+export async function deferHeygenPoll(jobId, retryDelayMs) {
+  if (!Number.isSafeInteger(retryDelayMs) || retryDelayMs < 0 || retryDelayMs > 900_000) throw new TypeError('Invalid HeyGen poll delay.');
+  return database().transaction(async tx => {
+    const job = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
+    if (!job || job.provider !== 'heygen' || !job.providerJobId || !['provider_submitted', 'provider_rendering'].includes(job.status)) return null;
+    const nextAttemptAt = new Date(Date.now() + retryDelayMs).toISOString();
+    const [deferred] = await tx.update(videoJobs).set({ output: { ...job.output, heygenSubmission: { ...job.output?.heygenSubmission, nextAttemptAt } }, updatedAt: new Date() }).where(eq(videoJobs.id, jobId)).returning();
+    await tx.insert(jobEvents).values({ jobId, correlationId: job.correlationId, eventType: 'provider.poll_deferred', stageFrom: job.status, stageTo: job.status, details: { nextAttemptAt } });
+    return deferred;
+  });
 }
 
 export async function listRecentJobs(limit = 100) {

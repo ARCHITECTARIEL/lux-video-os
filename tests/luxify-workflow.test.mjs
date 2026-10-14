@@ -10,6 +10,7 @@ import {
 } from '../lib/luxify-contract.js';
 import { issueLuxifyQuote, safeLuxifyQuoteProof, verifyLuxifyQuote } from '../lib/luxify-quote.js';
 import { providerCreationActivationStatus } from '../db/provider-reconciliation-repository.js';
+import { heygenSubmissionIdentity } from '../lib/heygen-provider-safety.js';
 
 const ACCOUNT = 'luxify-workflow-owner';
 const PROJECT = '11111111-1111-4111-8111-111111111111';
@@ -144,6 +145,7 @@ if (runFixture) {
 
   let currentJob = luxifyJob();
   let failLuxifySubmit = false;
+  let retryableSubmit = false;
   let avatarConsentReady = true;
   const calls = {
     authorizations: [],
@@ -216,6 +218,8 @@ if (runFixture) {
       return { tier };
     },
     markJobFailedAndRelease: async () => null,
+    deferHeygenPoll: async () => null,
+    requeueHeygenSubmission: async () => { throw Object.assign(new Error('requeue transaction failed'), { failureCategory: 'PROVIDER_OPERATION_CONFLICT' }); },
     transitionJob: async input => {
       calls.transitions.push(input);
       if (input.stageTo === 'provider_submitting') {
@@ -252,6 +256,7 @@ if (runFixture) {
     },
     submitHeygenLuxify: async input => {
       calls.luxifySubmissions.push(input);
+      if (retryableSubmit) throw Object.assign(new Error('provider returned 503'), { failureCategory: 'PROVIDER_RETRYABLE', retryDelayMs: 1000 });
       if (failLuxifySubmit) {
         throw Object.assign(new Error('submission outcome unknown'), {
           failureCategory: 'PROVIDER_SUBMIT_UNKNOWN',
@@ -304,13 +309,13 @@ if (runFixture) {
     assert.equal(calls.avatarReads.length, avatarReadsBefore);
     assert.equal(calls.avatarStatuses.length, avatarStatusesBefore);
     assert.deepEqual(calls.luxifySubmissions[0], {
-      idempotencyKey: currentJob.id,
+      idempotencyKey: heygenSubmissionIdentity(currentJob.id).idempotencyKey,
       prompt: currentJob.input.prompt,
       eligibleLookIds: ['server_look_a', 'server_look_b'],
       duration: 8,
       resolution: '720p',
       aspectRatio: '16:9',
-      title: currentJob.title,
+      title: `${currentJob.title} [${heygenSubmissionIdentity(currentJob.id).marker}]`,
     });
     assert.equal(JSON.stringify(calls.luxifySubmissions[0]).includes('voice'), false);
     assert.equal(JSON.stringify(calls.luxifySubmissions[0]).includes('script'), false);
@@ -418,6 +423,19 @@ if (runFixture) {
     assert.equal(calls.transitions.filter(value => value.stageTo === 'provider_submit_unknown').length, 1);
   });
 
+  test('requeue persistence failure holds a claimed submission for reconciliation', async () => {
+    currentJob = luxifyJob({ id: 'job-luxify-requeue-error' });
+    currentJob.input.renderAuthorization.jobId = currentJob.id;
+    retryableSubmit = true;
+    try {
+      await assert.rejects(workflow.submitProvider(currentJob.id), /VIDEO_OS_PROVIDER_SUBMISSION_POSSIBLE_V1/);
+      assert.equal(currentJob.status, 'provider_submit_unknown');
+      assert.equal(calls.transitions.filter(value => value.jobId === currentJob.id && value.stageTo === 'provider_submit_unknown').length, 1);
+    } finally {
+      retryableSubmit = false;
+    }
+  });
+
   test('pinned canary job passes the render provider creation gate', async () => {
     process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = ACCOUNT;
     try {
@@ -461,13 +479,13 @@ if (runFixture) {
     const job = luxifyJob();
     assert.equal(workflow.providerWorkflowMode(job), 'luxify');
     assert.deepEqual(workflow.luxifyProviderSubmission(job), {
-      idempotencyKey: job.id,
+      idempotencyKey: heygenSubmissionIdentity(job.id).idempotencyKey,
       prompt: job.input.prompt,
       eligibleLookIds: ['server_look_a', 'server_look_b'],
       duration: 8,
       resolution: '720p',
       aspectRatio: '16:9',
-      title: job.title,
+      title: `${job.title} [${heygenSubmissionIdentity(job.id).marker}]`,
     });
     assert.equal(workflow.providerWorkflowMode(presenterJob()), 'presenter');
     const presenter = presenterJob();

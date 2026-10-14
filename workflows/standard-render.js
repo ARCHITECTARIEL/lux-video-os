@@ -5,7 +5,7 @@ import { standardNarrationRepository } from '../db/standard-narration-repository
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
 import { notifyRenderReady } from '../lib/video-os-render-notify.js';
-import { persistRunpodStandardOutput, pollRunpodStandard, standardProviderMode, submitRunpodStandard } from '../services/sadtalker-runpod.js';
+import { cancelRunpodStandard, persistRunpodStandardOutput, pollRunpodStandard, runpodJobTimeoutMs, standardProviderMode, submitRunpodStandard } from '../services/sadtalker-runpod.js';
 import { renderStandardSimulation } from '../services/sadtalker-simulator.js';
 
 async function resolvedSources(job) {
@@ -104,7 +104,7 @@ export async function pollStandardProvider(jobId, providerJobId) {
   'use step';
   const job = await getJob(jobId);
   if (!job) throw new FatalError('Video job not found.');
-  const status = await pollRunpodStandard(providerJobId);
+  const status = await pollRunpodStandard(providerJobId, { submittedAt: job.output?.runpodSubmissionStartedAt });
   if (['provider_ready', 'finishing'].includes(job.status) && status.ready) return status;
   if (['provider_ready', 'finishing'].includes(job.status)) throw Object.assign(new FatalError('RunPod state regressed after Standard media became ready.'), { failureCategory: 'RECONCILIATION' });
   if (!status.ready) await transitionJob({ jobId, stageTo: 'provider_rendering', eventType: 'provider.polled', details: { providerStatus: status.status } });
@@ -143,7 +143,21 @@ export async function failWorkflow(jobId, error) {
   'use step';
   const category = classifyFailure(error, 'INTERNAL');
   if (category === 'PROVIDER_SUBMIT_UNKNOWN') return;
+  if (category === 'PROVIDER_CANCEL_UNKNOWN') {
+    const job = await getJob(jobId);
+    try { captureJobError(error, { jobId, accountId: job?.accountId, correlationId: job?.correlationId, stage: 'standard_provider_cancel', failureCategory: category }); } catch {}
+  }
   await markJobFailedAndRelease(jobId, category, String(error?.message || 'Workflow failed.').slice(0, 300), error?.rejectedArtifact);
+}
+
+export async function cancelStandardOnDeadline(providerJobId) {
+  'use step';
+  await cancelRunpodStandard(providerJobId);
+  throw Object.assign(new Error('RunPod Standard render exceeded its workflow deadline.'), { failureCategory: 'PROVIDER_TIMEOUT' });
+}
+
+export function standardPollLimit(env = process.env) {
+  return Math.ceil(runpodJobTimeoutMs(env) / 15_000) + 2;
 }
 
 export async function standardRenderWorkflow(jobId) {
@@ -151,12 +165,13 @@ export async function standardRenderWorkflow(jobId) {
   try {
     if (standardProviderMode() === 'simulation') return await resolveAndRender(jobId);
     const { providerJobId } = await submitStandardProvider(jobId);
-    for (let attempt = 0; attempt < 120; attempt += 1) {
+    const pollLimit = standardPollLimit();
+    for (let attempt = 0; attempt < pollLimit; attempt += 1) {
       const status = await pollStandardProvider(jobId, providerJobId);
       if (status.ready) return await finishStandardProvider(jobId, status.output);
       await sleep('15s');
     }
-    throw Object.assign(new Error('RunPod Standard render exceeded the 30 minute workflow deadline.'), { failureCategory: 'PROVIDER_TIMEOUT' });
+    await cancelStandardOnDeadline(providerJobId);
   } catch (error) {
     await failWorkflow(jobId, error);
     throw error;

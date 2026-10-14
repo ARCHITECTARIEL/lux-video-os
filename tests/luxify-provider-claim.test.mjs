@@ -63,6 +63,7 @@ mock.module('../db/provider-reconciliation-repository.js', { namedExports: {
     unknownClaims.push(input);
     return { state: 'ambiguous' };
   },
+  recordProviderJobDefinitiveRetryTx: async () => ({ state: 'definitive_retry' }),
 } });
 const heygenSpaceRepository = await import('../db/heygen-space-binding-repository.js');
 mock.module('../db/heygen-space-binding-repository.js', { namedExports: {
@@ -144,7 +145,7 @@ function persistedJob(overrides = {}) {
   };
 }
 
-function databaseFixture({ grants = true, job = persistedJob() } = {}) {
+function databaseFixture({ grants = true, job = persistedJob(), activeCounts = [] } = {}) {
   const events = [];
   const rowsFor = table => {
     if (table === schema.videoJobs) return [job];
@@ -154,6 +155,7 @@ function databaseFixture({ grants = true, job = persistedJob() } = {}) {
   };
   const db = {
     transaction: async work => work(db),
+    execute: async () => ({ rows: activeCounts }),
     select() {
       let table;
       const query = {
@@ -377,6 +379,91 @@ test('a claimed or uncertain LUXIFY submission is never re-claimed or released a
   assert.equal(state.job.status, 'provider_submit_unknown');
   assert.equal(unknownClaims.length, 1);
   assert.equal(unknownClaims[0].jobId, state.job.id);
+});
+
+test('unknown to submitted requires reconciled-found event, binding, and provider id', async () => {
+  const state = databaseFixture({ job: persistedJob({ status: 'provider_submit_unknown' }) });
+  for (const override of [
+    { eventType: 'provider.submitted' },
+    { providerBinding: null },
+    { providerJobId: null },
+  ]) {
+    await assert.rejects(repository.transitionJob({
+      jobId: state.job.id, stageTo: 'provider_submitted', eventType: 'provider.reconciled_found',
+      providerBinding: PROVIDER_BINDING, providerJobId: 'provider-video-1', ...override,
+    }), error => ['RECONCILIATION', 'MISSING_PROVIDER_ACCOUNT_BINDING'].includes(error.failureCategory));
+    assert.equal(state.job.status, 'provider_submit_unknown');
+  }
+});
+
+test('definitive 503 retries stop at the repository retry cap', async () => {
+  const state = databaseFixture({ job: persistedJob({ status: 'provider_submitting', output: {
+    heygenSubmission: { idempotencyKey: 'key-1', retryCount: 1, firstClaimedAt: '2026-10-13T12:00:00Z' },
+  } }) });
+  const exhausted = await repository.requeueHeygenSubmission(state.job.id, {
+    retryDelayMs: 1000, providerBinding: PROVIDER_BINDING, maxRetries: 1,
+  });
+  assert.equal(exhausted.status, 'failed');
+  assert.equal(exhausted.failureCategory, 'PROVIDER_RETRY_EXHAUSTED');
+  assert.equal(exhausted.output.heygenSubmission.retryCount, 2);
+  assert.equal(state.events.at(-1).eventType, 'provider.retry_exhausted');
+});
+
+test('configured retry exhaustion fails the job without an explicit retry override', async () => {
+  const previous = process.env.VIDEO_OS_HEYGEN_MAX_RETRY_ATTEMPTS;
+  process.env.VIDEO_OS_HEYGEN_MAX_RETRY_ATTEMPTS = '1';
+  try {
+    const state = databaseFixture({ job: persistedJob({ status: 'provider_submitting', output: {
+      heygenSubmission: { idempotencyKey: 'key-1', retryCount: 1, firstClaimedAt: '2026-10-13T12:00:00Z' },
+    } }) });
+    const exhausted = await repository.requeueHeygenSubmission(state.job.id, {
+      retryDelayMs: 1000, providerBinding: PROVIDER_BINDING,
+    });
+    assert.equal(exhausted.status, 'failed');
+    assert.equal(exhausted.failureCategory, 'PROVIDER_RETRY_EXHAUSTED');
+    assert.equal(state.events.at(-1).eventType, 'provider.retry_exhausted');
+  } finally {
+    if (previous === undefined) delete process.env.VIDEO_OS_HEYGEN_MAX_RETRY_ATTEMPTS;
+    else process.env.VIDEO_OS_HEYGEN_MAX_RETRY_ATTEMPTS = previous;
+  }
+});
+
+test('repository uses first claim cutoff even when a retry claim is recent', async () => {
+  const state = databaseFixture({ job: persistedJob({ status: 'provider_submit_unknown', output: {
+    heygenSubmission: { idempotencyKey: 'same-key', claimedAt: '2026-10-14T11:00:00Z', firstClaimedAt: '2026-10-13T11:00:00Z' },
+  } }) });
+  const released = await repository.releaseHeygenUnknownForRetry(state.job.id, {
+    providerBinding: PROVIDER_BINDING, graceMs: 60_000, now: new Date('2026-10-14T12:00:00Z'),
+  });
+  assert.equal(released, null);
+  assert.equal(state.job.status, 'provider_submit_unknown');
+});
+
+test('refused admission updates retry time but throttles deferral events', async () => {
+  const state = databaseFixture({ activeCounts: [{ account_id: ACCOUNT, count: 8 }] });
+  const claim = () => repository.transitionJob({
+    jobId: state.job.id, stageTo: 'provider_submitting', eventType: 'provider.submit_started', providerBinding: PROVIDER_BINDING,
+  }, trusted());
+  const first = await claim();
+  assert.equal(first.admissionDeferred, true);
+  assert.equal(state.events.filter(event => event.eventType === 'provider.admission_deferred').length, 1);
+  state.job.output.heygenSubmission.nextAttemptAt = '2000-01-01T00:00:00.000Z';
+  const second = await claim();
+  assert.equal(second.admissionDeferred, true);
+  assert.equal(state.events.filter(event => event.eventType === 'provider.admission_deferred').length, 1);
+  assert.ok(state.job.output.heygenSubmission.lastDeferralEventAt);
+});
+
+test('a new provider claim preserves the first claim timestamp across retries', async () => {
+  const firstClaimedAt = '2026-10-13T10:00:00.000Z';
+  const state = databaseFixture({ job: persistedJob({ output: { heygenSubmission: {
+    idempotencyKey: 'prior-key', claimedAt: firstClaimedAt, firstClaimedAt, retryCount: 1,
+  } } }) });
+  const claimed = await repository.transitionJob({
+    jobId: state.job.id, stageTo: 'provider_submitting', eventType: 'provider.submit_started', providerBinding: PROVIDER_BINDING,
+  }, trusted());
+  assert.equal(claimed.output.heygenSubmission.firstClaimedAt, firstClaimedAt);
+  assert.notEqual(claimed.output.heygenSubmission.claimedAt, firstClaimedAt);
 });
 } else {
   test('LUXIFY provider-claim and uncertainty scenarios', () => {

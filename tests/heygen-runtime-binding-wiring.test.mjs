@@ -177,7 +177,7 @@ test('actual route and Workflow keep bindings local to each Node mutation bounda
   assert.match(workflowSource, /stageTo:\s*'provider_submitted'[\s\S]{0,180}providerBinding/);
   assert.match(workflowSource, /stageTo:\s*'provider_submit_unknown'[\s\S]{0,220}providerBinding/);
   assert.doesNotMatch(workflowSource, /submitHeygen\(\{\s*\.\.\.job/);
-  assert.match(workflowSource, /prepareProviderVideoRead[\s\S]{0,500}pollHeygen\(readClaim\.providerJobId\)/);
+  assert.match(workflowSource, /prepareProviderVideoRead[\s\S]{0,1000}pollHeygen\(readClaim\.providerJobId\)/);
   assert.match(workflowSource, /providerSourceUrlDigest[\s\S]{0,500}stageTo:\s*'provider_ready'/);
   assert.match(workflowSource, /prepareProviderVideoFinish[\s\S]{0,700}readClaim\.sourceUrlDigest/);
   assert.match(workflowSource, /finalizeReadyJob\(jobId, artifact, \{ providerBinding \}\)/);

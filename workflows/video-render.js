@@ -1,6 +1,7 @@
 import { FatalError, sleep } from 'workflow';
 import { createHash } from 'node:crypto';
-import { finalizeReadyJob, getJob, prepareProviderVideoFinish, prepareProviderVideoRead, prepareIdentityProviderRead, requireJobRenderAuthorization, markJobFailedAndRelease, transitionJob } from '../db/repositories.js';
+import { deferHeygenPoll, finalizeReadyJob, getJob, prepareProviderVideoFinish, prepareProviderVideoRead, prepareIdentityProviderRead, requireJobRenderAuthorization, markJobFailedAndRelease, requeueHeygenSubmission, transitionJob } from '../db/repositories.js';
+import { heygenSubmissionIdentity } from '../lib/heygen-provider-safety.js';
 import { featureEnabled } from '../lib/video-os-security.js';
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
@@ -117,13 +118,13 @@ export function luxifyProviderSubmission(job) {
     });
   }
   return Object.freeze({
-    idempotencyKey: job.id,
+    idempotencyKey: job.output?.heygenSubmission?.idempotencyKey || heygenSubmissionIdentity(job.id).idempotencyKey,
     prompt: input.prompt,
     eligibleLookIds: Object.freeze([...input.eligibleLookIds]),
     duration: input.durationSeconds,
     resolution: input.resolution,
     aspectRatio: input.aspectRatio,
-    title: input.title,
+    title: `${input.title.slice(0, 89)} [${job.output?.heygenSubmission?.marker || heygenSubmissionIdentity(job.id).marker}]`,
   });
 }
 
@@ -250,6 +251,7 @@ export async function submitProvider(jobId) {
       assertProviderAvatarConsentClaim(job, avatarRead, avatarStatus);
     }
     const transitionedJob = await transitionJob({ jobId, stageTo: 'provider_submitting', eventType: 'provider.submit_started', providerBinding });
+    if (transitionedJob.admissionDeferred) throw Object.assign(new Error('HeyGen admission deferred.'), { failureCategory: 'PROVIDER_RETRY_DEFERRED' });
     submissionClaimed = true;
     claimedJob = assertRenderProviderClaim(transitionedJob, providerBinding, { jobId, accountId: job.accountId });
     assertFreshHeygenSpaceBinding(providerBinding);
@@ -261,6 +263,7 @@ export async function submitProvider(jobId) {
     await transitionJob({ jobId, stageTo: 'provider_submitted', eventType: 'provider.submitted', providerJobId: submitted.providerJobId, providerBinding });
     return submitted;
   } catch (error) {
+    if (error?.failureCategory === 'PROVIDER_RETRY_DEFERRED') throw error;
     if (!submissionClaimed && error?.failureCategory === 'PROVIDER_SUBMIT_UNKNOWN') {
       logOpsEvent({ level: 'error', event: 'render_workflow.provider_submission.blocked', accountId: job.accountId, jobId, code: 'PROVIDER_SUBMIT_UNKNOWN', message: 'Provider submission was blocked pending reconciliation.', correlationId: job.correlationId });
       throw providerSubmissionPossibleFailure();
@@ -268,6 +271,15 @@ export async function submitProvider(jobId) {
     if (!submissionClaimed) {
       logOpsEvent({ level: 'error', event: 'render_workflow.provider_preclaim.failed', accountId: job.accountId, jobId, status: error?.statusCode || 500, code: error?.failureCategory || 'RECONCILIATION', message: 'Provider preclaim failed.', correlationId: job.correlationId });
       throw heygenPreclaimFailure(error);
+    }
+    if (error?.failureCategory === 'PROVIDER_RETRYABLE') {
+      let requeued;
+      try {
+        requeued = await requeueHeygenSubmission(jobId, { retryDelayMs: error.retryDelayMs, providerBinding });
+      } catch (requeueError) {
+        try { captureJobError(requeueError, { jobId, accountId: job.accountId, correlationId: job.correlationId, stage: 'provider_requeue', failureCategory: classifyFailure(requeueError, 'PERSISTENCE') }); } catch {}
+      }
+      if (requeued) throw Object.assign(new Error('HeyGen retry queued.'), { failureCategory: 'PROVIDER_RETRY_DEFERRED' });
     }
     logOpsEvent({ level: 'error', event: 'render_workflow.provider_submission.uncertain', accountId: (claimedJob || job).accountId, jobId, status: error?.statusCode || 500, code: error?.failureCategory || 'PROVIDER_SUBMIT_UNKNOWN', message: 'Provider submission outcome is uncertain.', correlationId: (claimedJob || job).correlationId });
     const uncertainty = providerSubmissionPossibleFailure();
@@ -292,6 +304,10 @@ export async function pollProvider(jobId, providerJobId) {
       providerBinding,
       { jobId, providerJobId },
     );
+    const nextPollAt = Date.parse(readClaim.job.output?.heygenSubmission?.nextAttemptAt || '');
+    if (Number.isFinite(nextPollAt) && Date.now() < nextPollAt) {
+      throw Object.assign(new Error('HeyGen poll delay has not elapsed.'), { failureCategory: 'PROVIDER_RETRY_DEFERRED' });
+    }
     assertFreshHeygenSpaceBinding(providerBinding);
     const status = providerWorkflowMode(readClaim.job) === 'luxify'
       ? await pollHeygenLuxify(readClaim.providerJobId)
@@ -310,6 +326,11 @@ export async function pollProvider(jobId, providerJobId) {
     }
     return status;
   } catch (error) {
+    if (error?.failureCategory === 'PROVIDER_RETRY_DEFERRED') throw error;
+    if (error?.failureCategory === 'PROVIDER_RETRYABLE') {
+      await deferHeygenPoll(jobId, error.retryDelayMs);
+      throw Object.assign(new Error('HeyGen poll deferred.'), { failureCategory: 'PROVIDER_RETRY_DEFERRED' });
+    }
     if (error?.failureCategory === 'PROVIDER_REJECTED') throw error;
     throw providerSubmissionPossibleFailure();
   }
@@ -365,8 +386,8 @@ export async function failWorkflow(jobId, error) {
   'use step';
   const durable = parseDurableRenderFailure(error);
   const category = durable?.failureCategory || classifyFailure(error, 'INTERNAL');
-  if (durable?.kind === 'provider-submission-possible' || category === 'PROVIDER_SUBMIT_UNKNOWN' || error?.providerSubmissionPossible === true) {
-    logOpsEvent({ level: 'error', event: 'render_workflow.failure.contained', jobId, code: 'PROVIDER_SUBMIT_UNKNOWN', message: 'Workflow failure was contained pending provider reconciliation.' });
+  if (durable?.kind === 'provider-submission-possible' || category === 'PROVIDER_SUBMIT_UNKNOWN' || category === 'PROVIDER_RETRY_DEFERRED' || error?.providerSubmissionPossible === true) {
+    logOpsEvent({ level: 'error', event: 'render_workflow.failure.contained', jobId, code: category === 'PROVIDER_RETRY_DEFERRED' ? category : 'PROVIDER_SUBMIT_UNKNOWN', message: 'Workflow failure was contained pending provider reconciliation or retry.' });
     return;
   }
   const preclaim = durable?.kind === 'heygen-preclaim' || error?.scriptedPhotoPreclaim === true;
@@ -379,9 +400,24 @@ export async function failWorkflow(jobId, error) {
 export async function videoRenderWorkflow(jobId) {
   'use workflow';
   try {
-    const { providerJobId } = await submitProvider(jobId);
+    let submitted;
+    for (let admission = 0; admission < 5_760 && !submitted; admission += 1) {
+      try { submitted = await submitProvider(jobId); }
+      catch (error) {
+        if (error?.failureCategory !== 'PROVIDER_RETRY_DEFERRED') throw error;
+        await sleep('15s');
+      }
+    }
+    if (!submitted) throw Object.assign(new Error('HeyGen admission wait exceeded one day.'), { failureCategory: 'PROVIDER_RETRY_DEFERRED' });
+    const { providerJobId } = submitted;
     for (let attempt = 0; attempt < 120; attempt += 1) {
-      const status = await pollProvider(jobId, providerJobId);
+      let status;
+      try { status = await pollProvider(jobId, providerJobId); }
+      catch (error) {
+        if (error?.failureCategory !== 'PROVIDER_RETRY_DEFERRED') throw error;
+        await sleep('15s');
+        continue;
+      }
       if (status.ready) return await finishProviderMedia(jobId, status.sourceUrl);
       await sleep('15s');
     }

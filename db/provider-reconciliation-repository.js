@@ -302,6 +302,19 @@ export async function recordProviderJobSubmissionUnknownTx(tx, { accountId, jobI
   });
 }
 
+export async function recordProviderJobDefinitiveRetryTx(tx, { accountId, jobId, providerBinding, now = new Date() }) {
+  const authority = assertHeygenProviderReceiptTx(tx, { accountId, providerBinding });
+  const [operation] = await tx.select().from(providerLifecycleOperations).where(and(
+    eq(providerLifecycleOperations.applicationAccountId, accountId),
+    eq(providerLifecycleOperations.bindingId, authority.bindingId),
+    eq(providerLifecycleOperations.originScopeKey, authority.originScopeKey),
+    eq(providerLifecycleOperations.jobId, jobId),
+    eq(providerLifecycleOperations.kind, 'video_create'),
+  )).orderBy(desc(providerLifecycleOperations.createdAt)).for('update').limit(1);
+  if (!operation || operation.state !== 'pending') throw failure('Provider retry has no pending operation.', 409, 'PROVIDER_OPERATION_CONFLICT');
+  return recordProviderOperationFailureTx(tx, { accountId, operationId: operation.id, code: 'RETRYABLE_HTTP', now });
+}
+
 async function verifiedScopeForBinding(tx, bindingId) {
   const [promotion] = await tx.select().from(providerAccountBindingPromotions).where(and(
     eq(providerAccountBindingPromotions.bindingId, bindingId),

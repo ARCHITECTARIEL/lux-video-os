@@ -1,6 +1,7 @@
 import { LUXIFY_PROMPT_MAX_CHARS } from '../lib/luxify-contract.js';
 import { parseOrThrow, providerStatusSchema, providerSubmitSchema } from '../lib/video-os-validation.js';
 import { logEvent, timingSafeMatch } from '../lib/video-os-security.js';
+import { heygenRetryableResponse, heygenSubmissionIdentity } from '../lib/heygen-provider-safety.js';
 
 const API_ORIGIN = 'https://api.heygen.com';
 const timeoutMs = (env = process.env) => Number(env.HEYGEN_TIMEOUT_MS || 20_000);
@@ -37,13 +38,18 @@ async function responseJson(response, category) {
   return data;
 }
 
-async function postWithReceiptValidation(path, options, validate, fetchImpl = fetch) {
+async function postWithReceiptValidation(path, options, validate, fetchImpl = fetch, retryOptions = null) {
   // Once a POST is sent, an exception is not evidence that no resource exists.
   // Never automatically replay uploads/clones after a lost or unusable reply.
   try {
     const response = await fetchImpl(`${API_ORIGIN}${path}`, options);
+    if (retryOptions) {
+      const retry = heygenRetryableResponse(response, retryOptions);
+      if (retry) throw retry;
+    }
     return await validate(await responseJson(response, 'PROVIDER_SUBMIT_UNKNOWN'));
   } catch (error) {
+    if (error?.failureCategory === 'PROVIDER_RETRYABLE') throw error;
     const status = Number(error?.providerHttpStatus);
     const providerHttpStatus = Number.isInteger(status) && status >= 400 && status <= 599 ? status : undefined;
     throw Object.assign(new Error(providerHttpStatus
@@ -564,7 +570,7 @@ function luxifyConfigError() {
 }
 
 function luxifyDependencies(options = {}) {
-  const allowed = new Set(['env', 'fetchImpl']);
+  const allowed = new Set(['env', 'fetchImpl', 'now', 'random', 'retryNumber']);
   if (!plainRecord(options)
     || Reflect.ownKeys(options).some((field) => typeof field !== 'string' || !allowed.has(field))) {
     throw luxifyConfigError();
@@ -612,7 +618,7 @@ export async function submitHeygenLuxify(submission, options = {}) {
       'Idempotency-Key': requestKey,
     },
     body: JSON.stringify(request),
-  }, normalizeLuxifySubmitResponse, fetchImpl);
+  }, normalizeLuxifySubmitResponse, fetchImpl, { retryNumber: options.retryNumber ?? 1, now: options.now, random: options.random });
 }
 
 export async function pollHeygenLuxify(providerJobId, options = {}) {
@@ -629,6 +635,8 @@ export async function pollHeygenLuxify(providerJobId, options = {}) {
   } catch (error) {
     throw luxifyPollTransportError(error);
   }
+  const retry = heygenRetryableResponse(response, { retryNumber: options.retryNumber ?? 1, now: options.now, random: options.random });
+  if (retry) throw retry;
   let payload;
   try {
     payload = await responseJson(response, 'PROVIDER_POLL');
@@ -646,20 +654,25 @@ export async function pollHeygenLuxify(providerJobId, options = {}) {
   return status;
 }
 
-export async function submitHeygen(job) {
+export async function submitHeygen(job, { fetchImpl = fetch, env = process.env, now, random } = {}) {
   const input = job.input;
-  const response = await fetch(`${API_ORIGIN}/v3/videos`, {
+  const identity = job.output?.heygenSubmission || heygenSubmissionIdentity(job.id);
+  const response = await fetchImpl(`${API_ORIGIN}/v3/videos`, {
     method: 'POST',
-    signal: AbortSignal.timeout(timeoutMs()),
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Api-Key': key(), 'Idempotency-Key': job.id },
-    body: JSON.stringify({ type: 'avatar', avatar_id: input.avatar.avatarId, script: input.script, voice_id: input.voice.voiceId, title: job.title, resolution: '1080p', aspect_ratio: job.format === 'landscape' ? '16:9' : job.format === 'square' ? '1:1' : '9:16' }),
+    signal: AbortSignal.timeout(timeoutMs(env)),
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Api-Key': key(env), 'Idempotency-Key': identity.idempotencyKey },
+    body: JSON.stringify({ type: 'avatar', avatar_id: input.avatar.avatarId, script: input.script, voice_id: input.voice.voiceId, title: `${String(job.title).slice(0, 89)} [${identity.marker}]`, resolution: '1080p', aspect_ratio: job.format === 'landscape' ? '16:9' : job.format === 'square' ? '1:1' : '9:16' }),
   });
+  const retry = heygenRetryableResponse(response, { retryNumber: (identity.retryCount ?? 0) + 1, now, random });
+  if (retry) throw retry;
   const parsed = parseOrThrow(providerSubmitSchema, await responseJson(response, 'PROVIDER_SUBMIT'), 'HeyGen submission response was invalid.');
   return { providerJobId: parsed.data?.video_id || parsed.data?.id || parsed.data?.job_id || parsed.video_id || parsed.id || parsed.job_id };
 }
 
-export async function pollHeygen(providerJobId) {
-  const response = await fetch(`${API_ORIGIN}/v3/videos/${encodeURIComponent(providerJobId)}`, { signal: AbortSignal.timeout(timeoutMs()), headers: { Accept: 'application/json', 'X-Api-Key': key() } });
+export async function pollHeygen(providerJobId, { fetchImpl = fetch, env = process.env, now, random, retryNumber = 1 } = {}) {
+  const response = await fetchImpl(`${API_ORIGIN}/v3/videos/${encodeURIComponent(providerJobId)}`, { signal: AbortSignal.timeout(timeoutMs(env)), headers: { Accept: 'application/json', 'X-Api-Key': key(env) } });
+  const retry = heygenRetryableResponse(response, { retryNumber, now, random });
+  if (retry) throw retry;
   const parsed = parseOrThrow(providerStatusSchema, await responseJson(response, 'PROVIDER_POLL'), 'HeyGen status response was invalid.');
   const data = parsed.data || parsed;
   const status = String(data.status || parsed.status || '').toLowerCase();

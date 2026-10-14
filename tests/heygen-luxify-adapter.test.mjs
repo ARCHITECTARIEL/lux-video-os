@@ -299,8 +299,8 @@ test('every uncertain LUXIFY POST outcome is contained after one request and nev
           },
         }),
         (error) => {
-          assert.equal(error.failureCategory, 'PROVIDER_SUBMIT_UNKNOWN');
-          assert.equal(error.providerSubmissionPossible, true);
+          assert.equal(error.failureCategory, name === 'server_error' ? 'PROVIDER_RETRYABLE' : 'PROVIDER_SUBMIT_UNKNOWN');
+          if (name !== 'server_error') assert.equal(error.providerSubmissionPossible, true);
           assert.equal(error.message.includes(privateDiagnostic), false);
           assert.equal(error.message.includes(providerEnv.HEYGEN_API_KEY), false);
           return true;

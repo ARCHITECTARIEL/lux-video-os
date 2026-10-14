@@ -1,4 +1,8 @@
 import { HEYGEN_RECONCILIATION_RESOURCE_KINDS } from '../lib/heygen-reconciliation-contract.js';
+import { fetchHeygenPaginatedCollection } from './heygen.js';
+import { listHeygenUnknownJobs, releaseHeygenUnknownForRetry, transitionJob } from '../db/repositories.js';
+import { resolveFreshHeygenSpaceBinding } from '../db/heygen-space-binding-repository.js';
+import { heygenLimits } from '../lib/heygen-provider-safety.js';
 
 const API_ORIGIN = 'https://api.heygen.com';
 const PROVIDER_IDS = /^[A-Za-z0-9_.:-]{1,255}$/;
@@ -360,4 +364,58 @@ export async function deleteResource(kind, idInput, options = {}) {
     ...commonResult(kind, id, response, code, observedAt(options.now), correlation),
     outcome: 'DELETE_ACKNOWLEDGED',
   });
+}
+
+// Separate from the signed deletion-plan contract above: this only reconciles
+// an existing render submission. Inventory must be complete before absence is
+// actionable; a copied title alone never grants account/binding authority.
+export async function reconcileUnknownHeygenJob(job, {
+  lookup = () => fetchHeygenPaginatedCollection(`${API_ORIGIN}/v3/videos`, {
+    maxPages: 10, maxItems: 500, requireExplicitPagination: true,
+  }),
+  resolveBinding = resolveFreshHeygenSpaceBinding,
+  bind = transitionJob,
+  release = releaseHeygenUnknownForRetry,
+  now = () => new Date(),
+  env = process.env,
+} = {}) {
+  if (String(env.VIDEO_OS_HEYGEN_SUBMIT_RECONCILER_ENABLED || '').toLowerCase() !== 'true') return { outcome: 'disabled' };
+  if (!job || job.provider !== 'heygen' || job.status !== 'provider_submit_unknown') return { outcome: 'not_held' };
+  const metadata = job.output?.heygenSubmission;
+  if (!metadata?.marker || !metadata?.idempotencyKey || !metadata?.claimedAt) return { outcome: 'attention', reason: 'missing_submission_identity' };
+  const observedAt = new Date(now());
+  const inventory = await lookup(job);
+  if (!inventory?.complete || inventory.truncated || !Array.isArray(inventory.items)) return { outcome: 'attention', reason: 'incomplete_inventory' };
+  const matches = inventory.items.filter(item => typeof item?.title === 'string' && item.title.includes(`[${metadata.marker}]`));
+  if (matches.length > 1) return { outcome: 'attention', reason: 'multiple_matches' };
+  const providerJobId = matches[0]?.video_id ?? matches[0]?.id;
+  if (matches.length === 1) {
+    if (typeof providerJobId !== 'string' || !PROVIDER_IDS.test(providerJobId)) return { outcome: 'attention', reason: 'invalid_match' };
+    const providerBinding = await resolveBinding({ accountId: job.accountId });
+    await bind({ jobId: job.id, stageTo: 'provider_submitted', eventType: 'provider.reconciled_found', providerJobId, providerBinding,
+      details: { method: 'complete_v3_video_inventory', marker: metadata.marker } });
+    return { outcome: 'found', providerJobId };
+  }
+  const graceSeconds = Number(env.VIDEO_OS_HEYGEN_RECONCILE_GRACE_SECONDS);
+  const graceMs = (Number.isSafeInteger(graceSeconds) && graceSeconds >= 60 && graceSeconds <= 86_400 ? graceSeconds : 1_800) * 1000;
+  const ageMs = observedAt.getTime() - new Date(metadata.claimedAt).getTime();
+  const firstAgeMs = observedAt.getTime() - new Date(metadata.firstClaimedAt || metadata.claimedAt).getTime();
+  if (!Number.isFinite(ageMs) || !Number.isFinite(firstAgeMs)) return { outcome: 'attention', reason: 'invalid_claim_time' };
+  if (firstAgeMs >= 24 * 60 * 60_000) return { outcome: 'attention', reason: 'idempotency_window_expired' };
+  if (ageMs < graceMs) return { outcome: 'held', reason: 'grace_period' };
+  if ((metadata.retryCount ?? 0) >= heygenLimits(env).maxRetries) return { outcome: 'attention', reason: 'ambiguous_retry_limit' };
+  const providerBinding = await resolveBinding({ accountId: job.accountId });
+  const released = await release(job.id, { providerBinding, graceMs, now: observedAt });
+  return released ? { outcome: 'released_for_same_key_retry' } : { outcome: 'held', reason: 'state_changed' };
+}
+
+export async function reconcileUnknownHeygenJobs(options = {}) {
+  if (String((options.env ?? process.env).VIDEO_OS_HEYGEN_SUBMIT_RECONCILER_ENABLED || '').toLowerCase() !== 'true') return [];
+  const jobs = await (options.listJobs ?? listHeygenUnknownJobs)(20);
+  const results = [];
+  for (const job of jobs) {
+    try { results.push({ jobId: job.id, ...await reconcileUnknownHeygenJob(job, options) }); }
+    catch { results.push({ jobId: job.id, outcome: 'attention', reason: 'lookup_or_binding_failed' }); }
+  }
+  return results;
 }
