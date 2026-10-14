@@ -69,7 +69,7 @@ test('0012 snapshot and journal describe the same ops_events table', async () =>
   assert.equal(snapshot.tables['public.identity_consents'].checkConstraints.identity_consents_hosted_v3_purpose_ck, undefined);
 
   const plan = await migrationPlan();
-  const migration = plan.migrations.at(-1);
+  const migration = plan.migrations.find(entry => entry.tag === '0012_legal_magneto');
   assert.equal(migration.tag, '0012_legal_magneto');
   assert.equal(migration.hashes[0], NORMALIZED_MIGRATION_SHA256);
   assert.equal(migration.hashes.length, 2);

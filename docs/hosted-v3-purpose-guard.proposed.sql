@@ -1,3 +1,6 @@
+-- SUPERSEDED by drizzle/0013_hosted_v3_purpose_guard.sql (MIG-0013, 2026-10-14). Do not apply this file.
+-- Kept only as the historical 0000-0011 rehearsal input for tests/core-schema-null-purpose.test.mjs.
+-- See docs/migrations/0013-hosted-v3-purpose-guard.md for the pre-apply check and rollback.
 -- Review-only additive proposal. This file is not in drizzle/meta/_journal.json.
 -- Assign a migration identity only after the optional-branch lineage decision.
 DO $$

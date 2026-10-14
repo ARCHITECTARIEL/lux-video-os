@@ -1,0 +1,1 @@
+ALTER TABLE "identity_consents" ADD CONSTRAINT "identity_consents_hosted_v3_purpose_ck" CHECK ("identity_consents"."policy_version" <> 'identity-provider-subject-consent-v3' or "identity_consents"."consent_purpose" is not distinct from 'hosted-avatar-consent');

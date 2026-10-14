@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "provenance": "recaptured 2026-10-14 (OBS-001): fresh isolated PostgreSQL 18.6 (major version 18) throwaway instance with all 13 migrations (0000-0012) applied from empty via psql, captured twice (LF and CRLF copies of the migration SQL) with identical results after catalogue line-ending normalization (tools/check-migrations.mjs normalizeCatalogueLineEndings). Control: applying 0000-0011 on the same instance reproduced the VOS-002b schemaSha256 02d4d057... exactly. Hashed with readSchemaCatalogue/schemaDigest, migration set via migrationPlan(), sources via schemaSourceHashes(). The schemaSha256 depends on the PostgreSQL major version (catalogue text such as pg_get_functiondef differs, e.g. PG 17); compare only against a PostgreSQL 18 database. identity_consents_hosted_v3_purpose_ck is intentionally excluded (deferred per 2dd491c; proposal in docs/hosted-v3-purpose-guard.proposed.sql). Supersedes the 2026-10-13 VOS-002b capture (12 migrations, 0000-0011).",
-  "capturedAt": "2026-10-14T11:43:03.065Z",
-  "migrationSetSha256": "659c9f1d3d893d5d1f4ce0a8d83dfa5d23bcd1c0a5831158ac89da897006dc6e",
+  "provenance": "recaptured 2026-10-14 (MIG-0013): fresh isolated PostgreSQL 18.6 (major version 18) throwaway Docker instance (no published port, removed after capture) with all 14 migrations (0000-0013) applied from empty via psql. Hashed with readSchemaCatalogue/schemaDigest, migration set via migrationPlan(), sources via schemaSourceHashes(). Control: applying 0000-0012 on an identical throwaway instance reproduced the OBS-001 schemaSha256 5c7a106a... exactly. 0013 adds identity_consents_hosted_v3_purpose_ck (validated, convalidated=true) as declared in db/schema.js. The schemaSha256 depends on the PostgreSQL major version; compare only against a PostgreSQL 18 database. Supersedes the 2026-10-14 OBS-001 capture (13 migrations, 0000-0012).",
+  "capturedAt": "2026-10-14T16:57:34.345Z",
+  "migrationSetSha256": "e488f55a72184b622b36826fde80c3af63ee6e3d6a0416611a20e44b10fe8cc4",
   "sourceHashes": {
     "db/schema.js": "4e779ca2c4d28dd5cfaddc2a9fac1d1aac56a26df6ab389205774b2b157714fb",
     "db/standard-narration-schema.js": "be1b5caa8040685ddae706b0e3c7d7357deb8753d917528d3defb88af11b0efd",
     "db/provider-lifecycle-guards.sql": "dbbfe7a06b596283e62f58d3cb050a30d42e489dcd781d1523547aacc897c3df"
   },
-  "schemaSha256": "5c7a106a82069c6a849b84113ea1e70b2a8482e45b19585f0bd1ca05b3bffc70",
+  "schemaSha256": "fe9a67f35ec0703569f354eb87a4f31100f299eb746fb280301f2ef0212a823d",
   "tableCount": 28
 }
