@@ -116,9 +116,13 @@ test('active mode denies all 29 mapped aliases and direct function paths before 
 test('only the byte-exact diagnostic GET passes the admission helper', () => {
   const env = { VIDEO_OS_DIAGNOSTIC_MAINTENANCE: 'true' };
   const exact = '/api/video-os-lite/admin?operation=db-binding';
+  const canary = '/api/video-os-lite/admin?operation=canary-scope';
   assert.equal(blockForDiagnosticMaintenance({ method: 'GET', url: exact }, response(), { env, allowDiagnostic: true }), false);
+  assert.equal(blockForDiagnosticMaintenance({ method: 'GET', url: canary }, response(), { env, allowDiagnostic: true }), false);
   for (const [method, url] of [
     ['POST', exact], ['HEAD', exact], ['OPTIONS', exact],
+    ['POST', canary], ['HEAD', canary], ['OPTIONS', canary],
+    ['GET', `${canary}&extra=1`],
     ['GET', '/api/video-os-lite/admin?operation=db-binding&operation=grant-credit'],
     ['GET', '/api/video-os-lite/admin?oper%61tion=db-binding'],
     ['GET', '/api/video-os-lite/admin?operation=db-binding&extra=1'],

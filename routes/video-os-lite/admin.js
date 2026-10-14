@@ -14,7 +14,8 @@ import { captureRouteError } from '../../lib/video-os-observability.js';
 import { deletePrivateBlob, getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../../lib/video-os-private-blob.js';
 import { timingSafeMatch } from '../../lib/video-os-security.js';
 import { getP0JobAttestation, P0JobAttestationError } from '../../db/p0-job-attestation.js';
-import { diagnosticWindowOpen, handleProductionDbBindingDiagnostic } from '../../lib/production-db-binding-diagnostic.js';
+import { handleProductionDbBindingDiagnostic } from '../../lib/production-db-binding-diagnostic.js';
+import { handleCanaryScopeDiagnostic } from '../../lib/canary-scope-diagnostic.js';
 import { reconcileStripePayments } from '../../lib/video-os-stripe-reconciliation.js';
 import { runWatchdogSweep } from '../../lib/video-os-watchdog.js';
 
@@ -297,17 +298,6 @@ export async function handleP0AttestationRequest(req, res, {
   }
 }
 
-function isDbBindingOperatorRequest(req) {
-  const token = String(process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN || '').trim();
-  const adminToken = String(process.env.VIDEO_OS_ADMIN_TOKEN || '').trim();
-  const cronToken = String(process.env.CRON_SECRET || '').trim();
-  const match = /^Bearer ([^\s]+)$/i.exec(String(req.headers.authorization || ''));
-  return Boolean(token && match)
-    && (!adminToken || !timingSafeMatch(token, adminToken))
-    && (!cronToken || !timingSafeMatch(token, cronToken))
-    && timingSafeMatch(match[1], token);
-}
-
 async function jobsSummary() {
   const jobs = await listRecentJobs(100);
   const failed = jobs.filter((job) => job.status === 'failed').length;
@@ -347,16 +337,6 @@ async function handleVideoStream(req, res, jobId) {
 }
 
 async function handleGet(req, res, operation, url) {
-  if (operation === 'db-binding') {
-    if (!diagnosticWindowOpen()) return handleProductionDbBindingDiagnostic(req, res);
-    if (!isDbBindingOperatorRequest(req)) {
-      res.statusCode = 401;
-      res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return res.end(JSON.stringify({ ok: false, code: 'operator_required' }));
-    }
-    return handleProductionDbBindingDiagnostic(req, res);
-  }
   if (operation === 'jobs') return send(res, 200, { ok: true, ...(await jobsSummary()) });
   if (operation === 'overview') return send(res, 200, { ok: true, overview: await getAdminOverview() });
   if (operation === 'attention') return send(res, 200, { ok: true, jobs: await listFailedOrStuckJobs(200) });
@@ -526,10 +506,19 @@ export function createAdminHandler(deps = {}) {
     const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
     const operation = url.searchParams.get('operation') || 'jobs';
     if (operation === 'p0-attestation') return handleP0AttestationRequest(req, res);
+    if (operation === 'canary-scope') {
+      if (req.method !== 'GET') {
+        res.setHeader('Allow', 'GET');
+        return send(res, 405, { ok: false, error: 'Canary scope requires GET.' });
+      }
+      return handleCanaryScopeDiagnostic(req, res);
+    }
+    if (operation === 'db-binding' && req.method === 'GET') {
+      return handleProductionDbBindingDiagnostic(req, res, { requireOperator: true });
+    }
     if (handleOptions(req, res)) return;
     if (!['GET', 'POST'].includes(req.method)) return send(res, 405, { ok: false, error: 'Use GET or POST for admin requests.' });
     try {
-      if (req.method === 'GET' && operation === 'db-binding') return await handleGet(req, res, operation, url);
       if (!(deps.isAdminRequest || isAdminRequest)(req)) return send(res, 401, { ok: false, error: 'Admin login required.' });
       if (req.method === 'POST') return await handlePost(req, res, operation, deps);
       return await handleGet(req, res, operation, url);
