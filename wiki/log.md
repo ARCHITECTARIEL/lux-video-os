@@ -9,7 +9,7 @@
 
 - Corrected the production DB binding diagnostic to distinguish the existing no-account `providerCreationDisabled` field from canary-scoped creation, and to reject containment attestation when the pinned account can create. The response does not reveal the account ID.
 - Added direct render workflow gate tests for a pinned account, another account, and a missing account ID, plus a case-variant account regression. Updated current guidance and added a dated correction note for historical execution records.
-- Verification: full Node suite 1,052 passed, 0 failed, 48 skipped; Vitest 4 passed, 0 failed; import check, client privacy scan and diff whitespace check passed. No commit, push, merge, deploy, migration or external provider/database call was made.
+- Verification: full Node suite 1,052 passed, 0 failed, 48 skipped; Vitest 4 passed, 0 failed; import check, client privacy scan and diff whitespace check passed. Committed on branch codex/id-001 (ID-001 and ID-001b commits). No push, merge, deploy, migration or external provider/database call was made in those runs.
 
 ## 2026-10-01 - [p0-proof-scoping]
 
