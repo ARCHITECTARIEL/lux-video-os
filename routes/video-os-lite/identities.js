@@ -31,6 +31,7 @@ import {
   reserveIdentityComponentCreation,
 } from '../../db/repositories.js';
 import { handleOptions, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { logOpsEvent } from '../../lib/ops-log.js';
 import { observeProviderAvatarConsent } from '../../lib/provider-avatar-consent.js';
 import { IDENTITY_CONSENT_POLICY_VERSION } from '../../lib/video-os-identity-policy.js';
 import { assertPublicDns } from '../../lib/video-os-security.js';
@@ -342,10 +343,16 @@ async function providerAssetFor(accountId, identity, component, operationKey) {
 }
 
 export function assertIdentitySubmissionAllowed(accountId) {
-  assertIdentityProviderMutationEnabled();
-  assertIdentityProviderAccountAuthorized(accountId);
-  assertHeygenConfigured();
+  try {
+    assertIdentityProviderMutationEnabled();
+    assertIdentityProviderAccountAuthorized(accountId);
+    assertHeygenConfigured();
+  } catch (error) {
+    logOpsEvent({ level: 'warn', event: 'identity.provider_creation.blocked', accountId, status: error.statusCode || 503, code: error.failureCategory || 'IDENTITY_PROVIDER_DISABLED', message: 'Identity provider creation gate is closed.' });
+    throw error;
+  }
   if (providerCreationActivationStatus(process.env, accountId).enabled !== true) {
+    logOpsEvent({ level: 'warn', event: 'identity.provider_creation.blocked', accountId, status: 503, code: 'IDENTITY_PROVIDER_DISABLED', message: 'Identity provider creation gate is closed.' });
     throw Object.assign(new Error('Identity provider creation is not activated.'), {
       statusCode: 503,
       failureCategory: 'IDENTITY_PROVIDER_DISABLED',
@@ -448,6 +455,7 @@ async function submitComponent(accountId, identityId, component) {
     if (providerBinding) {
       await markIdentityComponentFailed({ accountId, identityId, component, operationKey: key, failureCode: failure.code, failureMessage: failure.message, providerBinding });
     }
+    logOpsEvent({ level: 'error', event: 'identity.provider_creation.failed', accountId, identityId, status: error.statusCode || 502, code: failure.code, message: 'Identity provider creation failed.', details: { component } });
     throw Object.assign(new Error(failure.message), { statusCode: error.statusCode || 502, failureCategory: failure.code });
   }
 }
@@ -504,24 +512,37 @@ async function refreshIdentity(accountId, identityId) {
 
 async function proxyVoicePreview(res, accountId, identityId) {
   const identity = await getOwnedIdentity(accountId, identityId);
-  if (!identity || identity.archivedAt || identity.voiceStatus !== 'READY' || !identity.providerVoiceId) return send(res, 404, { ok: false, error: 'Voice preview not found.' });
+  if (!identity || identity.archivedAt || identity.voiceStatus !== 'READY' || !identity.providerVoiceId) {
+    logOpsEvent({ level: 'warn', event: 'identity.voice_preview.rejected', accountId, identityId, status: 404, code: 'VOICE_PREVIEW_NOT_FOUND', message: 'Identity voice preview request was rejected.' });
+    return send(res, 404, { ok: false, error: 'Voice preview not found.' });
+  }
   const providerBinding = await resolveFreshHeygenSpaceBinding({ accountId });
   const readClaim = assertIdentityProviderReadClaim(
     await prepareIdentityProviderRead({ accountId, identityId, component: 'voice', providerBinding }),
     { accountId, identityId, component: 'voice' },
   );
   const voice = await identityProviderBindingBoundary.mutate(providerBinding, () => getHeygenVoiceStatus(readClaim.providerVoiceId));
-  if (!voice.ready || !voice.previewAudioUrl) return send(res, 409, { ok: false, error: 'Voice preview is not ready.' });
+  if (!voice.ready || !voice.previewAudioUrl) {
+    logOpsEvent({ level: 'warn', event: 'identity.voice_preview.rejected', accountId, identityId, status: 409, code: 'VOICE_PREVIEW_NOT_READY', message: 'Identity voice preview request was rejected.' });
+    return send(res, 409, { ok: false, error: 'Voice preview is not ready.' });
+  }
   const previewUrl = new URL(voice.previewAudioUrl);
   const hostname = providerMediaHostname(previewUrl);
-  if (!SAFE_PROVIDER_HOSTS.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))) return send(res, 502, { ok: false, error: 'Voice preview host was rejected.' });
+  if (!SAFE_PROVIDER_HOSTS.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))) {
+    logOpsEvent({ level: 'error', event: 'identity.voice_preview.rejected', accountId, identityId, status: 502, code: 'VOICE_PREVIEW_HOST_REJECTED', message: 'Identity voice preview request was rejected.' });
+    return send(res, 502, { ok: false, error: 'Voice preview host was rejected.' });
+  }
   try {
     await assertPublicDns(previewUrl);
   } catch {
+    logOpsEvent({ level: 'error', event: 'identity.voice_preview.rejected', accountId, identityId, status: 502, code: 'VOICE_PREVIEW_DNS_REJECTED', message: 'Identity voice preview request was rejected.' });
     return send(res, 502, { ok: false, error: 'Voice preview host was rejected.' });
   }
   const response = await fetch(previewUrl, { signal: AbortSignal.timeout(20_000), redirect: 'error' });
-  if (!response.ok || !response.body) return send(res, 502, { ok: false, error: 'Voice preview is unavailable.' });
+  if (!response.ok || !response.body) {
+    logOpsEvent({ level: 'error', event: 'identity.voice_preview.rejected', accountId, identityId, status: 502, code: 'VOICE_PREVIEW_UNAVAILABLE', message: 'Identity voice preview request was rejected.' });
+    return send(res, 502, { ok: false, error: 'Voice preview is unavailable.' });
+  }
   res.statusCode = 200;
   res.setHeader('Content-Type', String(response.headers.get('content-type') || 'audio/mpeg').split(';')[0]);
   res.setHeader('Cache-Control', 'private, no-store');
@@ -532,8 +553,9 @@ async function proxyVoicePreview(res, accountId, identityId) {
 
 export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
+  let session;
   try {
-    const session = sessionFromRequest(req);
+    session = sessionFromRequest(req);
     if (req.method === 'GET') {
       const url = new URL(req.url, 'https://video-os.invalid');
       const voicePreview = url.searchParams.get('voicePreview');
@@ -546,7 +568,10 @@ export default async function handler(req, res) {
         providerSubmissionEnabled: providerEnabled(session.accountId),
       });
     }
-    if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Method not allowed.' });
+    if (req.method !== 'POST') {
+      logOpsEvent({ level: 'warn', event: 'identity.request.rejected', accountId: session.accountId, status: 405, code: 'METHOD_NOT_ALLOWED', message: 'Identity request was rejected.' });
+      return send(res, 405, { ok: false, error: 'Method not allowed.' });
+    }
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email, initialCredits: 0 });
     let identity;
@@ -572,6 +597,7 @@ export default async function handler(req, res) {
           await submitComponent(session.accountId, body.identityId, component);
         } catch (error) {
           if (['IDENTITY_PROVIDER_DISABLED', 'IDENTITY_ASSET_PRIVACY_UNCONFIRMED', 'CONFIG_MISSING', 'ENTITLEMENT', 'CONSENT', 'OWNERSHIP', 'VALIDATION'].includes(error.failureCategory)) throw error;
+          logOpsEvent({ level: 'error', event: 'identity.provider_creation.contained_failure', accountId: session.accountId, identityId: body.identityId, status: error.statusCode || 502, code: error.failureCategory || 'PROVIDER_FAILURE', message: 'Identity provider component failure was contained.', details: { component } });
           // A contained component-level provider failure must not prevent its
           // sibling from reaching its own durable terminal state.
         }
@@ -595,6 +621,7 @@ export default async function handler(req, res) {
   } catch (error) {
     const status = error.statusCode || 500;
     const publicMessage = status < 500 || error.failureCategory === 'CAPABILITY_BLOCKED' ? error.message : 'Identity Studio could not complete this request.';
+    logOpsEvent({ level: status >= 500 ? 'error' : 'warn', event: 'identity.request.rejected', accountId: session?.accountId, identityId: undefined, status, code: String(error.failureCategory || 'IDENTITY_ERROR').slice(0, 80), message: 'Identity request was rejected.' });
     return send(res, status, { ok: false, error: publicMessage, code: String(error.failureCategory || 'IDENTITY_ERROR').slice(0, 80) });
   }
 }

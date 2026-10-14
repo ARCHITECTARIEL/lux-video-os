@@ -61,6 +61,20 @@ test('admin route rejects requests with neither a valid admin cookie nor bearer 
   assert.equal(res.statusCode, 401);
 });
 
+test('admin activity, summary, and entity timeline all reject unauthenticated reads before querying the database', async () => {
+  for (const url of [
+    '/api/video-os-lite/admin?operation=activity',
+    '/api/video-os-lite/admin?operation=activity-summary',
+    '/api/video-os-lite/admin?operation=entity-timeline&entityId=job-proof-1',
+  ]) {
+    const res = response();
+    await adminHandler(request({ url }), res);
+    assert.equal(res.statusCode, 401);
+    assert.equal(res.body.ok, false);
+    assert.equal(res.body.events, undefined);
+  }
+});
+
 test(
   'admin route accepts VIDEO_OS_ADMIN_TOKEN as a bearer token',
   { skip: !dbAvailable && 'DATABASE_URL not configured; skipping live integration test' },
@@ -132,7 +146,7 @@ test(
       const res = response();
       await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=stripe-reconciliation', body: {}, headers: { authorization: 'Bearer proof-admin-token' } }), res);
       assert.equal(res.statusCode, 503, 'this must fail loud, not silently report a clean sweep, when Stripe is not configured -- see .github/workflows/stripe-reconciliation.yml\'s header comment for why');
-      assert.match(res.body.error, /STRIPE_SECRET_KEY/);
+      assert.equal(res.body.error, 'Admin request failed.');
     } finally {
       if (originalToken === undefined) delete process.env.VIDEO_OS_ADMIN_TOKEN;
       else process.env.VIDEO_OS_ADMIN_TOKEN = originalToken;

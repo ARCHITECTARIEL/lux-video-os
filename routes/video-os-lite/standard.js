@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { standardNarrationRepository } from '../../db/standard-narration-repository.js';
 import { STANDARD_CONTRACT_VERSION, STANDARD_NARRATION_POLICY_VERSION, sanitizeStandardNarrationReason } from '../../lib/standard-narration-contract.js';
+import { logOpsEvent } from '../../lib/ops-log.js';
 
 const binding = { projectId: z.string().uuid(), identityId: z.string().uuid(), audioAssetId: z.string().uuid() };
 const mutationSchema = z.discriminatedUnion('operation', [
@@ -17,16 +18,8 @@ const readinessQuerySchema = z.object({
   narrationConsentId: z.string().uuid().optional(),
 }).strict();
 
-function logStandardFailure(error) {
-  const cause = error?.cause || error;
-  console.error(JSON.stringify({
-    event: 'video_os_standard_failure',
-    code: cause?.code || null,
-    constraint: cause?.constraint || null,
-    table: cause?.table || null,
-    column: cause?.column || null,
-    failureCategory: error?.failureCategory || null,
-  }));
+function logStandardRejection(accountId, status, code) {
+  logOpsEvent({ level: status >= 500 ? 'error' : 'warn', event: 'video_os_standard_failure', accountId, status, code, message: 'Standard narration request was rejected.' });
 }
 
 export function createStandardContractHandler({
@@ -39,25 +32,39 @@ export function createStandardContractHandler({
     try {
       accountId = authenticate(req)?.accountId;
     } catch {}
-    if (!accountId) return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in to continue.' });
-    if (!['GET', 'POST'].includes(req.method)) return send(res, 405, { ok: false, code: 'method_not_allowed', error: 'Method not allowed.' });
+    if (!accountId) {
+      logStandardRejection(undefined, 401, 'sign_in_required');
+      return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in to continue.' });
+    }
+    if (!['GET', 'POST'].includes(req.method)) {
+      logStandardRejection(accountId, 405, 'method_not_allowed');
+      return send(res, 405, { ok: false, code: 'method_not_allowed', error: 'Method not allowed.' });
+    }
     try {
       if (req.method === 'GET') {
         const url = new URL(req.url, 'https://video-os.invalid');
         const parsed = readinessQuerySchema.safeParse(Object.fromEntries(url.searchParams));
-        if (!parsed.success) return send(res, 400, { ok: false, code: 'invalid_request', error: 'Invalid readiness request.' });
+        if (!parsed.success) {
+          logStandardRejection(accountId, 400, 'invalid_request');
+          return send(res, 400, { ok: false, code: 'invalid_request', error: 'Invalid readiness request.' });
+        }
         if (parsed.data.operation === 'status') return send(res, 200, { ok: true, consent: await repository.consentStatus(accountId, accountId, parsed.data) });
         return send(res, 200, { ok: true, readiness: await repository.readiness(accountId, accountId, parsed.data) });
       }
       if (!process.env.VIDEO_OS_PUBLIC_ORIGIN || req.headers?.origin !== process.env.VIDEO_OS_PUBLIC_ORIGIN || !['same-origin', 'none', undefined].includes(req.headers?.['sec-fetch-site'])) {
+        logStandardRejection(accountId, 403, 'origin_not_allowed');
         return send(res, 403, { ok: false, code: 'origin_not_allowed', error: 'Origin not allowed.' });
       }
       if (String(req.headers?.['content-type'] || '').split(';')[0].trim().toLowerCase() !== 'application/json') {
+        logStandardRejection(accountId, 400, 'invalid_request');
         return send(res, 400, { ok: false, code: 'invalid_request', error: 'JSON required.' });
       }
       const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body ?? await readJson(req));
       const parsed = mutationSchema.safeParse(body);
-      if (!parsed.success) return send(res, 400, { ok: false, code: 'invalid_request', error: 'Invalid Standard request.' });
+      if (!parsed.success) {
+        logStandardRejection(accountId, 400, 'invalid_request');
+        return send(res, 400, { ok: false, code: 'invalid_request', error: 'Invalid Standard request.' });
+      }
       const { operation, contractVersion, ...payload } = parsed.data;
       const method = { consent: 'grantConsent', revoke: 'revokeConsent', quote: 'createQuote' }[operation];
       const result = await repository[method](accountId, accountId, payload);
@@ -67,8 +74,10 @@ export function createStandardContractHandler({
       const publicResult = Object.fromEntries(fields.filter(key => result[key] !== undefined).map(key => [key, result[key]]));
       return send(res, operation === 'revoke' ? 200 : 201, { ok: true, [operation === 'quote' ? 'quote' : 'consent']: publicResult });
     } catch (error) {
-      logStandardFailure(error);
-      return send(res, [400, 401, 402, 403, 404, 409, 410, 422, 503].includes(error.statusCode) ? error.statusCode : 503, { ok: false, code: sanitizeStandardNarrationReason(error.code), error: 'Standard narration request could not be completed.' });
+      const status = [400, 401, 402, 403, 404, 409, 410, 422, 503].includes(error.statusCode) ? error.statusCode : 503;
+      const code = sanitizeStandardNarrationReason(error.code);
+      logStandardRejection(accountId, status, code);
+      return send(res, status, { ok: false, code, error: 'Standard narration request could not be completed.' });
     }
   };
 }

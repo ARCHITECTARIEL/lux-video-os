@@ -16,6 +16,7 @@ import {
 import { readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { deletePrivateBlob, getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../../lib/video-os-private-blob.js';
 import { assertEnrollmentPrivateStoreReady } from '../../lib/enrollment-private-store.js';
+import { logOpsEvent } from '../../lib/ops-log.js';
 import { identityEnrollmentCleanupWorkflowMetadata, identityEnrollmentExpiryWorkflowMetadata, identityEnrollmentHashWorkflowMetadata } from '../../workflows/identity-enrollment-metadata.js';
 
 async function cleanupRejectedTerminalUpload(enrollment, blob, dependencies) {
@@ -52,12 +53,15 @@ export function createEnrollmentUploadHandler(overrides = {}) {
     ...overrides,
   };
   return async function handler(req, res) {
-    if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST for enrollment uploads.' });
+    if (req.method !== 'POST') {
+      logOpsEvent({ level: 'warn', event: 'enrollment.upload.rejected', status: 405, code: 'METHOD_NOT_ALLOWED', message: 'Enrollment upload request was rejected.' });
+      return send(res, 405, { ok: false, error: 'Use POST for enrollment uploads.' });
+    }
+    let tokenAccountId;
     try {
       const capability = assertEnrollmentCapability();
       const body = req.body && typeof req.body === 'object' ? req.body : await readJson(req);
       const tokenRequest = body?.type === 'blob.generate-client-token';
-      let tokenAccountId;
       if (tokenRequest) {
         validateEnrollmentTransport(req);
         tokenAccountId = dependencies.sessionFromRequest(req).accountId;
@@ -128,7 +132,10 @@ export function createEnrollmentUploadHandler(overrides = {}) {
       });
       return send(res, 200, result);
     } catch (error) {
-      return send(res, error.statusCode || 500, { ok: false, code: String(error.code || error.failureCategory || 'ENROLLMENT_UPLOAD_ERROR').slice(0, 80), error: error.statusCode && error.statusCode < 500 ? error.message : 'Enrollment upload is unavailable.' });
+      const status = error.statusCode || 500;
+      const code = String(error.code || error.failureCategory || 'ENROLLMENT_UPLOAD_ERROR').slice(0, 80);
+      logOpsEvent({ level: status >= 500 ? 'error' : 'warn', event: 'enrollment.upload.rejected', accountId: tokenAccountId, status, code, message: 'Enrollment upload request was rejected.' });
+      return send(res, status, { ok: false, code, error: error.statusCode && error.statusCode < 500 ? error.message : 'Enrollment upload is unavailable.' });
     }
   };
 }

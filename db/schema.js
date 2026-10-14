@@ -109,6 +109,28 @@ export const jobEvents = pgTable('job_events', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index('job_events_job_created_idx').on(table.jobId, table.createdAt)]);
 
+// Operational telemetry is retained for 30 days by the owning operations
+// process. This schema intentionally does not schedule or perform deletion.
+export const opsEvents = pgTable('ops_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  level: text('level').notNull(),
+  event: text('event').notNull(),
+  accountId: text('account_id'),
+  entityType: text('entity_type'),
+  entityId: text('entity_id'),
+  correlationId: text('correlation_id'),
+  code: text('code'),
+  httpStatus: integer('http_status'),
+  message: text('message'),
+  details: jsonb('details').notNull().default({}),
+}, (table) => [
+  index('ops_events_created_at_idx').on(table.createdAt),
+  index('ops_events_account_id_idx').on(table.accountId),
+  index('ops_events_entity_id_idx').on(table.entityId),
+  index('ops_events_code_idx').on(table.code),
+]);
+
 export const creditTransactions = pgTable('credit_transactions', {
   id: uuid('id').defaultRandom().primaryKey(),
   accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'cascade' }),

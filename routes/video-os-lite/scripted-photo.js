@@ -33,6 +33,7 @@ import {
   issueScriptedPhotoQuote,
 } from '../../lib/scripted-photo-quote.js';
 import { observeProviderAvatarConsent } from '../../lib/provider-avatar-consent.js';
+import { logOpsEvent } from '../../lib/ops-log.js';
 import {
   parseOrThrow,
   scriptedPhotoQuoteRequestSchema,
@@ -178,14 +179,6 @@ function assertSavedProject(project, { accountId, projectId, tier, format }) {
   }
 }
 
-function safeLog(error) {
-  console.error(JSON.stringify({
-    event: 'video_os_scripted_photo_failure',
-    code: error?.code || null,
-    failureCategory: error?.failureCategory || null,
-  }));
-}
-
 async function requestBody(req) {
   try {
     return typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body ?? await readJson(req));
@@ -213,13 +206,20 @@ export function createScriptedPhotoHandler({
 } = {}) {
   return async function scriptedPhotoHandler(req, res) {
     if (handleOptions(req, res)) return;
+    let session;
     try {
-      let session;
       try { session = authenticate(req); } catch {
+        logOpsEvent({ level: 'warn', event: 'scripted_photo.request.rejected', status: 401, code: 'sign_in_required', message: 'Scripted photo request was rejected.' });
         return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in to continue.' });
       }
-      if (!session?.accountId) return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in to continue.' });
-      if (!['GET', 'POST'].includes(req.method)) return send(res, 405, { ok: false, code: 'method_not_allowed', error: 'Use GET or POST.' });
+      if (!session?.accountId) {
+        logOpsEvent({ level: 'warn', event: 'scripted_photo.request.rejected', status: 401, code: 'sign_in_required', message: 'Scripted photo request was rejected.' });
+        return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in to continue.' });
+      }
+      if (!['GET', 'POST'].includes(req.method)) {
+        logOpsEvent({ level: 'warn', event: 'scripted_photo.request.rejected', accountId: session.accountId, status: 405, code: 'method_not_allowed', message: 'Scripted photo request was rejected.' });
+        return send(res, 405, { ok: false, code: 'method_not_allowed', error: 'Use GET or POST.' });
+      }
       assertTransport(req, environment, { json: req.method === 'POST' });
       const allowed = await rateLimit({
         accountId: session.accountId,
@@ -271,6 +271,7 @@ export function createScriptedPhotoHandler({
         };
         const existingJob = await recoverExistingJob(recovery);
         if (existingJob) {
+          logOpsEvent({ level: 'info', event: 'scripted_photo.quote.recovered', accountId: session.accountId, jobId: existingJob.id, status: 200, code: 'EXISTING_JOB_RECOVERED', message: 'Existing scripted photo job was recovered.' });
           return send(res, 200, { ok: true, recovered: true, quote: null, project: null, existingJob });
         }
         const project = await getProject(session.accountId, payload.projectId);
@@ -307,10 +308,10 @@ export function createScriptedPhotoHandler({
       }
       throw routeError('invalid_request', 'Invalid scripted-photo action.');
     } catch (error) {
-      safeLog(error);
       const status = [400, 401, 402, 403, 404, 409, 410, 422, 429, 503].includes(error?.statusCode) ? error.statusCode : 503;
       const publicError = status === 503 && !error?.statusCode ? 'Scripted-photo request could not be completed.' : error.message;
       const code = error?.code || (error?.issues ? 'invalid_request' : 'scripted_photo_unavailable');
+      logOpsEvent({ level: status >= 500 ? 'error' : 'warn', event: 'scripted_photo.request.rejected', accountId: session?.accountId, status, code, message: 'Scripted photo request was rejected.' });
       return send(res, status, { ok: false, code, error: publicError, issues: error?.issues });
     }
   };

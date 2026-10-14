@@ -8,8 +8,10 @@ const node = (tag, className, text) => {
 };
 
 const ADMIN_BASE = '/api/video-os-lite/admin';
-const panelData = { overview: null, jobs: null, attention: null, accounts: null, testers: null, billing: null };
+const panelData = { overview: null, activity: null, jobs: null, attention: null, accounts: null, testers: null, billing: null };
 let currentTimelineJob = null;
+let activityOffset = 0;
+const ACTIVITY_PAGE_SIZE = 50;
 
 async function getJson(url, options = {}) {
   const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -321,6 +323,153 @@ function renderBilling({ transactions, events }) {
   }
 }
 
+function activityQuery(offset = activityOffset) {
+  const params = new URLSearchParams({ operation: 'activity', limit: String(ACTIVITY_PAGE_SIZE), offset: String(offset) });
+  const form = $('#activity-filters');
+  const values = new FormData(form);
+  for (const name of ['accountId', 'entityType', 'entityId', 'event', 'level', 'code']) {
+    const value = String(values.get(name) || '').trim();
+    if (value) params.set(name, value);
+  }
+  for (const name of ['from', 'to']) {
+    const value = String(values.get(name) || '').trim();
+    if (value) params.set(name, new Date(value).toISOString());
+  }
+  return params;
+}
+
+function detailsText(details) {
+  if (!details || typeof details !== 'object' || !Object.keys(details).length) return '';
+  try { return JSON.stringify(details, null, 2); } catch { return ''; }
+}
+
+function renderActivitySummary(codes) {
+  const grid = $('#activity-summary-grid');
+  grid.textContent = '';
+  if (!codes.length) {
+    grid.append(statCard('Errors in 24h', 0, 'No coded operational errors'));
+    return;
+  }
+  for (const item of codes) {
+    const card = statCard(item.code, item.count, `Latest ${formatDate(item.latestAt)}`, 'danger');
+    card.classList.add('activity-summary-card');
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `Filter activity to code ${item.code}`);
+    const apply = () => {
+      $('#activity-code').value = item.code;
+      activityOffset = 0;
+      loadActivity(true);
+    };
+    card.addEventListener('click', apply);
+    card.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); apply(); }
+    });
+    grid.append(card);
+  }
+}
+
+function renderActivity({ events, page }) {
+  const body = $('#activity-table tbody');
+  body.textContent = '';
+  $('#activity-empty').hidden = events.length > 0;
+  for (const item of events) {
+    const row = node('tr');
+    row.dataset.level = item.level;
+    const entity = item.entityId ? `${item.entityType || 'entity'}: ${item.entityId}` : '—';
+    row.append(
+      node('td', null, formatDate(item.createdAt)),
+      node('td', null, item.level),
+      node('td', 'mono', item.event),
+      node('td', 'mono activity-entity', entity),
+      node('td', 'mono', item.accountId || '—'),
+      node('td', 'mono', item.code || '—'),
+    );
+    const messageCell = node('td', 'activity-message');
+    messageCell.append(node('span', null, item.message || '—'));
+    const details = detailsText(item.details);
+    if (details) {
+      const disclosure = node('details', 'activity-details');
+      disclosure.append(node('summary', null, 'Details'), node('pre', null, details));
+      messageCell.append(disclosure);
+    }
+    row.append(messageCell);
+    const actionCell = node('td');
+    if (item.entityId) {
+      const button = node('button', 'button quiet compact', 'Timeline');
+      button.type = 'button';
+      button.addEventListener('click', () => openEntityTimeline(item));
+      actionCell.append(button);
+    }
+    row.append(actionCell);
+    body.append(row);
+  }
+
+  $('#activity-page-label').textContent = !events.length
+    ? (page.total ? `No events on this page · ${page.total} total` : '0 events')
+    : `${page.offset + 1}–${Math.min(page.offset + events.length, page.total)} of ${page.total}`;
+  $('#activity-prev').disabled = page.offset === 0;
+  $('#activity-next').disabled = !page.hasMore;
+}
+
+function renderEntityTimeline(events) {
+  const list = $('#entity-timeline-list');
+  list.textContent = '';
+  if (!events.length) list.append(node('li', null, 'No activity recorded for this entity.'));
+  for (const item of events) {
+    const row = node('li');
+    row.dataset.level = item.level;
+    const header = node('div', 'timeline-event-heading');
+    const sourceLabel = item.source === 'job' ? 'JOB LIFECYCLE' : item.source === 'provider' ? 'PROVIDER LIFECYCLE' : 'OPS';
+    header.append(node('span', 'timeline-source', sourceLabel), node('span', 'timeline-stage', item.event));
+    const metaText = [formatDate(item.createdAt), item.level, item.code, item.httpStatus].filter((value) => value !== null && value !== undefined && value !== '').join(' · ');
+    row.append(header, node('span', 'timeline-meta', metaText));
+    if (item.message) row.append(node('p', 'timeline-message', item.message));
+    const details = detailsText(item.details);
+    if (details) {
+      const disclosure = node('details', 'activity-details');
+      disclosure.append(node('summary', null, 'Details'), node('pre', null, details));
+      row.append(disclosure);
+    }
+    list.append(row);
+  }
+}
+
+async function openEntityTimeline(item) {
+  const dialog = $('#entity-timeline-dialog');
+  $('#entity-timeline-subtitle').textContent = `${item.entityType || 'entity'}: ${item.entityId}`;
+  const list = $('#entity-timeline-list');
+  list.textContent = '';
+  list.append(node('li', null, 'Loading…'));
+  dialog.showModal();
+  try {
+    const params = new URLSearchParams({ operation: 'entity-timeline', entityId: item.entityId, limit: '100' });
+    if (item.entityType) params.set('entityType', item.entityType);
+    const data = await getJson(`${ADMIN_BASE}?${params}`);
+    renderEntityTimeline(data.events);
+  } catch (error) {
+    list.textContent = '';
+    list.append(node('li', null, error.message || 'Could not load the entity timeline.'));
+  }
+}
+
+async function loadActivity(force = false) {
+  if (panelData.activity && !force) return;
+  setStatus('Loading activity…');
+  try {
+    const [activity, summary] = await Promise.all([
+      getJson(`${ADMIN_BASE}?${activityQuery()}`),
+      getJson(`${ADMIN_BASE}?operation=activity-summary`),
+    ]);
+    panelData.activity = activity;
+    renderActivity(activity);
+    renderActivitySummary(summary.codes);
+    setStatus('');
+  } catch (error) {
+    setStatus(error.message || 'Could not load operational activity.', true);
+  }
+}
+
 async function loadJobAssets(jobId) {
   const section = $('#job-assets-section');
   const list = $('#job-assets-list');
@@ -515,6 +664,8 @@ async function loadPanel(name, force = false) {
       const data = await getJson(`${ADMIN_BASE}?operation=overview`);
       panelData.overview = data.overview;
       renderOverview(data.overview);
+    } else if (name === 'activity') {
+      return loadActivity(force);
     } else if (name === 'jobs') {
       const data = await getJson(`${ADMIN_BASE}?operation=jobs`);
       panelData.jobs = data.jobs;
@@ -557,6 +708,29 @@ function activateTab(name) {
 // login would double (then triple, ...) every click handler on this page.
 function bindStaticListeners() {
   for (const button of $$('[data-admin-tab]')) button.addEventListener('click', () => activateTab(button.dataset.adminTab));
+  $('#activity-filters').addEventListener('submit', (event) => {
+    event.preventDefault();
+    activityOffset = 0;
+    panelData.activity = null;
+    loadActivity(true);
+  });
+  $('#activity-clear').addEventListener('click', () => {
+    $('#activity-filters').reset();
+    activityOffset = 0;
+    panelData.activity = null;
+    loadActivity(true);
+  });
+  $('#activity-prev').addEventListener('click', () => {
+    activityOffset = Math.max(0, activityOffset - ACTIVITY_PAGE_SIZE);
+    panelData.activity = null;
+    loadActivity(true);
+  });
+  $('#activity-next').addEventListener('click', () => {
+    activityOffset += ACTIVITY_PAGE_SIZE;
+    panelData.activity = null;
+    loadActivity(true);
+  });
+  $('#entity-timeline-close').addEventListener('click', () => $('#entity-timeline-dialog').close());
   $('#admin-refresh').addEventListener('click', () => {
     const active = $$('[data-admin-tab]').find((button) => button.getAttribute('aria-selected') === 'true');
     const name = active?.dataset.adminTab || 'overview';
