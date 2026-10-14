@@ -68,15 +68,23 @@ test('original 0011 stays immutable while the separate proposal enforces exact h
   assert.doesNotMatch(snapshot, /identity_consents_hosted_v3_purpose_ck/);
   assert.match(schema, /check\('identity_consents_hosted_v3_purpose_ck'/);
   assert.match(proposal, /identity_consents_hosted_v3_purpose_ck/);
+  assert.match(proposal, /^-- SUPERSEDED by drizzle\/0013_hosted_v3_purpose_guard\.sql/);
   assert.match(proposal, /consent_purpose IS NOT DISTINCT FROM 'hosted-avatar-consent'/);
   assert.match(proposal, /\) IS NOT TRUE/);
   assert.match(proposal, /NOT VALID/);
   assert.match(proposal, /VALIDATE CONSTRAINT identity_consents_hosted_v3_purpose_ck/);
 });
 
-test('PostgreSQL 18 rehearses fresh, upgrade, rejection, and rollback paths', {
-  skip: container ? false : 'VIDEO_OS_CORE_SCHEMA_PG18_CONTAINER is not set',
+// Historical 0011-only qualification: VIDEO_OS_CORE_SCHEMA_PG18_CONTAINER must point at a database with exactly
+// migrations 0000-0011 applied. It rehearses the superseded proposal file; the shipped guard is migration 0013,
+// covered by tests/hosted-v3-purpose-migration.test.mjs.
+test('PostgreSQL 18 (0000-0011 database only) rehearses the superseded proposal: fresh, upgrade, rejection, and rollback paths', {
+  skip: container ? false : 'VIDEO_OS_CORE_SCHEMA_PG18_CONTAINER is not set (0000-0011 database only)',
 }, async () => {
+  const scope = psql("select count(*) as journal_count from drizzle.__drizzle_migrations; select count(*) as guard_count from pg_constraint where conname = 'identity_consents_hosted_v3_purpose_ck';");
+  assert.equal(scope.status, 0, scope.stderr || scope.stdout);
+  assert.match(scope.stdout, /journal_count\s*\n[- ]+\n\s*12\b/, 'This historical test requires a 0000-0011 database (12 journal rows); 0013 is tested in hosted-v3-purpose-migration.test.mjs.');
+  assert.match(scope.stdout, /guard_count\s*\n[- ]+\n\s*0\b/, 'The hosted v3 guard must not already exist (0000-0011 database only).');
   const proposal = await readFile('docs/hosted-v3-purpose-guard.proposed.sql', 'utf8');
   const fresh = psql(`begin; ${proposal} select convalidated::text as guard_validated from pg_constraint where conname = 'identity_consents_hosted_v3_purpose_ck'; rollback;`);
   assert.equal(fresh.status, 0, fresh.stderr || fresh.stdout);
