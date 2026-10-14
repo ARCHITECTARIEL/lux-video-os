@@ -36,11 +36,13 @@ import { listInFlightJobs } from '../db/repositories.js';
 import { driveJobSafely, log } from '../lib/video-os-render-driver.js';
 import { reconcileStripePayments } from '../lib/video-os-stripe-reconciliation.js';
 import { runWatchdogSweep } from '../lib/video-os-watchdog.js';
+import { reconcileUnknownHeygenJobs } from '../services/heygen-reconciliation.js';
 
 const POLL_INTERVAL_MS = Number(process.env.RENDER_WORKER_POLL_MS || 8000);
 const CONCURRENCY = Math.max(1, Number(process.env.RENDER_WORKER_CONCURRENCY || 4));
 const WATCHDOG_INTERVAL_MS = Number(process.env.RENDER_WORKER_WATCHDOG_INTERVAL_MS || 5 * 60_000);
 const STRIPE_RECONCILIATION_INTERVAL_MS = Number(process.env.RENDER_WORKER_STRIPE_RECONCILIATION_INTERVAL_MS || 24 * 60 * 60_000);
+const HEYGEN_RECONCILIATION_INTERVAL_MS = 60_000;
 
 async function runBatch(jobs) {
   const queue = [...jobs];
@@ -85,6 +87,7 @@ async function mainLoop() {
   let stopping = false;
   let lastWatchdogRunAt = 0;
   let lastStripeReconciliationRunAt = 0;
+  let lastHeygenReconciliationRunAt = 0;
   const stop = () => { stopping = true; log('render_worker.stopping'); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
@@ -104,6 +107,12 @@ async function mainLoop() {
     if (Date.now() - lastStripeReconciliationRunAt >= STRIPE_RECONCILIATION_INTERVAL_MS) {
       lastStripeReconciliationRunAt = Date.now();
       await runStripeReconciliationSafely();
+    }
+    if (process.env.VIDEO_OS_HEYGEN_SUBMIT_RECONCILER_ENABLED === 'true'
+      && Date.now() - lastHeygenReconciliationRunAt >= HEYGEN_RECONCILIATION_INTERVAL_MS) {
+      lastHeygenReconciliationRunAt = Date.now();
+      const results = await reconcileUnknownHeygenJobs();
+      for (const result of results) log('render_worker.heygen_submit_reconciled', result);
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }

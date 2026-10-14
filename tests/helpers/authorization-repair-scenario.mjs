@@ -24,8 +24,14 @@ if (scenario === 'claim') {
     async execute(statement) {
       assert.equal(active, true);
       const query = new PgDialect().sqlToQuery(statement);
-      assert.match(query.sql, /pg_advisory_xact_lock\(hashtextextended\(/);
-      assert.deepEqual(query.params, [`provider-lifecycle-v1:${Buffer.byteLength(accountId)}:${accountId}`]);
+      if (query.sql.includes('hashtextextended')) {
+        assert.match(query.sql, /pg_advisory_xact_lock\(hashtextextended\(/);
+        assert.deepEqual(query.params, [`provider-lifecycle-v1:${Buffer.byteLength(accountId)}:${accountId}`]);
+      } else if (query.sql.includes('pg_advisory_xact_lock')) {
+        assert.deepEqual(query.params, [730561014001]);
+      } else {
+        assert.match(query.sql, /select account_id, count\(\*\)::int as count from video_jobs/);
+      }
       return { rows: [] };
     },
     select() {

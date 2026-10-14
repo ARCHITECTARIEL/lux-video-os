@@ -630,36 +630,6 @@
 - Session readback confirms the recursive catalogue line-ending normalization, the new synthetic regression test, and the VOS-002 SHA correction in this worktree. The focused Node command passed 11/11; syntax checks and `git diff --check` passed.
 - The schema lock recapture was performed outside the Codex session against the throwaway container only. No push, deploy, Neon/production database, or secret access.
 
-## 2026-10-14T14:35:11Z - [closure-writeback] [REL-003]
-
-- Added explicit VTT and bare workspace routes in `vercel.json`, a hosted caption/workspace smoke step in `watchdog-sweep.yml`, and an opt-in `--base-url` smoke mode in the P0 candidate checker. Added route-order, caption-file, and stubbed-fetch tests; updated three existing API alias expectations from 28 to 29.
-- The caption exists in `public/assets/showcase/`, is not excluded by `.vercelignore`, and the project uses Vercel's default output directory. This worktree has no built `.vercel/output` artifact, so actual static artifact inclusion was not observed. No build configuration change was needed based on the inspected source/configuration.
-- The bare workspace path now returns JSON 401 with `sign_in_required` when unauthenticated; other unmatched paths retain JSON 404. The hosted 401 smoke contract is covered locally but has not been checked against a deployment.
-- Focused Node route tests passed; `npm run check:imports` and `git diff --check` passed. The full Node run had four failures from missing local `drizzle-kit` and `@workflow/builders` files. Plain Vitest hit sandbox `spawn EPERM`; an equivalent temporary-config Vitest run passed 4/4. No commit, deploy, hosted request, database action, provider action, or package installation occurred.
-
-## 2026-10-14T14:38:29Z - [closure-writeback] [REL-003-follow-up]
-
-- Updated the bare workspace handler to check `sessionFromRequest` after the maintenance gate. Missing or invalid sessions now receive JSON 401 with `sign_in_required`; authenticated bare requests and other unmatched paths retain JSON 404.
-- Added a no-cookie handler test for the JSON 401 response and an unmatched-path 404 assertion. The requested Node suite passed 24/24, `git diff --check` passed, and both edited JavaScript files passed `node --check`.
-- This was a local code and test follow-up. No commit, push, deployment, hosted request, network action, environment or secret read, or package install occurred.
-
-## 2026-10-14T14:49:30Z - [closure-writeback] [REL-004]
-
-- Added the dependency-free merge-intent CLI guard, the main-targeting PR workflow, 16 focused Node tests, and `docs/decisions/2026-10-13-pr98-merge-record.md` with the supplied PR #98 facts, risks, options, and unapplied branch protection proposal.
-- Verification: `node --test tests/merge-intent-guard.test.mjs` passed 16/16; `node --check tools/merge-intent-guard.mjs` and `git diff --check` exited 0. A separate scan found no trailing whitespace in the four new files.
-- Work remains uncommitted on `codex/rel-004`. No app code, network commands, deployment, rollback, or branch protection settings were changed. Ariel's decision on #98 remains open.
-
-## 2026-10-14 - [REL-004b]
-
-- Hardened `merge-intent-guard` to check out the PR base SHA with credentials disabled and read-only permissions. Added guard workflow and CODEOWNERS regression checks plus advisory `.github/CODEOWNERS` ownership for the four requested paths.
-- Updated the PR #98 record with Ariel's Option A decision to keep #98 live, QA's post-hoc PASS, the remaining `/provider-consent` pass, the supplied production migration 0011 read-only finding, and the corrected rollback target and unapplied branch protection command.
-- Verification: focused Node guard tests passed 18/18; `npm run test:unit` passed 1,075 Node tests with 48 skips and 4/4 Vitest tests; `npm run check:imports`, `npm run db:check`, and `git diff --check` exited 0.
-- This is a local worktree follow-up. No commit, push, merge, network access, deployment, database action, or branch protection change was performed.
-
-## 2026-10-14T16:10:43Z - [REL-004c]
-
-- Switched the merge-intent check to base-controlled `pull_request_target`, locked its exact three steps in tests, and corrected the PR #98 migration, deployment, and unapplied protection record.
-
 ## 2026-10-14T11:39:27Z - [closure-writeback] [OBS-001]
 
 - Added a bounded, redacting JSON operational logger with best-effort warning/error persistence, additive `ops_events` migration 0012, route/workflow decision events, and Activity in the existing admin console. The entity timeline joins operations, job events, and provider lifecycle events using safe fields. Retention target is 30 days; no deletion scheduler was added.
@@ -716,6 +686,41 @@
 - Final focused Node test: 22 passed, 0 failed. Final full Node test: 1,134 total, 1,086 passed, 0 failed, 48 skipped. The phone regression fix and tests remain uncommitted.
 - Operator verification (OBS-001e): Node 24.14.1 1,134 / 1,086 pass / 0 fail / 48 skipped (one earlier run had a load-flaky 'authorization repair: list' failure; passes 3/3 isolated and on full rerun); Node 20.20.2 1,134 / 1,066 / 20 / 48, failures identical to base `2e3d75a` (pre-existing Neon `Pool` ESM). Vitest 4/4, db:check, check:imports, schema-lock 13/0/1, admin Playwright 8/8, diff --check clean. Amended into the single OBS-001 commit on `2e3d75a`.
 
+## 2026-10-14T14:35:11Z - [closure-writeback] [REL-003]
+
+- Added explicit VTT and bare workspace routes in `vercel.json`, a hosted caption/workspace smoke step in `watchdog-sweep.yml`, and an opt-in `--base-url` smoke mode in the P0 candidate checker. Added route-order, caption-file, and stubbed-fetch tests; updated three existing API alias expectations from 28 to 29.
+- The caption exists in `public/assets/showcase/`, is not excluded by `.vercelignore`, and the project uses Vercel's default output directory. This worktree has no built `.vercel/output` artifact, so actual static artifact inclusion was not observed. No build configuration change was needed based on the inspected source/configuration.
+- The bare workspace path now returns JSON 401 with `sign_in_required` when unauthenticated; other unmatched paths retain JSON 404. The hosted 401 smoke contract is covered locally but has not been checked against a deployment.
+- Focused Node route tests passed; `npm run check:imports` and `git diff --check` passed. The full Node run had four failures from missing local `drizzle-kit` and `@workflow/builders` files. Plain Vitest hit sandbox `spawn EPERM`; an equivalent temporary-config Vitest run passed 4/4. No commit, deploy, hosted request, database action, provider action, or package installation occurred.
+
+## 2026-10-14T14:38:29Z - [closure-writeback] [REL-003-follow-up]
+
+- Updated the bare workspace handler to check `sessionFromRequest` after the maintenance gate. Missing or invalid sessions now receive JSON 401 with `sign_in_required`; authenticated bare requests and other unmatched paths retain JSON 404.
+- Added a no-cookie handler test for the JSON 401 response and an unmatched-path 404 assertion. The requested Node suite passed 24/24, `git diff --check` passed, and both edited JavaScript files passed `node --check`.
+- This was a local code and test follow-up. No commit, push, deployment, hosted request, network action, environment or secret read, or package install occurred.
+
+## 2026-10-14T14:49:30Z - [closure-writeback] [REL-004]
+
+- Added the dependency-free merge-intent CLI guard, the main-targeting PR workflow, 16 focused Node tests, and `docs/decisions/2026-10-13-pr98-merge-record.md` with the supplied PR #98 facts, risks, options, and unapplied branch protection proposal.
+- Verification: `node --test tests/merge-intent-guard.test.mjs` passed 16/16; `node --check tools/merge-intent-guard.mjs` and `git diff --check` exited 0. A separate scan found no trailing whitespace in the four new files.
+- Work remains uncommitted on `codex/rel-004`. No app code, network commands, deployment, rollback, or branch protection settings were changed. Ariel's decision on #98 remains open.
+
+## 2026-10-14 - [REL-004b]
+
+- Hardened `merge-intent-guard` to check out the PR base SHA with credentials disabled and read-only permissions. Added guard workflow and CODEOWNERS regression checks plus advisory `.github/CODEOWNERS` ownership for the four requested paths.
+- Updated the PR #98 record with Ariel's Option A decision to keep #98 live, QA's post-hoc PASS, the remaining `/provider-consent` pass, the supplied production migration 0011 read-only finding, and the corrected rollback target and unapplied branch protection command.
+- Verification: focused Node guard tests passed 18/18; `npm run test:unit` passed 1,075 Node tests with 48 skips and 4/4 Vitest tests; `npm run check:imports`, `npm run db:check`, and `git diff --check` exited 0.
+- This is a local worktree follow-up. No commit, push, merge, network access, deployment, database action, or branch protection change was performed.
+
+## 2026-10-14T16:10:43Z - [REL-004c]
+
+- Switched the merge-intent check to base-controlled `pull_request_target`, locked its exact three steps in tests, and corrected the PR #98 migration, deployment, and unapplied protection record.
+
+## 2026-10-14T17:14:05Z - [closure-writeback] [PROV-001] [QA-security]
+
+- Implemented a Postgres advisory-lock admission check for HeyGen render jobs with global and per-account limits; definitive POST 429/503 responses now requeue with Retry-After or bounded jitter while ambiguous outcomes remain held. Persisted a stable hashed idempotency key and title marker, added default-off held-submission reconciliation against complete v3 inventory, and added RunPod timeout cancellation.
+- Added `docs/HEYGEN-PROVIDER-SAFETY.md` and mocked provider tests. The full `npm test` run passed 1,083 Node tests with 48 skips and 4/4 Vitest tests; focused tests after the final edits passed 12/12. `npm run db:check`, `npm run check:imports`, and `git diff --check` exited 0.
+- No live provider or remote database call, migration, dependency addition, commit, push, merge, or deploy occurred. An isolated PostgreSQL race test and qualification of HeyGen's exact v3 inventory response remain outstanding before enabling the reconciler.
 ## 2026-10-14T16:55:37Z - [closure-writeback] [CANARY-001]
 
 - In worktree `codex/canary-001` at base `661ca88`, extracted the DB-binding operator, window, host, expected-identity, response, and rate-limit safeguards into `lib/operator-diagnostic-guard.js`. Added the no-DB `canary-scope` admin operation with nonce-bound pin MAC comparison, scope booleans, per-instance replay and rate limits, and awaited allow-listed console audit events. Added DB-binding rate limit and audit, an owner dry-run/send CLI, tests, procedure, and the required build-policy entries.
@@ -728,6 +733,60 @@
 - Recaptured `config/database-schema.lock.json` on throwaway PostgreSQL 18.6 Docker containers (no published port, removed afterwards): 0000-0012 control reproduced `5c7a106a...`; 0000-0013 gives `schemaSha256` `fe9a67f35ec0703569f354eb87a4f31100f299eb746fb280301f2ef0212a823d`, `migrationSetSha256` `e488f55a72184b622b36826fde80c3af63ee6e3d6a0416611a20e44b10fe8cc4`, 28 tables. Source hashes unchanged.
 - New `tests/hosted-v3-purpose-migration.test.mjs`: static SQL/snapshot/journal checks plus a PG18 test (`VIDEO_OS_MIG0013_PG18_CONTAINER`) showing a NULL v3 purpose passes before 0013 and is rejected after it, and the new CHECK alone rejects wrong non-null v3 purposes. Node 24.14.1: 1,160 / 1,111 pass / 0 fail / 49 skipped; Vitest 4/4; db:check, check:imports, diff --check clean. Not pushed; not applied to any live database.
 - QA PASS (2 LOW) fixes: added docs/migrations/0013-hosted-v3-purpose-guard.md (pre-apply read-only count, expect 0; rollback DROP CONSTRAINT, no data loss); re-scoped the core-schema-null-purpose PG18 test to 0000-0011 databases with an explicit scope guard (passes on 0000-0011, fails clearly on 0000-0013); marked docs/hosted-v3-purpose-guard.proposed.sql superseded by 0013.
+## 2026-10-14T17:42:33Z - [closure-writeback] [PROV-001b] [QA-security]
+
+- Addressed QA follow-ups locally: a thrown HeyGen requeue now logs and attempts the held `provider_submit_unknown` transition; first submission claim time survives reclaims and controls the 24-hour retry cutoff; refused admission events are throttled to one per job per configurable interval (five minutes by default); and provider retry/cancel categories retain their classifications.
+- Standard RunPod workflow polling now derives its bound from the same configured job timeout as the provider service, requests cancellation on loop exit, and records `PROVIDER_CANCEL_UNKNOWN` for operator attention when cancellation fails. Added focused fake-repository and workflow tests for retry exhaustion, guarded unknown-to-submitted reconciliation, cutoff, deferral throttle, requeue failure, and deadline cancellation.
+- Verification on Node 24.14.1: `npm test` passed 1,085 Node tests with 48 skips plus 4/4 Vitest tests; `npm run db:check`, `npm run check:imports`, and `git diff --check` exited 0. The required real-PostgreSQL admission race test was not implemented or run: this worktree has no installed local-TCP PostgreSQL driver, and no dependency was added. The advisory-lock and unknown-slot race mutants remain unverified against concurrent real `transitionJob` calls.
+- Changes remain uncommitted on `codex/prov-001`. No push, merge, deploy, migration, database or provider connection, external network call, persistent environment change, or secret read occurred.
+
+## 2026-10-14T17:52:28Z - [closure-writeback] [PROV-001b] [pg-race]
+
+- Added `tests/heygen-admission-race.pg.test.mjs` and `npm run test:pg-race`. With an explicit loopback-only URL and wsproxy, the opt-in suite resets a disposable Postgres schema, applies journal migrations, and races real `transitionJob` calls across repeated 20-job, 40-job, held-unknown, and custom-limit scenarios. It checks persisted global and per-account counts and that refused jobs remain `workflow_started`. Binding and provider-ledger fixture adapters keep credential and provider operations outside this admission test.
+- Documented a Postgres 17 plus local wsproxy Docker setup in `docs/HEYGEN-PROVIDER-SAFETY.md`. Added a repository regression assertion that `VIDEO_OS_HEYGEN_MAX_RETRY_ATTEMPTS` drives the default retry exhaustion path; the existing guarded unknown-to-submitted test covers the required reconciliation receipt fields.
+- Verification: the new suite loads and skips with no URL; a non-loopback URL fails before connection. `npm test` passed 1,085 Node tests with 49 skips and 4/4 Vitest tests; `npm run db:check`, `npm run check:imports`, `node --check` for the new test, and `git diff --check` passed. The actual Postgres race was not run because this sandbox cannot reach the operator's throwaway database.
+- All work remains uncommitted in this worktree. No push, deploy, migration execution, database or provider call, dependency addition, external environment change, or secret read occurred.
+
+## 2026-10-14T17:56:20Z - [closure-writeback] [PROV-001b] [pg-race-guard]
+
+- Corrected the opt-in PostgreSQL race fixture: binding and promotion rows now seed in one transaction after `acquireProviderLifecycleLock(tx, accountId)`, matching the bigint advisory lock required by the migration triggers. Audited the other seeded tables against the migration guards; the verified scope insert requires an internal evidence path but no account lock. Child database failures now report concise PostgreSQL message, detail, and where fields.
+- `npm test` passed 1,085 Node tests with 49 skips and 4/4 Vitest tests. `npm run db:check`, `npm run check:imports`, syntax checking, and `git diff --check` passed. With race URL and wsproxy unset here, the focused test skipped under `--test-isolation=none`; default Node test isolation hit sandbox `spawn EPERM`. The live race case remains unverified in this session.
+- No commit, push, deploy, persistent environment change, provider action, secret access, or MCP database action occurred. Prior uncommitted changes remain in place.
+
+## 2026-10-14T18:03:59Z - [closure-writeback] [PROV-001b] [pg-race-fixture]
+
+- Reworked `tests/heygen-admission-race.pg.test.mjs` after the operator's throwaway-Postgres rerun reached the identity binding check. The fixture now creates a synthetic verified space proof through the real binding repository, resolves and compares the returned binding receipt, and seeds matching linked enrollment, source digests, consent, reserved credits, identity resources, job references, and lifecycle operations. The race invokes real `transitionJob` binding and provider-ledger checks rather than module mocks.
+- The child uses `--test-reporter=spec`, reports each scenario's admitted and capacity-deferred counts, and prints the first distinct unexpected errors on failure. Assertions require zero rejected transitions, explicit capacity deferrals, and lifecycle claim proofs for admitted jobs.
+- `npm test` passed 1,085 Node tests with 49 skips and 4/4 Vitest tests. `npm run db:check`, `npm run check:imports`, `node --check tests/heygen-admission-race.pg.test.mjs`, and `git diff --check` exited 0. The actual race remains unverified here: the loopback URL and wsproxy were unset, and the focused suite skipped.
+- Changes remain uncommitted in this worktree. No push, deploy, persistent environment change, provider action, secret access, or database connection occurred; prior worktree edits were preserved.
+
+## 2026-10-14T18:08:10Z - [closure-writeback] [PROV-001b] [pg-race-nonvacuous]
+
+- Fixed the race test's recursive Node test child invocation by running the child as a plain script and removing `NODE_TEST_CONTEXT` and `NODE_OPTIONS` from its environment. The child emits one `PG_RACE_RESULT` JSON line after all scenarios succeed and exits nonzero on failure.
+- The parent requires that result line and validates scenarios a through d, trial counts, global and per-account maxima, zero unexpected errors, and expected admissions. Missing or invalid output fails the test; distinct transition errors are reported concisely.
+- Verification: `npm test` passed 1,085 Node tests with 49 skips plus 4/4 Vitest tests; `npm run db:check`, `npm run check:imports`, `node --check`, and `git diff --check` passed. An intentionally unreachable loopback database caused the parent test to fail with the child's connection error. The actual race scenarios remain unverified here because the loopback URL and wsproxy were unset.
+- Changes remain uncommitted in this worktree. No push, deployment, provider action, secret access, new dependency, or MCP database action occurred; other edits were preserved.
+
+## 2026-10-14T18:13:48Z - [closure-writeback] [PROV-001b] [pg-race-live]
+
+- In `tests/heygen-admission-race.pg.test.mjs`, the plain-script child now sets `NODE_TEST_CONTEXT=child-pg-race` after the static `node:test` import and before dynamically importing the binding repository and its dependency graph. The parent still strips the variable when spawning the child, preserving the nonrecursive `PG_RACE_RESULT` contract and non-vacuous scenario assertions.
+- The real local PostgreSQL run exposed fixture violations after the injection gate cleared. The test now seeds provider ledger rows under the account lifecycle advisory lock, advances operations through reserved, pending, and succeeded states, and creates the required avatar group before its look resource. No production module was changed for this fix.
+- The opt-in test passed against the existing loopback-only `prov001-pg-throwaway` and `prov001-wsproxy` containers: all four scenarios reported the expected admissions and zero unexpected errors. `npm test` passed 1,085 Node tests with 49 skips and 4/4 Vitest tests; `npm run db:check`, `npm run check:imports`, `node --check`, and `git diff --check` exited 0.
+- Changes remain uncommitted. The only database action was the test's schema reset and fixture work on the disposable local PostgreSQL container; no production database, provider, push, or deployment action occurred.
+
+## 2026-10-14T18:57:46Z - [closure-writeback] [PROV-001c] [rebase-qa]
+
+- Resolved the `origin/main` rebase conflicts in `workflows/video-render.js` and this log. The workflow retains main's operational event logging and the branch's guarded HeyGen requeue, unknown-submission containment, and deferred-retry handling. Combined the OBS, REL, MIG, and PROV entries in timestamp order. Conflict resolution is staged; rebase continuation remains with the operator.
+- Reused `HEYGEN_ACTIVE_STATUSES` in the admission SQL and race-test active count, added its exact-content unit assertion, and ported QA's mocked idempotency, v3 submit, HTTP 500, and reconciler boundary cases. The race suite now requires the exact destructive opt-in phrase and a loopback URL whose database name matches the documented disposable-name pattern before connecting.
+- Node 24 verification: `npm test` passed 1,124 Node tests with 50 skips plus 4/4 Vitest tests; `npm run db:check`, `npm run check:imports`, syntax checks, and `git diff --check` passed. An earlier full run had the known load-sensitive `authorization repair: list` child-status failure; that test passed 8/8 in isolation and the full rerun passed. The real PostgreSQL race was not rerun because no throwaway database was supplied.
+- The rebased commit contained no admin canary-scope handler or shared operator diagnostic guard to reapply; `admin.js` was left as the main version. No commit, rebase continuation, push, deploy, environment change, database connection, provider call, secret read, or new dependency occurred.
+
+## 2026-10-14T19:32:14Z - [closure-writeback] [PROV-001d] [workflow-build]
+
+- Fixed the preview workflow bundle's Node builtin failure. LUXIFY submission now consumes the HeyGen key and marker persisted by the provider claim before POST; missing persisted identity fails closed. Standard poll-limit calculation runs in a step, and the existing provider URL digest calls load `node:crypto` inside step functions.
+- Added `tests/workflow-bundle-node-builtins.test.mjs` to reject new workflow imports whose graph reaches a Node builtin, including the previous HeyGen safety import. Updated the LUXIFY test fixture to model persisted claim identity and documented the local `npm run build:preview` check in `docs/HEYGEN-PROVIDER-SAFETY.md`.
+- Verification: `npm test` passed 1,127 Node tests with 50 credential-gated skips and 4/4 Vitest tests; `npm run build:preview` completed 32 steps, 6 workflows, and 47 routes. `npm run db:check`, `npm run check:imports`, and `git diff --check` passed. The preview DB check was snapshot-only.
+- Changes remain uncommitted in this worktree. No deploy, provider call, live database action, secret read, or dependency addition occurred.
 
 ## 2026-10-14T17:31:46Z - [closure-writeback] [CANARY-001b] [QA-security]
 

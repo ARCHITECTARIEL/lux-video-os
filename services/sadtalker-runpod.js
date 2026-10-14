@@ -23,6 +23,10 @@ function positiveInteger(value, fallback) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+export function runpodJobTimeoutMs(env = process.env) {
+  return positiveInteger(env.VIDEO_OS_RUNPOD_JOB_TIMEOUT_MS, 30 * 60_000);
+}
+
 function safeName(value) {
   return String(value || 'video-os').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'video-os';
 }
@@ -41,6 +45,7 @@ function requireConfig(env) {
     inputLimit: positiveInteger(env.VIDEO_OS_RUNPOD_MAX_INPUT_BYTES, DEFAULT_INPUT_LIMIT),
     outputLimit: positiveInteger(env.VIDEO_OS_RUNPOD_MAX_OUTPUT_BYTES, DEFAULT_OUTPUT_LIMIT),
     timeoutMs: positiveInteger(env.VIDEO_OS_RUNPOD_TIMEOUT_MS, 30_000),
+    jobTimeoutMs: runpodJobTimeoutMs(env),
     allowSimulatedOutput: enabled(env.VIDEO_OS_RUNPOD_ALLOW_SIMULATED_OUTPUT),
   };
 }
@@ -148,6 +153,12 @@ export async function pollRunpodStandard(providerJobId, dependencies = {}) {
   const env = dependencies.env || process.env;
   const config = requireConfig(env);
   const fetchImpl = dependencies.fetchImpl || fetch;
+  const now = typeof dependencies.now === 'function' ? dependencies.now() : dependencies.now ?? Date.now();
+  const startedAt = dependencies.submittedAt == null ? NaN : new Date(dependencies.submittedAt).getTime();
+  if (Number.isFinite(startedAt) && Number(now) - startedAt >= config.jobTimeoutMs) {
+    await cancelRunpodStandard(providerJobId, dependencies);
+    throw failure('RunPod Standard render exceeded its job timeout.', 'PROVIDER_TIMEOUT', 504);
+  }
   let response;
   try {
     response = await fetchImpl(`${config.apiOrigin}/${encodeURIComponent(config.endpointId)}/status/${encodeURIComponent(providerJobId)}`, {
@@ -163,6 +174,25 @@ export async function pollRunpodStandard(providerJobId, dependencies = {}) {
   if (TERMINAL_FAILURES.has(status)) throw failure(`RunPod Standard render ended with ${status}.`, status === 'TIMED_OUT' ? 'PROVIDER_TIMEOUT' : 'PROVIDER_REJECTED', 502);
   if (status !== 'COMPLETED') throw failure('RunPod returned an unknown job status.', 'PROVIDER_POLL', 502);
   return { ready: true, status, output: decodeVerifiedOutput(payload.output, config) };
+}
+
+export async function cancelRunpodStandard(providerJobId, dependencies = {}) {
+  'use step';
+  if (!PROVIDER_ID_PATTERN.test(String(providerJobId || ''))) throw failure('RunPod job id is invalid.', 'VALIDATION', 400);
+  const config = requireConfig(dependencies.env || process.env);
+  const fetchImpl = dependencies.fetchImpl || fetch;
+  let response;
+  try {
+    response = await fetchImpl(`${config.apiOrigin}/${encodeURIComponent(config.endpointId)}/cancel/${encodeURIComponent(providerJobId)}`, {
+      method: 'POST', signal: AbortSignal.timeout(config.timeoutMs),
+      headers: { Accept: 'application/json', Authorization: `Bearer ${config.apiKey}` },
+    });
+  } catch {
+    throw failure('RunPod cancellation outcome is unknown.', 'PROVIDER_CANCEL_UNKNOWN', 502);
+  }
+  try { await responseJson(response, 'PROVIDER_CANCEL_UNKNOWN'); }
+  catch { throw failure('RunPod cancellation outcome is unknown.', 'PROVIDER_CANCEL_UNKNOWN', 502); }
+  return { providerJobId, cancelRequested: true };
 }
 
 export async function persistRunpodStandardOutput(job, output, dependencies = {}) {
