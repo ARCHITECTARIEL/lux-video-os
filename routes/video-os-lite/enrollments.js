@@ -20,6 +20,7 @@ import {
 } from '../../db/enrollment-repository.js';
 import { consumeRateLimit, ensureAccount, getOwnedIdentity, getOwnedMediaAsset, requireAnyPersistedRenderAuthorization } from '../../db/repositories.js';
 import { derivedVoicePreviewVerified, enrollmentCapabilitiesDto, enrollmentDto } from '../../lib/enrollment-dto.js';
+import { logOpsEvent } from '../../lib/ops-log.js';
 import {
   ENROLLMENT_EXTRACTION_FLAG,
   ENROLLMENT_MEDIA_LIMITS,
@@ -39,6 +40,21 @@ import {
 import { DEFAULT_TRIAL_CREDITS, handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { deletePrivateBlob, getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../../lib/video-os-private-blob.js';
 import { identityEnrollmentCleanupWorkflowMetadata, identityEnrollmentExpiryWorkflowMetadata, identityEnrollmentExtractionWorkflowMetadata, identityEnrollmentHashWorkflowMetadata } from '../../workflows/identity-enrollment-metadata.js';
+
+function sendEnrollmentError(res, status, payload, context = {}) {
+  logOpsEvent({
+    level: status >= 500 ? 'error' : 'warn',
+    event: 'enrollment.request.rejected',
+    accountId: context.accountId,
+    enrollmentId: context.enrollmentId,
+    status,
+    code: payload?.code || context.code || 'ENROLLMENT_ERROR',
+    message: 'Enrollment request was rejected.',
+    entityType: context.enrollmentId ? 'enrollment' : undefined,
+    entityId: context.enrollmentId,
+  });
+  return send(res, status, payload);
+}
 
 async function dtoFor(record, dependencies) {
   const identity = record?.identityId ? await dependencies.getOwnedIdentity(record.accountId, record.identityId) : null;
@@ -231,22 +247,22 @@ async function streamEnrollmentMedia(stored, res, { contentType, expectedBytes, 
 }
 
 async function streamEnrollmentVideo(record, res, dependencies) {
-  if (!record.uploadEtag || record.revokedAt || record.sourceDeletedAt || record.status === ENROLLMENT_STATUSES.AWAITING_UPLOAD) return send(res, 404, { ok: false, error: 'Enrollment video is unavailable.' });
+  if (!record.uploadEtag || record.revokedAt || record.sourceDeletedAt || record.status === ENROLLMENT_STATUSES.AWAITING_UPLOAD) return sendEnrollmentError(res, 404, { ok: false, error: 'Enrollment video is unavailable.' }, { accountId: record.accountId, enrollmentId: record.id, code: 'ENROLLMENT_VIDEO_UNAVAILABLE' });
   const stored = await dependencies.getPrivateBlob(record.uploadPathname);
   if (!stored?.stream || stored.blob?.pathname !== record.uploadPathname || stored.blob?.etag !== record.uploadEtag) {
     await cancelStream(stored?.stream);
-    return send(res, 410, { ok: false, error: 'Enrollment video is unavailable.' });
+    return sendEnrollmentError(res, 410, { ok: false, error: 'Enrollment video is unavailable.' }, { accountId: record.accountId, enrollmentId: record.id, code: 'ENROLLMENT_VIDEO_GONE' });
   }
   const expectedBytes = Number(record.sourceBytes || record.declaredBytes);
   if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || expectedBytes > ENROLLMENT_MEDIA_LIMITS.maxSourceBytes
     || !/^[a-f0-9]{64}$/.test(String(record.sourceSha256 || ''))
     || (stored.blob?.size !== undefined && Number(stored.blob.size) !== expectedBytes)) {
     await cancelStream(stored.stream);
-    return send(res, 410, { ok: false, error: 'Enrollment video is unavailable.' });
+    return sendEnrollmentError(res, 410, { ok: false, error: 'Enrollment video is unavailable.' }, { accountId: record.accountId, enrollmentId: record.id, code: 'ENROLLMENT_VIDEO_INVALID' });
   }
   const verified = await materializeVerifiedEnrollmentVideo(record, stored, res, dependencies, expectedBytes);
   if (verified?.aborted) return;
-  if (!verified) return send(res, 410, { ok: false, error: 'Enrollment video is unavailable.' });
+  if (!verified) return sendEnrollmentError(res, 410, { ok: false, error: 'Enrollment video is unavailable.' }, { accountId: record.accountId, enrollmentId: record.id, code: 'ENROLLMENT_VIDEO_INTEGRITY' });
   try {
     return await streamEnrollmentMedia({ stream: dependencies.createEnrollmentPreviewReadStream(verified.pathname) }, res, {
       contentType: record.sourceMetadata?.mimeType || record.declaredContentType,
@@ -264,7 +280,7 @@ async function streamEnrollmentVoice(record, res, dependencies) {
     record?.derivedVoiceAssetId ? dependencies.getOwnedMediaAsset(record.accountId, record.derivedVoiceAssetId) : null,
   ]);
   if (!derivedVoicePreviewVerified(record, identity, asset)) {
-    return send(res, 404, { ok: false, error: 'Extracted voice sample is unavailable.' });
+    return sendEnrollmentError(res, 404, { ok: false, error: 'Extracted voice sample is unavailable.' }, { accountId: record.accountId, enrollmentId: record.id, code: 'ENROLLMENT_VOICE_UNAVAILABLE' });
   }
   const expectedPathname = asset.privatePathname;
   const expectedBytes = Number(asset.bytes);
@@ -273,14 +289,14 @@ async function streamEnrollmentVoice(record, res, dependencies) {
     || (stored.blob?.size !== undefined && Number(stored.blob.size) !== expectedBytes)
     || (stored.blob?.contentType && stored.blob.contentType !== 'audio/wav')) {
     await cancelStream(stored?.stream);
-    return send(res, 410, { ok: false, error: 'Extracted voice sample is unavailable.' });
+    return sendEnrollmentError(res, 410, { ok: false, error: 'Extracted voice sample is unavailable.' }, { accountId: record.accountId, enrollmentId: record.id, code: 'ENROLLMENT_VOICE_GONE' });
   }
   const buffer = await readVerifiedEnrollmentBuffer(stored, {
     expectedBytes,
     expectedSha256: asset.sha256,
     maximumBytes: ENROLLMENT_MEDIA_LIMITS.maxAudioBytes,
   });
-  if (!buffer) return send(res, 410, { ok: false, error: 'Extracted voice sample is unavailable.' });
+  if (!buffer) return sendEnrollmentError(res, 410, { ok: false, error: 'Extracted voice sample is unavailable.' }, { accountId: record.accountId, enrollmentId: record.id, code: 'ENROLLMENT_VOICE_INTEGRITY' });
   res.statusCode = 200;
   res.setHeader('Content-Type', 'audio/wav');
   res.setHeader('Content-Length', String(expectedBytes));
@@ -356,8 +372,9 @@ export function createEnrollmentHandler(overrides = {}) {
   };
   return async function handler(req, res) {
     if (handleOptions(req, res)) return;
+    let session;
     try {
-      const session = dependencies.sessionFromRequest(req);
+      session = dependencies.sessionFromRequest(req);
       if (req.method === 'GET') {
         const enabled = enrollmentEnabled() && enrollmentAccountAllowed(session.accountId);
         const capabilities = enrollmentCapabilitiesDto({ enabled, extractionEnabled: enabled && String(process.env[ENROLLMENT_EXTRACTION_FLAG] || '').toLowerCase() === 'true' });
@@ -367,7 +384,7 @@ export function createEnrollmentHandler(overrides = {}) {
         try {
           if (enrollmentId) {
             const record = await dependencies.getOwnedEnrollment(session.accountId, enrollmentId);
-            if (!record) return send(res, 404, { ok: false, error: 'Enrollment not found.' });
+            if (!record) return sendEnrollmentError(res, 404, { ok: false, error: 'Enrollment not found.' }, { accountId: session.accountId, enrollmentId, code: 'ENROLLMENT_NOT_FOUND' });
             if (url.searchParams.get('preview') === 'video') return streamEnrollmentVideo(record, res, dependencies);
             if (url.searchParams.get('preview') === 'voice') return streamEnrollmentVoice(record, res, dependencies);
             return send(res, 200, { ok: true, ...capabilities, enrollment: await dtoFor(record, dependencies) });
@@ -379,7 +396,7 @@ export function createEnrollmentHandler(overrides = {}) {
           throw error;
         }
       }
-      if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use GET or POST for enrollments.' });
+      if (req.method !== 'POST') return sendEnrollmentError(res, 405, { ok: false, error: 'Use GET or POST for enrollments.' }, { accountId: session.accountId, code: 'METHOD_NOT_ALLOWED' });
       validateEnrollmentTransport(req);
       const input = parseEnrollmentRequest(await readJson(req));
       if (input.action === 'revoke') {
@@ -401,7 +418,7 @@ export function createEnrollmentHandler(overrides = {}) {
         }
         if (input.action !== 'create') {
           const canaryRecord = await dependencies.getOwnedEnrollment(session.accountId, input.enrollmentId);
-          if (!canaryRecord) return send(res, 404, { ok: false, error: 'Enrollment not found.' });
+          if (!canaryRecord) return sendEnrollmentError(res, 404, { ok: false, error: 'Enrollment not found.' }, { accountId: session.accountId, enrollmentId: input.enrollmentId, code: 'ENROLLMENT_NOT_FOUND' });
           assertEnrollmentCanaryRecord(canaryRecord);
         }
       }
@@ -417,6 +434,7 @@ export function createEnrollmentHandler(overrides = {}) {
       if (input.action === 'consent') {
         const result = await dependencies.grantEnrollmentConsent({ accountId: session.accountId, input });
         const delivery = await dispatch(result.enrollment, dependencies);
+        if (delivery.pending) logOpsEvent({ level: 'warn', event: 'enrollment.workflow.dispatch_pending', accountId: session.accountId, enrollmentId: result.enrollment.id, code: 'WORKFLOW_DISPATCH_PENDING', message: 'Enrollment workflow dispatch is pending.' });
         return send(res, 202, { ok: true, enrollment: await dtoFor(result.enrollment, dependencies), dispatchPending: delivery.pending });
       }
       if (input.action === 'provider-reconsent') {
@@ -426,10 +444,11 @@ export function createEnrollmentHandler(overrides = {}) {
       if (input.action === 'retry') {
         const result = await dependencies.retryEnrollment({ accountId: session.accountId, input });
         const delivery = await dispatch(result.enrollment, dependencies);
+        if (delivery.pending) logOpsEvent({ level: 'warn', event: 'enrollment.workflow.dispatch_pending', accountId: session.accountId, enrollmentId: result.enrollment.id, code: 'WORKFLOW_DISPATCH_PENDING', message: 'Enrollment workflow dispatch is pending.' });
         return send(res, 202, { ok: true, enrollment: await dtoFor(result.enrollment, dependencies), dispatchPending: delivery.pending });
       }
       let record = await dependencies.getOwnedEnrollment(session.accountId, input.enrollmentId);
-      if (!record) return send(res, 404, { ok: false, error: 'Enrollment not found.' });
+      if (!record) return sendEnrollmentError(res, 404, { ok: false, error: 'Enrollment not found.' }, { accountId: session.accountId, enrollmentId: input.enrollmentId, code: 'ENROLLMENT_NOT_FOUND' });
       if (record.stateVersion !== input.expectedStateVersion) throw Object.assign(new Error('Enrollment state changed.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
       record = await dependencies.expireEnrollment({ accountId: session.accountId, enrollmentId: record.id });
       if (record?.status === ENROLLMENT_STATUSES.EXPIRED && record.cleanupStatus === 'PENDING') await dependencies.start(identityEnrollmentCleanupWorkflowMetadata, [record.id]).catch(() => {});
@@ -457,11 +476,14 @@ export function createEnrollmentHandler(overrides = {}) {
         }
         if (record.status !== ENROLLMENT_STATUSES.SOURCE_HASHING) throw Object.assign(new Error('Upload reconciliation requires an uploaded source.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
         const delivery = await dispatch(record, dependencies);
+        if (delivery.pending) logOpsEvent({ level: 'warn', event: 'enrollment.workflow.dispatch_pending', accountId: session.accountId, enrollmentId: record.id, code: 'WORKFLOW_DISPATCH_PENDING', message: 'Enrollment workflow dispatch is pending.' });
         return send(res, 202, { ok: true, enrollment: await dtoFor(record, dependencies), dispatchPending: delivery.pending });
       }
       throw Object.assign(new Error('Enrollment action is unsupported.'), { statusCode: 400, failureCategory: 'VALIDATION' });
     } catch (error) {
-      return send(res, error.statusCode || 500, { ok: false, code: String(error.code || error.failureCategory || 'ENROLLMENT_ERROR').slice(0, 80), error: error.statusCode && error.statusCode < 500 ? error.message : 'Enrollment could not complete this request.' });
+      const status = error.statusCode || 500;
+      const payload = { ok: false, code: String(error.code || error.failureCategory || 'ENROLLMENT_ERROR').slice(0, 80), error: error.statusCode && error.statusCode < 500 ? error.message : 'Enrollment could not complete this request.' };
+      return sendEnrollmentError(res, status, payload, { accountId: session?.accountId, enrollmentId: error.enrollmentId, code: payload.code });
     }
   };
 }

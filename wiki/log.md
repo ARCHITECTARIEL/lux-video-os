@@ -659,3 +659,59 @@
 ## 2026-10-14T16:10:43Z - [REL-004c]
 
 - Switched the merge-intent check to base-controlled `pull_request_target`, locked its exact three steps in tests, and corrected the PR #98 migration, deployment, and unapplied protection record.
+
+## 2026-10-14T11:39:27Z - [closure-writeback] [OBS-001]
+
+- Added a bounded, redacting JSON operational logger with best-effort warning/error persistence, additive `ops_events` migration 0012, route/workflow decision events, and Activity in the existing admin console. The entity timeline joins operations, job events, and provider lifecycle events using safe fields. Retention target is 30 days; no deletion scheduler was added.
+- Local verification: `node --test tests/*.test.mjs` ran 1,113 tests: 1,064 passed, 1 failed, 48 skipped. The one failure is the intentional production schema-lock gate: VOS-002 lock pins 0000-0011 (`414d884a...`), while journal 0012 yields `659c9f1d...`; no PostgreSQL 18 catalogue recapture was authorized. `npx vitest run` passed 4/4; `npm run db:check`, `npm run check:imports`, focused admin/logger tests (15 pass, 4 DB skips), Playwright admin spec (8 pass), and `git diff --check` passed.
+- Migration SQL `drizzle/0012_legal_magneto.sql` LF-normalized SHA-256: `2f67174db6480484b239dbe8746fcdaac43b261c6843216c3d311d7b84d8d004`. No real database migration, provider call, deployment, commit, or push occurred. The production schema lock remains fail-closed; capture it only from a properly isolated PostgreSQL 18 database before release qualification.
+
+## 2026-10-14T11:50:00Z - [OBS-001] [schema-lock-recapture]
+
+- Owner-approved (Ariel, 2026-10-14 07:40 ET) recapture of `config/database-schema.lock.json` for 13 migrations (0000-0012) on a disposable PostgreSQL 18.6 container (`obs001-pg-throwaway`, no published port) via `psql`, using `migrationPlan`, `schemaSourceHashes`, `readSchemaCatalogue`, and `schemaDigest` from `tools/check-migrations.mjs`. LF and CRLF copies of the SQL gave identical results.
+- Control: applying 0000-0011 on the same instance reproduced the VOS-002b `schemaSha256` `02d4d057...` exactly.
+- New values: `migrationSetSha256` `659c9f1d3d893d5d1f4ce0a8d83dfa5d23bcd1c0a5831158ac89da897006dc6e` (was `414d884a...`), `schemaSha256` `5c7a106a82069c6a849b84113ea1e70b2a8482e45b19585f0bd1ca05b3bffc70` (was `02d4d057...`), `tableCount` 28 (was 27), `db/schema.js` `4e779ca2c4d28dd5cfaddc2a9fac1d1aac56a26df6ab389205774b2b157714fb` (was `00685ce2...`). `drizzle/0012_legal_magneto.sql` LF sha256 `2f67174db6480484b239dbe8746fcdaac43b261c6843216c3d311d7b84d8d004`.
+- Node v24.14.1 full suite: 1,113 tests, 1,065 passed, 0 failed, 48 skipped; Vitest 4/4; `db:check`, `check:imports`, admin Playwright (8 passed), and `git diff --check` passed. The throwaway container was removed after capture. No push, deploy, Neon/production database access, or provider call.
+
+## 2026-10-14T12:13:30Z - [closure-writeback] [OBS-001b]
+
+- Fixed the OBS-001 QA findings in this worktree: event-specific detail allowlists and bounded redaction, lazy ops-log DB imports, console-only anonymous 401/403/405 warnings, bounded warning persistence, and awaited admin credit/quarantine/tester audit writes with safe detail. Entity timeline details are redacted and admin client errors are generic.
+- Final local verification on Node v24.14.1: `node --test tests/*.test.mjs` ran 1,121 tests (1,073 passed, 0 failed, 48 skipped); Vitest 4/4; schema-lock tests 12/12; `npm run db:check`, `npm run check:imports`, and `git diff --check` passed. Node 20 remains for the operator; independent QA remains the reviewer.
+- The locked migration, Drizzle metadata, and `db/schema.js` are unchanged. No commit, push, merge, rebase, deploy, live database, or provider action occurred. The activity page's exact `count(*)` and protected DB raw account ID remain for existing pagination/filter contracts; console account IDs are hashed.
+- Node 20.20.2 (operator run): 1,121 tests, 1,053 passed, 20 failed, 48 skipped. All 20 failures are pre-existing and identical on base `2e3d75a` (1,100/1,032/20/48): `@neondatabase/serverless` does not provide an ESM export named `Pool` on Node 20 (authorization repair, provider reconciliation, LUXIFY, scripted-photo, reserveRender, talent discovery). The 10 OBS-001 enrollment-provider-security regressions are fixed. Production runs Node 24.
+## 2026-10-14T12:33:36Z - [OBS-001c]
+
+- Addressed OBS-001b QA re-review in this worktree. The three admin mutations now have route-level tests with injected mutation functions and ops writer. Each test checks the exact persisted audit event, account ID, code, and details; a delayed writer proves the response waits for persistence. Tester email is absent from the audit row and console. Audit write failures emit the distinct `OPS_AUDIT_PERSIST_FAILED` alert while the completed admin action succeeds.
+- Warning and error persistence share a five-per-key and 60-per-minute per-instance cap; explicit `persist: true` audits bypass both. Added coverage for repeated anonymous 5xx, key cycling, code variation, and audit bypass. Expanded bounded redaction for missed values and keys while preserving ISO dates, UUIDs, SHA-256 values, and audit codes. Split scanner-like fake secret fixtures at runtime. Admin 4xx errors again return their validation text; unclassified errors return generic 500 text.
+- Verification on local Node 24: `node --test tests/*.test.mjs` 1,128 total, 1,080 passed, 0 failed, 48 skipped; `npx vitest run` 4/4; schema-lock-focused Node tests 15/15; `npm run db:check`, `npm run check:imports`, and `git diff --check` passed. Changed test files contain no literal matches for the four fake-secret prefixes. Changes remain uncommitted. Audit persistence remains fail-open with alerting, and the shared admin credential still identifies the actor only as `admin`.
+- Closure readback: this dated OBS-001c entry is in `OBS-001/wiki/log.md`, the task's scoped worktree log.
+- Operator verification (OBS-001c): Node 24.14.1 1,128 tests / 1,080 pass / 0 fail / 48 skipped; Node 20.20.2 1,128 / 1,060 / 20 / 48, failures identical to base `2e3d75a` (pre-existing Neon `Pool` ESM export). Vitest 4/4, db:check, check:imports, schema-lock 13/0/1, admin Playwright 8/8, diff --check clean.
+
+## 2026-10-14T12:59:30Z - [OBS-001d]
+
+- Addressed the independent OBS-001c QA re-review in this worktree. A 64-hex value is now preserved only next to an allowlisted hash label; bare values and secret/key labels redact. The free-text scrub also removes user-supplied preservation markers, restricts long uppercase exceptions to underscore codes without long digit runs, and covers password phrasing, user:pass local/IP endpoints, card numbers, SSNs, and IBANs. Added positive and negative regressions for these cases and kept the capped 100 KB latency check.
+- The admin route now exports `createAdminHandler(deps)` for injected tests; the production default is a two-argument handler. Existing audit persistence remains awaited and fail-open with its distinct alert. Shared admin auth still records the actor as `admin`.
+- Local verification on Node 24: `node --test tests/*.test.mjs` 1,131 total, 1,083 passed, 0 failed, 48 skipped; schema-lock-focused tests 15/15; `npm run db:check`, `npm run check:imports`, and `git diff --check` passed. Vitest passed 4/4 with `--configLoader native --pool threads`; its default config bundler/fork worker hit Windows `spawn EPERM` in this session. No live database, provider, deployment, commit, push, merge, rebase, or reset action occurred. Changes remain uncommitted.
+
+## 2026-10-14T13:00:06Z - [closure-writeback] [OBS-001d]
+
+- Readback confirms the OBS-001d entry above is present in this worktree's `wiki/log.md`, modified after the session began. The closure hook reported an older timestamp, so its path or cached state may differ; no file outside this worktree was changed.
+- Operator verification (OBS-001d): Node 24.14.1 1,131 / 1,083 pass / 0 fail / 48 skipped; Node 20.20.2 1,131 / 1,063 / 20 / 48, failures identical to base `2e3d75a` (pre-existing Neon `Pool` ESM export). Vitest 4/4, db:check, check:imports, schema-lock 13/0/1, admin Playwright 8/8, diff --check clean. OBS-001..OBS-001d squashed into one local commit on `2e3d75a`.
+
+## 2026-10-14T13:30:08Z - [OBS-001e]
+
+- Fixed QA re-review findings in the operational logger. Event and code identifiers now use strict format validation without value scrubbing; invalid values become `invalid_event` and `invalid_code`. The validated event controls the detail allowlist, restoring `component` for `identity.provider_creation.contained_failure`.
+- Free-text redaction now requires an assignment or `is`/`was` after credential labels, checks IBAN mod 97 and card Luhn validity, and preserves 64-character hex only for the explicit digest label list. The initial phone narrowing missed domestic formats; see the follow-up below. Source-scanned literal emitted event/code identifiers and both sides of each redaction rule have regression coverage, including the bounded 100 KB adversarial case.
+- Local Node 24 verification: `node --test tests/*.test.mjs` 1,133 total / 1,085 passed / 0 failed / 48 skipped; `npx vitest run` 4/4; schema-lock-focused `tests/check-migrations.test.mjs` 10/10; `npm run db:check`, `npm run check:imports`, and `git diff --check` passed. Scanner-style fake secret prefixes do not occur literally in the changed test file. Changes remain uncommitted; no live DB, provider, deployment, or repository history action occurred.
+
+## 2026-10-14T13:43:29Z - [OBS-001e follow-up]
+
+- Restored optional `+` in the phone pattern, added a leading and trailing identifier boundary, and covered parenthesized domestic formats. The phone callback preserves plain digit-only matches of at least 13 digits without `+`; existing date-shape and 10–15 digit guards remain. A Luhn-invalid 16-digit card shape remains visible because it fails the card checksum and exceeds the phone digit cap.
+- Regression coverage redacts four domestic forms and an international form while preserving two 13-digit build/timestamp values, a date-shaped value, a UUID, an ISO timestamp, the invalid 16-digit card shape, and numbers embedded in build identifiers. The focused test was red before the fix and passed 22/22 afterward.
+- Final local Node run: `node --test tests/ops-log.test.mjs` 22 passed, 0 failed; `node --test tests/*.test.mjs` 1,134 total, 1,086 passed, 0 failed, 48 skipped. An earlier concurrent full run failed in unrelated authorization/media fixture tests under process pressure; the exact-command rerun passed. `git diff --check` passed. Changes remain uncommitted; no DB, network/provider, deployment, or repository history action occurred.
+
+## 2026-10-14T13:44:23Z - [closure-writeback] [OBS-001e follow-up]
+
+- Readback confirms the dated OBS-001e follow-up entry and this closure entry are present in this worktree's `wiki/log.md`. Its `LastWriteTimeUtc` was after this session began. The closure hook reported an older timestamp, so it may be checking a different path or stale state; no file outside the scoped worktree was changed.
+- Final focused Node test: 22 passed, 0 failed. Final full Node test: 1,134 total, 1,086 passed, 0 failed, 48 skipped. The phone regression fix and tests remain uncommitted.
+- Operator verification (OBS-001e): Node 24.14.1 1,134 / 1,086 pass / 0 fail / 48 skipped (one earlier run had a load-flaky 'authorization repair: list' failure; passes 3/3 isolated and on full rerun); Node 20.20.2 1,134 / 1,066 / 20 / 48, failures identical to base `2e3d75a` (pre-existing Neon `Pool` ESM). Vitest 4/4, db:check, check:imports, schema-lock 13/0/1, admin Playwright 8/8, diff --check clean. Amended into the single OBS-001 commit on `2e3d75a`.

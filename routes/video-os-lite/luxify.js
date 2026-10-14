@@ -23,6 +23,7 @@ import {
   issueLuxifyQuote,
 } from '../../lib/luxify-quote.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { logOpsEvent } from '../../lib/ops-log.js';
 import {
   assertPinnedHeygenSpaceAnchorProjection,
   loadPinnedHeygenSpaceAnchorProjection,
@@ -336,14 +337,6 @@ function bindingFrom(project, idempotencyKey, eligibility, accountId) {
   };
 }
 
-function safeLog(error) {
-  console.error(JSON.stringify({
-    event: 'video_os_luxify_route_failure',
-    code: error?.code || null,
-    failureCategory: error?.failureCategory || null,
-  }));
-}
-
 export function createLuxifyHandler({
   authenticate = sessionFromRequest,
   environment = process.env,
@@ -365,15 +358,22 @@ export function createLuxifyHandler({
 
   return async function luxifyHandler(req, res) {
     if (handleOptions(req, res)) return;
+    let session;
     try {
-      let session;
       try {
         session = authenticate(req);
       } catch {
+        logOpsEvent({ level: 'warn', event: 'luxify.request.rejected', status: 401, code: 'sign_in_required', message: 'LUXIFY request was rejected.' });
         return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in to continue.' });
       }
-      if (!session?.accountId) return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in to continue.' });
-      if (!['GET', 'POST'].includes(req.method)) return send(res, 405, { ok: false, code: 'method_not_allowed', error: 'Use GET or POST.' });
+      if (!session?.accountId) {
+        logOpsEvent({ level: 'warn', event: 'luxify.request.rejected', status: 401, code: 'sign_in_required', message: 'LUXIFY request was rejected.' });
+        return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in to continue.' });
+      }
+      if (!['GET', 'POST'].includes(req.method)) {
+        logOpsEvent({ level: 'warn', event: 'luxify.request.rejected', accountId: session.accountId, status: 405, code: 'method_not_allowed', message: 'LUXIFY request was rejected.' });
+        return send(res, 405, { ok: false, code: 'method_not_allowed', error: 'Use GET or POST.' });
+      }
       assertTransport(req, environment, { json: req.method === 'POST' });
 
       const allowed = await rateLimit({
@@ -430,7 +430,10 @@ export function createLuxifyHandler({
           idempotencyKey: payload.idempotencyKey,
         };
         const existingJob = await repository.recoverJob(recovery);
-        if (existingJob) return send(res, 200, { ok: true, recovered: true, existingJob, project: null, quote: null });
+        if (existingJob) {
+          logOpsEvent({ level: 'info', event: 'luxify.quote.recovered', accountId: session.accountId, jobId: existingJob.id, status: 200, code: 'EXISTING_JOB_RECOVERED', message: 'Existing LUXIFY job was recovered.' });
+          return send(res, 200, { ok: true, recovered: true, existingJob, project: null, quote: null });
+        }
 
         const project = await repository.getProject(session.accountId, payload.projectId);
         const eligibility = await requireLuxifyActivation(session.accountId, project.lookIdentityIds, {
@@ -445,12 +448,13 @@ export function createLuxifyHandler({
       }
       throw routeError('invalid_request', 'Invalid LUXIFY action.');
     } catch (error) {
-      safeLog(error);
       const status = [400, 401, 402, 403, 404, 409, 410, 422, 429, 503].includes(error?.statusCode) ? error.statusCode : 503;
       const publicError = status === 503 && !error?.statusCode ? 'LUXIFY request could not be completed.' : error.message;
+      const code = error?.code || (error?.issues ? 'invalid_request' : 'luxify_unavailable');
+      logOpsEvent({ level: status >= 500 ? 'error' : 'warn', event: 'luxify.request.rejected', accountId: session?.accountId, status, code, message: 'LUXIFY request was rejected.' });
       return send(res, status, {
         ok: false,
-        code: error?.code || (error?.issues ? 'invalid_request' : 'luxify_unavailable'),
+        code,
         error: publicError,
         ...(Array.isArray(error?.reasons) ? { reasons: error.reasons } : {}),
         ...(Array.isArray(error?.issues) ? { issues: error.issues } : {}),

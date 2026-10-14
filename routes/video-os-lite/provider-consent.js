@@ -24,6 +24,7 @@ import {
 import { identityConsents, providerLifecycleEvents, providerLifecycleOperations } from '../../db/schema.js';
 import { consumeRateLimit, getOwnedIdentity } from '../../db/repositories.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { logOpsEvent } from '../../lib/ops-log.js';
 import { assertProviderConsentInvitationEmailConfigured, sendProviderConsentInvitationEmail } from '../../lib/video-os-notifications.js';
 import { saveProviderConsentUrl, readProviderConsentUrl } from '../../lib/provider-consent-url-store.js';
 import { PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../../lib/video-os-private-blob.js';
@@ -230,6 +231,7 @@ export function createProviderConsentHandler(dependencies = {}) {
     }));
     const url = `${publicOrigin(env)}/provider-consent#invite=${encodeURIComponent(invitation.token)}`;
     await sendInvitation({ email: subjectEmail, url, expiresAt: invitation.expiresAt }, { env });
+    logOpsEvent({ level: 'info', event: 'provider_consent.notice.issued', accountId: actor.accountId, identityId: identity.id, status: 201, code: 'NOTICE_ISSUED', message: 'Provider consent notice was issued.' });
     return send(res, 201, { ok: true, invitation: { delivered: true, expiresAt: invitation.expiresAt } });
   }
 
@@ -245,6 +247,7 @@ export function createProviderConsentHandler(dependencies = {}) {
       noticeTokenHash: invitation.tokenHash,
       policyVersion: HOSTED_SUBJECT_CONSENT_POLICY_VERSION,
     }));
+    logOpsEvent({ level: 'info', event: result.replayed ? 'provider_consent.notice.replayed' : 'provider_consent.notice.accepted', accountId: invitation.accountId, identityId: invitation.identityId, status: result.replayed ? 200 : 201, code: result.replayed ? 'NOTICE_REPLAYED' : 'NOTICE_ACCEPTED', message: 'Provider consent notice decision was recorded.' });
     return send(res, result.replayed ? 200 : 201, { ok: true, subjectConsent: {
       accepted: true, replayed: result.replayed, policyVersion: HOSTED_SUBJECT_CONSENT_POLICY_VERSION,
       expiresAt: invitation.expiresAt,
@@ -284,6 +287,7 @@ export function createProviderConsentHandler(dependencies = {}) {
       });
     });
     if (!reserved.shouldSubmit) {
+      logOpsEvent({ level: 'info', event: 'provider_consent.session.recovered', accountId: invitation.accountId, identityId: invitation.identityId, status: 200, code: 'SESSION_RECOVERED', message: 'Existing provider consent session was recovered.' });
       const launchState = token();
       const attempt = await receiptTransaction(invitation.accountId, providerBinding, async tx => {
         const evidence = await findIssuedEvidence(tx, reserved.operation.id);
@@ -318,6 +322,7 @@ export function createProviderConsentHandler(dependencies = {}) {
         accountId: invitation.accountId, operationId: reserved.operation.id, providerBinding,
         code: error?.failureCategory || 'PROVIDER_RESULT_UNKNOWN',
       })).catch(() => {});
+      logOpsEvent({ level: 'error', event: 'provider_consent.session.submission_unknown', accountId: invitation.accountId, identityId: invitation.identityId, status: error?.statusCode || 502, code: error?.failureCategory || 'PROVIDER_RESULT_UNKNOWN', message: 'Provider consent session submission outcome is unknown.' });
       throw error;
     }
     const providerUrlExpiresAt = new Date(now() + PROVIDER_SESSION_TTL_MS);
@@ -403,7 +408,10 @@ export function createProviderConsentHandler(dependencies = {}) {
     const availability = providerSubjectConsentActivationStatus(env);
     const actor = session(req, authenticate);
     const identity = await exactIdentity(actor.accountId, query.get('identityId'), lookupIdentity);
-    if (!availability.enabled) return send(res, 200, { ok: true, availability, consent: null });
+    if (!availability.enabled) {
+      logOpsEvent({ level: 'info', event: 'provider_consent.availability.blocked', accountId: actor.accountId, identityId: identity.id, status: 200, code: availability.reason || 'PROVIDER_SUBJECT_CONSENT_DISABLED', message: 'Provider consent availability gate is closed.' });
+      return send(res, 200, { ok: true, availability, consent: null });
+    }
     const providerBinding = await resolveBinding({ accountId: actor.accountId });
     let consent = await db().transaction(tx => getStatusTx(tx, {
       accountId: actor.accountId, identityId: identity.id,
@@ -435,19 +443,26 @@ export function createProviderConsentHandler(dependencies = {}) {
         if (action === 'launch') return await launch(res, url.searchParams);
         if (action === 'return') return await returned(res, url.searchParams);
         if (action === 'status') return await status(req, res, url.searchParams);
+        logOpsEvent({ level: 'warn', event: 'provider_consent.request.rejected', status: 400, code: 'invalid_request', message: 'Provider consent request was rejected.' });
         return send(res, 400, { ok: false, code: 'invalid_request', error: 'Hosted consent action is invalid.' });
       }
-      if (req.method !== 'POST') return send(res, 405, { ok: false, code: 'method_not_allowed', error: 'Use GET or POST.' });
+      if (req.method !== 'POST') {
+        logOpsEvent({ level: 'warn', event: 'provider_consent.request.rejected', status: 405, code: 'method_not_allowed', message: 'Provider consent request was rejected.' });
+        return send(res, 405, { ok: false, code: 'method_not_allowed', error: 'Use GET or POST.' });
+      }
       assertJsonTransport(req, env);
       const input = await body(req);
       if (input.action === 'issue-notice') return await issueNotice(req, res, input);
       if (input.action === 'accept-notice') return await acceptNotice(req, res, input);
       if (input.action === 'create-session') return await createSession(req, res, input);
+      logOpsEvent({ level: 'warn', event: 'provider_consent.request.rejected', status: 400, code: 'invalid_request', message: 'Provider consent request was rejected.' });
       return send(res, 400, { ok: false, code: 'invalid_request', error: 'Hosted consent action is invalid.' });
     } catch (error) {
       const statusCode = error.statusCode || 400;
       const publicMessage = statusCode >= 500 ? 'Hosted consent is temporarily unavailable.' : (error.message || 'Hosted consent request failed.');
-      return send(res, statusCode, { ok: false, code: error.code || error.failureCategory || 'hosted_consent_failed', error: publicMessage });
+      const code = error.code || error.failureCategory || 'hosted_consent_failed';
+      logOpsEvent({ level: statusCode >= 500 ? 'error' : 'warn', event: 'provider_consent.request.rejected', status: statusCode, code, message: 'Provider consent request was rejected.' });
+      return send(res, statusCode, { ok: false, code, error: publicMessage });
     }
   };
 }

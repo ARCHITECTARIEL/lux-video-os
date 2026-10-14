@@ -2,10 +2,14 @@
 import { accountDto } from '../../db/dto.js';
 import { getAccountContext } from '../../db/repositories.js';
 import { handleOptions, providerList, send, sessionFromRequest } from '../../lib/video-os-account.js';
+import { logOpsEvent } from '../../lib/ops-log.js';
 
 export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
-  if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'Use GET for provider status.' });
+  if (req.method !== 'GET') {
+    logOpsEvent({ level: 'warn', event: 'provider_status.request.rejected', status: 405, code: 'METHOD_NOT_ALLOWED', message: 'Provider status request was rejected.' });
+    return send(res, 405, { ok: false, error: 'Use GET for provider status.' });
+  }
   try {
     try {
       const session = sessionFromRequest(req);
@@ -20,6 +24,7 @@ export default async function handler(req, res) {
         assetLibraries: [],
       });
     } catch {
+      logOpsEvent({ level: 'info', event: 'provider_status.signed_out', status: 200, code: 'SIGN_IN_REQUIRED', message: 'Provider status returned signed out capabilities.' });
       return send(res, 200, {
         ok: true,
         signedIn: false,
@@ -32,6 +37,8 @@ export default async function handler(req, res) {
       });
     }
   } catch (error) {
-    send(res, error.statusCode || 400, { ok: false, error: error.message || 'Could not load account.' });
+    const status = error.statusCode || 400;
+    logOpsEvent({ level: status >= 500 ? 'error' : 'warn', event: 'provider_status.request.rejected', status, code: error.failureCategory || 'PROVIDER_STATUS_ERROR', message: 'Provider status request was rejected.' });
+    send(res, status, { ok: false, error: error.message || 'Could not load account.' });
   }
 }

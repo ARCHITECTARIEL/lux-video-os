@@ -273,3 +273,26 @@ test('authentication, same-origin JSON, and account rate limits fail before muta
   assert.equal(limitedRes.statusCode, 429);
   assert.equal(limited.calls.save.length, 0);
 });
+
+test('route rejection emits a sanitized operational event without changing the response contract', async () => {
+  const marker = 'owner@example.test?token=never-log-this';
+  const handler = createScriptedPhotoHandler({
+    authenticate: () => { throw new Error(marker); },
+  });
+  const res = response();
+  const lines = [];
+  const originalLog = console.log;
+  console.log = line => lines.push(String(line));
+  try {
+    await handler(request('GET'), res);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(res.statusCode, 401);
+  assert.deepEqual(res.body, { ok: false, code: 'sign_in_required', error: 'Sign in to continue.' });
+  const event = lines.map(line => JSON.parse(line)).find(item => item.event === 'scripted_photo.request.rejected');
+  assert.equal(event?.status, 401);
+  assert.equal(event?.code, 'sign_in_required');
+  assert.equal(JSON.stringify(event).includes(marker), false);
+});

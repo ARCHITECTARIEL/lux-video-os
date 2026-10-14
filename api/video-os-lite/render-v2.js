@@ -35,9 +35,24 @@ import {
   unavailableLuxifyEligibilityResolver,
 } from '../../routes/video-os-lite/luxify.js';
 import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
+import { logOpsEvent } from '../../lib/ops-log.js';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function logRenderDecision(event, { level = 'warn', accountId, identityId, job, status, code, message = 'Render request decision was recorded.' } = {}) {
+  logOpsEvent({
+    level,
+    event,
+    accountId: accountId || job?.accountId,
+    identityId,
+    jobId: job?.id,
+    status,
+    code,
+    message,
+    correlationId: job?.correlationId,
+  });
+}
 
 export function renderProofBinding(proofId) {
   if (!uuidV4Pattern.test(String(proofId || ''))) {
@@ -351,6 +366,7 @@ export async function handleLuxifyRender(req, res, session, body, diagnosticRequ
       route: 'render',
     });
     if (workflowDispatchAttempted) {
+      logRenderDecision('render.workflow.dispatch_uncertain', { level: 'error', job: reservedJob, status: 202, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', message: 'Render workflow dispatch requires reconciliation.' });
       return send(res, 202, {
         ok: true,
         code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain',
@@ -466,6 +482,7 @@ async function handleStandardRender(req, res, session, body, correlationId) {
     if (shouldReleaseWorkflowReservation({ job: reservedJob, workflowDispatchAttempted })) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.', undefined, { expectedStatuses: ['reserved'] }).catch(() => {});
     captureJobError(error, { jobId: reservedJob?.id, accountId: reservedJob?.accountId, correlationId: reservedJob?.correlationId, route: 'render' });
     if (workflowDispatchAttempted) {
+      logRenderDecision('render.workflow.dispatch_uncertain', { level: 'error', job: reservedJob, status: 202, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', message: 'Render workflow dispatch requires reconciliation.' });
       return send(res, 202, {
         ok: true, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', job: jobDto(reservedJob),
         correlationId: reservedJob?.correlationId, status: reservedJob?.status, stage: reservedJob?.status,
@@ -477,15 +494,25 @@ async function handleStandardRender(req, res, session, body, correlationId) {
 }
 
 export default async function handler(req, res) {
-  if (blockForDiagnosticMaintenance(req, res)) return;
+  if (blockForDiagnosticMaintenance(req, res)) {
+    logRenderDecision('render.maintenance.blocked', { status: 503, code: 'DIAGNOSTIC_MAINTENANCE', message: 'Render request was blocked by diagnostic maintenance.' });
+    return;
+  }
   if (handleOptions(req, res)) return;
-  if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST to render.' });
+  if (req.method !== 'POST') {
+    logRenderDecision('render.request.rejected', { status: 405, code: 'METHOD_NOT_ALLOWED', message: 'Render request was rejected.' });
+    return send(res, 405, { ok: false, error: 'Use POST to render.' });
+  }
   let narrationRequest = false;
   let scriptedPhotoRequest = false;
   let luxifyRequest = false;
+  let session;
   try {
-    const session = sessionFromRequest(req);
-    if (!featureEnabled('VIDEO_OS_DURABLE_WORKFLOW_ENABLED')) return send(res, 503, { ok: false, code: 'durable_workflow_disabled', error: 'Live rendering is contained pending workflow verification.' });
+    session = sessionFromRequest(req);
+    if (!featureEnabled('VIDEO_OS_DURABLE_WORKFLOW_ENABLED')) {
+      logRenderDecision('render.durable_workflow.blocked', { level: 'error', accountId: session.accountId, status: 503, code: 'durable_workflow_disabled', message: 'Render request was blocked by the durable workflow gate.' });
+      return send(res, 503, { ok: false, code: 'durable_workflow_disabled', error: 'Live rendering is contained pending workflow verification.' });
+    }
     await assertRenderRateLimit(session.accountId);
     const body = await readJson(req);
     luxifyRequest = classifyLuxifyMarker(body, { provider: 'heygen' }) !== null;
@@ -509,26 +536,37 @@ export default async function handler(req, res) {
     return await handlePremiumRender(req, res, session, body, diagnosticRequestId);
   } catch (error) {
     if (luxifyRequest) {
-      return send(res, [400, 401, 402, 403, 404, 409, 410, 422, 429, 503].includes(error.statusCode) ? error.statusCode : 503, {
+      const status = [400, 401, 402, 403, 404, 409, 410, 422, 429, 503].includes(error.statusCode) ? error.statusCode : 503;
+      const code = error.code || (error.issues ? 'invalid_request' : 'luxify_unavailable');
+      logRenderDecision('render.request.rejected', { level: status >= 500 ? 'error' : 'warn', accountId: session?.accountId, status, code, message: 'LUXIFY render request was rejected.' });
+      return send(res, status, {
         ok: false,
-        code: error.code || (error.issues ? 'invalid_request' : 'luxify_unavailable'),
+        code,
         error: 'LUXIFY render request could not be completed.',
         issues: error.issues,
         ...(Array.isArray(error.reasons) ? { reasons: error.reasons } : {}),
       });
     }
     if (narrationRequest) {
-      return send(res, [400, 401, 402, 403, 404, 409, 410, 422, 503].includes(error.statusCode) ? error.statusCode : 503, { ok: false, code: sanitizeStandardNarrationReason(error.code), error: 'Standard narration request could not be completed.' });
+      const status = [400, 401, 402, 403, 404, 409, 410, 422, 503].includes(error.statusCode) ? error.statusCode : 503;
+      const code = sanitizeStandardNarrationReason(error.code);
+      logRenderDecision('render.request.rejected', { level: status >= 500 ? 'error' : 'warn', accountId: session?.accountId, status, code, message: 'Standard narration render request was rejected.' });
+      return send(res, status, { ok: false, code, error: 'Standard narration request could not be completed.' });
     }
     if (scriptedPhotoRequest) {
-      return send(res, [400, 401, 402, 403, 404, 409, 410, 422, 503].includes(error.statusCode) ? error.statusCode : 400, {
+      const status = [400, 401, 402, 403, 404, 409, 410, 422, 503].includes(error.statusCode) ? error.statusCode : 400;
+      const code = error.code || (error.issues ? 'invalid_request' : 'scripted_photo_render_failed');
+      logRenderDecision('render.request.rejected', { level: status >= 500 ? 'error' : 'warn', accountId: session?.accountId, status, code, message: 'Scripted photo render request was rejected.' });
+      return send(res, status, {
         ok: false,
-        code: error.code || (error.issues ? 'invalid_request' : 'scripted_photo_render_failed'),
+        code,
         error: 'Scripted-photo render request could not be completed.',
         issues: error.issues,
       });
     }
-    return send(res, error.statusCode || 400, { ok: false, error: error.message || 'Render failed.', issues: error.issues });
+    const status = error.statusCode || 400;
+    logRenderDecision('render.request.rejected', { level: status >= 500 ? 'error' : 'warn', accountId: session?.accountId, status, code: error.code || error.failureCategory || 'RENDER_ERROR', message: 'Render request was rejected.' });
+    return send(res, status, { ok: false, error: error.message || 'Render failed.', issues: error.issues });
   }
 }
 
@@ -633,7 +671,10 @@ async function handleScriptedPhotoRender(req, res, session, body, diagnosticRequ
   } catch (error) {
     if (shouldReleaseWorkflowReservation({ job: reservedJob, workflowDispatchAttempted })) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.', undefined, { expectedStatuses: ['reserved'] }).catch(() => {});
     captureJobError(error, { jobId: reservedJob?.id, accountId: reservedJob?.accountId, correlationId: reservedJob?.correlationId, route: 'render' });
-    if (workflowDispatchAttempted) return send(res, 202, { ok: true, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', proofId, job: jobDto(reservedJob), correlationId: reservedJob?.correlationId, status: reservedJob?.status, stage: reservedJob?.status, message: 'Workflow dispatch may have been accepted; reservation is preserved pending reconciliation.' });
+    if (workflowDispatchAttempted) {
+      logRenderDecision('render.workflow.dispatch_uncertain', { level: 'error', job: reservedJob, status: 202, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', message: 'Render workflow dispatch requires reconciliation.' });
+      return send(res, 202, { ok: true, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', proofId, job: jobDto(reservedJob), correlationId: reservedJob?.correlationId, status: reservedJob?.status, stage: reservedJob?.status, message: 'Workflow dispatch may have been accepted; reservation is preserved pending reconciliation.' });
+    }
     throw error;
   }
 }
@@ -685,7 +726,10 @@ async function handlePremiumRender(req, res, session, body, diagnosticRequestId)
   } catch (error) {
     if (shouldReleaseWorkflowReservation({ job: reservedJob, workflowDispatchAttempted })) await markJobFailedAndRelease(reservedJob.id, error.failureCategory || 'INTERNAL', 'Workflow start failed.', undefined, { expectedStatuses: ['reserved'] }).catch(() => {});
     captureJobError(error, { jobId: reservedJob?.id, accountId: reservedJob?.accountId, correlationId: reservedJob?.correlationId, route: 'render' });
-    if (workflowDispatchAttempted) return send(res, 202, { ok: true, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', proofId, job: jobDto(reservedJob), correlationId: reservedJob?.correlationId, status: reservedJob?.status, stage: reservedJob?.status, message: 'Workflow dispatch may have been accepted; reservation is preserved pending reconciliation.' });
+    if (workflowDispatchAttempted) {
+      logRenderDecision('render.workflow.dispatch_uncertain', { level: 'error', job: reservedJob, status: 202, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', message: 'Render workflow dispatch requires reconciliation.' });
+      return send(res, 202, { ok: true, code: workflowAccepted ? 'workflow_tracking_pending' : 'workflow_dispatch_uncertain', proofId, job: jobDto(reservedJob), correlationId: reservedJob?.correlationId, status: reservedJob?.status, stage: reservedJob?.status, message: 'Workflow dispatch may have been accepted; reservation is preserved pending reconciliation.' });
+    }
     throw error;
   }
 }

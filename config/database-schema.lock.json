@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "provenance": "recaptured 2026-10-13 (VOS-002b): fresh isolated PostgreSQL 18.6 (major version 18) throwaway instance with all 12 migrations (0000-0011) applied from empty via psql, captured twice (LF and CRLF copies of the migration SQL) with identical results after catalogue line-ending normalization (tools/check-migrations.mjs normalizeCatalogueLineEndings). Hashed with readSchemaCatalogue/schemaDigest, migration set via migrationPlan(), sources via schemaSourceHashes(). The schemaSha256 depends on the PostgreSQL major version (catalogue text such as pg_get_functiondef differs, e.g. PG 17); compare only against a PostgreSQL 18 database. identity_consents_hosted_v3_purpose_ck is intentionally excluded (deferred per 2dd491c; proposal in docs/hosted-v3-purpose-guard.proposed.sql). Supersedes the 2026-10-01 capture (11 migrations, pre-normalization).",
-  "capturedAt": "2026-10-13T18:57:03.744Z",
-  "migrationSetSha256": "414d884abacd185c72e744b5c8858791df5d7bbcb2bf6931ac03bab1e09916ea",
+  "provenance": "recaptured 2026-10-14 (OBS-001): fresh isolated PostgreSQL 18.6 (major version 18) throwaway instance with all 13 migrations (0000-0012) applied from empty via psql, captured twice (LF and CRLF copies of the migration SQL) with identical results after catalogue line-ending normalization (tools/check-migrations.mjs normalizeCatalogueLineEndings). Control: applying 0000-0011 on the same instance reproduced the VOS-002b schemaSha256 02d4d057... exactly. Hashed with readSchemaCatalogue/schemaDigest, migration set via migrationPlan(), sources via schemaSourceHashes(). The schemaSha256 depends on the PostgreSQL major version (catalogue text such as pg_get_functiondef differs, e.g. PG 17); compare only against a PostgreSQL 18 database. identity_consents_hosted_v3_purpose_ck is intentionally excluded (deferred per 2dd491c; proposal in docs/hosted-v3-purpose-guard.proposed.sql). Supersedes the 2026-10-13 VOS-002b capture (12 migrations, 0000-0011).",
+  "capturedAt": "2026-10-14T11:43:03.065Z",
+  "migrationSetSha256": "659c9f1d3d893d5d1f4ce0a8d83dfa5d23bcd1c0a5831158ac89da897006dc6e",
   "sourceHashes": {
-    "db/schema.js": "00685ce24bfe9baeaf3ea4b5742298e2ca1dffe21c022804f836420cf050c87f",
+    "db/schema.js": "4e779ca2c4d28dd5cfaddc2a9fac1d1aac56a26df6ab389205774b2b157714fb",
     "db/standard-narration-schema.js": "be1b5caa8040685ddae706b0e3c7d7357deb8753d917528d3defb88af11b0efd",
     "db/provider-lifecycle-guards.sql": "dbbfe7a06b596283e62f58d3cb050a30d42e489dcd781d1523547aacc897c3df"
   },
-  "schemaSha256": "02d4d057495b821e9ddbcb4d246f74adbd96a7b6b050d07a5bca1c1e94935240",
-  "tableCount": 27
+  "schemaSha256": "5c7a106a82069c6a849b84113ea1e70b2a8482e45b19585f0bd1ca05b3bffc70",
+  "tableCount": 28
 }

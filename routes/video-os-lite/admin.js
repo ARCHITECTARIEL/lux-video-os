@@ -1,6 +1,9 @@
 // Routed through the consolidated workspace function to stay within the Vercel function limit.
 import crypto from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import { dispatchClaimedJob } from '../../api/video-os-lite/render-v2.js';
+import { database } from '../../db/client.js';
+import { logOpsEvent, logOpsEventAwaited, redactOpsValue } from '../../lib/ops-log.js';
 import {
   adminResolveJob, claimWorkflowStart, getAdminOverview, getJob, getJobEventTimeline, grantAdminCredit, listAdminTesters, listFailedOrStuckJobs,
   listMediaAssetsForJob, listRecentAccounts, listRecentCreditTransactions, listRecentJobs, listRecentStripeEvents,
@@ -43,6 +46,191 @@ function isDiagnosticOperatorRequest(req, env = process.env) {
 }
 
 const P0_ATTESTATION_MAX_WINDOW_MS = 2 * 60 * 60_000;
+const ACTIVITY_DEFAULT_LIMIT = 50;
+const ACTIVITY_MAX_LIMIT = 100;
+const ACTIVITY_MAX_OFFSET = 10_000;
+const OPS_LEVELS = new Set(['info', 'warn', 'error']);
+
+function boundedQueryText(value, label, maxLength = 128) {
+  const text = String(value || '').trim();
+  if (text.length > maxLength) throw Object.assign(new Error(`${label} is too long.`), { statusCode: 400 });
+  return text;
+}
+
+function boundedInteger(value, fallback, { min = 0, max } = {}) {
+  if (value === null || value === undefined || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw Object.assign(new Error(`Expected a whole number between ${min} and ${max}.`), { statusCode: 400 });
+  }
+  return parsed;
+}
+
+function optionalDate(value, label) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) throw Object.assign(new Error(`${label} must be a valid date.`), { statusCode: 400 });
+  return parsed;
+}
+
+export function parseActivityQuery(url, { requireEntity = false } = {}) {
+  const entityId = boundedQueryText(url.searchParams.get('entityId'), 'entityId');
+  if (requireEntity && !entityId) throw Object.assign(new Error('entityId is required.'), { statusCode: 400 });
+  const level = boundedQueryText(url.searchParams.get('level'), 'level', 16).toLowerCase();
+  if (level && !OPS_LEVELS.has(level)) throw Object.assign(new Error('level must be info, warn, or error.'), { statusCode: 400 });
+  const from = optionalDate(url.searchParams.get('from'), 'from');
+  const to = optionalDate(url.searchParams.get('to'), 'to');
+  if (from && to && from > to) throw Object.assign(new Error('from must be earlier than to.'), { statusCode: 400 });
+  return {
+    accountId: boundedQueryText(url.searchParams.get('accountId'), 'accountId'),
+    entityType: boundedQueryText(url.searchParams.get('entityType'), 'entityType', 32).toLowerCase(),
+    entityId,
+    event: boundedQueryText(url.searchParams.get('event'), 'event', 96),
+    level,
+    code: boundedQueryText(url.searchParams.get('code'), 'code', 80),
+    from,
+    to,
+    limit: boundedInteger(url.searchParams.get('limit'), ACTIVITY_DEFAULT_LIMIT, { min: 1, max: ACTIVITY_MAX_LIMIT }),
+    offset: boundedInteger(url.searchParams.get('offset'), 0, { min: 0, max: ACTIVITY_MAX_OFFSET }),
+  };
+}
+
+function withoutTotalCount(row) {
+  const { totalCount: _totalCount, ...event } = row;
+  return event;
+}
+
+function pagedRows(rows, limit, offset) {
+  // The CTE queries below deliberately return one count-only row when an
+  // offset is past the last event. Filtering that placeholder preserves an
+  // honest total while keeping the API's events collection empty.
+  const events = rows.filter((row) => row.id).map(withoutTotalCount);
+  const total = Number(rows[0]?.totalCount || 0);
+  return { events, page: { limit, offset, total, hasMore: offset + events.length < total } };
+}
+
+// All values in these admin queries are bound through Drizzle's sql tag.
+// The activity surface is deliberately read-only and never accepts a raw
+// sort expression, column name, or SQL fragment from the request.
+export async function listOpsActivity(filters, db = database()) {
+  const conditions = [sql`true`];
+  if (filters.accountId) conditions.push(sql`account_id = ${filters.accountId}`);
+  if (filters.entityType) conditions.push(sql`entity_type = ${filters.entityType}`);
+  if (filters.entityId) conditions.push(sql`entity_id = ${filters.entityId}`);
+  if (filters.event) conditions.push(sql`event = ${filters.event}`);
+  if (filters.level) conditions.push(sql`level = ${filters.level}`);
+  if (filters.code === 'UNCODED') conditions.push(sql`code is null`);
+  else if (filters.code) conditions.push(sql`code = ${filters.code}`);
+  if (filters.from) conditions.push(sql`created_at >= ${filters.from}`);
+  if (filters.to) conditions.push(sql`created_at <= ${filters.to}`);
+  const result = await db.execute(sql`
+    with filtered as (
+      select id, created_at as "createdAt", level, event,
+        account_id as "accountId", entity_type as "entityType", entity_id as "entityId",
+        correlation_id as "correlationId", code, http_status as "httpStatus", message, details
+      from ops_events
+      where ${sql.join(conditions, sql` and `)}
+    ), counted as (
+      select count(*)::int as "totalCount" from filtered
+    ), paged as (
+      select * from filtered order by "createdAt" desc, id desc
+      limit ${filters.limit} offset ${filters.offset}
+    )
+    select paged.*, counted."totalCount"
+    from counted left join paged on true
+    order by paged."createdAt" desc, paged.id desc
+  `);
+  const rows = result.rows || [];
+  return pagedRows(rows, filters.limit, filters.offset);
+}
+
+export async function getOpsCodeSummary(db = database()) {
+  const result = await db.execute(sql`
+    select coalesce(code, 'UNCODED') as code, count(*)::int as count, max(created_at) as "latestAt"
+    from ops_events
+    where level = 'error' and created_at >= now() - interval '24 hours'
+    group by coalesce(code, 'UNCODED')
+    order by count(*) desc, coalesce(code, 'UNCODED') asc
+    limit 20
+  `);
+  return result.rows || [];
+}
+
+export async function listEntityTimeline(filters, db = database()) {
+  const entityType = filters.entityType || '';
+  const result = await db.execute(sql`
+    with timeline as (
+      select 'ops'::text as source, oe.id::text as id, oe.created_at as "createdAt",
+        oe.level, oe.event, oe.account_id as "accountId", oe.entity_type as "entityType",
+        oe.entity_id as "entityId", oe.correlation_id as "correlationId", oe.code,
+        oe.http_status as "httpStatus", oe.message, oe.details
+      from ops_events oe
+      where oe.entity_id = ${filters.entityId}
+        and (${entityType} = '' or oe.entity_type = ${entityType})
+      union all
+      select 'job'::text as source, je.id::text as id, je.created_at as "createdAt",
+        case when je.failure_category is not null or je.stage_to = 'failed' then 'error' else 'info' end as level,
+        je.event_type as event, vj.account_id as "accountId", 'job'::text as "entityType",
+        je.job_id as "entityId", je.correlation_id as "correlationId", je.failure_category as code,
+        null::integer as "httpStatus", coalesce(je.details->>'message', '') as message,
+        coalesce(je.details, '{}'::jsonb) || jsonb_build_object(
+          'stageFrom', je.stage_from, 'stageTo', je.stage_to,
+          'failureCategory', je.failure_category, 'provider', vj.provider
+        ) as details
+      from job_events je
+      inner join video_jobs vj on vj.id = je.job_id
+      where je.job_id = ${filters.entityId} and (${entityType} = '' or ${entityType} = 'job')
+      union all
+      select 'provider'::text as source, ple.id::text as id, ple.observed_at as "createdAt",
+        case
+          when plo.state in ('failed', 'ambiguous') or ple.provider_http_status >= 400 or ple.provider_code is not null then 'error'
+          else 'info'
+        end as level,
+        ple.event_type as event, plo.application_account_id as "accountId",
+        case
+          when plo.job_id::text = ${filters.entityId} then 'job'
+          when plo.identity_id::text = ${filters.entityId} then 'identity'
+          else 'enrollment'
+        end as "entityType",
+        ${filters.entityId}::text as "entityId", ple.correlation_id as "correlationId",
+        ple.provider_code as code, ple.provider_http_status as "httpStatus", ''::text as message,
+        jsonb_strip_nulls(jsonb_build_object(
+          'operationKind', plo.kind, 'operationState', plo.state, 'attempt', plo.attempt,
+          'method', ple.method, 'pathTemplate', ple.path_template,
+          'outcome', ple.outcome, 'observedResourceKind', ple.observed_resource_kind
+        )) as details
+      from provider_lifecycle_events ple
+      inner join provider_lifecycle_operations plo
+        on plo.id = ple.operation_id
+        and plo.application_account_id = ple.application_account_id
+        and plo.origin_scope_key = ple.origin_scope_key
+      where (
+        (${entityType} = '' and (
+          plo.job_id::text = ${filters.entityId}
+          or plo.identity_id::text = ${filters.entityId}
+          or plo.enrollment_id::text = ${filters.entityId}
+        ))
+        or (${entityType} = 'job' and plo.job_id::text = ${filters.entityId})
+        or (${entityType} = 'identity' and plo.identity_id::text = ${filters.entityId})
+        or (${entityType} = 'enrollment' and plo.enrollment_id::text = ${filters.entityId})
+      )
+    ), counted as (
+      select count(*)::int as "totalCount" from timeline
+    ), paged as (
+      select * from timeline order by "createdAt" desc, id desc
+      limit ${filters.limit} offset ${filters.offset}
+    )
+    select paged.*, counted."totalCount"
+    from counted left join paged on true
+    order by paged."createdAt" desc, paged.id desc
+  `);
+  const rows = result.rows || [];
+  return pagedRows(rows.map(row => row.id ? {
+    ...row,
+    details: redactOpsValue(row.details),
+    message: redactOpsValue(row.message),
+  } : row), filters.limit, filters.offset);
+}
 
 export function p0AttestationWindow(env = process.env, now = Date.now()) {
   const startedAt = Date.parse(String(env.VIDEO_OS_P0_ATTESTATION_STARTED_AT || ''));
@@ -176,6 +364,18 @@ async function handleGet(req, res, operation, url) {
   if (operation === 'accounts') return send(res, 200, { ok: true, accounts: await listRecentAccounts(200) });
   if (operation === 'credit-ledger') return send(res, 200, { ok: true, transactions: await listRecentCreditTransactions(200) });
   if (operation === 'stripe-events') return send(res, 200, { ok: true, events: await listRecentStripeEvents(200) });
+  if (operation === 'activity') {
+    const activity = await listOpsActivity(parseActivityQuery(url));
+    return send(res, 200, { ok: true, ...activity });
+  }
+  if (operation === 'activity-summary') {
+    return send(res, 200, { ok: true, windowHours: 24, codes: await getOpsCodeSummary() });
+  }
+  if (operation === 'entity-timeline') {
+    const filters = parseActivityQuery(url, { requireEntity: true });
+    const timeline = await listEntityTimeline(filters);
+    return send(res, 200, { ok: true, entity: { type: filters.entityType || null, id: filters.entityId }, ...timeline });
+  }
   if (operation === 'video') return handleVideoStream(req, res, String(url.searchParams.get('jobId') || '').trim());
   if (operation === 'job-events') {
     const jobId = String(url.searchParams.get('jobId') || '').trim();
@@ -240,7 +440,7 @@ async function handleRetryJob(jobId) {
   return getJob(reserved.job.id);
 }
 
-async function handlePost(req, res, operation) {
+async function handlePost(req, res, operation, deps = {}) {
   const payload = await readJson(req, 5_000);
   if (operation === 'resolve-job') {
     const jobId = String(payload.jobId || '').trim();
@@ -287,20 +487,18 @@ async function handlePost(req, res, operation) {
     if (!accountId) return send(res, 400, { ok: false, error: 'accountId is required.' });
     if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > 100_000) return send(res, 400, { ok: false, error: 'amount must be a non-zero integer with a magnitude of 100,000 or less.' });
     if (!idempotencyKey) return send(res, 400, { ok: false, error: 'idempotencyKey is required.' });
-    const result = await grantAdminCredit({ accountId, amount, note: payload.note, idempotencyKey });
-    console.log(JSON.stringify({ event: 'video_os_admin_credit_grant', accountId, amount, duplicate: result.duplicate, note: String(payload.note || '').slice(0, 300) || null }));
+    const result = await (deps.grantAdminCredit || grantAdminCredit)({ accountId, amount, note: payload.note, idempotencyKey });
+    await logOpsEventAwaited({ level: 'info', persist: true, event: 'admin.credit.granted', accountId, code: result.duplicate ? 'CREDIT_GRANT_REPLAYED' : 'CREDIT_GRANTED', message: 'Admin credit grant was recorded.', details: { adminActor: 'admin', amount, duplicate: Boolean(result.duplicate) } }, { writer: deps.opsWriter });
     return send(res, 200, { ok: true, ...result });
   }
   if (operation === 'quarantine-asset') {
     const mediaAssetId = String(payload.mediaAssetId || '').trim();
     if (!mediaAssetId) return send(res, 400, { ok: false, error: 'mediaAssetId is required.' });
-    const asset = await quarantineMediaAsset(mediaAssetId);
+    const asset = await (deps.quarantineMediaAsset || quarantineMediaAsset)(mediaAssetId);
     if (!asset) return send(res, 404, { ok: false, error: 'Media asset not found.' });
-    // Not persisted (media_assets has no reason column yet -- see
-    // quarantineMediaAsset()'s comment); logged here as a structured audit
-    // line (not an error -- this is routine admin action, not a failure)
-    // purely so the reason isn't lost entirely.
-    console.log(JSON.stringify({ event: 'video_os_admin_quarantine', mediaAssetId, reason: String(payload.reason || '').slice(0, 300) || null }));
+    // The free-form reason is not logged because it may contain private data.
+    // media_assets has no reason column; see quarantineMediaAsset().
+    await logOpsEventAwaited({ level: 'info', persist: true, event: 'admin.asset.quarantined', accountId: asset.accountId, entityType: 'asset', entityId: mediaAssetId, message: 'Admin asset quarantine was recorded.', details: { adminActor: 'admin' } }, { writer: deps.opsWriter });
     return send(res, 200, { ok: true, asset });
   }
   if (operation === 'register-tester') {
@@ -309,8 +507,8 @@ async function handlePost(req, res, operation) {
     const credits = Number(payload.credits) || 5000;
     const note = String(payload.note || '').trim();
     if (!email) return send(res, 400, { ok: false, error: 'email is required.' });
-    const tester = await registerAdminTester({ email, name, credits, note });
-    console.log(JSON.stringify({ event: 'video_os_admin_register_tester', email, accountId: tester.account?.id, credits }));
+    const tester = await (deps.registerAdminTester || registerAdminTester)({ email, name, credits, note });
+    await logOpsEventAwaited({ level: 'info', persist: true, event: 'admin.tester.registered', accountId: tester.account?.id, message: 'Admin tester registration was recorded.', details: { adminActor: 'admin', testerDomain: /^[^@\s]+@([a-z0-9.-]+)$/i.exec(email)?.[1] || '[redacted]' } }, { writer: deps.opsWriter });
     return send(res, 200, { ok: true, tester });
   }
   if (operation === 'revoke-tester') {
@@ -323,20 +521,26 @@ async function handlePost(req, res, operation) {
   return send(res, 400, { ok: false, error: `Unknown admin operation: ${operation}` });
 }
 
-export default async function handler(req, res) {
-  const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
-  const operation = url.searchParams.get('operation') || 'jobs';
-  if (operation === 'p0-attestation') return handleP0AttestationRequest(req, res);
-  if (handleOptions(req, res)) return;
-  if (!['GET', 'POST'].includes(req.method)) return send(res, 405, { ok: false, error: 'Use GET or POST for admin requests.' });
-  try {
-    if (req.method === 'GET' && operation === 'db-binding') return await handleGet(req, res, operation, url);
-    if (!isAdminRequest(req)) return send(res, 401, { ok: false, error: 'Admin login required.' });
-    if (req.method === 'POST') return await handlePost(req, res, operation);
-    return await handleGet(req, res, operation, url);
-  } catch (error) {
-    captureRouteError(error, { route: 'admin', failureCategory: error?.failureCategory || 'ADMIN' });
-    if (res.headersSent) return; // a streaming response (operation=video) may have already started
-    send(res, error.statusCode || 400, { ok: false, error: error.message || 'Admin status failed.' });
-  }
+export function createAdminHandler(deps = {}) {
+  return async function handler(req, res) {
+    const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
+    const operation = url.searchParams.get('operation') || 'jobs';
+    if (operation === 'p0-attestation') return handleP0AttestationRequest(req, res);
+    if (handleOptions(req, res)) return;
+    if (!['GET', 'POST'].includes(req.method)) return send(res, 405, { ok: false, error: 'Use GET or POST for admin requests.' });
+    try {
+      if (req.method === 'GET' && operation === 'db-binding') return await handleGet(req, res, operation, url);
+      if (!(deps.isAdminRequest || isAdminRequest)(req)) return send(res, 401, { ok: false, error: 'Admin login required.' });
+      if (req.method === 'POST') return await handlePost(req, res, operation, deps);
+      return await handleGet(req, res, operation, url);
+    } catch (error) {
+      captureRouteError(error, { route: 'admin', failureCategory: error?.failureCategory || 'ADMIN' });
+      if (res.headersSent) return; // a streaming response (operation=video) may have already started
+      const status = Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode <= 599 ? error.statusCode : 500;
+      logOpsEvent({ level: status >= 500 ? 'error' : 'warn', event: 'admin.request.failed', status, code: error?.failureCategory || 'ADMIN', message: error?.message || 'Admin request failed.' });
+      send(res, status, { ok: false, error: status < 500 ? error.message : 'Admin request failed.' });
+    }
+  };
 }
+
+export default createAdminHandler();

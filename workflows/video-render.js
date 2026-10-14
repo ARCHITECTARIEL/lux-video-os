@@ -4,6 +4,7 @@ import { finalizeReadyJob, getJob, prepareProviderVideoFinish, prepareProviderVi
 import { featureEnabled } from '../lib/video-os-security.js';
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
+import { logOpsEvent } from '../lib/ops-log.js';
 import { notifyRenderReady } from '../lib/video-os-render-notify.js';
 import { assertHeygenConfigured, getHeygenPhotoAvatarStatus, pollHeygen, pollHeygenLuxify, submitHeygen, submitHeygenLuxify } from '../services/heygen.js';
 import {
@@ -190,13 +191,20 @@ export async function submitProvider(jobId) {
   let job;
   try { job = await getJob(jobId); } catch (error) { throw heygenPreclaimFailure(error); }
   if (!job) throw new FatalError('Video job not found.');
-  if (job.providerJobId) return { providerJobId: job.providerJobId };
-  if (job.status === 'provider_submitting' || job.status === 'provider_submit_unknown') throw providerSubmissionPossibleFailure();
+  if (job.providerJobId) {
+    logOpsEvent({ level: 'info', event: 'render_workflow.provider_submission.recovered', accountId: job.accountId, jobId, code: 'PROVIDER_JOB_RECOVERED', message: 'Existing provider submission was recovered.', correlationId: job.correlationId });
+    return { providerJobId: job.providerJobId };
+  }
+  if (job.status === 'provider_submitting' || job.status === 'provider_submit_unknown') {
+    logOpsEvent({ level: 'error', event: 'render_workflow.provider_submission.blocked', accountId: job.accountId, jobId, code: 'PROVIDER_SUBMIT_UNKNOWN', message: 'Provider submission was blocked pending reconciliation.', correlationId: job.correlationId });
+    throw providerSubmissionPossibleFailure();
+  }
   let tier;
   let mode;
   try {
     mode = providerWorkflowMode(job);
     if (mode === 'luxify' && !featureEnabled('VIDEO_OS_HOSTED_FINISHING_ENABLED')) {
+      logOpsEvent({ level: 'error', event: 'render_workflow.hosted_finishing.blocked', accountId: job.accountId, jobId, status: 503, code: 'LUXIFY_HOSTED_FINISHING_DISABLED', message: 'Hosted finishing gate is closed.', correlationId: job.correlationId });
       throw Object.assign(new Error('LUXIFY hosted finishing is disabled.'), {
         statusCode: 503,
         failureCategory: 'CONFIG_MISSING',
@@ -212,6 +220,7 @@ export async function submitProvider(jobId) {
     assertHeygenConfigured();
     await requireJobRenderAuthorization(job, tier);
     if (providerCreationActivationStatus(process.env, job.accountId).enabled !== true) {
+      logOpsEvent({ level: 'error', event: 'render_workflow.provider_creation.blocked', accountId: job.accountId, jobId, status: 503, code: 'PROVIDER_CREATION_DISABLED', message: 'Provider creation gate is closed.', correlationId: job.correlationId });
       throw Object.assign(new Error('HeyGen provider creation is not activated.'), {
         statusCode: 503,
         failureCategory: 'CONFIG_MISSING',
@@ -219,6 +228,7 @@ export async function submitProvider(jobId) {
       });
     }
     if (mode === 'presenter' && !job.input?.identityId) {
+      logOpsEvent({ level: 'warn', event: 'render_workflow.identity_binding.blocked', accountId: job.accountId, jobId, status: 409, code: 'LEGACY_PROVIDER_RESOURCE_UNREGISTERED', message: 'Provider identity binding gate is closed.', correlationId: job.correlationId });
       throw Object.assign(new Error('Provider resources are not registered to an owned identity.'), {
         statusCode: 409,
         failureCategory: 'RECONCILIATION',
@@ -226,6 +236,7 @@ export async function submitProvider(jobId) {
       });
     }
   } catch (error) {
+    logOpsEvent({ level: 'error', event: 'render_workflow.provider_preclaim.failed', accountId: job.accountId, jobId, status: error?.statusCode || 500, code: error?.code || error?.failureCategory || 'RECONCILIATION', message: 'Provider preclaim failed.', correlationId: job.correlationId });
     throw heygenPreclaimFailure(error);
   }
   let submissionClaimed = false;
@@ -251,9 +262,14 @@ export async function submitProvider(jobId) {
     return submitted;
   } catch (error) {
     if (!submissionClaimed && error?.failureCategory === 'PROVIDER_SUBMIT_UNKNOWN') {
+      logOpsEvent({ level: 'error', event: 'render_workflow.provider_submission.blocked', accountId: job.accountId, jobId, code: 'PROVIDER_SUBMIT_UNKNOWN', message: 'Provider submission was blocked pending reconciliation.', correlationId: job.correlationId });
       throw providerSubmissionPossibleFailure();
     }
-    if (!submissionClaimed) throw heygenPreclaimFailure(error);
+    if (!submissionClaimed) {
+      logOpsEvent({ level: 'error', event: 'render_workflow.provider_preclaim.failed', accountId: job.accountId, jobId, status: error?.statusCode || 500, code: error?.failureCategory || 'RECONCILIATION', message: 'Provider preclaim failed.', correlationId: job.correlationId });
+      throw heygenPreclaimFailure(error);
+    }
+    logOpsEvent({ level: 'error', event: 'render_workflow.provider_submission.uncertain', accountId: (claimedJob || job).accountId, jobId, status: error?.statusCode || 500, code: error?.failureCategory || 'PROVIDER_SUBMIT_UNKNOWN', message: 'Provider submission outcome is uncertain.', correlationId: (claimedJob || job).correlationId });
     const uncertainty = providerSubmissionPossibleFailure();
     try { captureJobError(error, { jobId, accountId: (claimedJob || job).accountId, correlationId: (claimedJob || job).correlationId, stage: 'provider_submit', failureCategory: classifyFailure(error, 'PROVIDER_SUBMIT') }); } catch {}
     try {
@@ -318,6 +334,7 @@ export async function finishProviderMedia(jobId, sourceUrl) {
     }
     if (!featureEnabled('VIDEO_OS_HOSTED_FINISHING_ENABLED')) {
       await transitionJob({ jobId, stageTo: 'finish_contained', eventType: 'finish.contained', providerBinding, details: { reason: 'hosted_finishing_disabled' } });
+      logOpsEvent({ level: 'error', event: 'render_workflow.hosted_finishing.contained', accountId: readClaim.job.accountId, jobId, status: 503, code: 'HOSTED_FINISHING_DISABLED', message: 'Hosted finishing was contained by its gate.', correlationId: readClaim.job.correlationId });
       return { contained: true };
     }
     if (readClaim.job.status === 'provider_ready') await transitionJob({ jobId, stageTo: 'finishing', eventType: 'finish.started', providerBinding });
@@ -348,10 +365,14 @@ export async function failWorkflow(jobId, error) {
   'use step';
   const durable = parseDurableRenderFailure(error);
   const category = durable?.failureCategory || classifyFailure(error, 'INTERNAL');
-  if (durable?.kind === 'provider-submission-possible' || category === 'PROVIDER_SUBMIT_UNKNOWN' || error?.providerSubmissionPossible === true) return;
+  if (durable?.kind === 'provider-submission-possible' || category === 'PROVIDER_SUBMIT_UNKNOWN' || error?.providerSubmissionPossible === true) {
+    logOpsEvent({ level: 'error', event: 'render_workflow.failure.contained', jobId, code: 'PROVIDER_SUBMIT_UNKNOWN', message: 'Workflow failure was contained pending provider reconciliation.' });
+    return;
+  }
   const preclaim = durable?.kind === 'heygen-preclaim' || error?.scriptedPhotoPreclaim === true;
   const options = { protectedStatuses: ['provider_submitting', 'provider_submit_unknown'], ...(preclaim ? { expectedStatuses: ['workflow_started'] } : {}) };
   const message = preclaim ? 'Provider claim failed before submission.' : String(error?.message || 'Workflow failed.').slice(0, 300);
+  logOpsEvent({ level: 'error', event: 'render_workflow.failed', jobId, code: category, message: preclaim ? 'Provider claim failed before submission.' : 'Render workflow failed.' });
   await markJobFailedAndRelease(jobId, category, message, error?.rejectedArtifact, options);
 }
 

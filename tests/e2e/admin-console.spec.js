@@ -30,6 +30,17 @@ const jobEvents = [
   { stageFrom: 'workflow_started', stageTo: 'failed', eventType: 'workflow.failed', failureCategory: 'PROVIDER_SUBMIT', createdAt: '2026-09-19T19:58:10.000Z' },
 ];
 
+const activityEvents = [
+  { id: 'ops-1', createdAt: '2026-10-14T12:00:00.000Z', level: 'error', event: 'provider.poll.failed', accountId: 'account-proof-1', entityType: 'job', entityId: 'job-proof-1', correlationId: 'corr-1', code: 'UPSTREAM_TIMEOUT', httpStatus: 504, message: 'Provider poll timed out.', details: { attempt: 3 } },
+  { id: 'ops-2', createdAt: '2026-10-14T11:55:00.000Z', level: 'warn', event: 'enrollment.retry', accountId: 'account-proof-1', entityType: 'enrollment', entityId: 'enrollment-proof-1', correlationId: 'corr-2', code: 'RETRY_SCHEDULED', httpStatus: null, message: 'Retry scheduled.', details: {} },
+];
+
+const entityTimeline = [
+  { source: 'ops', id: 'ops-1', createdAt: '2026-10-14T12:00:00.000Z', level: 'error', event: 'provider.poll.failed', accountId: 'account-proof-1', entityType: 'job', entityId: 'job-proof-1', correlationId: 'corr-1', code: 'UPSTREAM_TIMEOUT', httpStatus: 504, message: 'Provider poll timed out.', details: { attempt: 3 } },
+  { source: 'provider', id: 'provider-event-1', createdAt: '2026-10-14T11:59:30.000Z', level: 'info', event: 'provider.video.created', accountId: 'account-proof-1', entityType: 'job', entityId: 'job-proof-1', correlationId: 'corr-1', code: null, httpStatus: 201, message: '', details: { operationKind: 'video_create', operationState: 'succeeded' } },
+  { source: 'job', id: 'job-event-1', createdAt: '2026-10-14T11:59:00.000Z', level: 'info', event: 'provider.submitted', accountId: 'account-proof-1', entityType: 'job', entityId: 'job-proof-1', correlationId: 'corr-1', code: null, httpStatus: null, message: '', details: { stageFrom: 'provider_submitting', stageTo: 'provider_submitted', provider: 'heygen' } },
+];
+
 async function stubAdminApi(page, { authorized = true } = {}) {
   await page.route('**/api/video-os-lite/admin*', async (route) => {
     if (!authorized) return route.fulfill({ status: 401, json: { ok: false, error: 'Admin login required.' } });
@@ -40,6 +51,9 @@ async function stubAdminApi(page, { authorized = true } = {}) {
     if (operation === 'jobs') return route.fulfill({ json: { ok: true, summary: { total: recentJobs.length, rendering: 0, ready: 1, failed: 1 }, jobs: recentJobs } });
     if (operation === 'attention') return route.fulfill({ json: { ok: true, jobs: attentionJobs } });
     if (operation === 'accounts') return route.fulfill({ json: { ok: true, accounts } });
+    if (operation === 'activity') return route.fulfill({ json: { ok: true, events: activityEvents, page: { limit: 50, offset: 0, total: 2, hasMore: false } } });
+    if (operation === 'activity-summary') return route.fulfill({ json: { ok: true, windowHours: 24, codes: [{ code: 'UPSTREAM_TIMEOUT', count: 3, latestAt: '2026-10-14T12:00:00.000Z' }] } });
+    if (operation === 'entity-timeline') return route.fulfill({ json: { ok: true, entity: { type: 'job', id: url.searchParams.get('entityId') }, events: entityTimeline, page: { limit: 100, offset: 0, total: 3, hasMore: false } } });
     if (operation === 'job-events') return route.fulfill({ json: { ok: true, jobId: url.searchParams.get('jobId'), events: jobEvents } });
     if (operation === 'credit-ledger') return route.fulfill({ json: { ok: true, transactions: creditLedger } });
     if (operation === 'stripe-events') return route.fulfill({ json: { ok: true, events: [] } });
@@ -92,6 +106,47 @@ test('the billing ledger shows a credit grant\'s note, and a real dash for a tra
   await expect(ledgerRows).toHaveCount(2);
   await expect(ledgerRows.nth(0)).toContainText('backfilling a pre-fix trial grant');
   await expect(ledgerRows.nth(1)).toContainText('—');
+});
+
+test('activity filters render redacted events and open a combined entity timeline', async ({ page }) => {
+  await stubAdminApi(page);
+  await page.goto('/admin-console.html');
+  await page.locator('[data-admin-tab="activity"]').click();
+
+  await expect(page.locator('#panel-activity')).toBeVisible();
+  await expect(page.locator('#activity-summary-grid')).toContainText('UPSTREAM_TIMEOUT');
+  await expect(page.locator('#activity-summary-grid')).toContainText('3');
+  const rows = page.locator('#activity-table tbody tr');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText('provider.poll.failed');
+  await expect(rows.first()).toContainText('Provider poll timed out.');
+  await expect(page.locator('#activity-page-label')).toHaveText('1–2 of 2');
+
+  await page.locator('#activity-code').fill('UPSTREAM_TIMEOUT');
+  await page.locator('#activity-filters button[type="submit"]').click();
+  await expect(page.locator('#activity-table')).toContainText('UPSTREAM_TIMEOUT');
+
+  await rows.first().locator('button', { hasText: 'Timeline' }).click();
+  const dialog = page.locator('#entity-timeline-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('job: job-proof-1');
+  await expect(dialog).toContainText('provider.poll.failed');
+  await expect(dialog).toContainText('provider.video.created');
+  await expect(dialog).toContainText('provider.submitted');
+  await expect(dialog).toContainText('JOB LIFECYCLE');
+  await expect(dialog).toContainText('PROVIDER LIFECYCLE');
+});
+
+test('activity controls remain usable without page-level overflow on a narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await stubAdminApi(page);
+  await page.goto('/admin-console.html');
+  await page.locator('[data-admin-tab="activity"]').click();
+
+  await expect(page.locator('#activity-filters button[type="submit"]')).toBeVisible();
+  await expect(page.locator('#activity-table')).toContainText('provider.poll.failed');
+  const viewport = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
+  expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth);
 });
 
 test('viewing a job timeline shows its real, ordered stage history', async ({ page }) => {

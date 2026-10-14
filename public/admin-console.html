@@ -46,6 +46,7 @@
 
       <nav class="admin-tabs" role="tablist" aria-label="Admin sections">
         <button type="button" role="tab" aria-selected="true" data-admin-tab="overview">Overview</button>
+        <button type="button" role="tab" aria-selected="false" data-admin-tab="activity">Activity</button>
         <button type="button" role="tab" aria-selected="false" data-admin-tab="jobs">Jobs</button>
         <button type="button" role="tab" aria-selected="false" data-admin-tab="attention">Needs attention</button>
         <button type="button" role="tab" aria-selected="false" data-admin-tab="accounts">Accounts</button>
@@ -58,6 +59,47 @@
         <div id="stat-grid" class="stat-grid" aria-live="polite"></div>
         <h2 class="admin-subheading">Jobs by status</h2>
         <div id="status-grid" class="stat-grid stat-grid-compact" aria-live="polite"></div>
+      </section>
+
+      <section id="panel-activity" class="admin-panel" role="tabpanel" hidden>
+        <div class="activity-heading">
+          <div>
+            <h2 class="admin-subheading">Operational activity</h2>
+            <p class="section-copy">Recent redacted operational events. Select an entity to combine its operations and render lifecycle into one timeline.</p>
+          </div>
+          <span class="activity-retention">30-day retention</span>
+        </div>
+
+        <h3 class="activity-summary-heading">Error codes in the last 24 hours</h3>
+        <div id="activity-summary-grid" class="stat-grid stat-grid-compact" aria-live="polite"></div>
+
+        <form id="activity-filters" class="activity-filters" aria-label="Filter operational activity">
+          <label>Account<input name="accountId" type="search" autocomplete="off" placeholder="Account ID"></label>
+          <label>Entity type<select name="entityType"><option value="">All types</option><option value="identity">Identity</option><option value="enrollment">Enrollment</option><option value="job">Job</option></select></label>
+          <label>Entity ID<input name="entityId" type="search" autocomplete="off" placeholder="Identity, enrollment, or job"></label>
+          <label>Event<input name="event" type="search" autocomplete="off" placeholder="e.g. provider.poll.failed"></label>
+          <label>Level<select name="level"><option value="">All levels</option><option value="error">Error</option><option value="warn">Warning</option><option value="info">Info</option></select></label>
+          <label>Code<input id="activity-code" name="code" type="search" autocomplete="off" placeholder="Error code"></label>
+          <label>From<input name="from" type="datetime-local"></label>
+          <label>To<input name="to" type="datetime-local"></label>
+          <div class="activity-filter-actions">
+            <button class="button primary compact" type="submit">Apply filters</button>
+            <button id="activity-clear" class="button quiet compact" type="button">Clear</button>
+          </div>
+        </form>
+
+        <div class="table-wrap">
+          <table class="data-table activity-table" id="activity-table">
+            <thead><tr><th>When</th><th>Level</th><th>Event</th><th>Entity</th><th>Account</th><th>Code</th><th>Message</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p id="activity-empty" class="inline-empty" hidden>No events match these filters.</p>
+        <div class="activity-pagination" aria-label="Activity pages">
+          <button id="activity-prev" class="button quiet compact" type="button">Previous</button>
+          <span id="activity-page-label" aria-live="polite">0 events</span>
+          <button id="activity-next" class="button quiet compact" type="button">Next</button>
+        </div>
       </section>
 
       <section id="panel-jobs" class="admin-panel" role="tabpanel" hidden>
@@ -170,6 +212,14 @@
         <button id="job-resolve-confirm" class="button primary compact" type="button">Mark failed &amp; release credits</button>
       </div>
     </div>
+  </dialog>
+
+  <dialog id="entity-timeline-dialog" aria-labelledby="entity-timeline-title">
+    <div class="dialog-heading">
+      <div><h2 id="entity-timeline-title">Entity timeline</h2><p id="entity-timeline-subtitle" class="section-copy"></p></div>
+      <button class="icon-button" id="entity-timeline-close" type="button" aria-label="Close">×</button>
+    </div>
+    <ol id="entity-timeline-list" class="timeline-list entity-timeline-list"></ol>
   </dialog>
 
   <script src="/admin-console.js" type="module"></script>
