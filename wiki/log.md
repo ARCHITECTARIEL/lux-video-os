@@ -716,9 +716,28 @@
 - Final focused Node test: 22 passed, 0 failed. Final full Node test: 1,134 total, 1,086 passed, 0 failed, 48 skipped. The phone regression fix and tests remain uncommitted.
 - Operator verification (OBS-001e): Node 24.14.1 1,134 / 1,086 pass / 0 fail / 48 skipped (one earlier run had a load-flaky 'authorization repair: list' failure; passes 3/3 isolated and on full rerun); Node 20.20.2 1,134 / 1,066 / 20 / 48, failures identical to base `2e3d75a` (pre-existing Neon `Pool` ESM). Vitest 4/4, db:check, check:imports, schema-lock 13/0/1, admin Playwright 8/8, diff --check clean. Amended into the single OBS-001 commit on `2e3d75a`.
 
+## 2026-10-14T16:55:37Z - [closure-writeback] [CANARY-001]
+
+- In worktree `codex/canary-001` at base `661ca88`, extracted the DB-binding operator, window, host, expected-identity, response, and rate-limit safeguards into `lib/operator-diagnostic-guard.js`. Added the no-DB `canary-scope` admin operation with nonce-bound pin MAC comparison, scope booleans, per-instance replay and rate limits, and awaited allow-listed console audit events. Added DB-binding rate limit and audit, an owner dry-run/send CLI, tests, procedure, and the required build-policy entries.
+- Verification on Node v24.14.1: `npm test` passed 1,088 Node tests and 4 Vitest tests, with 48 live integration tests skipped; `npm run db:check`, `npm run check:imports`, focused canary/maintenance tests, syntax checks, and `git diff --check` passed. No hosted canary check was performed; audit remains console-backed pending OBS-001, and nonce/rate state is per instance.
+- Changes remain uncommitted in this worktree. No push, merge, deploy, Vercel command, real database migration, provider call, secret-file read, or edit to the main checkout occurred.
+
 ## 2026-10-14T17:30:00Z - [MIG-0013]
 
 - Added migration `0013_hosted_v3_purpose_guard` (drizzle-kit generate; exactly one validated `ADD CONSTRAINT identity_consents_hosted_v3_purpose_ck`, matching `db/schema.js` and `docs/hosted-v3-purpose-guard.proposed.sql` minus the NOT VALID/precheck steps, since production has 0 v3 rows). Additive only; journal entry and `0013_snapshot.json` differ from 0012 only by this CHECK.
 - Recaptured `config/database-schema.lock.json` on throwaway PostgreSQL 18.6 Docker containers (no published port, removed afterwards): 0000-0012 control reproduced `5c7a106a...`; 0000-0013 gives `schemaSha256` `fe9a67f35ec0703569f354eb87a4f31100f299eb746fb280301f2ef0212a823d`, `migrationSetSha256` `e488f55a72184b622b36826fde80c3af63ee6e3d6a0416611a20e44b10fe8cc4`, 28 tables. Source hashes unchanged.
 - New `tests/hosted-v3-purpose-migration.test.mjs`: static SQL/snapshot/journal checks plus a PG18 test (`VIDEO_OS_MIG0013_PG18_CONTAINER`) showing a NULL v3 purpose passes before 0013 and is rejected after it, and the new CHECK alone rejects wrong non-null v3 purposes. Node 24.14.1: 1,160 / 1,111 pass / 0 fail / 49 skipped; Vitest 4/4; db:check, check:imports, diff --check clean. Not pushed; not applied to any live database.
 - QA PASS (2 LOW) fixes: added docs/migrations/0013-hosted-v3-purpose-guard.md (pre-apply read-only count, expect 0; rollback DROP CONSTRAINT, no data loss); re-scoped the core-schema-null-purpose PG18 test to 0000-0011 databases with an explicit scope guard (passes on 0000-0011, fails clearly on 0000-0013); marked docs/hosted-v3-purpose-guard.proposed.sql superseded by 0013.
+
+## 2026-10-14T17:31:46Z - [closure-writeback] [CANARY-001b] [QA-security]
+
+- Preserved and completed the interrupted QA fix in this worktree: anonymous 404s no longer clear canary rate or nonce state; canary-scope passes maintenance only for GET and rejects non-GET at admin dispatch; the CLI dry run redacts nonce and MAC. Added regression tests for interleaved anonymous failures, rate and replay ordering, each scope condition, wrong-MAC provider status, audit allow-list, route gating, and dry-run output.
+- Updated `docs/CANARY-SCOPE-CHECK.md` to treat nonce and MAC as sensitive and to state that the audit is console-only until OBS-001 wires durable `ops_events` rows.
+- Verification on Node v24.14.1: `npm test` passed 1,094 Node tests with 48 skipped and 4/4 Vitest tests; `npm run db:check`, `npm run check:imports`, and `git diff --check` passed. The existing npm test suite invokes `npm audit`, which may contact the npm registry; this was identified after running the requested suite.
+- Changes remain uncommitted. No push, merge, deployment, Vercel command, migration, provider action, secret-file read, or edit outside this worktree occurred.
+
+## 2026-10-14T18:45:26Z - [CANARY-001c] [QA-LOW] [rebase-resolution]
+
+- Resolved the `admin.js` and wiki rebase conflicts on `035720d`, retaining main's `createAdminHandler(deps)` and ops events while restoring the canary-scope and guarded DB-binding dispatch. Both histories remain in the wiki in timestamp order. No unmerged paths remain; the operator will continue the rebase.
+- Added handler and admin-dispatch regressions for anonymous `diagnostic_unavailable` 404 responses when `VERCEL_ENV` is unset, `development`, or `preview`, before authentication or rate/nonce state changes. DB-binding no longer clears its limiter on unavailable requests. Non-GET canary-scope returns 405 with `Allow: GET`; the procedure documents it.
+- Node v24.14.1 verification: `npm test` passed 1,130 Node tests, 49 skipped, and 4 Vitest tests; `npm run db:check`, `npm run check:imports`, and `git diff --check` passed. `workflows/video-render.js` had no branch requeue or `PROVIDER_RETRY_DEFERRED` delta to preserve, so it was untouched and main's ops events remain. No commit, rebase continuation, push, deploy, network/provider call, environment change, or secret read occurred.

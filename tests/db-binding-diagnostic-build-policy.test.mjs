@@ -51,6 +51,9 @@ test('reviewed path scope covers every deployed API function and the maintenance
   for (const path of apiFunctions) assert.ok(DIAGNOSTIC_PATHS.includes(path), path);
   for (const path of [
     'lib/diagnostic-maintenance-gate.js',
+    'lib/operator-diagnostic-guard.js',
+    'lib/operator-diagnostic-audit.js',
+    'lib/canary-scope-diagnostic.js',
     'tests/diagnostic-maintenance-gate.test.mjs',
     'tests/diagnostic-maintenance-server-routing.test.mjs',
     'docs/execution-notes/20261006-diagnostic-maintenance-gate.md',
@@ -68,10 +71,10 @@ test('diagnostic packaging rejects a local operator token or active maintenance 
   assert.doesNotThrow(() => assertDiagnosticBuildInputs(input({ env: { VIDEO_OS_DIAGNOSTIC_MAINTENANCE: 'false' } })));
 });
 
-test('diagnostic scope is pinned to the reviewed vos-002 base and its exact 20-file RC delta', () => {
+test('diagnostic scope is pinned to the reviewed vos-002 base and its explicit 23-file path set', () => {
   assert.equal(ACTIVE_APP_BASE, '61c907e32eea84d65bfe5ab51f0b00f8a265f94f');
-  assert.equal(DIAGNOSTIC_PATHS.length, 20);
-  assert.equal(new Set(DIAGNOSTIC_PATHS).size, 20);
+  assert.equal(DIAGNOSTIC_PATHS.length, 23);
+  assert.equal(new Set(DIAGNOSTIC_PATHS).size, 23);
 });
 
 function scratchRepo({ absentFromBase = [] } = {}) {
