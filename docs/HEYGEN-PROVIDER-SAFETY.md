@@ -28,6 +28,8 @@ The existing `services/heygen-reconciliation.js` signed deletion contract and re
 
 ## Verification limits
 
+Run `npm run build:preview` locally before pushing changes to `workflows/`. Unit tests alone do not check whether workflow-function bundles can load the modules reached from a workflow body; Node builtins such as `node:crypto` belong in step code.
+
 The regular provider tests inject fetch and use synthetic responses. The separate `npm run test:pg-race` suite exercises `transitionJob` concurrently against a disposable local Postgres through Neon's WebSocket proxy. It checks actual advisory-lock admission and persisted job statuses. The suite uses fixture binding/ledger adapters, so it does not qualify provider credentials, provider calls, or the complete live binding path. The exact v3 inventory shape still needs review before the default-off reconciler can be activated.
 
 ### Run the local admission race

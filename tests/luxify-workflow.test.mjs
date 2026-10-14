@@ -223,7 +223,7 @@ if (runFixture) {
     transitionJob: async input => {
       calls.transitions.push(input);
       if (input.stageTo === 'provider_submitting') {
-        currentJob = frozenJob({ ...currentJob, status: input.stageTo }, { providerClaimProof: claimProof(currentJob) });
+        currentJob = frozenJob({ ...currentJob, status: input.stageTo, output: { ...currentJob.output, heygenSubmission: heygenSubmissionIdentity(currentJob.id) } }, { providerClaimProof: claimProof(currentJob) });
         return currentJob;
       }
       currentJob = {
@@ -476,7 +476,8 @@ if (runFixture) {
   const workflow = await import('../workflows/video-render.js');
 
   test('pure persisted-mode dispatch rejects malformed LUXIFY markers and keeps Presenter separate', () => {
-    const job = luxifyJob();
+    const persisted = luxifyJob();
+    const job = { ...persisted, output: { ...persisted.output, heygenSubmission: heygenSubmissionIdentity(persisted.id) } };
     assert.equal(workflow.providerWorkflowMode(job), 'luxify');
     assert.deepEqual(workflow.luxifyProviderSubmission(job), {
       idempotencyKey: heygenSubmissionIdentity(job.id).idempotencyKey,

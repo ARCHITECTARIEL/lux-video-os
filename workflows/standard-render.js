@@ -160,12 +160,17 @@ export function standardPollLimit(env = process.env) {
   return Math.ceil(runpodJobTimeoutMs(env) / 15_000) + 2;
 }
 
+export async function getStandardPollLimit() {
+  'use step';
+  return standardPollLimit();
+}
+
 export async function standardRenderWorkflow(jobId) {
   'use workflow';
   try {
     if (standardProviderMode() === 'simulation') return await resolveAndRender(jobId);
     const { providerJobId } = await submitStandardProvider(jobId);
-    const pollLimit = standardPollLimit();
+    const pollLimit = await getStandardPollLimit();
     for (let attempt = 0; attempt < pollLimit; attempt += 1) {
       const status = await pollStandardProvider(jobId, providerJobId);
       if (status.ready) return await finishStandardProvider(jobId, status.output);

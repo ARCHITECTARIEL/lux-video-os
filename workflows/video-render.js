@@ -1,7 +1,5 @@
 import { FatalError, sleep } from 'workflow';
-import { createHash } from 'node:crypto';
 import { deferHeygenPoll, finalizeReadyJob, getJob, prepareProviderVideoFinish, prepareProviderVideoRead, prepareIdentityProviderRead, requireJobRenderAuthorization, markJobFailedAndRelease, requeueHeygenSubmission, transitionJob } from '../db/repositories.js';
-import { heygenSubmissionIdentity } from '../lib/heygen-provider-safety.js';
 import { featureEnabled } from '../lib/video-os-security.js';
 import { classifyFailure } from '../lib/video-os-operations.js';
 import { captureJobError } from '../lib/video-os-observability.js';
@@ -117,14 +115,18 @@ export function luxifyProviderSubmission(job) {
       code: 'LUXIFY_JOB_BINDING_INVALID',
     });
   }
+  const identity = job.output?.heygenSubmission;
+  if (!/^vos-[a-f0-9]{32}$/.test(identity?.idempotencyKey || '') || !/^vos-[a-f0-9]{24}$/.test(identity?.marker || '')) {
+    throw Object.assign(new Error('Persisted HeyGen submission identity is missing.'), { failureCategory: 'RECONCILIATION' });
+  }
   return Object.freeze({
-    idempotencyKey: job.output?.heygenSubmission?.idempotencyKey || heygenSubmissionIdentity(job.id).idempotencyKey,
+    idempotencyKey: identity.idempotencyKey,
     prompt: input.prompt,
     eligibleLookIds: Object.freeze([...input.eligibleLookIds]),
     duration: input.durationSeconds,
     resolution: input.resolution,
     aspectRatio: input.aspectRatio,
-    title: `${input.title.slice(0, 89)} [${job.output?.heygenSubmission?.marker || heygenSubmissionIdentity(job.id).marker}]`,
+    title: `${input.title.slice(0, 89)} [${identity.marker}]`,
   });
 }
 
@@ -321,7 +323,7 @@ export async function pollProvider(jobId, providerJobId) {
       if (typeof status.sourceUrl !== 'string' || status.sourceUrl.length === 0) {
         throw Object.assign(new FatalError('Provider ready response did not include media.'), { failureCategory: 'PROVIDER_RESPONSE' });
       }
-      const providerSourceUrlDigest = createHash('sha256').update(status.sourceUrl, 'utf8').digest('hex');
+      const providerSourceUrlDigest = (await import('node:crypto')).createHash('sha256').update(status.sourceUrl, 'utf8').digest('hex');
       await transitionJob({ jobId, stageTo: 'provider_ready', eventType: 'provider.ready', providerJobId: readClaim.providerJobId, providerBinding, providerSourceUrlDigest });
     }
     return status;
@@ -350,7 +352,7 @@ export async function finishProviderMedia(jobId, sourceUrl) {
       providerBinding,
       { jobId, providerJobId: advisoryJob.providerJobId },
     );
-    if (typeof sourceUrl !== 'string' || createHash('sha256').update(sourceUrl, 'utf8').digest('hex') !== readClaim.sourceUrlDigest) {
+    if (typeof sourceUrl !== 'string' || (await import('node:crypto')).createHash('sha256').update(sourceUrl, 'utf8').digest('hex') !== readClaim.sourceUrlDigest) {
       throw new FatalError('Provider media URL does not match ready evidence.');
     }
     if (!featureEnabled('VIDEO_OS_HOSTED_FINISHING_ENABLED')) {
