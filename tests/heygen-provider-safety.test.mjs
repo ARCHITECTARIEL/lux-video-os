@@ -63,7 +63,7 @@ test('definitive 429/503 POST retries preserve the exact key and marker', async 
   assert.equal(calls[0].headers['Idempotency-Key'], identity.idempotencyKey);
   assert.equal(calls[1].headers['Idempotency-Key'], identity.idempotencyKey);
   assert.match(JSON.parse(calls[0].body).title, new RegExp(identity.marker));
-  const long = await submitHeygen({ ...job, title: 'x'.repeat(120) }, { env, fetchImpl: async (_url, options) => {
+  const long = await submitHeygen({ ...persisted, title: 'x'.repeat(120) }, { env, fetchImpl: async (_url, options) => {
     assert.equal(JSON.parse(options.body).title.length, 120);
     return new Response(JSON.stringify({ data: { video_id: 'provider-1' } }), { status: 200 });
   } });
@@ -78,8 +78,9 @@ test('ambiguous POST replay uses the same key and one provider resource', async 
     if (!keys.has(key)) { keys.add(key); created += 1; }
     return new Response(JSON.stringify({ data: { video_id: 'provider-1' } }), { status: 200 });
   };
-  const first = await submitHeygen(job, { env, fetchImpl });
-  const second = await submitHeygen(job, { env, fetchImpl });
+  const persisted = { ...job, output: { heygenSubmission: heygenSubmissionIdentity(job.id) } };
+  const first = await submitHeygen(persisted, { env, fetchImpl });
+  const second = await submitHeygen(persisted, { env, fetchImpl });
   assert.equal(first.providerJobId, 'provider-1');
   assert.equal(second.providerJobId, 'provider-1');
   assert.equal(created, 1);

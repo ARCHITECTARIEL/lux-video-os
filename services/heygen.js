@@ -1,7 +1,7 @@
 import { LUXIFY_PROMPT_MAX_CHARS } from '../lib/luxify-contract.js';
 import { parseOrThrow, providerStatusSchema, providerSubmitSchema } from '../lib/video-os-validation.js';
 import { logEvent, timingSafeMatch } from '../lib/video-os-security.js';
-import { heygenRetryableResponse, heygenSubmissionIdentity } from '../lib/heygen-provider-safety.js';
+import { heygenRetryableResponse } from '../lib/heygen-provider-safety.js';
 
 const API_ORIGIN = 'https://api.heygen.com';
 const timeoutMs = (env = process.env) => Number(env.HEYGEN_TIMEOUT_MS || 20_000);
@@ -656,7 +656,10 @@ export async function pollHeygenLuxify(providerJobId, options = {}) {
 
 export async function submitHeygen(job, { fetchImpl = fetch, env = process.env, now, random } = {}) {
   const input = job.input;
-  const identity = job.output?.heygenSubmission || heygenSubmissionIdentity(job.id);
+  const identity = job.output?.heygenSubmission;
+  if (!/^vos-[a-f0-9]{32}$/.test(identity?.idempotencyKey || '') || !/^vos-[a-f0-9]{24}$/.test(identity?.marker || '')) {
+    throw Object.assign(new Error('Persisted HeyGen submission identity is missing or malformed.'), { failureCategory: 'PROVIDER_IDENTITY_MISSING' });
+  }
   const response = await fetchImpl(`${API_ORIGIN}/v3/videos`, {
     method: 'POST',
     signal: AbortSignal.timeout(timeoutMs(env)),

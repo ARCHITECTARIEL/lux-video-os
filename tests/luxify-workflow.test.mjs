@@ -146,6 +146,8 @@ if (runFixture) {
   let currentJob = luxifyJob();
   let failLuxifySubmit = false;
   let retryableSubmit = false;
+  let admissionDeferred = false;
+  let missingClaimIdentity = false;
   let avatarConsentReady = true;
   const calls = {
     authorizations: [],
@@ -217,13 +219,14 @@ if (runFixture) {
       calls.authorizations.push({ jobId: job.id, tier });
       return { tier };
     },
-    markJobFailedAndRelease: async () => null,
+    markJobFailedAndRelease: async (...args) => { calls.failures ??= []; calls.failures.push(args); return null; },
     deferHeygenPoll: async () => null,
     requeueHeygenSubmission: async () => { throw Object.assign(new Error('requeue transaction failed'), { failureCategory: 'PROVIDER_OPERATION_CONFLICT' }); },
     transitionJob: async input => {
       calls.transitions.push(input);
       if (input.stageTo === 'provider_submitting') {
-        currentJob = frozenJob({ ...currentJob, status: input.stageTo, output: { ...currentJob.output, heygenSubmission: heygenSubmissionIdentity(currentJob.id) } }, { providerClaimProof: claimProof(currentJob) });
+        if (admissionDeferred) return frozenJob({ ...currentJob, admissionDeferred: true });
+        currentJob = frozenJob({ ...currentJob, status: input.stageTo, output: { ...currentJob.output, heygenSubmission: missingClaimIdentity ? { idempotencyKey: 'vos-' } : heygenSubmissionIdentity(currentJob.id) } }, { providerClaimProof: claimProof(currentJob) });
         return currentJob;
       }
       currentJob = {
@@ -323,6 +326,7 @@ if (runFixture) {
 
     const status = await workflow.pollProvider(currentJob.id, submitted.providerJobId);
     assert.equal(status.ready, true);
+    assert.equal(calls.transitions.at(-1).providerSourceUrlDigest, createHash('sha256').update(status.sourceUrl, 'utf8').digest('hex'));
     assert.deepEqual(calls.luxifyPolls, ['luxify_provider_video']);
     assert.equal(calls.presenterPolls.length, 0);
     const artifact = await workflow.finishProviderMedia(currentJob.id, status.sourceUrl);
@@ -347,6 +351,42 @@ if (runFixture) {
     const artifact = await workflow.finishProviderMedia(currentJob.id, status.sourceUrl);
     assert.equal(artifact.privatePathname, 'presenter-final.mp4');
     assert.equal(calls.presenterFinishes.length, 1);
+  });
+
+  test('refused shared admission makes no provider submit for either mode', async () => {
+    admissionDeferred = true;
+    try {
+      for (const candidate of [luxifyJob({ id: 'job-luxify-deferred' }), presenterJob({ id: 'job-presenter-deferred' })]) {
+        candidate.input.renderAuthorization.jobId = candidate.id;
+        currentJob = candidate;
+        const before = calls.luxifySubmissions.length + calls.presenterSubmissions.length;
+        await assert.rejects(workflow.submitProvider(candidate.id), { failureCategory: 'PROVIDER_RETRY_DEFERRED' });
+        assert.equal(calls.luxifySubmissions.length + calls.presenterSubmissions.length, before);
+        assert.equal(currentJob.status, 'workflow_started');
+      }
+    } finally { admissionDeferred = false; }
+  });
+
+  test('missing claimed Luxify identity is held with its own nonretryable category', async () => {
+    currentJob = luxifyJob({ id: 'job-luxify-no-identity' });
+    currentJob.input.renderAuthorization.jobId = currentJob.id;
+    missingClaimIdentity = true;
+    const before = calls.luxifySubmissions.length;
+    try {
+      await assert.rejects(workflow.submitProvider(currentJob.id), /VIDEO_OS_PROVIDER_SUBMISSION_POSSIBLE_V1:PROVIDER_IDENTITY_MISSING/);
+    } finally { missingClaimIdentity = false; }
+    assert.equal(calls.luxifySubmissions.length, before);
+    assert.equal(currentJob.status, 'provider_submit_unknown');
+    assert.equal(calls.transitions.at(-1).failureCategory, 'PROVIDER_IDENTITY_MISSING');
+  });
+
+  test('provider rejection and admission-wait timeout use failed-and-release', async () => {
+    currentJob = luxifyJob({ id: 'job-luxify-release' });
+    for (const category of ['PROVIDER_REJECTED', 'PROVIDER_TIMEOUT']) {
+      await workflow.failWorkflow(currentJob.id, Object.assign(new Error('definitive failure'), { failureCategory: category }));
+      assert.equal(calls.failures.at(-1)[0], currentJob.id);
+      assert.equal(calls.failures.at(-1)[1], category);
+    }
   });
 
   test('Presenter without avatar consent evidence is rejected before submit', async () => {
@@ -420,7 +460,7 @@ if (runFixture) {
     assert.equal(calls.luxifySubmissions.length, before + 1);
     await assert.rejects(workflow.submitProvider(currentJob.id), /VIDEO_OS_PROVIDER_SUBMISSION_POSSIBLE_V1/);
     assert.equal(calls.luxifySubmissions.length, before + 1);
-    assert.equal(calls.transitions.filter(value => value.stageTo === 'provider_submit_unknown').length, 1);
+    assert.equal(calls.transitions.filter(value => value.jobId === currentJob.id && value.stageTo === 'provider_submit_unknown').length, 1);
   });
 
   test('requeue persistence failure holds a claimed submission for reconciliation', async () => {

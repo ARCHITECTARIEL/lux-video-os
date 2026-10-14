@@ -58,8 +58,8 @@ function heygenPreclaimFailure(error) {
   return new FatalError(durableHeygenPreclaimMessage(classifyFailure(error, 'RECONCILIATION')));
 }
 
-function providerSubmissionPossibleFailure() {
-  return new FatalError(durableProviderSubmissionPossibleMessage());
+function providerSubmissionPossibleFailure(failureCategory) {
+  return new FatalError(durableProviderSubmissionPossibleMessage(failureCategory));
 }
 
 export function providerWorkflowMode(job) {
@@ -117,7 +117,7 @@ export function luxifyProviderSubmission(job) {
   }
   const identity = job.output?.heygenSubmission;
   if (!/^vos-[a-f0-9]{32}$/.test(identity?.idempotencyKey || '') || !/^vos-[a-f0-9]{24}$/.test(identity?.marker || '')) {
-    throw Object.assign(new Error('Persisted HeyGen submission identity is missing.'), { failureCategory: 'RECONCILIATION' });
+    throw Object.assign(new Error('Persisted HeyGen submission identity is missing or malformed.'), { failureCategory: 'PROVIDER_IDENTITY_MISSING' });
   }
   return Object.freeze({
     idempotencyKey: identity.idempotencyKey,
@@ -284,10 +284,10 @@ export async function submitProvider(jobId) {
       if (requeued) throw Object.assign(new Error('HeyGen retry queued.'), { failureCategory: 'PROVIDER_RETRY_DEFERRED' });
     }
     logOpsEvent({ level: 'error', event: 'render_workflow.provider_submission.uncertain', accountId: (claimedJob || job).accountId, jobId, status: error?.statusCode || 500, code: error?.failureCategory || 'PROVIDER_SUBMIT_UNKNOWN', message: 'Provider submission outcome is uncertain.', correlationId: (claimedJob || job).correlationId });
-    const uncertainty = providerSubmissionPossibleFailure();
+    const uncertainty = providerSubmissionPossibleFailure(error?.failureCategory);
     try { captureJobError(error, { jobId, accountId: (claimedJob || job).accountId, correlationId: (claimedJob || job).correlationId, stage: 'provider_submit', failureCategory: classifyFailure(error, 'PROVIDER_SUBMIT') }); } catch {}
     try {
-      await transitionJob({ jobId, stageTo: 'provider_submit_unknown', eventType: 'provider.submit_unknown', failureCategory: 'PROVIDER_SUBMIT_UNKNOWN', providerBinding });
+      await transitionJob({ jobId, stageTo: 'provider_submit_unknown', eventType: 'provider.submit_unknown', failureCategory: error?.failureCategory === 'PROVIDER_IDENTITY_MISSING' ? 'PROVIDER_IDENTITY_MISSING' : 'PROVIDER_SUBMIT_UNKNOWN', providerBinding });
     } catch (persistenceError) {
       try { captureJobError(persistenceError, { jobId, accountId: job.accountId, correlationId: job.correlationId, stage: 'provider_submit_unknown_persistence', failureCategory: 'PROVIDER_SUBMIT_UNKNOWN' }); } catch {}
     }
@@ -410,7 +410,7 @@ export async function videoRenderWorkflow(jobId) {
         await sleep('15s');
       }
     }
-    if (!submitted) throw Object.assign(new Error('HeyGen admission wait exceeded one day.'), { failureCategory: 'PROVIDER_RETRY_DEFERRED' });
+    if (!submitted) throw Object.assign(new Error('HeyGen admission wait exceeded one day.'), { failureCategory: 'PROVIDER_TIMEOUT' });
     const { providerJobId } = submitted;
     for (let attempt = 0; attempt < 120; attempt += 1) {
       let status;

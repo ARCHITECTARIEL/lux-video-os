@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mock, test } from 'node:test';
 
 import * as schema from '../db/schema.js';
+import { heygenSubmissionIdentity } from '../lib/heygen-provider-safety.js';
 import {
   LUXIFY_CONTRACT_VERSION,
   LUXIFY_PROVIDER_CAPABILITY,
@@ -147,10 +148,12 @@ function persistedJob(overrides = {}) {
 
 function databaseFixture({ grants = true, job = persistedJob(), activeCounts = [] } = {}) {
   const events = [];
+  const credit = { accountId: ACCOUNT, reserved: job.costCredits };
   const rowsFor = table => {
     if (table === schema.videoJobs) return [job];
     if (table === schema.entitlements) return grants ? [{ accountId: ACCOUNT, entitlementKey: 'liveRendering', enabled: true, sourceType: 'admin_tester_grant', sourceId: null }] : [];
     if (table === schema.users) return [{ id: ACCOUNT, email: 'owner@example.test' }];
+    if (table === schema.creditAccounts) return [credit];
     return [];
   };
   const db = {
@@ -170,6 +173,7 @@ function databaseFixture({ grants = true, job = persistedJob(), activeCounts = [
     update(table) {
       return { set(values) { return { where() {
         if (table === schema.videoJobs) Object.assign(job, values);
+        if (table === schema.creditAccounts) Object.assign(credit, values);
         return { returning: async () => table === schema.videoJobs ? [job] : [] };
       } }; } };
     },
@@ -184,7 +188,7 @@ function databaseFixture({ grants = true, job = persistedJob(), activeCounts = [
   lookReferenceClaims = [];
   operationClaims = [];
   unknownClaims = [];
-  return { events, job };
+  return { events, job, credit };
 }
 
 const trusted = resolver => ({ resolveLuxifyAuthority: resolver || (async () => authority()) });
@@ -405,6 +409,7 @@ test('definitive 503 retries stop at the repository retry cap', async () => {
   });
   assert.equal(exhausted.status, 'failed');
   assert.equal(exhausted.failureCategory, 'PROVIDER_RETRY_EXHAUSTED');
+  assert.equal(state.credit.reserved, 0);
   assert.equal(exhausted.output.heygenSubmission.retryCount, 2);
   assert.equal(state.events.at(-1).eventType, 'provider.retry_exhausted');
 });
@@ -464,6 +469,20 @@ test('a new provider claim preserves the first claim timestamp across retries', 
   }, trusted());
   assert.equal(claimed.output.heygenSubmission.firstClaimedAt, firstClaimedAt);
   assert.notEqual(claimed.output.heygenSubmission.claimedAt, firstClaimedAt);
+});
+
+test('requeue then reclaim derives the saved provider key from the job ID and attempt', async () => {
+  const state = databaseFixture();
+  const claim = () => repository.transitionJob({
+    jobId: state.job.id, stageTo: 'provider_submitting', eventType: 'provider.submit_started', providerBinding: PROVIDER_BINDING,
+  }, trusted());
+  const first = await claim();
+  assert.equal(first.output.heygenSubmission.idempotencyKey, heygenSubmissionIdentity(state.job.id).idempotencyKey);
+  await repository.requeueHeygenSubmission(state.job.id, { retryDelayMs: 0, providerBinding: PROVIDER_BINDING });
+  state.job.output.heygenSubmission.nextAttemptAt = '2000-01-01T00:00:00.000Z';
+  const second = await claim();
+  assert.equal(second.output.heygenSubmission.idempotencyKey, heygenSubmissionIdentity(state.job.id).idempotencyKey);
+  assert.equal(second.output.heygenSubmission.marker, first.output.heygenSubmission.marker);
 });
 } else {
   test('LUXIFY provider-claim and uncertainty scenarios', () => {

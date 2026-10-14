@@ -1,5 +1,13 @@
 # HeyGen provider safety (PROV-001)
 
+## Luxify admission extension (LUXIFY-ADM-001)
+
+Premium Presenter and default-off Luxify use the same `provider_submitting` admission claim and shared 8/2 pool. A deferred claim makes no provider POST in either mode. Luxify reserves the signed quote's `luxCredits`; production price values remain an owner decision and environment-only.
+
+Both submit adapters require the saved `vos-<32 hex>` idempotency key and `vos-<24 hex>` title marker. Missing or malformed identity makes no POST and holds the job under the nonretryable `PROVIDER_IDENTITY_MISSING` category, distinct from general `RECONCILIATION`. Submission never falls back to `job.id`.
+
+The held-submit inventory resolver also handles Luxify jobs. It binds a single verified title-marker match and releases verified absence only after complete inventory and the grace period; ambiguous or malformed cases remain held. A released job reclaims with the same key. `npm test` includes the workflow CLI build step in an isolated temporary output tree when the local CLI is installed, without network or Vercel credentials.
+
 ## Admission
 
 All HeyGen render claims use Postgres transaction advisory lock `730561014001`. The lock covers a global count of `video_jobs` in `provider_submitting`, `provider_submitted`, `provider_rendering`, and `provider_submit_unknown`, the per-account count, and the transition to `provider_submitting`. The last state retains a slot because an ambiguous POST may have created a running video. `provider_ready` releases the slot because the provider has completed generation. This is deliberately conservative when unknown jobs accumulate; operators can resolve those held jobs.

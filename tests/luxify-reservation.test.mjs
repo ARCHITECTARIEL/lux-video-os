@@ -238,6 +238,8 @@ test('test-authoritative reservation persists exact mode, quote, ordered looks, 
   assert.equal(reserved.job.input.voice, undefined);
   assert.equal(reserved.job.input.renderAuthorization.tier, 'premium');
   assert.equal(reserved.job.input.quoteProof.luxCredits, 41);
+  assert.equal(reserved.job.costCredits, reserved.job.input.quoteProof.luxCredits);
+  assert.notEqual(reserved.job.costCredits, 90);
   assert.equal(attachedLookBindings.length, 1);
   assert.deepEqual(attachedLookBindings[0].lookBindings, LOOK_BINDINGS);
   assert.equal(JSON.stringify(attachedLookBindings).includes('voice'), false);
