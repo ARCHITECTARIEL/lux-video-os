@@ -1,0 +1,4 @@
+/.github/ @ARCHITECTARIEL
+/tools/merge-intent-guard.mjs @ARCHITECTARIEL
+/tests/merge-intent-guard.test.mjs @ARCHITECTARIEL
+/CODEOWNERS @ARCHITECTARIEL
