@@ -721,6 +721,11 @@
 - Implemented a Postgres advisory-lock admission check for HeyGen render jobs with global and per-account limits; definitive POST 429/503 responses now requeue with Retry-After or bounded jitter while ambiguous outcomes remain held. Persisted a stable hashed idempotency key and title marker, added default-off held-submission reconciliation against complete v3 inventory, and added RunPod timeout cancellation.
 - Added `docs/HEYGEN-PROVIDER-SAFETY.md` and mocked provider tests. The full `npm test` run passed 1,083 Node tests with 48 skips and 4/4 Vitest tests; focused tests after the final edits passed 12/12. `npm run db:check`, `npm run check:imports`, and `git diff --check` exited 0.
 - No live provider or remote database call, migration, dependency addition, commit, push, merge, or deploy occurred. An isolated PostgreSQL race test and qualification of HeyGen's exact v3 inventory response remain outstanding before enabling the reconciler.
+## 2026-10-14T16:55:37Z - [closure-writeback] [CANARY-001]
+
+- In worktree `codex/canary-001` at base `661ca88`, extracted the DB-binding operator, window, host, expected-identity, response, and rate-limit safeguards into `lib/operator-diagnostic-guard.js`. Added the no-DB `canary-scope` admin operation with nonce-bound pin MAC comparison, scope booleans, per-instance replay and rate limits, and awaited allow-listed console audit events. Added DB-binding rate limit and audit, an owner dry-run/send CLI, tests, procedure, and the required build-policy entries.
+- Verification on Node v24.14.1: `npm test` passed 1,088 Node tests and 4 Vitest tests, with 48 live integration tests skipped; `npm run db:check`, `npm run check:imports`, focused canary/maintenance tests, syntax checks, and `git diff --check` passed. No hosted canary check was performed; audit remains console-backed pending OBS-001, and nonce/rate state is per instance.
+- Changes remain uncommitted in this worktree. No push, merge, deploy, Vercel command, real database migration, provider call, secret-file read, or edit to the main checkout occurred.
 
 ## 2026-10-14T17:30:00Z - [MIG-0013]
 
@@ -782,3 +787,16 @@
 - Added `tests/workflow-bundle-node-builtins.test.mjs` to reject new workflow imports whose graph reaches a Node builtin, including the previous HeyGen safety import. Updated the LUXIFY test fixture to model persisted claim identity and documented the local `npm run build:preview` check in `docs/HEYGEN-PROVIDER-SAFETY.md`.
 - Verification: `npm test` passed 1,127 Node tests with 50 credential-gated skips and 4/4 Vitest tests; `npm run build:preview` completed 32 steps, 6 workflows, and 47 routes. `npm run db:check`, `npm run check:imports`, and `git diff --check` passed. The preview DB check was snapshot-only.
 - Changes remain uncommitted in this worktree. No deploy, provider call, live database action, secret read, or dependency addition occurred.
+
+## 2026-10-14T17:31:46Z - [closure-writeback] [CANARY-001b] [QA-security]
+
+- Preserved and completed the interrupted QA fix in this worktree: anonymous 404s no longer clear canary rate or nonce state; canary-scope passes maintenance only for GET and rejects non-GET at admin dispatch; the CLI dry run redacts nonce and MAC. Added regression tests for interleaved anonymous failures, rate and replay ordering, each scope condition, wrong-MAC provider status, audit allow-list, route gating, and dry-run output.
+- Updated `docs/CANARY-SCOPE-CHECK.md` to treat nonce and MAC as sensitive and to state that the audit is console-only until OBS-001 wires durable `ops_events` rows.
+- Verification on Node v24.14.1: `npm test` passed 1,094 Node tests with 48 skipped and 4/4 Vitest tests; `npm run db:check`, `npm run check:imports`, and `git diff --check` passed. The existing npm test suite invokes `npm audit`, which may contact the npm registry; this was identified after running the requested suite.
+- Changes remain uncommitted. No push, merge, deployment, Vercel command, migration, provider action, secret-file read, or edit outside this worktree occurred.
+
+## 2026-10-14T18:45:26Z - [CANARY-001c] [QA-LOW] [rebase-resolution]
+
+- Resolved the `admin.js` and wiki rebase conflicts on `035720d`, retaining main's `createAdminHandler(deps)` and ops events while restoring the canary-scope and guarded DB-binding dispatch. Both histories remain in the wiki in timestamp order. No unmerged paths remain; the operator will continue the rebase.
+- Added handler and admin-dispatch regressions for anonymous `diagnostic_unavailable` 404 responses when `VERCEL_ENV` is unset, `development`, or `preview`, before authentication or rate/nonce state changes. DB-binding no longer clears its limiter on unavailable requests. Non-GET canary-scope returns 405 with `Allow: GET`; the procedure documents it.
+- Node v24.14.1 verification: `npm test` passed 1,130 Node tests, 49 skipped, and 4 Vitest tests; `npm run db:check`, `npm run check:imports`, and `git diff --check` passed. `workflows/video-render.js` had no branch requeue or `PROVIDER_RETRY_DEFERRED` delta to preserve, so it was untouched and main's ops events remain. No commit, rebase continuation, push, deploy, network/provider call, environment change, or secret read occurred.
