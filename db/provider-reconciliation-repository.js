@@ -1116,11 +1116,13 @@ export function providerReconciliationExecutionStatus() {
 // an ordinary new sign-up -- see lib/video-os-security.js's
 // containedRenderingEntitlementKeys) can actually reach a HeyGen submission
 // even while this reports enabled.
-export function providerCreationActivationStatus(env = process.env) {
-  const privateEnrollmentCanary = Boolean(String(env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID || '').trim());
-  const enabled = !privateEnrollmentCanary && String(env.VIDEO_OS_PROVIDER_CREATION_ENABLED || '').trim().toLowerCase() === 'true';
+export function providerCreationActivationStatus(env = process.env, accountId) {
+  const pinnedAccountId = String(env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID || '').trim();
+  const privateEnrollmentCanary = Boolean(pinnedAccountId);
+  const canaryAccountAllowed = !privateEnrollmentCanary || (typeof accountId === 'string' && accountId.length > 0 && accountId === pinnedAccountId);
+  const enabled = canaryAccountAllowed && String(env.VIDEO_OS_PROVIDER_CREATION_ENABLED || '').trim().toLowerCase() === 'true';
   let reason = 'verified_provider_account_binding_not_wired';
-  if (privateEnrollmentCanary) reason = 'private_enrollment_canary_active';
+  if (privateEnrollmentCanary && !canaryAccountAllowed) reason = 'private_enrollment_canary_active';
   else if (enabled) reason = 'owner_authorized_contained_activation';
   return Object.freeze({
     enabled,

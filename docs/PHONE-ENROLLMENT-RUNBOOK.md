@@ -60,10 +60,15 @@ record reads remain available. This is an account boundary, not approval to
 enable the flags. Keep the pin in place until an authorized attempt reaches a
 terminal state or its upload token expires and cleanup is reconciled; do not
 advance the cohort start timestamp while callbacks remain possible. While
-the production pin is set, `providerCreationActivationStatus()` also holds
-provider creation and render submission off even if their separate flag is
-accidentally enabled. Removing the pin to pursue later provider work requires
-a new scoped review; it disables new production enrollment until replaced.
+the production pin is set, `providerCreationActivationStatus()` is gated by
+`VIDEO_OS_PROVIDER_CREATION_ENABLED` and permits provider creation and render
+submission for the exact pinned account only when that flag is true. Other
+accounts remain blocked. For a safe rollback, unset
+`VIDEO_OS_PROVIDER_CREATION_ENABLED` and the enrollment flags before removing
+the pin. Removing the pin while provider creation remains enabled opens
+creation to all accounts subject to the other provider, entitlement, consent,
+cost and binding gates. Removing the pin also disables new production enrollment
+until replaced.
 
 Enrollment additionally requires Blob storage, durable Vercel Workflow dispatch, an exact HTTPS `VIDEO_OS_PUBLIC_ORIGIN`, a strong existing session secret, and `VIDEO_OS_ENROLLMENT_BLOB_STORE_ID` matching the configured private store token. Never put tokens in browser state, logs or handoff files. Existing provider, account, privacy, scripted-render and pricing gates still apply; enabling enrollment alone does not enable paid generation. The existing gates include `VIDEO_OS_IDENTITY_PROVIDER_ENABLED`, `VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID` (the contained pilot account), `HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED`, `VIDEO_OS_SCRIPTED_PHOTO_ENABLED`, `VIDEO_OS_STANDARD_SCRIPTED_CREDITS` and `VIDEO_OS_DURABLE_WORKFLOW_ENABLED`. Provider credentials remain server-only. These names are configuration requirements, not instructions to enable them now.
 

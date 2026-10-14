@@ -4,17 +4,19 @@
 
 **Last audited: 2026-10-01.** For "what's left to ship, in priority order," read [../NEXT-DEVELOPER-HANDOFF.md](../NEXT-DEVELOPER-HANDOFF.md) first — this file is the detailed chronological session log underneath it. This file supersedes older status, priority, branch and deployment claims in HANDOFF.md, DEVELOPER_HANDOFF.md, README.md and the September 29 ZIP. Historical architecture notes remain references, not release evidence.
 
+**2026-10-13 local code correction (ID-001/ID-001b):** The October 1 hardcoded-off statements below are historical. `providerCreationActivationStatus(env, accountId)` is now gated by `VIDEO_OS_PROVIDER_CREATION_ENABLED` and, while the enrollment canary pin is set, allows only the exact pinned account. This is local code, not proof of production activation. Safe rollback: unset `VIDEO_OS_PROVIDER_CREATION_ENABLED` and enrollment flags before removing the pin. Removing the pin with creation enabled opens creation to all accounts subject to the other gates. See [the dated correction](execution-notes/20261013-id-001b-provider-creation-correction.md).
+
 ## Latest October 1 (night) — P0 proof scoped, deliberately not started
 
 The owner asked to proceed to the P0 production proof next; billing (Stripe or Authorize.net, undecided) is explicitly deferred to later and does not block this. Investigation found two substantial, unbuilt prerequisites, not quick continuations: (1) `tools/verify-p0-release-gate.mjs` is permanently disabled by design -- a real evidence collector needs actual browser-session automation (fresh-session anonymous/wrong-account/direct-Blob denial checks), not a script; (2) private storage migration was explicitly found "not ready to execute" on Sept 30 (26 of 77 production Blob objects unclassified), and its own reviewed procedure requires 4 separately-approved phases, the last marked "destructive approval." See [the scoping note](execution-notes/20261001-p0-proof-scoping.md). The owner chose to stop here for this session rather than start either piece.
 
-**Exact next action:** treat the P0 proof as its own dedicated multi-session project. Start with a read-only re-run of the storage inventory, then work the 4 migration phases with explicit approval at each. Build the real evidence collector alongside or after. Do not flip `providerCreationActivationStatus()` until immediately before an actual proof run is in progress.
+**October 1 next action (historical):** treat the P0 proof as its own dedicated multi-session project. Start with a read-only re-run of the storage inventory, then work the 4 migration phases with explicit approval at each. Build the real evidence collector alongside or after. Production activation remains a separate decision; see the October 13 correction above for the current gate.
 
 ## Earlier October 1 (late evening) — production HeyGen provider-space binding bootstrapped
 
 A real, verified HeyGen provider-space binding now exists in production for the owner's account (`user-af738329999cec793560f0a4`), using the newly rotated `HEYGEN_API_KEY`. This required a genuine refactor of `db/heygen-space-binding-repository.js` and `tools/bind-heygen-space.mjs`, which previously hard-rejected any environment other than `verification` with no override, by design. The new production path requires its own separate, explicit `--owner-authorized` confirmation distinct from merely requesting the environment. See [the binding note](execution-notes/20261001-production-heygen-binding.md).
 
-**Still true:** `providerCreationActivationStatus()` remains hardcoded `{ enabled: false }` -- no HeyGen provider creation or render submission is possible from production yet, regardless of this binding. That activation switch is the one remaining piece of the original Phase 2 goal, and is intentionally left for a separate, later, explicitly owner-gated decision -- ideally timed alongside the real P0 production-proof run and a billing/reconciliation plan, not flipped in isolation.
+**October 1 observation (historical):** Provider creation was hardcoded off at this checkpoint; no HeyGen creation or render submission followed from the binding alone. The October 13 local candidate uses the environment and canary account gate described above. No production activation is established by this note.
 
 ## Earlier October 1 (evening) — production code deployed
 

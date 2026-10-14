@@ -72,6 +72,7 @@ test('exact deployment, source, project and canonical database match with read-o
   assert.equal(result.body.uniqueDeploymentHostMatched, false);
   assert.equal(result.body.durableRenderDisabled, true);
   assert.equal(result.body.providerCreationDisabled, true);
+  assert.equal(result.body.providerCreationCanaryScoped, false);
   assert.equal(result.body.billingDisabled, true);
   assert.equal(result.body.maintenanceAdmissionActive, true);
   assert.equal(result.body.sourceByteAttested, false);
@@ -138,6 +139,33 @@ test('every enabled mutation gate blocks attestation before SQL', async () => {
   assert.equal(result.status, 409);
   assert.equal(result.body.providerCreationDisabled, false);
   assert.equal(providerEnabled.getQueries(), 0);
+});
+
+test('pinned provider creation reports canary scope without disclosing the account and blocks attestation', async () => {
+  const canaryAccount = 'fixture-canary-account';
+  const input = options({ env: {
+    VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: canaryAccount,
+    VIDEO_OS_PROVIDER_CREATION_ENABLED: ' TrUe ',
+  } });
+  const result = await evaluateProductionDbBinding(input);
+  assert.equal(result.status, 409);
+  assert.equal(result.body.ok, false);
+  assert.equal(result.body.providerCreationDisabled, true);
+  assert.equal(result.body.providerCreationCanaryScoped, true);
+  assert.equal(input.getQueries(), 0);
+  assert.equal(JSON.stringify(result).includes(canaryAccount), false);
+});
+
+test('pinned provider creation with its switch off remains disabled for containment', async () => {
+  const input = options({ env: {
+    VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: 'fixture-canary-account',
+    VIDEO_OS_PROVIDER_CREATION_ENABLED: 'false',
+  } });
+  const result = await evaluateProductionDbBinding(input);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.providerCreationDisabled, true);
+  assert.equal(result.body.providerCreationCanaryScoped, false);
+  assert.equal(input.getQueries(), 1);
 });
 
 test('maintenance admission must be active before DB binding can attest or query', async () => {

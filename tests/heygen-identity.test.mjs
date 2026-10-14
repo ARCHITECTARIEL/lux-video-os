@@ -72,6 +72,26 @@ test('identity route rejects an unauthorized account before provider submission'
   assert.throws(() => assertIdentitySubmissionAllowed('acct-other'), { failureCategory: 'ENTITLEMENT' });
   assert.equal(calls, 0);
 });
+test('identity submission admits only the pinned canary when provider creation is enabled', () => {
+  const names = ['VIDEO_OS_PROVIDER_CREATION_ENABLED', 'VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID'];
+  const prior = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  try {
+    enableProviderMutations();
+    process.env.VIDEO_OS_PROVIDER_CREATION_ENABLED = 'true';
+    process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = 'acct-proof';
+    assert.equal(assertIdentitySubmissionAllowed('acct-proof'), true);
+    process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = 'other-account';
+    assert.throws(() => assertIdentitySubmissionAllowed('acct-proof'), { failureCategory: 'IDENTITY_PROVIDER_DISABLED' });
+    process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = 'acct-proof';
+    process.env.VIDEO_OS_PROVIDER_CREATION_ENABLED = 'false';
+    assert.throws(() => assertIdentitySubmissionAllowed('acct-proof'), { failureCategory: 'IDENTITY_PROVIDER_DISABLED' });
+  } finally {
+    for (const name of names) {
+      if (prior[name] === undefined) delete process.env[name];
+      else process.env[name] = prior[name];
+    }
+  }
+});
 test('identity route rejects missing provider configuration before reservation or fetch', async () => {
   process.env.VIDEO_OS_IDENTITY_PROVIDER_ENABLED = 'true';
   process.env.HEYGEN_IDENTITY_ASSET_PRIVACY_CONFIRMED = 'true';

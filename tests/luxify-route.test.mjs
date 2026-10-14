@@ -197,6 +197,7 @@ test('default runtime preflight verifies local prerequisites and returns only sa
   const approved = approvedEvidenceFor();
   const options = {
     env,
+    accountId: ACCOUNT,
     now: new Date('2026-10-11T17:00:00.000Z'),
     loadQualificationEvidence: async () => approved,
     assertQualificationEvidence: evidence => evidence,
@@ -212,7 +213,7 @@ test('default runtime preflight verifies local prerequisites and returns only sa
     [runtimeEnv({ VIDEO_OS_PROVIDER_CREATION_ENABLED: 'false' }), ['provider_creation_disabled']],
     [runtimeEnv({
       VIDEO_OS_PROVIDER_CREATION_ENABLED: 'true',
-      VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: ACCOUNT,
+      VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: 'other-account',
     }), ['provider_creation_disabled']],
     [runtimeEnv({ VIDEO_OS_DURABLE_WORKFLOW_ENABLED: '' }), ['durable_workflow_disabled']],
     [runtimeEnv({ VIDEO_OS_HOSTED_FINISHING_ENABLED: '0' }), ['hosted_finishing_disabled']],
@@ -222,6 +223,13 @@ test('default runtime preflight verifies local prerequisites and returns only sa
     assert.equal(result.ready, false);
     for (const reason of expected) assert.equal(result.reasons.includes(reason), true, reason);
     assert.equal(JSON.stringify(result).includes(candidate.HEYGEN_API_KEY || 'never-match'), false);
+  }
+
+  const canaryEnv = runtimeEnv({ VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: ACCOUNT });
+  assert.deepEqual(await defaultLuxifyRuntimePreflight({ ...options, env: canaryEnv }), { ready: true, reasons: [] });
+  for (const accountId of [undefined, '', 'other-account']) {
+    const result = await defaultLuxifyRuntimePreflight({ ...options, env: canaryEnv, accountId });
+    assert.equal(result.reasons.includes('provider_creation_disabled'), true);
   }
 
   const mismatch = await defaultLuxifyRuntimePreflight({
@@ -266,7 +274,7 @@ test('each downstream execution flag independently blocks capability and new quo
     [{ VIDEO_OS_PROVIDER_CREATION_ENABLED: 'false' }, 'provider_creation_disabled'],
     [{
       VIDEO_OS_PROVIDER_CREATION_ENABLED: 'true',
-      VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: ACCOUNT,
+      VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: 'other-account',
     }, 'provider_creation_disabled'],
     [{ VIDEO_OS_DURABLE_WORKFLOW_ENABLED: 'false' }, 'durable_workflow_disabled'],
     [{ VIDEO_OS_HOSTED_FINISHING_ENABLED: 'false' }, 'hosted_finishing_disabled'],
@@ -276,8 +284,9 @@ test('each downstream execution flag independently blocks capability and new quo
     const label = JSON.stringify(overrides);
     const blocked = fixture({
       environment,
-      runtimePreflight: ({ env }) => defaultLuxifyRuntimePreflight({
+      runtimePreflight: ({ env, accountId }) => defaultLuxifyRuntimePreflight({
         env,
+        accountId,
         now: new Date('2026-10-11T17:00:00.000Z'),
         loadQualificationEvidence: async () => approvedEvidenceFor(),
         assertQualificationEvidence: evidence => evidence,

@@ -9,6 +9,7 @@ import {
   LUXIFY_RENDER_MODE,
 } from '../lib/luxify-contract.js';
 import { issueLuxifyQuote, safeLuxifyQuoteProof, verifyLuxifyQuote } from '../lib/luxify-quote.js';
+import { providerCreationActivationStatus } from '../db/provider-reconciliation-repository.js';
 
 const ACCOUNT = 'luxify-workflow-owner';
 const PROJECT = '11111111-1111-4111-8111-111111111111';
@@ -138,6 +139,8 @@ if (runFixture) {
   process.env.HEYGEN_API_KEY = 'local-test-key';
   process.env.VIDEO_OS_HOSTED_FINISHING_ENABLED = 'true';
   process.env.VIDEO_OS_COMPOSITION_ENGINE = 'ffmpeg';
+  process.env.VIDEO_OS_PROVIDER_CREATION_ENABLED = 'true';
+  delete process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID;
 
   let currentJob = luxifyJob();
   let failLuxifySubmit = false;
@@ -232,7 +235,7 @@ if (runFixture) {
     resolveFreshHeygenSpaceBinding: async () => PROVIDER_BINDING,
   } });
   mock.module('../db/provider-reconciliation-repository.js', { namedExports: {
-    providerCreationActivationStatus: () => ({ enabled: true }),
+    providerCreationActivationStatus,
   } });
   mock.module('../services/heygen.js', { namedExports: {
     assertHeygenConfigured: () => true,
@@ -413,6 +416,43 @@ if (runFixture) {
     await assert.rejects(workflow.submitProvider(currentJob.id), /VIDEO_OS_PROVIDER_SUBMISSION_POSSIBLE_V1/);
     assert.equal(calls.luxifySubmissions.length, before + 1);
     assert.equal(calls.transitions.filter(value => value.stageTo === 'provider_submit_unknown').length, 1);
+  });
+
+  test('pinned canary job passes the render provider creation gate', async () => {
+    process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = ACCOUNT;
+    try {
+      failLuxifySubmit = false;
+      currentJob = luxifyJob({ id: 'job-canary-gate' });
+      const before = calls.luxifySubmissions.length;
+      await workflow.submitProvider(currentJob.id);
+      assert.equal(calls.luxifySubmissions.length, before + 1);
+    } finally {
+      delete process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID;
+    }
+  });
+
+  test('other-account job is blocked by the render provider creation gate before claim', async () => {
+    process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = ACCOUNT;
+    try {
+      currentJob = luxifyJob({ id: 'job-other-account-gate', accountId: 'other-account' });
+      const before = calls.transitions.length;
+      await assert.rejects(workflow.submitProvider(currentJob.id), /VIDEO_OS_HEYGEN_PRECLAIM_V1:CONFIG_MISSING/);
+      assert.equal(calls.transitions.length, before);
+    } finally {
+      delete process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID;
+    }
+  });
+
+  test('job without an account ID is blocked by the render provider creation gate before claim', async () => {
+    process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = ACCOUNT;
+    try {
+      currentJob = luxifyJob({ id: 'job-missing-account-gate', accountId: undefined });
+      const before = calls.transitions.length;
+      await assert.rejects(workflow.submitProvider(currentJob.id), /VIDEO_OS_HEYGEN_PRECLAIM_V1:CONFIG_MISSING/);
+      assert.equal(calls.transitions.length, before);
+    } finally {
+      delete process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID;
+    }
   });
 } else {
   const workflow = await import('../workflows/video-render.js');

@@ -4,10 +4,12 @@
 
 Current production HEAD as of this writing: commit `02d5e46`, deployed and smoke-tested healthy at `https://lux-video-os.vercel.app`.
 
+**2026-10-13 local code correction (ID-001/ID-001b):** The activation description below is historical. In this worktree, `providerCreationActivationStatus(env, accountId)` is gated by `VIDEO_OS_PROVIDER_CREATION_ENABLED` and, while `VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID` is set, allows only the exact pinned account. This local change is not deployment evidence. For safe rollback, unset `VIDEO_OS_PROVIDER_CREATION_ENABLED` and the enrollment flags before removing the pin. Removing the pin with creation enabled opens creation to all accounts subject to the other provider, entitlement, consent, cost and binding gates. See [the dated correction](docs/execution-notes/20261013-id-001b-provider-creation-correction.md).
+
 ## TL;DR
 
 - The product **works end to end in code**: sign-in, Identity Studio, Standard/Premium tiers, HeyGen Premium rendering, admin console, watchdog alerting, a real (if newly-built) release-authorization pipeline. All of it is live in production as of today.
-- **Nothing customer-facing can actually render yet.** `providerCreationActivationStatus()` (`db/provider-reconciliation-repository.js`) is hardcoded `{ enabled: false }` — this is the single master switch gating both identity creation and render submission. Flip it and real HeyGen spend becomes possible; until then, the deployed app is inert on that front by design.
+- **Provider creation is env-gated in the local candidate.** `providerCreationActivationStatus(env, accountId)` requires `VIDEO_OS_PROVIDER_CREATION_ENABLED=true`; with a canary pin, it allows the exact pinned account only. Production activation and a real render still require separate proof.
 - **Billing is not built.** No Stripe keys in production, and the owner is reconsidering Stripe vs. Authorize.net — this decision is explicitly deferred, not scoped here.
 - **The P0 launch gate has never been cleared**, and the two things it actually needs are both unbuilt (see #1 below) — not configuration, real engineering work.
 
@@ -28,13 +30,11 @@ Once decided: get real keys into production, wire the checkout/webhook routes (`
 
 ### 3. The `providerCreationActivationStatus()` activation switch
 
-A single hardcoded function in `db/provider-reconciliation-repository.js`:
+A default-disabled, environment-gated function in `db/provider-reconciliation-repository.js`:
 ```js
-export function providerCreationActivationStatus() {
-  return Object.freeze({ enabled: false, reason: 'verified_provider_account_binding_not_wired' });
-}
+providerCreationActivationStatus(env, accountId)
 ```
-This is checked independently at both identity submission (`routes/video-os-lite/identities.js`) and render submission (`workflows/video-render.js`) — flipping it is the literal moment real customers can trigger real HeyGen spend. The production HeyGen provider-space binding now exists (bootstrapped today, see `docs/execution-notes/20261001-production-heygen-binding.md`), so the binding-validity precondition is met — but flipping this switch should happen **immediately before and in service of the P0 proof run**, not as a standalone action. Treat it as owner-gated every single time, per this project's execution-mode ladder (SIMULATION → CANARY → PRODUCTION).
+Identity and render submission pass their account ID to this gate. With the canary pin set, only the exact pinned account can pass when `VIDEO_OS_PROVIDER_CREATION_ENABLED=true`; without the pin, that flag opens creation to all accounts subject to the other gates. The production HeyGen provider-space binding was bootstrapped October 1 (see `docs/execution-notes/20261001-production-heygen-binding.md`). Treat production activation as owner-gated, per this project's execution-mode ladder (SIMULATION → CANARY → PRODUCTION). For rollback, unset provider creation and enrollment flags before removing the pin.
 
 ### 4. Standard tier: SIMULATION vs. real RunPod GPU inference
 
