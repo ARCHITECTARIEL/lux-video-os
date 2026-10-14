@@ -642,3 +642,20 @@
 - Updated the bare workspace handler to check `sessionFromRequest` after the maintenance gate. Missing or invalid sessions now receive JSON 401 with `sign_in_required`; authenticated bare requests and other unmatched paths retain JSON 404.
 - Added a no-cookie handler test for the JSON 401 response and an unmatched-path 404 assertion. The requested Node suite passed 24/24, `git diff --check` passed, and both edited JavaScript files passed `node --check`.
 - This was a local code and test follow-up. No commit, push, deployment, hosted request, network action, environment or secret read, or package install occurred.
+
+## 2026-10-14T14:49:30Z - [closure-writeback] [REL-004]
+
+- Added the dependency-free merge-intent CLI guard, the main-targeting PR workflow, 16 focused Node tests, and `docs/decisions/2026-10-13-pr98-merge-record.md` with the supplied PR #98 facts, risks, options, and unapplied branch protection proposal.
+- Verification: `node --test tests/merge-intent-guard.test.mjs` passed 16/16; `node --check tools/merge-intent-guard.mjs` and `git diff --check` exited 0. A separate scan found no trailing whitespace in the four new files.
+- Work remains uncommitted on `codex/rel-004`. No app code, network commands, deployment, rollback, or branch protection settings were changed. Ariel's decision on #98 remains open.
+
+## 2026-10-14 - [REL-004b]
+
+- Hardened `merge-intent-guard` to check out the PR base SHA with credentials disabled and read-only permissions. Added guard workflow and CODEOWNERS regression checks plus advisory `.github/CODEOWNERS` ownership for the four requested paths.
+- Updated the PR #98 record with Ariel's Option A decision to keep #98 live, QA's post-hoc PASS, the remaining `/provider-consent` pass, the supplied production migration 0011 read-only finding, and the corrected rollback target and unapplied branch protection command.
+- Verification: focused Node guard tests passed 18/18; `npm run test:unit` passed 1,075 Node tests with 48 skips and 4/4 Vitest tests; `npm run check:imports`, `npm run db:check`, and `git diff --check` exited 0.
+- This is a local worktree follow-up. No commit, push, merge, network access, deployment, database action, or branch protection change was performed.
+
+## 2026-10-14T16:10:43Z - [REL-004c]
+
+- Switched the merge-intent check to base-controlled `pull_request_target`, locked its exact three steps in tests, and corrected the PR #98 migration, deployment, and unapplied protection record.
