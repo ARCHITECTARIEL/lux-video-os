@@ -51,3 +51,27 @@ jobs:
             echo "::error::Watchdog sweep request failed with HTTP $status"
             exit 1
           fi
+      - name: Hosted route smoke (caption VTT + workspace API)
+        env:
+          BASE_URL: ${{ vars.VIDEO_OS_BASE_URL }}
+        run: |
+          if [ -z "$BASE_URL" ]; then
+            echo "::warning::VIDEO_OS_BASE_URL is not configured -- skipping hosted route smoke."
+            exit 0
+          fi
+          set -e
+          caption_status=$(curl -sS -D caption.headers -o caption.body -w '%{http_code}' "${BASE_URL%/}/assets/showcase/owner-kristian.vtt")
+          caption_type=$(awk 'tolower($1) == "content-type:" { print tolower($2) }' caption.headers | tr -d '\r' | tail -n 1)
+          caption_body=$(cat caption.body)
+          caption_body=${caption_body#$'\xef\xbb\xbf'}
+          if [ "$caption_status" != "200" ] || [[ "$caption_type" != text/vtt* ]] || [[ "$caption_body" != WEBVTT* ]]; then
+            echo "::error::Hosted caption route failed status/content-type/WEBVTT validation."
+            exit 1
+          fi
+          workspace_status=$(curl -sS -D workspace.headers -o workspace.body -w '%{http_code}' "${BASE_URL%/}/api/video-os-lite/workspace")
+          workspace_type=$(awk 'tolower($1) == "content-type:" { print tolower($2) }' workspace.headers | tr -d '\r' | tail -n 1)
+          workspace_body=$(cat workspace.body)
+          if [ "$workspace_status" != "401" ] || [[ "$workspace_type" != *application/json* ]] || [[ "$workspace_body" == \<* ]]; then
+            echo "::error::Hosted workspace route failed status/content-type/body validation."
+            exit 1
+          fi
