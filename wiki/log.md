@@ -629,3 +629,16 @@
 
 - Session readback confirms the recursive catalogue line-ending normalization, the new synthetic regression test, and the VOS-002 SHA correction in this worktree. The focused Node command passed 11/11; syntax checks and `git diff --check` passed.
 - The schema lock recapture was performed outside the Codex session against the throwaway container only. No push, deploy, Neon/production database, or secret access.
+
+## 2026-10-14T14:35:11Z - [closure-writeback] [REL-003]
+
+- Added explicit VTT and bare workspace routes in `vercel.json`, a hosted caption/workspace smoke step in `watchdog-sweep.yml`, and an opt-in `--base-url` smoke mode in the P0 candidate checker. Added route-order, caption-file, and stubbed-fetch tests; updated three existing API alias expectations from 28 to 29.
+- The caption exists in `public/assets/showcase/`, is not excluded by `.vercelignore`, and the project uses Vercel's default output directory. This worktree has no built `.vercel/output` artifact, so actual static artifact inclusion was not observed. No build configuration change was needed based on the inspected source/configuration.
+- The bare workspace path now returns JSON 401 with `sign_in_required` when unauthenticated; other unmatched paths retain JSON 404. The hosted 401 smoke contract is covered locally but has not been checked against a deployment.
+- Focused Node route tests passed; `npm run check:imports` and `git diff --check` passed. The full Node run had four failures from missing local `drizzle-kit` and `@workflow/builders` files. Plain Vitest hit sandbox `spawn EPERM`; an equivalent temporary-config Vitest run passed 4/4. No commit, deploy, hosted request, database action, provider action, or package installation occurred.
+
+## 2026-10-14T14:38:29Z - [closure-writeback] [REL-003-follow-up]
+
+- Updated the bare workspace handler to check `sessionFromRequest` after the maintenance gate. Missing or invalid sessions now receive JSON 401 with `sign_in_required`; authenticated bare requests and other unmatched paths retain JSON 404.
+- Added a no-cookie handler test for the JSON 401 response and an unmatched-path 404 assertion. The requested Node suite passed 24/24, `git diff --check` passed, and both edited JavaScript files passed `node --check`.
+- This was a local code and test follow-up. No commit, push, deployment, hosted request, network action, environment or secret read, or package install occurred.

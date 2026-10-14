@@ -11,7 +11,7 @@ import enrollmentUpload from '../../routes/video-os-lite/enrollment-upload.js';
 import scriptedPhoto from '../../routes/video-os-lite/scripted-photo.js';
 import providerConsent from '../../routes/video-os-lite/provider-consent.js';
 import luxify from '../../routes/video-os-lite/luxify.js';
-import { send } from '../../lib/video-os-account.js';
+import { send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 
 const handlers = { admin, asset, copywriter, identities, projects, providers, results, standard, enrollments, luxify, 'enrollment-upload': enrollmentUpload, 'scripted-photo': scriptedPhoto, 'provider-consent': providerConsent };
@@ -21,6 +21,17 @@ export default async function handler(req, res) {
   const pathname = new URL(req.url, 'https://video-os.invalid').pathname;
   const route = pathname.split('/').filter(Boolean).pop();
   const selected = handlers[route];
-  if (!selected) return send(res, 404, { ok: false, error: 'Workspace route not found.' });
+  if (!selected) {
+    if (route === 'workspace') {
+      let session;
+      try {
+        session = sessionFromRequest(req);
+      } catch {
+        // Missing or invalid sessions use the same unauthenticated response.
+      }
+      if (!session) return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in required.' });
+    }
+    return send(res, 404, { ok: false, error: 'Workspace route not found.' });
+  }
   return selected(req, res);
 }

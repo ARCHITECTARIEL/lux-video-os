@@ -114,6 +114,10 @@
             "dest": "/api/video-os-lite/download-v2.js"
         },
         {
+            "src": "/api/video-os-lite/workspace",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
             "src": "/api/video-os-lite/admin",
             "dest": "/api/video-os-lite/workspace.js"
         },
@@ -179,6 +183,14 @@
             "dest": "/$1",
             "headers": {
                 "Cache-Control": "no-store"
+            }
+        },
+        {
+            "src": "/(.*\\.vtt)",
+            "dest": "/$1",
+            "headers": {
+                "Cache-Control": "no-store",
+                "Content-Type": "text/vtt; charset=utf-8"
             }
         },
         {
