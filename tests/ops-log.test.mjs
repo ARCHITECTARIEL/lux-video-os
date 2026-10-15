@@ -87,6 +87,21 @@ test('detail allowlist retains only known event fields', () => {
   assert.deepEqual(prepareOpsEvent({ event: 'unknown', details: { component: 'provider' } }).row.details, {});
 });
 
+test('unknown diagnostic detail code is dropped from the ops_events row', async () => {
+  const rows = [];
+  const original = console.log;
+  console.log = () => {};
+  try {
+    await logOpsEventAwaited({
+      level: 'info', persist: true, event: 'admin.canary_scope.checked',
+      details: { ok: false, code: 'UNRECOGNIZED_DIAGNOSTIC_CODE', deploymentMatched: true },
+    }, { writer: row => rows.push(row) });
+  } finally { console.log = original; }
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0].details, { ok: false, deploymentMatched: true });
+  assert.equal(JSON.stringify(rows[0]).includes('UNRECOGNIZED_DIAGNOSTIC_CODE'), false);
+});
+
 test('admin audit records retain actor, target, amount, replay flag, and tester domain', () => {
   const credit = prepareOpsEvent({
     level: 'info', event: 'admin.credit.granted', accountId: 'target-1',

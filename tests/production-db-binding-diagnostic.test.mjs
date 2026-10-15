@@ -248,6 +248,32 @@ test('response prevents caching and conceals database failures', async () => {
   assert.equal(body.includes(databaseUrl), false);
 });
 
+test('durable DB binding audit row has booleans only and excludes connection evidence', async () => {
+  const input = options();
+  const rows = [];
+  const res = { setHeader() {}, end(value) { this.body = value; } };
+  await handleProductionDbBindingDiagnostic(input.req, res, { ...input,
+    auditWriter: async row => rows.push(row) });
+  assert.equal(res.statusCode, 200);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].event, 'admin.db_binding.checked');
+  assert.ok(Object.values(rows[0].details).every(value => typeof value === 'boolean'));
+  const serialized = JSON.stringify(rows[0]);
+  for (const forbidden of [databaseUrl, target.hosts[0], digest(deployment), digest(source), digest(project)]) {
+    assert.equal(serialized.includes(forbidden), false);
+  }
+});
+
+test('DB binding audit failure cannot change an attested response', async () => {
+  const input = options();
+  const res = { setHeader() {}, end(value) { this.body = value; } };
+  await handleProductionDbBindingDiagnostic(input.req, res, { ...input,
+    auditWriter: async () => { throw new Error(databaseUrl); } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(JSON.parse(res.body).ok, true);
+  assert.equal(res.body.includes(databaseUrl), false);
+});
+
 test('dedicated diagnostic bearer cannot access ordinary admin operations', async () => {
   const previousAdmin = process.env.VIDEO_OS_ADMIN_TOKEN;
   const previousOperator = process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN;

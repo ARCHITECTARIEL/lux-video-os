@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { createCanaryScopeState, evaluateCanaryScope, handleCanaryScopeDiagnostic } from '../lib/canary-scope-diagnostic.js';
 import { createDiagnosticLimiter } from '../lib/operator-diagnostic-guard.js';
 import { DETAIL_KEYS, diagnosticAuditDetails } from '../lib/operator-diagnostic-audit.js';
+import { prepareOpsEvent } from '../lib/ops-log.js';
 import { handleProductionDbBindingDiagnostic } from '../lib/production-db-binding-diagnostic.js';
 import { buildCanaryRequest, runCanaryScopeCheck } from '../tools/canary-scope-check.mjs';
 import adminHandler from '../routes/video-os-lite/admin.js';
@@ -178,6 +179,11 @@ test('audit details accept only listed boolean fields and fixed codes', () => {
     assert.deepEqual(diagnosticAuditDetails({ code }), {});
   }
   assert.equal(DETAIL_KEYS.includes(unknown), false);
+  const { row } = prepareOpsEvent({ event: 'admin.canary_scope.checked', details: {
+    ok: true, code: 'diagnostic_unavailable', canaryPinPresent: false,
+    privatePin: 'secret', canaryPinMatchesExpected: 'true',
+  } });
+  assert.deepEqual(row.details, { ok: true, code: 'diagnostic_unavailable', canaryPinPresent: false });
 });
 
 test('MAC comparator is injectable and its output is never serialized', async () => {
@@ -204,21 +210,35 @@ test('response and audit leak neither random pin, its digest nor its MAC', async
   }
 });
 
-test('default console audit contains only allow-listed booleans and code', async () => {
+test('durable canary audit row contains only allow-listed booleans and fixed code', async () => {
   const secretPin = randomBytes(20).toString('hex');
   const input = fixture({ env: { VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: secretPin } });
   input.req.headers['x-expected-canary-pin-mac'] = input.mac(secretPin);
   const lines = [];
+  const rows = [];
   const previous = console.log;
   console.log = (line) => lines.push(line);
   try {
     const res = { setHeader() {}, end(value) { this.body = value; } };
-    await handleCanaryScopeDiagnostic(input.req, res, input);
-    const combined = JSON.stringify({ lines, response: res.body });
+    await handleCanaryScopeDiagnostic(input.req, res, { ...input,
+      db: () => { throw new Error('diagnostic DB opened'); }, auditWriter: async row => rows.push(row) });
+    const combined = JSON.stringify({ lines, rows, response: res.body });
     for (const forbidden of [secretPin, digest(secretPin), input.mac(secretPin)]) assert.equal(combined.includes(forbidden), false);
     assert.equal(lines.length, 1);
-    assert.deepEqual(Object.keys(JSON.parse(lines[0])), ['event', 'detail']);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].event, 'admin.canary_scope.checked');
+    assert.deepEqual(rows[0].details, JSON.parse(lines[0]).details);
+    assert.ok(Object.entries(rows[0].details).every(([key, value]) =>
+      DETAIL_KEYS.includes(key) && (typeof value === 'boolean' || (key === 'code' && typeof value === 'string'))));
   } finally { console.log = previous; }
+});
+
+test('canary audit write failure preserves the evaluated response', async () => {
+  const input = fixture();
+  const res = { setHeader() {}, end(value) { this.body = value; } };
+  await handleCanaryScopeDiagnostic(input.req, res, { ...input, auditWriter: async () => { throw new Error('private audit failure'); } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(JSON.parse(res.body).ok, true);
 });
 
 test('rate limit denies sixth request per minute and twenty-first per window', async () => {

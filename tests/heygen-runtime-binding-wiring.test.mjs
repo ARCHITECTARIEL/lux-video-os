@@ -158,7 +158,7 @@ test('actual route and Workflow keep bindings local to each Node mutation bounda
 
   const workflowSource = await readFile(new URL('../workflows/video-render.js', import.meta.url), 'utf8');
   assert.match(workflowSource, /export async function submitProvider\(jobId\)\s*{\s*'use step';/);
-  assert.match(workflowSource, /videoRenderWorkflow\(jobId\)[\s\S]*submitProvider\(jobId\)/);
+  assert.match(workflowSource, /videoRenderWorkflow\(jobId(?:,\s*\{[^)]*\})?\)[\s\S]*submitProvider\(jobId\)/);
   assert.doesNotMatch(workflowSource, /videoRenderWorkflow\([^)]*providerBinding/);
   const providerJobGuard = workflowSource.indexOf('if (job.providerJobId)');
   const claimedStatusGuard = workflowSource.indexOf("if (job.status === 'provider_submitting'");

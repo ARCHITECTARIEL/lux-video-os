@@ -148,6 +148,7 @@ if (runFixture) {
   let retryableSubmit = false;
   let admissionDeferred = false;
   let missingClaimIdentity = false;
+  let claimIdentityOverride;
   let avatarConsentReady = true;
   const calls = {
     authorizations: [],
@@ -226,7 +227,7 @@ if (runFixture) {
       calls.transitions.push(input);
       if (input.stageTo === 'provider_submitting') {
         if (admissionDeferred) return frozenJob({ ...currentJob, admissionDeferred: true });
-        currentJob = frozenJob({ ...currentJob, status: input.stageTo, output: { ...currentJob.output, heygenSubmission: missingClaimIdentity ? { idempotencyKey: 'vos-' } : heygenSubmissionIdentity(currentJob.id) } }, { providerClaimProof: claimProof(currentJob) });
+        currentJob = frozenJob({ ...currentJob, status: input.stageTo, output: { ...currentJob.output, heygenSubmission: claimIdentityOverride || (missingClaimIdentity ? { idempotencyKey: 'vos-' } : heygenSubmissionIdentity(currentJob.id)) } }, { providerClaimProof: claimProof(currentJob) });
         return currentJob;
       }
       currentJob = {
@@ -300,6 +301,27 @@ if (runFixture) {
   } });
 
   const workflow = await import('../workflows/video-render.js');
+
+  test('workflow admission default remains 5760 attempts', () => {
+    assert.equal(workflow.DEFAULT_ADMISSION_ATTEMPTS, 5_760);
+  });
+
+  test('workflow uses all default admission attempts before timeout and release', async () => {
+    currentJob = luxifyJob({ id: 'job-luxify-admission-default' });
+    admissionDeferred = true;
+    let pauses = 0;
+    try {
+      await assert.rejects(workflow.videoRenderWorkflow(currentJob.id, {
+        admissionPause: async () => { pauses += 1; },
+      }), { failureCategory: 'PROVIDER_TIMEOUT' });
+    } finally { admissionDeferred = false; }
+    const attempts = calls.transitions.filter(value => value.jobId === currentJob.id && value.stageTo === 'provider_submitting').length;
+    assert.equal(attempts, workflow.DEFAULT_ADMISSION_ATTEMPTS);
+    assert.equal(pauses, workflow.DEFAULT_ADMISSION_ATTEMPTS);
+    assert.equal(calls.failures.at(-1)[0], currentJob.id);
+    assert.equal(calls.failures.at(-1)[1], 'PROVIDER_TIMEOUT');
+    assert.equal(calls.luxifySubmissions.length, 0);
+  });
 
   test('persisted LUXIFY mode selects only the cinematic submit, poll, and finishing adapters', async () => {
     currentJob = luxifyJob();
@@ -378,6 +400,45 @@ if (runFixture) {
     assert.equal(calls.luxifySubmissions.length, before);
     assert.equal(currentJob.status, 'provider_submit_unknown');
     assert.equal(calls.transitions.at(-1).failureCategory, 'PROVIDER_IDENTITY_MISSING');
+  });
+
+  test('malformed vos identities are held before the Luxify provider adapter is called', async () => {
+    for (const mode of ['luxify']) {
+      const candidate = luxifyJob();
+      const valid = heygenSubmissionIdentity(candidate.id);
+      for (const [field, value] of [
+        ['idempotencyKey', valid.idempotencyKey.slice(0, -1)],
+        ['idempotencyKey', `${valid.idempotencyKey}a`],
+        ['idempotencyKey', `vos-${valid.idempotencyKey.slice(4).toUpperCase()}`],
+        ['marker', valid.marker.slice(0, -1)],
+        ['marker', `${valid.marker}a`],
+        ['marker', `vos-${valid.marker.slice(4).toUpperCase()}`],
+      ]) {
+        currentJob = mode === 'luxify' ? luxifyJob() : presenterJob();
+        claimIdentityOverride = { ...valid, [field]: value };
+        const before = calls.luxifySubmissions.length + calls.presenterSubmissions.length;
+        try {
+          await assert.rejects(workflow.submitProvider(currentJob.id), /VIDEO_OS_PROVIDER_SUBMISSION_POSSIBLE_V1:PROVIDER_IDENTITY_MISSING/);
+        } finally { claimIdentityOverride = undefined; }
+        assert.equal(calls.luxifySubmissions.length + calls.presenterSubmissions.length, before);
+        assert.equal(calls.transitions.at(-1).failureCategory, 'PROVIDER_IDENTITY_MISSING');
+      }
+    }
+  });
+
+  test('admission wait exhaustion fails as PROVIDER_TIMEOUT and releases the reservation', async () => {
+    currentJob = luxifyJob({ id: 'job-luxify-admission-timeout' });
+    admissionDeferred = true;
+    let pauses = 0;
+    const before = calls.luxifySubmissions.length;
+    try {
+      await assert.rejects(workflow.videoRenderWorkflow(currentJob.id, {
+        admissionAttempts: 2, admissionPause: async () => { pauses++; },
+      }), { failureCategory: 'PROVIDER_TIMEOUT' });
+    } finally { admissionDeferred = false; }
+    assert.equal(pauses, 2);
+    assert.equal(calls.failures.at(-1)[1], 'PROVIDER_TIMEOUT');
+    assert.equal(calls.luxifySubmissions.length, before);
   });
 
   test('provider rejection and admission-wait timeout use failed-and-release', async () => {

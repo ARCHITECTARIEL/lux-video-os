@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { open, realpath, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 
@@ -331,7 +332,7 @@ test('failed private output cleanup unlinks the exact canonical path that was op
     async close() {},
   };
   await assert.rejects(writePrivatePlanFile({ private: true }, apparentOutput, {
-    async realpath(path) { return path.includes('lux-video-os') ? canonicalRoot : canonicalParent; },
+    async realpath(path) { return path === fileURLToPath(new URL('../', import.meta.url)) ? canonicalRoot : canonicalParent; },
     async open(path, flags, mode) {
       openedPath = path;
       assert.equal(flags, 'wx');

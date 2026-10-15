@@ -370,9 +370,8 @@ export async function deleteResource(kind, idInput, options = {}) {
 // an existing render submission. Inventory must be complete before absence is
 // actionable; a copied title alone never grants account/binding authority.
 export async function reconcileUnknownHeygenJob(job, {
-  lookup = () => fetchHeygenPaginatedCollection(`${API_ORIGIN}/v3/videos`, {
-    maxPages: 10, maxItems: 500, requireExplicitPagination: true,
-  }),
+  lookup,
+  fetchImpl,
   resolveBinding = resolveFreshHeygenSpaceBinding,
   bind = transitionJob,
   release = releaseHeygenUnknownForRetry,
@@ -384,7 +383,18 @@ export async function reconcileUnknownHeygenJob(job, {
   const metadata = job.output?.heygenSubmission;
   if (!/^vos-[a-f0-9]{24}$/.test(metadata?.marker || '') || !/^vos-[a-f0-9]{32}$/.test(metadata?.idempotencyKey || '') || !metadata?.claimedAt) return { outcome: 'attention', reason: 'missing_submission_identity' };
   const observedAt = new Date(now());
-  const inventory = await lookup(job);
+  let inventory;
+  try {
+    const url = new URL(`${API_ORIGIN}/v3/videos`);
+    url.searchParams.set('limit', '100');
+    url.searchParams.set('title', metadata.marker);
+    inventory = await (lookup ?? (() => fetchHeygenPaginatedCollection(url.href, {
+      maxPages: 10, maxItems: 500, requireExplicitPagination: true, allowTerminalTokenOmission: true,
+      fetchImpl, apiKey: env.HEYGEN_API_KEY,
+    })))(job);
+  } catch {
+    return { outcome: 'attention', reason: 'incomplete_inventory' };
+  }
   if (!inventory?.complete || inventory.truncated || !Array.isArray(inventory.items)) return { outcome: 'attention', reason: 'incomplete_inventory' };
   const matches = inventory.items.filter(item => typeof item?.title === 'string' && item.title.includes(`[${metadata.marker}]`));
   if (matches.length > 1) return { outcome: 'attention', reason: 'multiple_matches' };

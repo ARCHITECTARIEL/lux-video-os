@@ -399,15 +399,17 @@ export async function failWorkflow(jobId, error) {
   await markJobFailedAndRelease(jobId, category, message, error?.rejectedArtifact, options);
 }
 
-export async function videoRenderWorkflow(jobId) {
+export const DEFAULT_ADMISSION_ATTEMPTS = 5_760;
+
+export async function videoRenderWorkflow(jobId, { admissionAttempts = DEFAULT_ADMISSION_ATTEMPTS, admissionPause = sleep } = {}) {
   'use workflow';
   try {
     let submitted;
-    for (let admission = 0; admission < 5_760 && !submitted; admission += 1) {
+    for (let admission = 0; admission < admissionAttempts && !submitted; admission += 1) {
       try { submitted = await submitProvider(jobId); }
       catch (error) {
         if (error?.failureCategory !== 'PROVIDER_RETRY_DEFERRED') throw error;
-        await sleep('15s');
+        await admissionPause('15s');
       }
     }
     if (!submitted) throw Object.assign(new Error('HeyGen admission wait exceeded one day.'), { failureCategory: 'PROVIDER_TIMEOUT' });
