@@ -12,7 +12,7 @@ const aliases = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.ur
     '/api/video-os/talent.js',
   ]).has(dest)).map(({ src }) => src);
 
-test('the shared route table sends every API alias through active maintenance denial', async () => {
+test('the shared route table denies mapped APIs while its fallback stays 404', async () => {
   const prior = process.env.VIDEO_OS_DIAGNOSTIC_MAINTENANCE;
   process.env.VIDEO_OS_DIAGNOSTIC_MAINTENANCE = 'true';
   const server = createServer();
@@ -26,8 +26,9 @@ test('the shared route table sends every API alias through active maintenance de
           method,
           ...(method === 'POST' ? { body: '{}', headers: { 'content-type': 'application/json' } } : {}),
         });
-        assert.equal(response.status, 503, `${method} ${alias}`);
-        assert.deepEqual(await response.json(), { ok: false, code: 'diagnostic_maintenance_active' });
+        const fallback = alias === '/api/(.*)';
+        assert.equal(response.status, fallback ? 404 : 503, `${method} ${alias}`);
+        assert.equal((await response.json()).code, fallback ? 'not_found' : 'diagnostic_maintenance_active');
       }
     }
     const diagnostic = await fetch(`${origin}/api/video-os-lite/admin?operation=db-binding`);

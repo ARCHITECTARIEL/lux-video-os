@@ -845,3 +845,9 @@
 
 ## 2026-10-15 - [closure-writeback] [REL-010] [QA]
 Prefix-only admin IP audit, consolidated health/404 routing (12 functions), bounded async Slack alerts, and main-head watchdog grace. Offline checks passed; local commit blocked by linked Git directory permissions.
+
+## 2026-10-15T14:08:43Z - [closure-writeback] [REL-010] [QA-follow-up]
+
+- Restricted the shared workspace dispatcher to exact request paths. Nested admin and health aliases, trailing slashes, and dot-segment paths now return JSON 404 before any route handler runs; unknown workspace paths include `code: "not_found"`. Kept the existing single-segment workspace login response and health route. Updated maintenance tests for the fallback's 404 contract.
+- Registered the optional Slack admin alert promise with Vercel request-context `waitUntil` when available, with a nonblocking fallback. Added regressions for waitUntil delivery, response independence, and admin-login rejection of bare or non-Bearer cron tokens.
+- With `DATABASE_URL` and `HEYGEN_API_KEY` unset, `node --test tests/*.test.mjs` passed 1,200 tests with 50 expected skips; `npx vitest run` passed 4 tests; `npm run check:imports` and `git diff --check` passed. The 12-function budget test passed. Changes remain uncommitted; no push, merge, deploy, migration, database connection, or provider call occurred.

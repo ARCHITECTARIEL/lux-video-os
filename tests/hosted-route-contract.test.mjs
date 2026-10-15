@@ -27,7 +27,32 @@ test('workspace handler returns JSON 401 for the bare unauthenticated path and 4
 
   const unknown = await invoke('/api/video-os-lite/nonexistent');
   assert.equal(unknown.status, 404);
-  assert.deepEqual(unknown.body, { ok: false, error: 'Workspace route not found.' });
+  assert.deepEqual(unknown.body, { ok: false, code: 'not_found', error: 'Workspace route not found.' });
+});
+
+test('workspace rejects nested and trailing aliases before a handler can read the request', async () => {
+  for (const url of [
+    '/api/video-os-lite/x/admin',
+    '/api/video-os-lite/a/b/admin',
+    '/api/video-os-lite/x/health',
+    '/api/video-os-lite/x/../admin',
+    '/api/foo/health',
+    '/api/video-os-lite/admin/',
+  ]) {
+    let body;
+    const req = { method: 'GET', url: `${url}?operation=db-binding`, get headers() { throw new Error('handler was called'); } };
+    const res = { setHeader() {}, end(value) { body = JSON.parse(value); } };
+    await workspaceHandler(req, res);
+    assert.equal(res.statusCode, 404, url);
+    assert.equal(body.code, 'not_found', url);
+  }
+});
+
+test('exact workspace paths still dispatch', async () => {
+  const res = { setHeader() {}, end(value) { this.body = JSON.parse(value); } };
+  await workspaceHandler({ method: 'GET', url: '/api/video-os-lite/workspace?test=1', headers: {} }, res);
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.code, 'sign_in_required');
 });
 
 test('hosted caption and workspace routes precede the fallback without earlier shadowing', async () => {

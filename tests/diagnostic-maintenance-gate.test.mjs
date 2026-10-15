@@ -81,7 +81,7 @@ test('all nine API entrypoints retain their unsupported-method response with mai
   }
 });
 
-test('active mode denies all 31 mapped aliases and direct function paths before input or network side effects', async () => {
+test('active mode denies mapped APIs while unknown workspace paths stay 404 without side effects', async () => {
   assert.equal(mappedApiRoutes.length, 31);
   assert.equal(new Set(mappedApiRoutes.map(({ dest }) => dest)).size, 9);
   assert.deepEqual(new Set(mappedApiRoutes.map(({ dest }) => dest)), new Set(byDestination.keys()));
@@ -99,10 +99,13 @@ test('active mode denies all 31 mapped aliases and direct function paths before 
       for (const method of ['GET', 'POST', 'OPTIONS', 'DELETE']) {
         const res = response();
         await handler(poisonedRequest(method, url), res);
-        assert.equal(res.statusCode, 503, `${method} ${url}`);
-        assert.deepEqual(JSON.parse(res.body), { ok: false, code: 'diagnostic_maintenance_active' });
-        assert.equal(res.headers['cache-control'], 'private, no-store, max-age=0');
-        assert.equal(res.headers['retry-after'], '60');
+        const unknownWorkspacePath = handler === workspace && (url === '/api/(.*)' || url === '/api/video-os-lite/workspace.js');
+        assert.equal(res.statusCode, unknownWorkspacePath ? 404 : 503, `${method} ${url}`);
+        assert.equal(JSON.parse(res.body).code, unknownWorkspacePath ? 'not_found' : 'diagnostic_maintenance_active');
+        if (!unknownWorkspacePath) {
+          assert.equal(res.headers['cache-control'], 'private, no-store, max-age=0');
+          assert.equal(res.headers['retry-after'], '60');
+        }
         assert.equal(res.endCalls, 1);
       }
     }

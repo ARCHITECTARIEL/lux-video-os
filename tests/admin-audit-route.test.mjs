@@ -316,6 +316,33 @@ test('failed anonymous alert flood is deduped and responses never wait for Slack
   assert.equal(calls, 1);
 });
 
+test('request waitUntil receives the Slack promise without delaying the response', async () => {
+  const symbol = Symbol.for('@vercel/request-context');
+  const previous = globalThis[symbol];
+  let registered;
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  globalThis[symbol] = { get: () => ({ waitUntil(promise) { registered = promise; } }) };
+  try {
+    const res = response();
+    await createAdminHandler({
+      env: { ...TEST_ENV, WATCHDOG_SLACK_WEBHOOK_URL: 'https://hooks.slack.invalid/fixture' },
+      opsWriter: async () => {},
+      grantAdminCredit: async () => ({ duplicate: false }),
+      fetchImpl: () => pending,
+    })(request('grant-credit', { accountId: 'account-1', amount: 1, idempotencyKey: 'wait-until' }, {
+      headers: { authorization: `Bearer ${TEST_ENV.VIDEO_OS_ADMIN_TOKEN}` },
+    }), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.ended, true);
+    assert.ok(registered instanceof Promise);
+  } finally {
+    release({ ok: true });
+    if (previous === undefined) delete globalThis[symbol];
+    else globalThis[symbol] = previous;
+  }
+});
+
 test('missing Slack URL never calls fetch', async () => {
   let calls = 0;
   const res = response();
@@ -428,6 +455,18 @@ test('admin login requests are awaited-audited, including cron rejection', async
     }), cron, { env: TEST_ENV, opsWriter: async row => rows.push(row) });
     assert.equal(cron.statusCode, 403);
     assert.deepEqual(cron.body, { ok: false, code: 'cron_scope_forbidden' });
+
+    for (const authorization of [TEST_ENV.CRON_SECRET, `Basic ${TEST_ENV.CRON_SECRET}`]) {
+      const invalidScheme = response();
+      const originalError = console.error;
+      console.error = () => {};
+      try {
+        await handleAuthRequest(request('admin-login', { username: 'audit-owner', password: 'wrong-password' }, {
+          url: '/api/video-os-lite/admin-login', headers: { authorization },
+        }), invalidScheme, { env: TEST_ENV, opsWriter: async row => rows.push(row) });
+      } finally { console.error = originalError; }
+      assert.equal(invalidScheme.statusCode, 401);
+    }
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
@@ -438,5 +477,7 @@ test('admin login requests are awaited-audited, including cron rejection', async
     ['admin.request.completed', 200, 'admin-login', 'none'],
     ['admin.request.completed', 401, 'admin-login', 'none'],
     ['admin.request.completed', 403, 'admin-login', 'cron_secret'],
+    ['admin.request.completed', 401, 'admin-login', 'none'],
+    ['admin.request.completed', 401, 'admin-login', 'none'],
   ]);
 });

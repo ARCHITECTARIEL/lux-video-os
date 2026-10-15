@@ -20,13 +20,16 @@ import notFound from '../../lib/api-not-found.js';
 const handlers = { admin, asset, copywriter, identities, projects, providers, results, standard, enrollments, luxify, 'enrollment-upload': enrollmentUpload, 'scripted-photo': scriptedPhoto, 'provider-consent': providerConsent };
 
 export default async function handler(req, res) {
-  const pathname = new URL(req.url, 'https://video-os.invalid').pathname;
-  if (pathname === '/api/health' || !pathname.startsWith('/api/video-os-lite/')) {
+  const pathname = String(req.url || '').split('?', 1)[0];
+  if (pathname === '/api/health') {
     if (blockForDiagnosticMaintenance(req, res, { allowDiagnostic: true })) return;
-    return pathname === '/api/health' ? health(req, res) : notFound(req, res);
+    return health(req, res);
   }
-  const route = pathname.split('/').filter(Boolean).pop();
-  const selected = handlers[route];
+  if (!pathname.startsWith('/api/video-os-lite/')) return notFound(req, res);
+  const route = pathname.slice('/api/video-os-lite/'.length);
+  if (!route || route.includes('/')) return send(res, 404, { ok: false, code: 'not_found', error: 'Workspace route not found.' });
+  const selected = Object.hasOwn(handlers, route) ? handlers[route] : undefined;
+  if (!selected && route !== 'workspace') return send(res, 404, { ok: false, code: 'not_found', error: 'Workspace route not found.' });
   if (selected === admin) {
     const operation = new URL(req.url, 'https://video-os.invalid').searchParams.get('operation') || 'jobs';
     const deferred = deferAdminResponse(req, res, {
@@ -42,18 +45,15 @@ export default async function handler(req, res) {
     return selected(req, res);
   }
   if (blockForDiagnosticMaintenance(req, res, { allowDiagnostic: true })) return;
-  if (!selected) {
-    if (route === 'workspace') {
-      let session;
-      try {
-        session = sessionFromRequest(req);
-      } catch {
-        // Missing or invalid sessions use the same unauthenticated response.
-      }
-      if (!session) return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in required.' });
-      return send(res, 404, { ok: false, error: 'Workspace route not found.' });
+  if (route === 'workspace') {
+    let session;
+    try {
+      session = sessionFromRequest(req);
+    } catch {
+      // Missing or invalid sessions use the same unauthenticated response.
     }
-    return send(res, 404, { ok: false, error: 'Workspace route not found.' });
+    if (!session) return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in required.' });
+    return send(res, 404, { ok: false, code: 'not_found', error: 'Workspace route not found.' });
   }
   return selected(req, res);
 }
