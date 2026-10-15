@@ -835,3 +835,22 @@
 - Added a Luxify workflow regression using the existing deferred-admission fake. It omits `admissionAttempts` and asserts 5,760 submit attempts and pauses, `PROVIDER_TIMEOUT`, and failed-and-release.
 - The focused test passed on the original code (2/2). Temporarily changing the signature default to `1` made it fail (1/2); the production file was restored byte-for-byte, with an empty `git diff` for `workflows/video-render.js`. Syntax, import, and diff checks passed.
 - Changes remain uncommitted. No deploy, provider or network call, environment change, secret read, or dependency addition occurred.
+
+## 2026-10-15T12:53:29Z - [closure-writeback] [RECON-001] [heygen-shadow]
+
+- Added explicit `off`/`shadow`/`act` reconciler mode with fail-closed precedence over the legacy flag. Shadow uses the existing bounded v3 video inventory and decision branches while skipping binding resolution, job transitions, and retry release. The VPS worker keeps its 60-second cadence.
+- Added per-job shadow/act `ops_events` decisions, a shadow batch summary, and a strict details allow list. Updated the provider safety procedure with mode precedence, observation criteria, and VPS restart rollback. Added mocked decision, leak, and worker-gate tests.
+- Verification with `DATABASE_URL` and `HEYGEN_API_KEY` removed from each test process: 58 focused Node tests passed in-process, 4 Vitest tests passed with native config loading and threads, and import, syntax, and diff checks passed. Plain `npm test` and `npx vitest run` were blocked before test execution by this sandbox's `spawn EPERM`; a broader shared-process Node attempt stalled and was stopped.
+- Work remains uncommitted in this worktree. No push, deployment, environment-file edit, network or live HeyGen call, or non-loopback database connection occurred.
+
+## 2026-10-15T13:26:18Z - [closure-writeback] [RECON-001-follow-up] [QA-LOWs]
+
+- Restored the legacy HeyGen reconciler fallback to exact 'true' matching when the explicit mode is blank or unset. Updated the prior loose-parsing assertion and added precedence cases for uppercase, padded, numeric, yes, empty, and exact true values. Clarified precedence and shadow-only shadow_run wording in the provider safety document.
+- Ported the QA leak and shadow module-mock tests into repo tests. The module-mock scenario runs through the repo's Node experimental module-mock subprocess pattern; its 16 checks passed without skips. Three temporary lib/ops-log.js mutants (marker filter removed, reason filter removed, extra nextToken key) each failed the new leak test; the production file was restored byte-for-byte.
+- With DATABASE_URL and HEYGEN_API_KEY removed for each test command, final npm test passed 1,204 Node tests with 50 environment-gated skips and 4 Vitest tests. Import, syntax, and diff checks passed. An existing ignored .vercel/output blocked the first release preflight test; it was preserved within this worktree during the passing run and restored afterward.
+- Changes remain uncommitted. No push, network or live provider call, env-file edit, or non-loopback database connection occurred.
+
+## 2026-10-15T14:02:13Z - [closure-writeback] [RECON-001] [QA-test]
+
+- Replaced the synthetic HeyGen API key fixture in tests/heygen-reconciler-leak.test.mjs. Existing log, error, and output leak assertions continue to use the replacement value through API_KEY.
+- With DATABASE_URL and HEYGEN_API_KEY unset, the focused Node test passed (2/2); git diff --check passed. Changes remain uncommitted in this worktree.

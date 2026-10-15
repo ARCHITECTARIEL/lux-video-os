@@ -57,6 +57,7 @@ const options = (extra = {}) => ({
   lookup: async () => ({ complete: true, items: [] }),
   resolveBinding: async () => ({ applicationAccountId: 'acct' }),
   bind: async () => { throw new Error('unexpected bind'); }, release: async () => true,
+  opsLogger: async () => {},
   ...extra,
 });
 

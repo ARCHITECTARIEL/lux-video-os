@@ -2,7 +2,8 @@ import { HEYGEN_RECONCILIATION_RESOURCE_KINDS } from '../lib/heygen-reconciliati
 import { fetchHeygenPaginatedCollection } from './heygen.js';
 import { listHeygenUnknownJobs, releaseHeygenUnknownForRetry, transitionJob } from '../db/repositories.js';
 import { resolveFreshHeygenSpaceBinding } from '../db/heygen-space-binding-repository.js';
-import { heygenLimits } from '../lib/heygen-provider-safety.js';
+import { heygenLimits, heygenReconcilerMode } from '../lib/heygen-provider-safety.js';
+import { logOpsEventAwaited } from '../lib/ops-log.js';
 
 const API_ORIGIN = 'https://api.heygen.com';
 const PROVIDER_IDS = /^[A-Za-z0-9_.:-]{1,255}$/;
@@ -377,55 +378,118 @@ export async function reconcileUnknownHeygenJob(job, {
   release = releaseHeygenUnknownForRetry,
   now = () => new Date(),
   env = process.env,
+  mode = heygenReconcilerMode(env),
+  opsLogger = logOpsEventAwaited,
 } = {}) {
-  if (String(env.VIDEO_OS_HEYGEN_SUBMIT_RECONCILER_ENABLED || '').toLowerCase() !== 'true') return { outcome: 'disabled' };
+  if (mode === 'off') return { outcome: 'disabled' };
   if (!job || job.provider !== 'heygen' || job.status !== 'provider_submit_unknown') return { outcome: 'not_held' };
   const metadata = job.output?.heygenSubmission;
-  if (!/^vos-[a-f0-9]{24}$/.test(metadata?.marker || '') || !/^vos-[a-f0-9]{32}$/.test(metadata?.idempotencyKey || '') || !metadata?.claimedAt) return { outcome: 'attention', reason: 'missing_submission_identity' };
   const observedAt = new Date(now());
+  const graceValue = Number(env.VIDEO_OS_HEYGEN_RECONCILE_GRACE_SECONDS);
+  const graceSeconds = Number.isSafeInteger(graceValue) && graceValue >= 60 && graceValue <= 86_400 ? graceValue : 1_800;
+  const ageSeconds = metadata?.claimedAt ? Math.floor((observedAt.getTime() - new Date(metadata.claimedAt).getTime()) / 1000) : null;
+  const firstAgeSeconds = metadata?.claimedAt ? Math.floor((observedAt.getTime() - new Date(metadata.firstClaimedAt || metadata.claimedAt).getTime()) / 1000) : null;
   let inventory;
+  let matches = [];
+  let listCalls = 0;
+  const record = async (result, proposedAction, classification, providerJobId = null) => {
+    const reason = result.reason || (proposedAction === 'bind_found' ? 'single_match' : 'verified_absence');
+    const details = {
+      mode, ourState: job.status, marker: /^vos-[a-f0-9]{24}$/.test(metadata?.marker || '') ? metadata.marker : null,
+      matchedBy: matches.length ? 'title_marker' : 'none', matchCount: matches.length,
+      heygenVideoId: providerJobId, heygenStatus: matches.length === 1 ? matches[0]?.status ?? null : null,
+      proposedAction, classification, reason, pages: inventory?.pages ?? 0,
+      complete: inventory?.complete === true, truncated: inventory?.truncated === true,
+      ageSeconds: Number.isFinite(ageSeconds) ? ageSeconds : null,
+      firstAgeSeconds: Number.isFinite(firstAgeSeconds) ? firstAgeSeconds : null,
+      retryCount: Number.isSafeInteger(metadata?.retryCount) ? metadata.retryCount : 0, graceSeconds,
+    };
+    try {
+      await opsLogger({ level: proposedAction === 'attention' ? 'warn' : 'info', persist: true,
+        event: `heygen.reconciler.${mode}_decision`, accountId: job.accountId,
+        entityType: 'job', entityId: job.id, correlationId: job.correlationId,
+        code: `${mode}_${proposedAction}`.toUpperCase(), details });
+    } catch { /* Observability cannot change reconciliation. */ }
+    return mode === 'shadow' ? { outcome: 'shadow', proposedAction, classification, reason, pages: details.pages,
+      listCalls,
+      complete: details.complete, truncated: details.truncated, ...(providerJobId ? { providerJobId } : {}) } : result;
+  };
+  if (!/^vos-[a-f0-9]{24}$/.test(metadata?.marker || '') || !/^vos-[a-f0-9]{32}$/.test(metadata?.idempotencyKey || '') || !metadata?.claimedAt) return record({ outcome: 'attention', reason: 'missing_submission_identity' }, 'attention', 'UNKNOWN');
   try {
     const url = new URL(`${API_ORIGIN}/v3/videos`);
     url.searchParams.set('limit', '100');
     url.searchParams.set('title', metadata.marker);
+    if (lookup) listCalls = 1;
     inventory = await (lookup ?? (() => fetchHeygenPaginatedCollection(url.href, {
       maxPages: 10, maxItems: 500, requireExplicitPagination: true, allowTerminalTokenOmission: true,
-      fetchImpl, apiKey: env.HEYGEN_API_KEY,
+      fetchImpl: (...args) => { listCalls++; return (fetchImpl ?? fetch)(...args); }, apiKey: env.HEYGEN_API_KEY,
     })))(job);
   } catch {
-    return { outcome: 'attention', reason: 'incomplete_inventory' };
+    return record({ outcome: 'attention', reason: 'incomplete_inventory' }, 'attention', 'UNKNOWN');
   }
-  if (!inventory?.complete || inventory.truncated || !Array.isArray(inventory.items)) return { outcome: 'attention', reason: 'incomplete_inventory' };
-  const matches = inventory.items.filter(item => typeof item?.title === 'string' && item.title.includes(`[${metadata.marker}]`));
-  if (matches.length > 1) return { outcome: 'attention', reason: 'multiple_matches' };
+  if (!inventory?.complete || inventory.truncated || !Array.isArray(inventory.items)) return record({ outcome: 'attention', reason: 'incomplete_inventory' }, 'attention', 'UNKNOWN');
+  matches = inventory.items.filter(item => typeof item?.title === 'string' && item.title.includes(`[${metadata.marker}]`));
+  if (matches.length > 1) return record({ outcome: 'attention', reason: 'multiple_matches' }, 'attention', 'UNKNOWN');
   const providerJobId = matches[0]?.video_id ?? matches[0]?.id;
   if (matches.length === 1) {
-    if (typeof providerJobId !== 'string' || !PROVIDER_IDS.test(providerJobId)) return { outcome: 'attention', reason: 'invalid_match' };
-    const providerBinding = await resolveBinding({ accountId: job.accountId });
-    await bind({ jobId: job.id, stageTo: 'provider_submitted', eventType: 'provider.reconciled_found', providerJobId, providerBinding,
-      details: { method: 'complete_v3_video_inventory', marker: metadata.marker } });
-    return { outcome: 'found', providerJobId };
+    if (typeof providerJobId !== 'string' || !PROVIDER_IDS.test(providerJobId)) return record({ outcome: 'attention', reason: 'invalid_match' }, 'attention', 'UNKNOWN');
+    if (mode === 'act') {
+      const providerBinding = await resolveBinding({ accountId: job.accountId });
+      await bind({ jobId: job.id, stageTo: 'provider_submitted', eventType: 'provider.reconciled_found', providerJobId, providerBinding,
+        details: { method: 'complete_v3_video_inventory', marker: metadata.marker } });
+    }
+    return record({ outcome: 'found', providerJobId }, 'bind_found', 'FOUND', providerJobId);
   }
-  const graceSeconds = Number(env.VIDEO_OS_HEYGEN_RECONCILE_GRACE_SECONDS);
-  const graceMs = (Number.isSafeInteger(graceSeconds) && graceSeconds >= 60 && graceSeconds <= 86_400 ? graceSeconds : 1_800) * 1000;
+  const graceMs = graceSeconds * 1000;
   const ageMs = observedAt.getTime() - new Date(metadata.claimedAt).getTime();
   const firstAgeMs = observedAt.getTime() - new Date(metadata.firstClaimedAt || metadata.claimedAt).getTime();
-  if (!Number.isFinite(ageMs) || !Number.isFinite(firstAgeMs)) return { outcome: 'attention', reason: 'invalid_claim_time' };
-  if (firstAgeMs >= 24 * 60 * 60_000) return { outcome: 'attention', reason: 'idempotency_window_expired' };
-  if (ageMs < graceMs) return { outcome: 'held', reason: 'grace_period' };
-  if ((metadata.retryCount ?? 0) >= heygenLimits(env).maxRetries) return { outcome: 'attention', reason: 'ambiguous_retry_limit' };
+  if (!Number.isFinite(ageMs) || !Number.isFinite(firstAgeMs)) return record({ outcome: 'attention', reason: 'invalid_claim_time' }, 'attention', 'UNKNOWN');
+  if (firstAgeMs >= 24 * 60 * 60_000) return record({ outcome: 'attention', reason: 'idempotency_window_expired' }, 'attention', 'ABSENT');
+  if (ageMs < graceMs) return record({ outcome: 'held', reason: 'grace_period' }, 'hold', 'ABSENT');
+  if ((metadata.retryCount ?? 0) >= heygenLimits(env).maxRetries) return record({ outcome: 'attention', reason: 'ambiguous_retry_limit' }, 'attention', 'ABSENT');
+  if (mode === 'shadow') return record({ outcome: 'shadow' }, 'release_same_key_retry', 'ABSENT');
   const providerBinding = await resolveBinding({ accountId: job.accountId });
   const released = await release(job.id, { providerBinding, graceMs, now: observedAt });
-  return released ? { outcome: 'released_for_same_key_retry' } : { outcome: 'held', reason: 'state_changed' };
+  return released ? record({ outcome: 'released_for_same_key_retry' }, 'release_same_key_retry', 'ABSENT') : record({ outcome: 'held', reason: 'state_changed' }, 'hold', 'UNKNOWN');
 }
 
 export async function reconcileUnknownHeygenJobs(options = {}) {
-  if (String((options.env ?? process.env).VIDEO_OS_HEYGEN_SUBMIT_RECONCILER_ENABLED || '').toLowerCase() !== 'true') return [];
+  const mode = options.mode ?? heygenReconcilerMode(options.env ?? process.env);
+  if (mode === 'off') return [];
+  const started = Date.now();
   const jobs = await (options.listJobs ?? listHeygenUnknownJobs)(20);
   const results = [];
   for (const job of jobs) {
-    try { results.push({ jobId: job.id, ...await reconcileUnknownHeygenJob(job, options) }); }
-    catch { results.push({ jobId: job.id, outcome: 'attention', reason: 'lookup_or_binding_failed' }); }
+    try { results.push({ jobId: job.id, ...await reconcileUnknownHeygenJob(job, { ...options, mode }) }); }
+    catch {
+      results.push({ jobId: job.id, outcome: 'attention', reason: 'lookup_or_binding_failed', ...(mode === 'shadow' ? { proposedAction: 'attention', classification: 'UNKNOWN' } : {}) });
+      const metadata = job.output?.heygenSubmission;
+      const observedAt = new Date(options.now?.() ?? new Date());
+      const ageSeconds = metadata?.claimedAt ? Math.floor((observedAt.getTime() - new Date(metadata.claimedAt).getTime()) / 1000) : null;
+      const firstAgeSeconds = metadata?.claimedAt ? Math.floor((observedAt.getTime() - new Date(metadata.firstClaimedAt || metadata.claimedAt).getTime()) / 1000) : null;
+      const graceValue = Number((options.env ?? process.env).VIDEO_OS_HEYGEN_RECONCILE_GRACE_SECONDS);
+      try { await (options.opsLogger ?? logOpsEventAwaited)({ level: 'warn', persist: true,
+        event: `heygen.reconciler.${mode}_decision`, accountId: job.accountId, entityType: 'job', entityId: job.id,
+        correlationId: job.correlationId, code: `${mode}_attention`.toUpperCase(), details: {
+          mode, ourState: job.status, marker: /^vos-[a-f0-9]{24}$/.test(metadata?.marker || '') ? metadata.marker : null,
+          matchedBy: 'none', matchCount: 0, heygenVideoId: null, heygenStatus: null,
+          proposedAction: 'attention', classification: 'UNKNOWN', reason: 'lookup_or_binding_failed', pages: 0,
+          complete: false, truncated: false, ageSeconds: Number.isFinite(ageSeconds) ? ageSeconds : null,
+          firstAgeSeconds: Number.isFinite(firstAgeSeconds) ? firstAgeSeconds : null,
+          retryCount: Number.isSafeInteger(metadata?.retryCount) ? metadata.retryCount : 0,
+          graceSeconds: Number.isSafeInteger(graceValue) && graceValue >= 60 && graceValue <= 86_400 ? graceValue : 1_800,
+        } }); } catch { /* Logging failure cannot change batch processing. */ }
+    }
+  }
+  if (mode === 'shadow') {
+    const byProposedAction = Object.fromEntries(['bind_found', 'release_same_key_retry', 'hold', 'attention'].map(action => [action, results.filter(result => result.proposedAction === action).length]));
+    try { await (options.opsLogger ?? logOpsEventAwaited)({ level: 'info', persist: true, event: 'heygen.reconciler.shadow_run',
+      code: 'SHADOW_RUN', details: { jobsScanned: jobs.length, byProposedAction,
+        unknownCount: results.filter(result => result.classification === 'UNKNOWN').length,
+        listCalls: results.reduce((sum, result) => sum + (result.listCalls || 0), 0),
+        pagesTotal: results.reduce((sum, result) => sum + (result.pages || 0), 0),
+        incompleteCount: results.filter(result => result.reason === 'incomplete_inventory').length,
+        durationMs: Date.now() - started } }); } catch { /* Best-effort logging. */ }
   }
   return results;
 }
