@@ -14,6 +14,7 @@ base_url="${VIDEO_OS_BASE_URL:-}"
 cron_secret="${VIDEO_OS_CRON_SECRET:-}"
 expected_git_sha="${EXPECTED_GIT_SHA:-}"
 curl_bin="${CURL_BIN:-curl}"
+source "$(dirname "${BASH_SOURCE[0]}")/main-head-grace.sh"
 
 if [[ -z "$base_url" || -z "$cron_secret" ]]; then
   error 'Watchdog configuration is incomplete. Configure VIDEO_OS_BASE_URL and VIDEO_OS_CRON_SECRET.'
@@ -87,6 +88,14 @@ if [[ "$HTTP_STATUS" != '200' ]]; then
   error "Health request failed with HTTP $HTTP_STATUS."
   exit 1
 fi
+health_type="$(content_type "$work_dir/health.headers")"
+if [[ "$health_type" == text/html* ]] && legacy_spa_fallback "$work_dir/health.body"; then
+  grace_age=''
+  if grace_age="$(main_head_age_seconds)" && (( grace_age <= 1200 )); then
+    warning 'Legacy HTML health response during the 20-minute deployment grace period; skipping this sweep.'
+    exit 0
+  fi
+fi
 require_json_content_type 'Health' "$work_dir/health.headers" || exit 1
 
 health_fields=''
@@ -112,31 +121,10 @@ if [[ "$health_status" != 'ok' ]]; then
 fi
 
 if [[ "$deployed_git_sha" != "$expected_git_sha" ]]; then
-  main_head_epoch="${MAIN_HEAD_EPOCH:-}"
-  now_epoch="${NOW_EPOCH:-$(date +%s)}"
-  push_epoch=''
-
-  if [[ ! "$now_epoch" =~ ^[0-9]+$ ]]; then
-    error 'NOW_EPOCH must be Unix seconds when supplied.'
-    exit 1
-  fi
-
-  if ! push_epoch=$(node - "$main_head_epoch" 2>/dev/null <<'NODE'
-const raw = process.argv[2] || '';
-let seconds;
-if (/^[0-9]+$/.test(raw)) seconds = Number(raw);
-else seconds = Date.parse(raw) / 1000;
-if (!Number.isFinite(seconds) || seconds < 0) process.exit(1);
-process.stdout.write(String(Math.floor(seconds)));
-NODE
-  ); then
+  age_seconds=''
+  if ! age_seconds="$(main_head_age_seconds)"; then
     error 'The deployed SHA differs from main and MAIN_HEAD_EPOCH is missing or invalid.'
     exit 1
-  fi
-
-  age_seconds=$((now_epoch - push_epoch))
-  if (( age_seconds < 0 )); then
-    age_seconds=0
   fi
 
   if (( age_seconds <= 1200 )); then

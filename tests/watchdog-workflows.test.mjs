@@ -79,7 +79,11 @@ case "$url" in
 esac
 
 printf 'HTTP/2 %s\\r\\ncontent-type: %s\\r\\n\\r\\n' "$status" "$type" > "$headers"
-printf '%s' "$body" > "$output"
+if [[ "$url" == */api/health && -n "\${MOCK_HEALTH_FILE:-}" ]]; then
+  cat "$MOCK_HEALTH_FILE" > "$output"
+else
+  printf '%s' "$body" > "$output"
+fi
 printf '%s' "$status"
 `;
 
@@ -175,6 +179,35 @@ test('watchdog allows deployment grace for a fresh main push and does not sweep 
   assert.equal(result.calls, 'GET https://video.example/api/health\n');
 });
 
+test('watchdog allows only the known legacy HTML health fallback during deployment grace', { skip: !bashAvailable }, async (t) => {
+  const legacy = { MOCK_HEALTH_TYPE: 'text/html', MOCK_HEALTH_FILE: posixPath(resolve(root, 'public/index.html')) };
+  const fresh = await runScript(t, watchdogScript, { ...legacy, MAIN_HEAD_EPOCH: String(nowEpoch - 1200) });
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.match(fresh.stderr, /::warning::.*grace period/i);
+  assert.equal(fresh.calls, 'GET https://video.example/api/health\n');
+
+  const degraded = await runScript(t, watchdogScript, {
+    MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', gitSha: mainSha }),
+    MAIN_HEAD_EPOCH: String(nowEpoch - 600),
+  });
+  assert.equal(degraded.status, 1);
+  assert.equal(degraded.calls, 'GET https://video.example/api/health\n');
+
+  const arbitraryHtml = await runScript(t, watchdogScript, {
+    MOCK_HEALTH_TYPE: 'text/html', MOCK_HEALTH_BODY: '<html><title>Sign in</title></html>',
+    MAIN_HEAD_EPOCH: String(nowEpoch - 600),
+  });
+  assert.equal(arbitraryHtml.status, 1);
+
+  const futureEpoch = await runScript(t, watchdogScript, { ...legacy, MAIN_HEAD_EPOCH: String(nowEpoch + 1) });
+  assert.equal(futureEpoch.status, 1);
+  const missingEpoch = await runScript(t, watchdogScript, { ...legacy, MAIN_HEAD_EPOCH: '' });
+  assert.equal(missingEpoch.status, 1);
+  const stale = await runScript(t, watchdogScript, { ...legacy, MAIN_HEAD_EPOCH: String(nowEpoch - 1201) });
+  assert.equal(stale.status, 1);
+  assert.equal(stale.calls, 'GET https://video.example/api/health\n');
+});
+
 test('watchdog passes only after health, sweep, and all strict route probes pass', { skip: !bashAvailable }, async (t) => {
   const result = await runScript(t, watchdogScript);
   assert.equal(result.status, 0, result.stderr);
@@ -247,6 +280,34 @@ test('heartbeat fails closed when the URL or persisted heartbeat is unconfigured
   assert.match(missingHeartbeat.stderr, /::error::.*unconfigured or missing/i);
 });
 
+test('heartbeat allows only the legacy HTML health fallback during deployment grace', { skip: !bashAvailable }, async (t) => {
+  const legacy = { MOCK_HEALTH_TYPE: 'text/html', MOCK_HEALTH_FILE: posixPath(resolve(root, 'public/index.html')) };
+  const fresh = await runScript(t, heartbeatScript, { ...legacy, MAIN_HEAD_EPOCH: String(nowEpoch - 1200) });
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.match(fresh.stderr, /::warning::.*grace period/i);
+  assert.equal(fresh.calls, 'GET https://video.example/api/health\n');
+
+  const nonLegacy = await runScript(t, heartbeatScript, {
+    MOCK_HEALTH_TYPE: 'text/plain',
+    MAIN_HEAD_EPOCH: String(nowEpoch - 600),
+  });
+  assert.equal(nonLegacy.status, 1);
+
+  const arbitraryHtml = await runScript(t, heartbeatScript, {
+    MOCK_HEALTH_TYPE: 'text/html', MOCK_HEALTH_BODY: '<html><title>Sign in</title></html>',
+    MAIN_HEAD_EPOCH: String(nowEpoch - 600),
+  });
+  assert.equal(arbitraryHtml.status, 1);
+
+  const futureEpoch = await runScript(t, heartbeatScript, { ...legacy, MAIN_HEAD_EPOCH: String(nowEpoch + 1) });
+  assert.equal(futureEpoch.status, 1);
+  const missingEpoch = await runScript(t, heartbeatScript, { ...legacy, MAIN_HEAD_EPOCH: '' });
+  assert.equal(missingEpoch.status, 1);
+  const stale = await runScript(t, heartbeatScript, { ...legacy, MAIN_HEAD_EPOCH: String(nowEpoch - 1201) });
+  assert.equal(stale.status, 1);
+  assert.equal(stale.calls, 'GET https://video.example/api/health\n');
+});
+
 test('watchdog and heartbeat workflows parse and invoke the extracted scripts on schedule', async () => {
   const watchdogRaw = await readFile(resolve(root, '.github/workflows/watchdog-sweep.yml'), 'utf8');
   const heartbeatRaw = await readFile(resolve(root, '.github/workflows/heartbeat-check.yml'), 'utf8');
@@ -268,7 +329,9 @@ test('watchdog and heartbeat workflows parse and invoke the extracted scripts on
 
   assert.deepEqual(heartbeat.on.schedule, [{ cron: '0 * * * *' }]);
   assert.ok(heartbeat.on.workflow_dispatch !== undefined);
-  assert.equal(heartbeat.jobs.heartbeat.steps.at(-1).run, 'bash scripts/heartbeat-check.sh');
+  assert.equal(heartbeat.jobs.heartbeat.steps[0].with.ref, 'main');
+  assert.match(heartbeat.jobs.heartbeat.steps.at(-1).run, /MAIN_HEAD_EPOCH="\$\(git log -1 --format=%ct HEAD\)"/);
+  assert.match(heartbeat.jobs.heartbeat.steps.at(-1).run, /bash scripts\/heartbeat-check\.sh/);
   assert.equal(heartbeat.jobs.heartbeat.steps.at(-1).env.VIDEO_OS_BASE_URL, '${{ vars.VIDEO_OS_BASE_URL }}');
 });
 

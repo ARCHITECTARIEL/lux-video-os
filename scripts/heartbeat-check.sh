@@ -6,8 +6,14 @@ error() {
   printf '::error::%s\n' "$*" >&2
 }
 
+warning() {
+  printf '::warning::%s\n' "$*" >&2
+}
+
 base_url="${VIDEO_OS_BASE_URL:-}"
 curl_bin="${CURL_BIN:-curl}"
+source "$(dirname "${BASH_SOURCE[0]}")/main-head-grace.sh"
+
 max_age_seconds=2700
 
 if [[ -z "$base_url" ]]; then
@@ -42,6 +48,13 @@ if [[ "$status" != '200' ]]; then
 fi
 
 content_type="$(awk 'tolower($1) == "content-type:" { value = tolower($2) } END { gsub(/\r/, "", value); print value }' "$work_dir/health.headers")"
+if [[ "$content_type" == text/html* ]] && legacy_spa_fallback "$work_dir/health.body"; then
+  grace_age=''
+  if grace_age="$(main_head_age_seconds)" && (( grace_age <= 1200 )); then
+    warning 'Legacy HTML health response during the 20-minute deployment grace period; skipping this heartbeat check.'
+    exit 0
+  fi
+fi
 if [[ "$content_type" != application/json* ]]; then
   error 'Heartbeat health response must use an application/json content type.'
   exit 1

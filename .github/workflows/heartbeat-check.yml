@@ -15,6 +15,9 @@ jobs:
     steps:
       - name: Check out heartbeat checker
         uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 1
 
       - name: Use Node.js 24
         uses: actions/setup-node@v7
@@ -24,4 +27,6 @@ jobs:
       - name: Require a recent persisted watchdog heartbeat
         env:
           VIDEO_OS_BASE_URL: ${{ vars.VIDEO_OS_BASE_URL }}
-        run: bash scripts/heartbeat-check.sh
+        run: |
+          export MAIN_HEAD_EPOCH="$(git log -1 --format=%ct HEAD)"
+          bash scripts/heartbeat-check.sh
