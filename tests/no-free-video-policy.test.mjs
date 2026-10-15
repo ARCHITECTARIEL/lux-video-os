@@ -28,6 +28,7 @@ function accountDatabaseHarness() {
 
   const db = {
     async transaction(callback) { return callback(db); },
+    async execute() { return []; },
     insert(table) {
       return {
         values(values) {
@@ -119,7 +120,7 @@ async function runAccountPolicyScenario() {
       return activeDatabase;
     },
   } });
-  const { ensureAccount, updateAuthenticatedAccount } = await import('../db/repositories.js');
+  const { ensureAccount, setAccountRole, updateAuthenticatedAccount } = await import('../db/repositories.js');
 
   let harness = accountDatabaseHarness();
   activeDatabase = harness.db;
@@ -146,6 +147,28 @@ async function runAccountPolicyScenario() {
     initialCredits: 5000, registerAsTester: true,
   });
   assert.equal(afterTesterSignIn.credits.balance, 7300, 'a tester credit floor must never reduce a larger existing balance');
+
+  for (const preservedRole of ['ceo', 'workspace']) {
+    harness = accountDatabaseHarness();
+    activeDatabase = harness.db;
+    await ensureAccount({ accountId: 'ariel-account', email: 'ariel@luxmarketingcompany.com', name: 'Ariel' });
+    await setAccountRole('ariel-account', preservedRole, { actor: 'system_bootstrap' });
+    harness.state.grants.push({ accountId: 'ariel-account', entitlementKey: 'tester', enabled: true, sourceType: 'admin_tester_grant' });
+    for (const signInRole of ['customer', 'tester']) {
+      const account = await updateAuthenticatedAccount({
+        accountId: 'ariel-account', email: 'ariel@luxmarketingcompany.com', name: 'Ariel', role: signInRole,
+      });
+      assert.equal(account.user.role, preservedRole, `${signInRole} sign-in must preserve ${preservedRole}`);
+    }
+  }
+
+  harness = accountDatabaseHarness();
+  activeDatabase = harness.db;
+  const bootstrapped = await updateAuthenticatedAccount({
+    accountId: 'bootstrap-ceo', email: 'ariel@luxmarketingcompany.com', name: 'Ariel',
+    role: 'ceo', actor: 'system_bootstrap', entitlementKeys: ['ceoPreview'],
+  });
+  assert.equal(bootstrapped.user.role, 'ceo', 'credential-gated bootstrap promotes in the sign-in transaction');
 }
 
 if (process.argv[2] === '--account-policy-scenario') {

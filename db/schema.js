@@ -8,7 +8,7 @@ export const users = pgTable('users', {
   role: text('role').notNull().default('customer'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [check('users_role_ck', sql`${table.role} in ('customer', 'tester', 'workspace', 'ceo')`)]);
 
 export const authChallenges = pgTable('auth_challenges', {
   id: uuid('id').defaultRandom().primaryKey(),

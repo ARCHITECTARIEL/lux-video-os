@@ -107,7 +107,7 @@ async function loadWorkspaceAccount() {
   return updateAuthenticatedAccount({
     accountId, email,
     name: process.env.VIDEO_OS_WORKSPACE_NAME || 'LUX Workspace',
-    role: 'workspace', initialCredits: credits,
+    role: 'workspace', actor: 'system_bootstrap', initialCredits: credits,
     // liveRendering/standardRendering are unconditional here (not gated by
     // containedRenderingEntitlementKeys) -- the workspace credential is
     // itself the trust boundary, same as it's always been; this just keeps
@@ -138,9 +138,10 @@ function publicAuthError(error) {
 async function loadCeoAccount() {
   const email = String(process.env.VIDEO_OS_CEO_EMAIL || 'ariel@luxmarketingcompany.com').trim().toLowerCase();
   const credits = Math.max(1000, Number(process.env.VIDEO_OS_CEO_CREDITS || 10000));
+  const accountId = accountIdForEmail(email);
   return updateAuthenticatedAccount({
-    accountId: accountIdForEmail(email), email, name: process.env.VIDEO_OS_CEO_NAME || 'CEO Preview',
-    role: 'ceo', initialCredits: credits,
+    accountId, email, name: process.env.VIDEO_OS_CEO_NAME || 'CEO Preview',
+    role: 'ceo', actor: 'system_bootstrap', initialCredits: credits,
     entitlementKeys: ['ceoPreview', 'fullAccess'], sourceId: 'ceo_access_token',
   });
 }
