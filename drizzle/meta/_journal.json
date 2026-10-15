@@ -106,6 +106,20 @@
       "when": 1792080000000,
       "tag": "0014_pre_role_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792092633681,
+      "tag": "0015_luxify_cinematic_consent",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792092733036,
+      "tag": "0016_render_mode",
+      "breakpoints": true
     }
   ]
 }
