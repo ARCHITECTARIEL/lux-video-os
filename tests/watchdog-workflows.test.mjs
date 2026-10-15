@@ -122,6 +122,19 @@ async function runScript(t, script, overrides = {}) {
   return { ...result, calls };
 }
 
+async function legacyShellVariant(t, from, to) {
+  const directory = await mkdtemp(join(tmpdir(), 'video-os-legacy-shell-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, 'index.html');
+  const current = await readFile(resolve(root, 'public/index.html'), 'utf8');
+  const variant = from
+    ? current.replace(from, to)
+    : current.includes('\r\n') ? current.replaceAll('\r\n', '\n') : current.replaceAll('\n', '\r\n');
+  assert.notEqual(variant, current);
+  await writeFile(file, variant, 'utf8');
+  return posixPath(file);
+}
+
 test('watchdog fails closed when the production URL or cron secret is missing', { skip: !bashAvailable }, async (t) => {
   const missingUrl = await runScript(t, watchdogScript, { VIDEO_OS_BASE_URL: '' });
   assert.equal(missingUrl.status, 1);
@@ -186,6 +199,14 @@ test('watchdog allows only the known legacy HTML health fallback during deployme
   assert.match(fresh.stderr, /::warning::.*grace period/i);
   assert.equal(fresh.calls, 'GET https://video.example/api/health\n');
 
+  const alternateLineEndings = await runScript(t, watchdogScript, {
+    MOCK_HEALTH_TYPE: 'text/html', MOCK_HEALTH_FILE: await legacyShellVariant(t),
+    MAIN_HEAD_EPOCH: String(nowEpoch - 600),
+  });
+  assert.equal(alternateLineEndings.status, 0, alternateLineEndings.stderr);
+  assert.match(alternateLineEndings.stderr, /::warning::.*grace period/i);
+  assert.equal(alternateLineEndings.calls, 'GET https://video.example/api/health\n');
+
   const degraded = await runScript(t, watchdogScript, {
     MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', gitSha: mainSha }),
     MAIN_HEAD_EPOCH: String(nowEpoch - 600),
@@ -198,6 +219,15 @@ test('watchdog allows only the known legacy HTML health fallback during deployme
     MAIN_HEAD_EPOCH: String(nowEpoch - 600),
   });
   assert.equal(arbitraryHtml.status, 1);
+
+  const missingAppScript = await runScript(t, watchdogScript, {
+    MOCK_HEALTH_TYPE: 'text/html',
+    MOCK_HEALTH_FILE: await legacyShellVariant(t, '/studio.js', '/unrelated.js'),
+    MAIN_HEAD_EPOCH: String(nowEpoch - 600),
+  });
+  assert.equal(missingAppScript.status, 1);
+  assert.match(missingAppScript.stderr, /Unrecognized HTML health response \(sha256=[0-9a-f]{64}, bytes=\d+\); grace denied/);
+  assert.equal(missingAppScript.calls, 'GET https://video.example/api/health\n');
 
   const futureEpoch = await runScript(t, watchdogScript, { ...legacy, MAIN_HEAD_EPOCH: String(nowEpoch + 1) });
   assert.equal(futureEpoch.status, 1);
@@ -286,6 +316,14 @@ test('heartbeat allows only the legacy HTML health fallback during deployment gr
   assert.equal(fresh.status, 0, fresh.stderr);
   assert.match(fresh.stderr, /::warning::.*grace period/i);
   assert.equal(fresh.calls, 'GET https://video.example/api/health\n');
+
+  const alternateLineEndings = await runScript(t, heartbeatScript, {
+    MOCK_HEALTH_TYPE: 'text/html', MOCK_HEALTH_FILE: await legacyShellVariant(t),
+    MAIN_HEAD_EPOCH: String(nowEpoch - 600),
+  });
+  assert.equal(alternateLineEndings.status, 0, alternateLineEndings.stderr);
+  assert.match(alternateLineEndings.stderr, /::warning::.*grace period/i);
+  assert.equal(alternateLineEndings.calls, 'GET https://video.example/api/health\n');
 
   const nonLegacy = await runScript(t, heartbeatScript, {
     MOCK_HEALTH_TYPE: 'text/plain',
