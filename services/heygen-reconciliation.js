@@ -389,7 +389,7 @@ export async function reconcileUnknownHeygenJob(job, {
     url.searchParams.set('limit', '100');
     url.searchParams.set('title', metadata.marker);
     inventory = await (lookup ?? (() => fetchHeygenPaginatedCollection(url.href, {
-      maxPages: 10, maxItems: 500, requireExplicitPagination: true, allowTerminalTokenOmission: true, pageTokenParam: 'next_token',
+      maxPages: 10, maxItems: 500, requireExplicitPagination: true, allowTerminalTokenOmission: true,
       fetchImpl, apiKey: env.HEYGEN_API_KEY,
     })))(job);
   } catch {

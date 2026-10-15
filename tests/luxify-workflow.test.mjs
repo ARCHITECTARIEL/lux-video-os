@@ -302,6 +302,10 @@ if (runFixture) {
 
   const workflow = await import('../workflows/video-render.js');
 
+  test('workflow admission default remains 5760 attempts', () => {
+    assert.equal(workflow.DEFAULT_ADMISSION_ATTEMPTS, 5_760);
+  });
+
   test('persisted LUXIFY mode selects only the cinematic submit, poll, and finishing adapters', async () => {
     currentJob = luxifyJob();
     const avatarReadsBefore = calls.avatarReads.length;

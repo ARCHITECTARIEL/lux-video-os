@@ -821,3 +821,11 @@
 ## 2026-10-15T02:28:10Z - [closure-writeback] [FIX-001-addendum] [QA-security]
 
 - Completed the default-off HeyGen held-submit paging correction and fake-fetch failure coverage in this session. Node 24 checks passed: 1,155 Node tests (50 skipped), 4 Vitest tests, preview build (32 steps, 6 workflows, 47 routes), standalone workflow build, migration snapshot, imports, and diff check. The preview build did not change `package-lock.json`; changes remain uncommitted.
+
+## 2026-10-14 - FIX-001b (QA & Security)
+
+- Corrected held HeyGen v3 video inventory to send response `next_token` as the next request's `token` parameter. Kept reconciliation default-off and added distinct fail-closed pagination, 500-item cap, exact-cap, admission-default, and diagnostic-code row tests. Updated the provider safety note and CodeQL setup-node action to v7.
+
+## 2026-10-15T03:33:21Z - [closure-writeback] [FIX-001b] [QA-security]
+
+- Verified the cursor correction and regression coverage: 1,165 Node tests passed, 50 skipped, and 4 Vitest tests passed. The standalone workflow build test, migration snapshot check, import check, and `git diff --check` passed. All changes remain uncommitted in this worktree.

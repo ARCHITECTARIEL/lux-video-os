@@ -353,7 +353,7 @@ export async function fetchHeygenPaginatedCollection(url, options = {}) {
     if (!nextToken) throw new Error('HeyGen inventory pagination did not return a next token.');
     if (tokens.has(nextToken)) throw new Error('HeyGen inventory returned a repeated pagination token.');
     tokens.add(nextToken);
-    pageUrl.searchParams.set(options.pageTokenParam === 'next_token' ? 'next_token' : 'token', nextToken);
+    pageUrl.searchParams.set('token', nextToken);
   }
   throw new Error(`HeyGen inventory exceeded the ${maxPages}-page safety limit.`);
 }

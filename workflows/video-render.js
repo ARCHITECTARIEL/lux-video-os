@@ -399,7 +399,9 @@ export async function failWorkflow(jobId, error) {
   await markJobFailedAndRelease(jobId, category, message, error?.rejectedArtifact, options);
 }
 
-export async function videoRenderWorkflow(jobId, { admissionAttempts = 5_760, admissionPause = sleep } = {}) {
+export const DEFAULT_ADMISSION_ATTEMPTS = 5_760;
+
+export async function videoRenderWorkflow(jobId, { admissionAttempts = DEFAULT_ADMISSION_ATTEMPTS, admissionPause = sleep } = {}) {
   'use workflow';
   try {
     let submitted;
