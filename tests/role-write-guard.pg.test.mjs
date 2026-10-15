@@ -15,8 +15,8 @@ function assertThrowawayTarget() {
 }
 
 function psql(script) {
-  const result = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-f', '-'], {
-    input: script, encoding: 'utf8', env: { ...process.env, PGDATABASE: url }, maxBuffer: 1 << 20,
+  const result = spawnSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', url, '-f', '-'], {
+    input: script, encoding: 'utf8', env: { ...process.env }, maxBuffer: 1 << 20,
   });
   if (result.error) throw result.error;
   return { status: result.status, output: `${result.stdout}\n${result.stderr}` };

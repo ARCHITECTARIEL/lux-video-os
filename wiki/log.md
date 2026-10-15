@@ -839,3 +839,7 @@
 ## 2026-10-15T12:50:59Z - [closure-writeback] [FIX-002] [QA-security]
 
 - Added fail-closed LUXIFY consent expiry checks, closed account roles, dedicated privileged role writes, and hand-written `0014_pre_role_guard` migration. Audited all users.role write paths in `docs/FIX-002-ROLE-AUDIT.md` and confirmed the section 2f render-mode schema. Node 24 `npm test`: 1,168 passed, 51 skipped, one stale-lock packaging failure; workflow build, Drizzle check, import check, and diff check passed. No migration, provider, or production action was run. Schema lock needs fresh isolated PostgreSQL 18 recapture before release; changes remain uncommitted.
+
+## 2026-10-15 - [FIX-002b] [QA-security]
+
+- Recaptured `config/database-schema.lock.json` for 0000-0014 on a throwaway loopback PostgreSQL 18.6 (LF and CRLF identical; schemaSha256 `b9a94a75...`; control 0000-0013 reproduced `fe9a67f3...`). Fixed the opt-in role-guard PG test's psql connection (`-d <url>` instead of `PGDATABASE`) and ran it 1/1 on a throwaway loopback DB. Documented that scripted-photo STANDARD jobs run on heygen, so the 0016 render_mode backfill needs an `input->>'tier'` branch. Kept migration `0014_pre_role_guard`; consents become 0015 and render_mode 0016.
