@@ -241,11 +241,9 @@ function inventoryCollection(payload, { requireExplicitPagination = false } = {}
   return [];
 }
 
-function inventoryPagination(payload, { requireExplicitPagination = false } = {}) {
+function inventoryPagination(payload, { requireExplicitPagination = false, allowTerminalTokenOmission = false } = {}) {
   if (requireExplicitPagination) {
-    if (!Object.hasOwn(payload || {}, 'has_more')
-      || !Object.hasOwn(payload || {}, 'next_token')
-      || typeof payload.has_more !== 'boolean') {
+    if (!Object.hasOwn(payload || {}, 'has_more') || typeof payload.has_more !== 'boolean') {
       throw inventoryResponseError();
     }
     if (payload.has_more) {
@@ -257,7 +255,7 @@ function inventoryPagination(payload, { requireExplicitPagination = false } = {}
       }
       return { hasMore: true, nextToken: payload.next_token };
     }
-    if (payload.next_token !== null) throw inventoryResponseError();
+    if (!allowTerminalTokenOmission && (!Object.hasOwn(payload, 'next_token') || payload.next_token !== null)) throw inventoryResponseError();
     return { hasMore: false, nextToken: '' };
   }
   const data = payload?.data;
@@ -349,13 +347,13 @@ export async function fetchHeygenPaginatedCollection(url, options = {}) {
       items.push(item);
     }
     const { hasMore, nextToken } = inventoryPagination(payload, options);
-    if (items.length >= maxItems) return { items: items.slice(0, maxItems), pages: page, complete: !hasMore, truncated: hasMore || items.length > maxItems };
+    if (items.length >= maxItems) return { items: items.slice(0, maxItems), pages: page, complete: !hasMore && items.length === maxItems, truncated: hasMore || items.length > maxItems };
     if (!hasMore) return { items, pages: page, complete: true, truncated: false };
     if (page === maxPages && options.allowTruncatedPageLimit === true) return { items, pages: page, complete: false, truncated: true };
     if (!nextToken) throw new Error('HeyGen inventory pagination did not return a next token.');
     if (tokens.has(nextToken)) throw new Error('HeyGen inventory returned a repeated pagination token.');
     tokens.add(nextToken);
-    pageUrl.searchParams.set('token', nextToken);
+    pageUrl.searchParams.set(options.pageTokenParam === 'next_token' ? 'next_token' : 'token', nextToken);
   }
   throw new Error(`HeyGen inventory exceeded the ${maxPages}-page safety limit.`);
 }

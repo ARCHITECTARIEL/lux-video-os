@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mock } from 'node:test';
+import { PREMIUM_SCRIPTED_PHOTO_CREDITS } from '../lib/scripted-photo-contract.js';
 
 const ORIGIN = 'https://video.example';
 const ACCOUNT_ID = 'core-release-render-owner';
@@ -41,6 +42,7 @@ const standardJobsByKey = new Map();
 const calls = {
   authorizations: [],
   premiumReservations: [],
+  legacyPremiumReservations: [],
   standardReservations: [],
   providerReads: 0,
   workflowStarts: 0,
@@ -50,6 +52,7 @@ const calls = {
 let premiumConsentWithdrawn = false;
 let standardConsentWithdrawn = false;
 let failWorkflowStart = false;
+let allowLegacyPremium = false;
 
 function failure(message, statusCode, code, failureCategory) {
   return Object.assign(new Error(message), { statusCode, code, failureCategory });
@@ -80,8 +83,11 @@ mock.module('../db/repositories.js', {
       return true;
     },
     ensureAccount: async ({ accountId }) => ({ accountId, credits: { balance: 500, reserved: 0 } }),
-    getOwnedProject: async () => null,
-    getRenderAuthorizedIdentity: async () => null,
+    getOwnedProject: async () => allowLegacyPremium ? { id: PROJECT_ID, identityId: IDENTITY_ID, settings: {} } : null,
+    getRenderAuthorizedIdentity: async () => allowLegacyPremium ? {
+      id: IDENTITY_ID, overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY',
+      providerRenderableAvatarId: 'private-avatar-look', providerVoiceId: 'private-instant-voice',
+    } : null,
     getOwnedScriptedPhotoJobByIdempotency: async intent => {
       const job = jobsByKey.get(intent.idempotencyKey) || null;
       if (!job || job.accountId !== intent.accountId) return null;
@@ -139,6 +145,10 @@ mock.module('../db/repositories.js', {
       });
     },
     reserveRender: async input => {
+      if (!input.input.contractVersion) {
+        calls.legacyPremiumReservations.push(input);
+        throw failure('Reservation observed.', 409, 'reservation_observed', 'RECONCILIATION');
+      }
       calls.premiumReservations.push(input);
       assert.equal(input.accountId, ACCOUNT_ID);
       assert.equal(input.provider, 'heygen');
@@ -445,4 +455,12 @@ assert.equal(calls.workflowStarts, 1, 'recovery must not dispatch a second workf
 assert.equal(calls.premiumReservations.length, 2, 'only the original and uncertain intents reserve');
 
 assert.equal(calls.capturedErrors, capturedErrorsBeforeUncertainDispatch + 1);
+process.env.WORKFLOW_DISPATCH_MODE = 'poll';
+allowLegacyPremium = true;
+const legacyPremium = await call({ provider: 'heygen', projectId: PROJECT_ID, identityId: IDENTITY_ID,
+  idempotencyKey: randomUUID(), title, script, format: 'landscape' });
+assert.equal(legacyPremium.statusCode, 409);
+assert.equal(calls.legacyPremiumReservations.length, 1);
+assert.equal(calls.legacyPremiumReservations[0].costCredits, PREMIUM_SCRIPTED_PHOTO_CREDITS,
+  'the render-v2 Premium route must reserve the exact shared Premium credit amount');
 assert.equal(externalFetches, 0, 'fixture route QA must never contact HeyGen or RunPod');

@@ -20,6 +20,8 @@ No schema change was needed. Migration 0014 and the main-branch 0012/0013 journa
 
 Every `/v3/videos` POST uses `vos-` plus the first 32 hex characters of SHA-256 over `jobId|attempt`. The current attempt is 0; an ambiguous retry **always** uses the same key, as does a retry after a definitive 429/503. A stable `vos-` job hash marker is appended to the provider title for inventory lookup. The key, marker, attempt, retry count, and claim time are persisted in `video_jobs.output.heygenSubmission` before POST. The key contains no script, title, account identifier, or credential.
 
+The derived `vos-<32 hex>` key satisfies HeyGen's `Idempotency-Key` header rule, `/^[A-Za-z0-9_:.-]{1,255}$/`; the submit validator requires that exact derived shape, and the synthetic key test asserts the header rule across 10,000 job IDs.
+
 A 429 or 503 response to POST is treated as definitive rejection. It marks the lifecycle operation failed and returns the job to `workflow_started`; the next claim gets a new lifecycle attempt but the same provider idempotency key. `VIDEO_OS_HEYGEN_MAX_RETRY_ATTEMPTS` defaults to 6 (six requeues after the first submission); exhaustion fails with `PROVIDER_RETRY_EXHAUSTED` and releases reserved credits. A lost response, timeout, network error, malformed success, or other 5xx remains `provider_submit_unknown` and requires reconciliation. That state is never handled by the normal submit loop.
 
 Retry-After supports seconds and HTTP-date, clamped to 0–900 seconds. Without a valid header, delay uses full jitter from `[0, min(900 seconds, 1 second × 2^(retry number − 1)))`; clock and RNG can be injected in tests. A 429/503 on GET delays the next poll while retaining the provider job ID and state. Requeueing that job for another POST would risk duplicate generation.
@@ -28,7 +30,9 @@ Retry-After supports seconds and HTTP-date, clamped to 0–900 seconds. Without 
 
 `VIDEO_OS_HEYGEN_SUBMIT_RECONCILER_ENABLED` defaults off. When enabled, the VPS worker scans held jobs once per minute. The resolver uses the existing read-only v3 inventory adapter against `GET /v3/videos`; only a complete, bounded inventory can establish absence. A single matching title marker is attached to the existing provider lifecycle operation and moves the job to `provider_submitted`. Multiple matches, incomplete inventory, invalid IDs, or transport/binding failures stay held and are logged for attention. After `VIDEO_OS_HEYGEN_RECONCILE_GRACE_SECONDS` (default 1800, allowed 60–86400), verified absence releases the held job to `workflow_started` with the **same** idempotency key. After 24 hours from claim, automatic resubmission remains held because the documented idempotency replay window may have expired. Reaching the ambiguous retry limit also holds the job for attention; an unresolved provider outcome cannot safely be labelled a definitive failure.
 
-The existing `services/heygen-reconciliation.js` signed deletion contract and read-only resource adapter remain separate. This reconciliation adds no delete path. The exact v3 list response shape is validated by the existing explicit pagination contract; an unsupported shape fails closed and needs provider qualification before enabling the flag.
+The v3 video list request sends only `limit=100`, `title=<saved marker>`, and subsequent `next_token` cursors. It reads `{data, has_more, next_token}` pages until a page explicitly returns boolean `has_more: false`. HTTP, network, JSON, pagination-shape, repeated-cursor, item-cap, and page-cap failures make the inventory incomplete and keep the job held. A match on a later page is considered only after the whole inventory completes.
+
+The existing `services/heygen-reconciliation.js` signed deletion contract and read-only resource adapter remain separate. This reconciliation adds no delete path. The v3 list response shape is validated by the explicit pagination contract; an unsupported shape fails closed.
 
 ## RunPod
 
@@ -38,7 +42,7 @@ The existing `services/heygen-reconciliation.js` signed deletion contract and re
 
 Run `npm run build:preview` locally before pushing changes to `workflows/`. Unit tests alone do not check whether workflow-function bundles can load the modules reached from a workflow body; Node builtins such as `node:crypto` belong in step code.
 
-The regular provider tests inject fetch and use synthetic responses. The separate `npm run test:pg-race` suite exercises `transitionJob` concurrently against a disposable local Postgres through Neon's WebSocket proxy. It checks actual advisory-lock admission and persisted job statuses. The suite uses fixture binding/ledger adapters, so it does not qualify provider credentials, provider calls, or the complete live binding path. The exact v3 inventory shape still needs review before the default-off reconciler can be activated.
+The regular provider tests inject fetch and use synthetic responses, including multi-page v3 video inventory. The separate `npm run test:pg-race` suite exercises `transitionJob` concurrently against a disposable local Postgres through Neon's WebSocket proxy. It checks actual advisory-lock admission and persisted job statuses. The suite uses fixture binding/ledger adapters, so it does not qualify provider credentials, provider calls, or the complete live binding path. The reconciler remains default-off; local contract tests do not establish live provider qualification.
 
 ### Run the local admission race
 

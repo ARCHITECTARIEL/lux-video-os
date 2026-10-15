@@ -807,3 +807,17 @@
 - Covered Luxify held-submit reconciliation for found, complete-inventory absence, and ambiguous inventory; verified same-key reclaims, quote-bound reservation cost, provider URL digest round-trip, terminal failure and admission-wait release paths, and atomic reserved-credit release on retry exhaustion. Replaced the generic Premium `90` literal with `PREMIUM_SCRIPTED_PHOTO_CREDITS`. Added the offline, isolated workflow CLI build test and updated `docs/HEYGEN-PROVIDER-SAFETY.md`.
 - Node 24.14.1 verification: `npm test` passed 1,130 Node tests with 50 skips and 4/4 Vitest tests. After final test-only assertions, focused provider-claim, workflow-build, and failure-category tests passed. `npm run build:preview` packaged 32 steps, 6 workflows, and 47 routes; `npm run db:check`, `npm run check:imports`, and `git diff --check` passed. The preview DB check was snapshot-only.
 - Retry exhaustion retains PROV-001's atomic repository credit release rather than calling `markJobFailedAndRelease`; provider rejection and admission-wait timeout use that helper. Production Luxify prices remain an owner decision and were not set. Changes remain uncommitted in this worktree; no deploy, live provider or database call, migration, secret read, or dependency addition occurred.
+
+## 2026-10-15T02:19:14Z - [closure-writeback] [FIX-001] [QA-security]
+
+- The reconciliation CLI cleanup test used `path.includes('lux-video-os')` as its fake `realpath` classifier. That assumes a checkout directory name; under a differently named checkout it classifies the repository root as the private parent, so the asserted canonical cleanup path fails. The fake now compares the exact module-relative repository root path, matching the CLI's `root` definition.
+- Added malformed persisted-identity, admission timeout, exact Premium reservation cost, and idempotent failure-release regressions. Diagnostic audits now await a durable `ops_events` write; the canary's diagnostic DB client remains unopened, with an injected audit writer used in tests. CodeQL now pins Node 24.
+- Final Node v24.14.1 checks: `npm test` passed 1,153 Node tests (50 skipped) and 4/4 Vitest tests; preview build packaged 32 steps, six workflows, and 47 routes; the standalone workflow build test, migration snapshot check, import check, and `git diff --check` passed. The first preview build caused npm to add the root `engines` metadata to `package-lock.json`, so its source-integrity gate stopped that attempt; the stable rerun and final build passed. Changes remain uncommitted.
+
+## 2026-10-14 - FIX-001 addendum (QA & Security)
+
+- Corrected default-off held-submit v3 video inventory to use the saved title marker, bounded `limit=100`, and `next_token` paging; incomplete inventory holds the job. Fake-fetch and key-regex tests added. Node 24: 1,155 Node tests passed (50 skipped), 4 Vitest passed; preview packaged 32 steps, 6 workflows, 47 routes; standalone workflow, migration snapshot, import, and diff checks passed.
+
+## 2026-10-15T02:28:10Z - [closure-writeback] [FIX-001-addendum] [QA-security]
+
+- Completed the default-off HeyGen held-submit paging correction and fake-fetch failure coverage in this session. Node 24 checks passed: 1,155 Node tests (50 skipped), 4 Vitest tests, preview build (32 steps, 6 workflows, 47 routes), standalone workflow build, migration snapshot, imports, and diff check. The preview build did not change `package-lock.json`; changes remain uncommitted.
