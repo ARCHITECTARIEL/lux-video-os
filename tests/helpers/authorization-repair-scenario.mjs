@@ -109,6 +109,7 @@ if (scenario === 'claim') {
   let grants = [];
   const db = {
     transaction: async fn => fn(db),
+    async execute() { return []; },
     select(fields) {
       let table;
       return { from(value) { table = value; return this; }, where(condition) { conditions.push(new PgDialect().sqlToQuery(condition).sql); return this; }, for() { return this; }, limit() { return this; }, innerJoin() { return this; }, then(resolve, reject) {

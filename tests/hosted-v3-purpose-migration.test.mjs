@@ -26,7 +26,7 @@ test('0013 adds only the hosted v3 purpose CHECK declared in db/schema.js, valid
   assert.match(schema, /check\('identity_consents_hosted_v3_purpose_ck', sql`\$\{table\.policyVersion\} <> 'identity-provider-subject-consent-v3' or \$\{table\.consentPurpose\} is not distinct from 'hosted-avatar-consent'`\)/);
 
   const journal = JSON.parse(journalRaw);
-  const last = journal.entries.at(-1);
+  const last = journal.entries[13];
   assert.equal(last.idx, 13);
   assert.equal(last.tag, '0013_hosted_v3_purpose_guard');
 
@@ -41,7 +41,7 @@ test('0013 adds only the hosted v3 purpose CHECK declared in db/schema.js, valid
   assert.deepEqual(snapshot, previous);
 
   const plan = await migrationPlan();
-  assert.equal(plan.migrations.at(-1).tag, '0013_hosted_v3_purpose_guard');
+  assert.equal(plan.migrations[13].tag, '0013_hosted_v3_purpose_guard');
 });
 
 function psql(sql, db = database) {

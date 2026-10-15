@@ -35,6 +35,32 @@ import { authSessions, creditAccounts, creditTransactions, entitlements, identit
 export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING', 'PROCESSING', 'READY', 'FAILED']);
 export const IDENTITY_OVERALL_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING', 'READY', 'PARTIAL_FAILURE', 'FAILED', 'ARCHIVED']);
 const AUTH_ENTITLEMENT_SOURCE = 'validated_auth';
+export const ROLE = Object.freeze({ CUSTOMER: 'customer', TESTER: 'tester', WORKSPACE: 'workspace', CEO: 'ceo' });
+const ROLE_VALUES = new Set(Object.values(ROLE));
+
+function assertRole(role) {
+  if (!ROLE_VALUES.has(role)) throw new TypeError('Unsupported account role.');
+  return role;
+}
+
+async function setAccountRoleTx(tx, accountId, role, actor) {
+  assertRole(role);
+  if (!['admin', 'system_bootstrap', 'system_grant'].includes(actor)) throw new TypeError('Privileged role actor is required.');
+  if (actor === 'system_grant' && role !== ROLE.TESTER) throw new TypeError('System grant may only reapply tester role.');
+  await tx.execute(sql`select set_config('lux.role_write', 'admin', true)`);
+  await tx.update(users).set({ role, updatedAt: new Date() }).where(actor === 'system_grant'
+    ? and(eq(users.id, accountId), inArray(users.role, [ROLE.CUSTOMER, ROLE.TESTER]))
+    : eq(users.id, accountId));
+}
+
+export async function setAccountRole(accountId, role, { actor } = {}) {
+  if (!accountId) throw new TypeError('accountId is required.');
+  if (!['admin', 'system_bootstrap'].includes(actor)) throw new TypeError('Privileged role actor is required.');
+  return database().transaction(async (tx) => {
+    await setAccountRoleTx(tx, accountId, role, actor);
+    return getAccountContext(accountId, tx);
+  });
+}
 
 export function reconcileAuthenticatedEntitlements(existingGrants = [], entitlementKeys = []) {
   // Explicit admin revocation wins over every later sign-in, including workspace
@@ -73,11 +99,15 @@ export async function ensureAccount({ accountId, email, name, initialCredits = 0
   });
 }
 
-export async function updateAuthenticatedAccount({ accountId, email, name, role = 'customer', initialCredits = 0, entitlementKeys = [], sourceId = null, registerAsTester = false }) {
+export async function updateAuthenticatedAccount({ accountId, email, name, role = 'customer', actor = null, initialCredits = 0, entitlementKeys = [], sourceId = null, registerAsTester = false }) {
+  assertRole(role);
+  if ([ROLE.WORKSPACE, ROLE.CEO].includes(role) && actor !== 'system_bootstrap') throw new TypeError('Privileged sign-in role requires system bootstrap.');
   return database().transaction(async (tx) => {
     const now = new Date();
-    await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account', role })
-      .onConflictDoUpdate({ target: users.id, set: { email: email || null, name: name || 'Video OS Account', role, updatedAt: now } });
+    // Authentication may establish customer/tester on INSERT, never promote
+    // a persisted account by replaying a sign-in path.
+    await tx.insert(users).values({ id: accountId, email: email || null, name: name || 'Video OS Account', role: role === ROLE.TESTER ? ROLE.TESTER : ROLE.CUSTOMER })
+      .onConflictDoUpdate({ target: users.id, set: { email: email || null, name: name || 'Video OS Account', updatedAt: now } });
     // Credit floor for explicitly configured testers; never an authorization grant.
     if (registerAsTester && initialCredits > 0) {
       await tx.insert(creditAccounts).values({ accountId, balance: initialCredits })
@@ -94,12 +124,18 @@ export async function updateAuthenticatedAccount({ accountId, email, name, role 
     const existingGrants = await tx.select().from(entitlements).where(eq(entitlements.accountId, accountId));
     if (existingGrants.some(grant => grant.sourceType === 'admin_tester_grant' && grant.entitlementKey === 'tester'
       && grant.enabled && (!grant.expiresAt || new Date(grant.expiresAt) > now))) {
-      await tx.update(users).set({ role: 'tester' }).where(eq(users.id, accountId));
+      const [currentUser] = await tx.select({ role: users.role }).from(users).where(eq(users.id, accountId));
+      if (currentUser && [ROLE.CUSTOMER, ROLE.TESTER].includes(currentUser.role)) {
+        await setAccountRoleTx(tx, accountId, ROLE.TESTER, 'system_grant');
+      }
     }
     const { desiredKeys } = reconcileAuthenticatedEntitlements(existingGrants, entitlementKeys);
     await tx.update(entitlements).set({ enabled: false, updatedAt: now }).where(and(eq(entitlements.accountId, accountId), eq(entitlements.sourceType, AUTH_ENTITLEMENT_SOURCE), eq(entitlements.enabled, true)));
     for (const entitlementKey of desiredKeys) await tx.insert(entitlements).values({ accountId, entitlementKey, enabled: true, sourceType: AUTH_ENTITLEMENT_SOURCE, sourceId })
       .onConflictDoUpdate({ target: [entitlements.accountId, entitlements.entitlementKey], set: { enabled: true, sourceType: AUTH_ENTITLEMENT_SOURCE, sourceId, updatedAt: now } });
+    if (actor === 'system_bootstrap' && [ROLE.WORKSPACE, ROLE.CEO].includes(role)) {
+      await setAccountRoleTx(tx, accountId, role, actor);
+    }
     return getAccountContext(accountId, tx);
   });
 }
@@ -2279,6 +2315,7 @@ export async function registerAdminTester({ email, name, credits = 5000, note = 
   const initialCredits = Math.max(100, Number(credits) || 5000);
 
   return database().transaction(async (tx) => {
+    await tx.execute(sql`select set_config('lux.role_write', 'admin', true)`);
     const now = new Date();
     const matches = await tx.select().from(users).where(sql`lower(${users.email}) = ${normalizedEmail}`).for('update').limit(2);
     if (matches.length > 1) throw Object.assign(new Error('Account identity requires reconciliation.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
@@ -2366,6 +2403,7 @@ export async function listAdminTesters() {
 export async function revokeAdminTester(accountId) {
   if (!accountId) throw Object.assign(new Error('accountId is required.'), { statusCode: 400 });
   return database().transaction(async (tx) => {
+    await tx.execute(sql`select set_config('lux.role_write', 'admin', true)`);
     const now = new Date();
     await tx.update(users).set({ role: 'customer', updatedAt: now }).where(eq(users.id, accountId));
     await tx.update(entitlements).set({ enabled: false, sourceType: 'admin_tester_grant', sourceId: 'admin_console', updatedAt: now }).where(and(

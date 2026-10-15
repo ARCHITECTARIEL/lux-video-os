@@ -835,3 +835,7 @@
 - Added a Luxify workflow regression using the existing deferred-admission fake. It omits `admissionAttempts` and asserts 5,760 submit attempts and pauses, `PROVIDER_TIMEOUT`, and failed-and-release.
 - The focused test passed on the original code (2/2). Temporarily changing the signature default to `1` made it fail (1/2); the production file was restored byte-for-byte, with an empty `git diff` for `workflows/video-render.js`. Syntax, import, and diff checks passed.
 - Changes remain uncommitted. No deploy, provider or network call, environment change, secret read, or dependency addition occurred.
+
+## 2026-10-15T12:50:59Z - [closure-writeback] [FIX-002] [QA-security]
+
+- Added fail-closed LUXIFY consent expiry checks, closed account roles, dedicated privileged role writes, and hand-written `0014_pre_role_guard` migration. Audited all users.role write paths in `docs/FIX-002-ROLE-AUDIT.md` and confirmed the section 2f render-mode schema. Node 24 `npm test`: 1,168 passed, 51 skipped, one stale-lock packaging failure; workflow build, Drizzle check, import check, and diff check passed. No migration, provider, or production action was run. Schema lock needs fresh isolated PostgreSQL 18 recapture before release; changes remain uncommitted.

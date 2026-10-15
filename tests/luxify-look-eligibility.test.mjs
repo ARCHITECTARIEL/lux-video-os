@@ -4,6 +4,9 @@ import test from 'node:test';
 import {
   LUXIFY_CINEMATIC_CAPABILITY,
   LUXIFY_CINEMATIC_CONSENT_POLICY_VERSION,
+  LUXIFY_CONSENT_MAX_DAYS,
+  LUXIFY_CONSENT_DEFAULT_DAYS,
+  defaultLuxifyConsentExpiry,
   LUXIFY_LOOK_ELIGIBILITY_POLICY_VERSION,
   LuxifyLookEligibilityError,
   resolveLuxifyLookEligibility,
@@ -234,6 +237,22 @@ test('cinematic consent must be exact, active, current, and bound to the look', 
     mutate(input);
     expectDenied(input, 'CONSENT_INVALID');
   }
+});
+
+test('cinematic consent expiry is mandatory, exact, and at most 365 days', () => {
+  assert.equal(LUXIFY_CONSENT_MAX_DAYS, 365);
+  assert.equal(LUXIFY_CONSENT_DEFAULT_DAYS, 365);
+  assert.equal(defaultLuxifyConsentExpiry('2024-02-29T00:00:00.000Z'), '2025-02-28T00:00:00.000Z');
+  const accepted = Date.parse('2026-10-11T12:00:00.000Z');
+  const input = fixture([LOOKS[0]]);
+  input.looks[0].consent.expiresAt = new Date(accepted + 365 * 86_400_000).toISOString();
+  assert.doesNotThrow(() => resolveLuxifyLookEligibility(input, { now: NOW }));
+  for (const expiry of [null, new Date(accepted + 365 * 86_400_000 + 1).toISOString(), '2027-10-11', 'bad']) {
+    input.looks[0].consent.expiresAt = expiry;
+    expectDenied(input, 'CONSENT_INVALID');
+  }
+  input.looks[0].consent.expiresAt = new Date(NOW).toISOString();
+  expectDenied(input, 'CONSENT_INVALID');
 });
 
 test('cinematic consent rejects every non-current policy version', () => {
