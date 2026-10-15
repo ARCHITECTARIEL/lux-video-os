@@ -99,6 +99,13 @@
       "when": 1791996811211,
       "tag": "0013_hosted_v3_purpose_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792080000000,
+      "tag": "0014_pre_role_guard",
+      "breakpoints": true
     }
   ]
 }

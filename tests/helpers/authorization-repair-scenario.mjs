@@ -107,8 +107,10 @@ if (scenario === 'claim') {
   const { PgDialect } = await import('drizzle-orm/pg-core');
   let credits;
   let grants = [];
+  let writes = 0;
   const db = {
     transaction: async fn => fn(db),
+    async execute() { writes += 1; return []; },
     select(fields) {
       let table;
       return { from(value) { table = value; return this; }, where(condition) { conditions.push(new PgDialect().sqlToQuery(condition).sql); return this; }, for() { return this; }, limit() { return this; }, innerJoin() { return this; }, then(resolve, reject) {
@@ -116,6 +118,7 @@ if (scenario === 'claim') {
       } };
     },
     insert(table) { return { values(value) { return { onConflictDoUpdate() {
+      writes += 1;
       if (table === schema.users) user = value;
       else if (table === schema.creditAccounts) credits = value;
       else if (table === schema.entitlements) grants.push(value);
@@ -134,6 +137,14 @@ if (scenario === 'claim') {
   const existing = await registerAdminTester({ email });
   assert.equal(existing.user.id, 'legacy-existing-account', 'existing identities are preserved');
   assert.equal(await authenticatedAccountId(accountIdForEmail(email), email), 'legacy-existing-account', 'verified sign-in resolves the original grant owner');
+  for (const role of ['ceo', 'workspace']) {
+    user.role = role;
+    const before = writes;
+    await assert.rejects(registerAdminTester({ email }), { statusCode: 409, message: /privileged account cannot be registered as a tester/i });
+    assert.equal(writes, before, 'privileged account rejection must precede all writes');
+    assert.equal(user.role, role);
+  }
+  user.role = 'tester';
   user.email = email.toUpperCase();
   assert.equal(await authenticatedAccountId(accountIdForEmail(email), email), 'legacy-existing-account');
   assert.match(conditions.at(-1), /lower\(/, 'stored email must be normalized by the query, not only its parameter');
