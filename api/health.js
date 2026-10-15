@@ -1,0 +1,85 @@
+import { sql, desc, eq } from 'drizzle-orm';
+
+const startedAt = new Date().toISOString();
+const HEADERS = {
+  'Cache-Control': 'no-store',
+  'Content-Type': 'application/json; charset=utf-8',
+  'X-Content-Type-Options': 'nosniff',
+};
+
+async function probeDatabase() {
+  const { database } = await import('../db/client.js');
+  await database().execute(sql`select 1`);
+}
+
+async function readLastSweepAt() {
+  const [{ database }, { opsEvents }] = await Promise.all([import('../db/client.js'), import('../db/schema.js')]);
+  const rows = await database().select({ createdAt: opsEvents.createdAt }).from(opsEvents)
+    .where(eq(opsEvents.event, 'watchdog_heartbeat')).orderBy(desc(opsEvents.createdAt)).limit(1);
+  return rows[0]?.createdAt?.toISOString() || null;
+}
+
+async function within(deadlineMs, operation) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), deadlineMs); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function createHealthHandler({ env = process.env, dbProbe = probeDatabase, lastSweep = readLastSweepAt, now = () => new Date() } = {}) {
+  return async function handler(req, res) {
+    for (const [name, value] of Object.entries(HEADERS)) res.setHeader(name, value);
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.statusCode = 405;
+      res.setHeader('Allow', 'GET, HEAD');
+      res.end(JSON.stringify({ ok: false, code: 'method_not_allowed' }));
+      return;
+    }
+
+    const dbConfigured = Boolean(env.DATABASE_URL);
+    const began = Date.now();
+    let dbOk = false;
+    let dbCode;
+    if (!dbConfigured) dbCode = 'db_unconfigured';
+    else {
+      try {
+        await within(2000, dbProbe);
+        dbOk = true;
+      } catch (error) {
+        dbCode = error?.message === 'timeout' ? 'db_timeout' : 'db_unavailable';
+      }
+    }
+    let lastSweepAt = null;
+    if (dbOk) {
+      try { lastSweepAt = await within(2000, lastSweep); } catch { /* heartbeat has a separate alarm */ }
+    }
+    const blobOk = Boolean(env.BLOB_READ_WRITE_TOKEN);
+    const providerOk = Boolean(env.HEYGEN_API_KEY);
+    const status = !dbOk || !blobOk ? 'fail' : !providerOk ? 'degraded' : 'ok';
+    const body = {
+      status,
+      service: 'lux-video-os',
+      deploymentId: env.VERCEL_DEPLOYMENT_ID || null,
+      gitSha: env.VERCEL_GIT_COMMIT_SHA || null,
+      gitRef: env.VERCEL_GIT_COMMIT_REF || null,
+      env: env.VERCEL_ENV || null,
+      startedAt,
+      checkedAt: now().toISOString(),
+      checks: {
+        db: { ok: dbOk, critical: true, latencyMs: Date.now() - began, ...(dbCode ? { code: dbCode } : {}) },
+        blob: { ok: blobOk, critical: true, configured: blobOk },
+        provider: { ok: providerOk, critical: false, configured: providerOk },
+        watchdog: { critical: false, lastSweepAt },
+      },
+    };
+    res.statusCode = status === 'fail' ? 503 : 200;
+    res.end(req.method === 'HEAD' ? undefined : JSON.stringify(body));
+  };
+}
+
+export default createHealthHandler();

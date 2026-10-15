@@ -1,4 +1,4 @@
-import admin from '../../routes/video-os-lite/admin.js';
+import admin, { adminActorType } from '../../routes/video-os-lite/admin.js';
 import asset from '../../routes/video-os-lite/asset.js';
 import copywriter from '../../routes/video-os-lite/copywriter.js';
 import identities from '../../routes/video-os-lite/identities.js';
@@ -13,14 +13,29 @@ import providerConsent from '../../routes/video-os-lite/provider-consent.js';
 import luxify from '../../routes/video-os-lite/luxify.js';
 import { send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
+import { deferAdminResponse } from '../../lib/admin-request-audit.js';
 
 const handlers = { admin, asset, copywriter, identities, projects, providers, results, standard, enrollments, luxify, 'enrollment-upload': enrollmentUpload, 'scripted-photo': scriptedPhoto, 'provider-consent': providerConsent };
 
 export default async function handler(req, res) {
-  if (blockForDiagnosticMaintenance(req, res, { allowDiagnostic: true })) return;
   const pathname = new URL(req.url, 'https://video-os.invalid').pathname;
   const route = pathname.split('/').filter(Boolean).pop();
   const selected = handlers[route];
+  if (selected === admin) {
+    const operation = new URL(req.url, 'https://video-os.invalid').searchParams.get('operation') || 'jobs';
+    const deferred = deferAdminResponse(req, res, {
+      operation,
+      actorType: () => adminActorType(req),
+      env: process.env,
+    });
+    if (blockForDiagnosticMaintenance(req, res, { allowDiagnostic: true })) {
+      await deferred.wait();
+      return;
+    }
+    deferred.cancel();
+    return selected(req, res);
+  }
+  if (blockForDiagnosticMaintenance(req, res, { allowDiagnostic: true })) return;
   if (!selected) {
     if (route === 'workspace') {
       let session;

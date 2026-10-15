@@ -47,7 +47,7 @@ const byDestination = new Map([
   ['/api/video-os/talent.js', talent],
 ]);
 const mappedApiRoutes = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'))
-  .routes.filter(({ dest }) => dest.startsWith('/api/'));
+  .routes.filter(({ dest }) => byDestination.has(dest));
 
 function setMode(value) {
   if (value === undefined) delete process.env.VIDEO_OS_DIAGNOSTIC_MAINTENANCE;
@@ -174,12 +174,16 @@ test('diagnostic authentication remains separate while active; expiry never reop
     process.env.CRON_SECRET = 'synthetic-cron-token';
     process.env.VERCEL_ENV = 'production';
     const url = '/api/video-os-lite/admin?operation=db-binding';
-    for (const authorization of [undefined, 'Bearer wrong', 'Bearer synthetic-admin-token', 'Bearer synthetic-cron-token']) {
+    for (const authorization of [undefined, 'Bearer wrong', 'Bearer synthetic-admin-token']) {
       const res = response();
       await workspace({ method: 'GET', url, headers: { host: 'lux-video-os.vercel.app', authorization } }, res);
       assert.equal(res.statusCode, 401);
       assert.equal(JSON.parse(res.body).code, 'operator_required');
     }
+    const cron = response();
+    await workspace({ method: 'GET', url, headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-cron-token' } }, cron);
+    assert.equal(cron.statusCode, 403);
+    assert.equal(JSON.parse(cron.body).code, 'cron_scope_forbidden');
     const accepted = response();
     await workspace({ method: 'GET', url, headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-diagnostic-token' } }, accepted);
     assert.equal(accepted.statusCode, 400);

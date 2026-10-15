@@ -40,6 +40,19 @@ test('server router: healthz responds without touching the route table', async (
   });
 });
 
+test('server router: health and unknown API paths stay JSON', async () => {
+  await withServer(async (base) => {
+    const health = await request(`${base}/api/health`);
+    assert.equal(health.status, 503);
+    assert.match(health.headers['content-type'], /application\/json/);
+    assert.equal(JSON.parse(health.body).status, 'fail');
+    const unknown = await request(`${base}/api/zz-unknown`);
+    assert.equal(unknown.status, 404);
+    assert.match(unknown.headers['content-type'], /application\/json/);
+    assert.equal(JSON.parse(unknown.body).code, 'not_found');
+  });
+});
+
 test('server router: static JS asset is served from public/ with the right content type', async () => {
   await withServer(async (base) => {
     const res = await request(`${base}/app.js`);

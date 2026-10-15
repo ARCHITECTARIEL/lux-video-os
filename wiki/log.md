@@ -835,3 +835,10 @@
 - Added a Luxify workflow regression using the existing deferred-admission fake. It omits `admissionAttempts` and asserts 5,760 submit attempts and pauses, `PROVIDER_TIMEOUT`, and failed-and-release.
 - The focused test passed on the original code (2/2). Temporarily changing the signature default to `1` made it fail (1/2); the production file was restored byte-for-byte, with an empty `git diff` for `workflows/video-render.js`. Syntax, import, and diff checks passed.
 - Changes remain uncommitted. No deploy, provider or network call, environment change, secret read, or dependency addition occurred.
+
+## 2026-10-15T12:56:39Z - [closure-writeback] [REL-010] [health-watchdog] [admin-audit]
+
+- Added JSON `/api/health` and API 404 handlers, ordered Vercel routes, strict watchdog and hourly heartbeat checks, and the pinned closed-PR Neon preview cleanup workflow. Successful watchdog sweeps record `watchdog_heartbeat` in the existing `ops_events` table; no migration was needed.
+- Awaited an `admin.request.completed` audit for admin requests, including login and maintenance denials. Cron credentials are limited to watchdog sweep and Stripe reconciliation. Optional admin write alerts reuse `WATCHDOG_SLACK_WEBHOOK_URL` with bounded Slack text; audit and notification failures preserve responses.
+- Offline verification with `DATABASE_URL` and `HEYGEN_API_KEY` unset: `npm test` passed 1,192 Node tests (50 expected skips) and 4 Vitest tests; `npm run workflow:build`, `npm run db:check`, `npm run check:imports`, and the 11 workflow dry-run tests passed. Generated `.vercel/output` from the local build was removed after verification.
+- Historical preview budget coverage counted 12 functions; these two required API handlers bring the source plus Workflow runtime count to 14. The test now asserts that inventory without claiming Hobby deployability. Live smoke and the current platform limit remain unverified. One local REL-010 commit was made; no push, deployment, live/network call, environment change, migration application, or secret print occurred.

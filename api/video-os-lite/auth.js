@@ -1,14 +1,15 @@
 import crypto from 'node:crypto';
 import { accountDto } from '../../db/dto.js';
 import { authenticatedAccountId, consumeRateLimit, ensureAccount, getAccountContext, recordSignIn, updateAuthenticatedAccount } from '../../db/repositories.js';
-import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, DEFAULT_TRIAL_CREDITS, handleOptions, makeSession, normalizeEmail, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken } from '../../lib/video-os-account.js';
+import { accountIdForEmail, clearAdminCookie, clearOauthStateCookie, clearSessionCookie, consumeMagicToken, DEFAULT_TRIAL_CREDITS, handleOptions, makeSession, normalizeEmail, oauthStateCookie, parseCookies, readJson, saveMagicToken, send, sendMagicEmail, sessionCookie, sessionFromRequest, validateMagicToken, verifySessionToken } from '../../lib/video-os-account.js';
 import { captureRouteError } from '../../lib/video-os-observability.js';
 import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleOAuthConfigured } from '../../lib/google-oauth.js';
 import { containedRenderingEntitlementKeys, isTesterAccountId, isTesterEmailDomain, isTesterEmailExact, publicOrigin } from '../../lib/video-os-security.js';
 import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
+import { deferAdminResponse } from '../../lib/admin-request-audit.js';
 
 function route(req) {
-  const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
+  const url = new URL(req.url, 'https://lux-video-os.vercel.app');
   return url.pathname.split('/').pop();
 }
 
@@ -87,6 +88,18 @@ function adminCookie(token) {
   return `vos_admin=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${60 * 60 * 12}`;
 }
 
+function adminLoginActorType(req, env) {
+  const authorization = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const adminToken = String(env.VIDEO_OS_ADMIN_TOKEN || '').trim();
+  const cronSecret = String(env.CRON_SECRET || '').trim();
+  if (adminToken && timingSafeMatch(authorization, adminToken)) return 'admin_token';
+  if (cronSecret && timingSafeMatch(authorization, cronSecret)) return 'cron_secret';
+  try {
+    if (verifySessionToken(parseCookies(req).vos_admin).accountId === 'admin') return 'session';
+  } catch {}
+  return 'none';
+}
+
 async function loadWorkspaceAccount() {
   const email = String(process.env.VIDEO_OS_WORKSPACE_EMAIL || 'workspace@luxvideoos.local').trim().toLowerCase();
   const credits = Math.max(500, Number(process.env.VIDEO_OS_WORKSPACE_CREDITS || 5000));
@@ -131,11 +144,20 @@ async function loadCeoAccount() {
     entitlementKeys: ['ceoPreview', 'fullAccess'], sourceId: 'ceo_access_token',
   });
 }
-export default async function handler(req, res) {
-  if (blockForDiagnosticMaintenance(req, res)) return;
-  if (handleOptions(req, res)) return;
+export async function handleAuthRequest(req, res, deps = {}) {
   const action = route(req);
+  const env = deps.env || process.env;
+  const actorType = action === 'admin-login' ? () => adminLoginActorType(req, env) : 'none';
+  const deferred = action === 'admin-login' ? deferAdminResponse(req, res, {
+    operation: 'admin-login', actorType, env, writer: deps.opsWriter, fetchImpl: deps.fetchImpl,
+  }) : null;
   try {
+    if (blockForDiagnosticMaintenance(req, res, { env })) return;
+    if (handleOptions(req, res)) return;
+    const resolvedActorType = action === 'admin-login' ? adminLoginActorType(req, env) : 'none';
+    if (action === 'admin-login' && resolvedActorType === 'cron_secret') {
+      return send(res, 403, { ok: false, code: 'cron_scope_forbidden' });
+    }
     if (action === 'ceo-access') {
       if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'Use the private CEO access link.' });
       const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
@@ -297,5 +319,11 @@ export default async function handler(req, res) {
     });
     const failure = publicAuthError(error);
     return send(res, failure.status, failure.payload);
+  } finally {
+    if (deferred) await deferred.wait();
   }
+}
+
+export default function handler(req, res) {
+  return handleAuthRequest(req, res);
 }
