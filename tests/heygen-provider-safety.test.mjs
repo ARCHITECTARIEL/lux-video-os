@@ -92,7 +92,7 @@ const reconEnv = { VIDEO_OS_HEYGEN_SUBMIT_RECONCILER_ENABLED: 'true', VIDEO_OS_H
 
 test('reconciler binds one match, releases verified absence, and holds ambiguity', async () => {
   const calls = [];
-  const common = { env: reconEnv, now: () => new Date('2026-10-14T12:00:00Z'), resolveBinding: async () => ({ applicationAccountId: 'account-1' }),
+  const common = { env: reconEnv, now: () => new Date('2026-10-14T12:00:00Z'), resolveBinding: async () => ({ applicationAccountId: 'account-1' }), opsLogger: async () => {},
     bind: async input => calls.push(input), release: async input => { calls.push(input); return true; } };
   const found = await reconcileUnknownHeygenJob(unknown, { ...common, lookup: async () => ({ complete: true, items: [{ title: `[${unknown.output.heygenSubmission.marker}]`, video_id: 'provider-1' }] }) });
   assert.equal(found.outcome, 'found');
@@ -116,6 +116,7 @@ test('reconciler uses the first claim for the 24 hour idempotency cutoff', async
   } } };
   const result = await reconcileUnknownHeygenJob(stale, {
     env: reconEnv,
+    opsLogger: async () => {},
     now: () => new Date('2026-10-14T12:00:00Z'),
     lookup: async () => ({ complete: true, items: [] }),
     release: async () => { throw new Error('expired claim must not be released'); },

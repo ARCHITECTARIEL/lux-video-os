@@ -37,12 +37,23 @@ import { driveJobSafely, log } from '../lib/video-os-render-driver.js';
 import { reconcileStripePayments } from '../lib/video-os-stripe-reconciliation.js';
 import { runWatchdogSweep } from '../lib/video-os-watchdog.js';
 import { reconcileUnknownHeygenJobs } from '../services/heygen-reconciliation.js';
+import { heygenReconcilerMode } from '../lib/heygen-provider-safety.js';
+import { logOpsEventAwaited } from '../lib/ops-log.js';
 
 const POLL_INTERVAL_MS = Number(process.env.RENDER_WORKER_POLL_MS || 8000);
 const CONCURRENCY = Math.max(1, Number(process.env.RENDER_WORKER_CONCURRENCY || 4));
 const WATCHDOG_INTERVAL_MS = Number(process.env.RENDER_WORKER_WATCHDOG_INTERVAL_MS || 5 * 60_000);
 const STRIPE_RECONCILIATION_INTERVAL_MS = Number(process.env.RENDER_WORKER_STRIPE_RECONCILIATION_INTERVAL_MS || 24 * 60 * 60_000);
 const HEYGEN_RECONCILIATION_INTERVAL_MS = 60_000;
+
+export async function runHeygenReconciliationIfDue({ env = process.env, nowMs = Date.now(), lastRunAt = 0,
+  reconcile = reconcileUnknownHeygenJobs, logger = logOpsEventAwaited } = {}) {
+  const mode = heygenReconcilerMode(env);
+  if (mode === 'off' || nowMs - lastRunAt < HEYGEN_RECONCILIATION_INTERVAL_MS) return { ran: false, lastRunAt };
+  const results = await reconcile({ env, mode, opsLogger: logger });
+  for (const result of results) log('render_worker.heygen_submit_reconciled', result);
+  return { ran: true, lastRunAt: nowMs, results };
+}
 
 async function runBatch(jobs) {
   const queue = [...jobs];
@@ -108,11 +119,12 @@ async function mainLoop() {
       lastStripeReconciliationRunAt = Date.now();
       await runStripeReconciliationSafely();
     }
-    if (process.env.VIDEO_OS_HEYGEN_SUBMIT_RECONCILER_ENABLED === 'true'
-      && Date.now() - lastHeygenReconciliationRunAt >= HEYGEN_RECONCILIATION_INTERVAL_MS) {
+    try {
+      const heygenRun = await runHeygenReconciliationIfDue({ lastRunAt: lastHeygenReconciliationRunAt });
+      lastHeygenReconciliationRunAt = heygenRun.lastRunAt;
+    } catch {
       lastHeygenReconciliationRunAt = Date.now();
-      const results = await reconcileUnknownHeygenJobs();
-      for (const result of results) log('render_worker.heygen_submit_reconciled', result);
+      log('render_worker.heygen_reconciliation_failed', { code: 'HEYGEN_RECONCILIATION_FAILED' });
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
