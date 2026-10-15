@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { createHealthHandler } from '../api/health.js';
-import notFound from '../api/not-found.js';
+import { createHealthHandler } from '../lib/health.js';
+import notFound from '../lib/api-not-found.js';
 
 function response() {
   const headers = {};
@@ -27,11 +27,11 @@ async function health(method = 'GET', overrides = {}, deps = {}) {
   return res;
 }
 
-test('health reports an ok JSON response with identity, checks, and no-store', async () => {
+test('health reports an ok JSON response with identity, checks, and short CDN cache', async () => {
   const res = await health();
   const body = JSON.parse(res.body);
   assert.equal(res.statusCode, 200);
-  assert.equal(res.headers['cache-control'], 'no-store');
+  assert.equal(res.headers['cache-control'], 'public, s-maxage=15, max-age=0');
   assert.match(res.headers['content-type'], /application\/json/);
   assert.equal(res.headers['x-content-type-options'], 'nosniff');
   assert.equal(body.status, 'ok');
@@ -104,8 +104,11 @@ test('API fallback gives JSON 404 for any method and drops query text', () => {
 test('Vercel routes preserve explicit API and static destinations before fallback', () => {
   const routes = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url))).routes;
   const resolve = path => routes.find(route => new RegExp(`^${route.src}$`).test(path))?.dest;
-  assert.equal(resolve('/api/health'), '/api/health.js');
-  assert.equal(resolve('/api/zz-unknown'), '/api/not-found.js');
+  assert.equal(resolve('/api/health'), '/api/video-os-lite/workspace.js');
+  assert.equal(resolve('/api/zz-unknown'), '/api/video-os-lite/workspace.js');
+  for (const path of ['script', 'export', 'account', 'finish', 'avatar', 'assets', 'assets/recommend']) {
+    assert.equal(resolve(`/api/video-os-lite/${path}`), '/api/video-os-lite/workspace.js', path);
+  }
   for (const [path, dest] of [
     ['/api/video-os-lite/admin', '/api/video-os-lite/workspace.js'],
     ['/api/video-os-lite/render', '/api/video-os-lite/render-v2.js'],

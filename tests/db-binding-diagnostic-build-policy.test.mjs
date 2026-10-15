@@ -46,8 +46,7 @@ test('diagnostic packaging rejects database credentials in process memory', () =
 
 test('reviewed path scope covers every deployed API function and the maintenance guard', () => {
   const routes = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).routes;
-  const apiFunctions = new Set(routes.filter(({ dest }) => dest.startsWith('/api/') &&
-    !['/api/health.js', '/api/not-found.js'].includes(dest)).map(({ dest }) => dest.slice(1)));
+  const apiFunctions = new Set(routes.filter(({ dest }) => dest.startsWith('/api/')).map(({ dest }) => dest.slice(1)));
   assert.equal(apiFunctions.size, 9);
   for (const path of apiFunctions) assert.ok(DIAGNOSTIC_PATHS.includes(path), path);
   for (const path of [

@@ -14,11 +14,17 @@ import luxify from '../../routes/video-os-lite/luxify.js';
 import { send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 import { deferAdminResponse } from '../../lib/admin-request-audit.js';
+import health from '../../lib/health.js';
+import notFound from '../../lib/api-not-found.js';
 
 const handlers = { admin, asset, copywriter, identities, projects, providers, results, standard, enrollments, luxify, 'enrollment-upload': enrollmentUpload, 'scripted-photo': scriptedPhoto, 'provider-consent': providerConsent };
 
 export default async function handler(req, res) {
   const pathname = new URL(req.url, 'https://video-os.invalid').pathname;
+  if (pathname === '/api/health' || !pathname.startsWith('/api/video-os-lite/')) {
+    if (blockForDiagnosticMaintenance(req, res, { allowDiagnostic: true })) return;
+    return pathname === '/api/health' ? health(req, res) : notFound(req, res);
+  }
   const route = pathname.split('/').filter(Boolean).pop();
   const selected = handlers[route];
   if (selected === admin) {
@@ -45,6 +51,7 @@ export default async function handler(req, res) {
         // Missing or invalid sessions use the same unauthenticated response.
       }
       if (!session) return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in required.' });
+      return send(res, 404, { ok: false, error: 'Workspace route not found.' });
     }
     return send(res, 404, { ok: false, error: 'Workspace route not found.' });
   }

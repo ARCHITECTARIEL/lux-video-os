@@ -89,7 +89,7 @@ function adminCookie(token) {
 }
 
 function adminLoginActorType(req, env) {
-  const authorization = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const authorization = /^Bearer ([^\s]+)$/i.exec(String(req.headers.authorization || ''))?.[1] || '';
   const adminToken = String(env.VIDEO_OS_ADMIN_TOKEN || '').trim();
   const cronSecret = String(env.CRON_SECRET || '').trim();
   if (adminToken && timingSafeMatch(authorization, adminToken)) return 'admin_token';

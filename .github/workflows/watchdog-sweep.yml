@@ -32,7 +32,7 @@ jobs:
         env:
           VIDEO_OS_BASE_URL: ${{ vars.VIDEO_OS_BASE_URL }}
           VIDEO_OS_CRON_SECRET: ${{ secrets.VIDEO_OS_CRON_SECRET }}
-          MAIN_PUSHED_AT: ${{ github.event.repository.pushed_at }}
         run: |
           export EXPECTED_GIT_SHA="$(git rev-parse HEAD)"
+          export MAIN_HEAD_EPOCH="$(git log -1 --format=%ct HEAD)"
           bash scripts/watchdog-check.sh

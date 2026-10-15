@@ -7,7 +7,7 @@
     "routes": [
         {
             "src": "/api/health",
-            "dest": "/api/health.js"
+            "dest": "/api/video-os-lite/workspace.js"
         },
         {
             "src": "/api/video-os-lite/enrollments",
@@ -127,7 +127,7 @@
         },
         {
             "src": "/api/(.*)",
-            "dest": "/api/not-found.js"
+            "dest": "/api/video-os-lite/workspace.js"
         },
         {
             "src": "/admin-console",

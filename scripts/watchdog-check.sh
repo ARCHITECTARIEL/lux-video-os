@@ -112,7 +112,7 @@ if [[ "$health_status" != 'ok' ]]; then
 fi
 
 if [[ "$deployed_git_sha" != "$expected_git_sha" ]]; then
-  main_pushed_at="${MAIN_PUSHED_AT:-}"
+  main_head_epoch="${MAIN_HEAD_EPOCH:-}"
   now_epoch="${NOW_EPOCH:-$(date +%s)}"
   push_epoch=''
 
@@ -121,7 +121,7 @@ if [[ "$deployed_git_sha" != "$expected_git_sha" ]]; then
     exit 1
   fi
 
-  if ! push_epoch=$(node - "$main_pushed_at" 2>/dev/null <<'NODE'
+  if ! push_epoch=$(node - "$main_head_epoch" 2>/dev/null <<'NODE'
 const raw = process.argv[2] || '';
 let seconds;
 if (/^[0-9]+$/.test(raw)) seconds = Number(raw);
@@ -130,7 +130,7 @@ if (!Number.isFinite(seconds) || seconds < 0) process.exit(1);
 process.stdout.write(String(Math.floor(seconds)));
 NODE
   ); then
-    error 'The deployed SHA differs from main and MAIN_PUSHED_AT is missing or invalid.'
+    error 'The deployed SHA differs from main and MAIN_HEAD_EPOCH is missing or invalid.'
     exit 1
   fi
 

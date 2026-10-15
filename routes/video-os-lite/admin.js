@@ -23,7 +23,7 @@ import { ADMIN_ACTOR_TYPES, deferAdminResponse } from '../../lib/admin-request-a
 export function adminActorType(req, env = process.env) {
   const token = String(env.VIDEO_OS_ADMIN_TOKEN || '').trim();
   const cronSecret = String(env.CRON_SECRET || '').trim();
-  const auth = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const auth = /^Bearer ([^\s]+)$/i.exec(String(req.headers.authorization || ''))?.[1] || '';
   const diagnosticToken = String(env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN || '').trim();
   if (diagnosticToken && timingSafeMatch(auth, diagnosticToken)) return 'none';
   if (token && timingSafeMatch(auth, token)) return 'admin_token';

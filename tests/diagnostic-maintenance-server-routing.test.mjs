@@ -19,7 +19,7 @@ test('the shared route table sends every API alias through active maintenance de
   try {
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${server.address().port}`;
-    assert.equal(aliases.length, 29);
+    assert.equal(aliases.length, 31);
     for (const alias of aliases) {
       for (const method of ['GET', 'POST']) {
         const response = await fetch(`${origin}${alias}`, {

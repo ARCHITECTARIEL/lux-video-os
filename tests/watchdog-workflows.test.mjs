@@ -101,7 +101,7 @@ async function runScript(t, script, overrides = {}) {
     VIDEO_OS_BASE_URL: 'https://video.example',
     VIDEO_OS_CRON_SECRET: 'test-cron-secret',
     EXPECTED_GIT_SHA: mainSha,
-    MAIN_PUSHED_AT: String(nowEpoch - 3600),
+    MAIN_HEAD_EPOCH: String(nowEpoch - 3600),
     NOW_EPOCH: String(nowEpoch),
     CURL_BIN: posixPath(mockCurl),
     MOCK_CALL_LOG: posixPath(callLog),
@@ -150,7 +150,7 @@ test('watchdog rejects HTML and degraded health responses before the sweep', { s
 test('watchdog rejects a stale deployed SHA after the main push grace period', { skip: !bashAvailable }, async (t) => {
   const result = await runScript(t, watchdogScript, {
     MOCK_HEALTH_BODY: JSON.stringify({ status: 'ok', gitSha: deployedSha }),
-    MAIN_PUSHED_AT: String(nowEpoch - 1201),
+    MAIN_HEAD_EPOCH: String(nowEpoch - 1201),
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /::error::.*does not match main.*20-minute/i);
@@ -158,17 +158,17 @@ test('watchdog rejects a stale deployed SHA after the main push grace period', {
 
   const missingPushTime = await runScript(t, watchdogScript, {
     MOCK_HEALTH_BODY: JSON.stringify({ status: 'ok', gitSha: deployedSha }),
-    MAIN_PUSHED_AT: '',
+    MAIN_HEAD_EPOCH: '',
   });
   assert.equal(missingPushTime.status, 1);
-  assert.match(missingPushTime.stderr, /::error::.*MAIN_PUSHED_AT is missing or invalid/i);
+  assert.match(missingPushTime.stderr, /::error::.*MAIN_HEAD_EPOCH is missing or invalid/i);
   assert.equal(missingPushTime.calls.trim().split(/\r?\n/).length, 1);
 });
 
 test('watchdog allows deployment grace for a fresh main push and does not sweep the old deployment', { skip: !bashAvailable }, async (t) => {
   const result = await runScript(t, watchdogScript, {
     MOCK_HEALTH_BODY: JSON.stringify({ status: 'ok', gitSha: deployedSha }),
-    MAIN_PUSHED_AT: String(nowEpoch - 1200),
+    MAIN_HEAD_EPOCH: String(nowEpoch - 1200),
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /::warning::.*grace period/i);
@@ -225,6 +225,15 @@ test('heartbeat passes at 10 minutes and fails red at 60 minutes', { skip: !bash
   assert.match(stale.stderr, /::error::.*60 minutes old.*45 minutes/i);
 });
 
+test('heartbeat passes at 45 minutes and fails at 45 minutes plus one second', { skip: !bashAvailable }, async (t) => {
+  for (const [ageSeconds, expected] of [[2700, 0], [2701, 1], [2760, 1]]) {
+    const result = await runScript(t, heartbeatScript, {
+      MOCK_HEALTH_BODY: JSON.stringify({ checks: { watchdog: { lastSweepAt: new Date((nowEpoch - ageSeconds) * 1000).toISOString() } } }),
+    });
+    assert.equal(result.status, expected, `age=${ageSeconds}: ${result.stderr}`);
+  }
+});
+
 test('heartbeat fails closed when the URL or persisted heartbeat is unconfigured', { skip: !bashAvailable }, async (t) => {
   const missingUrl = await runScript(t, heartbeatScript, { VIDEO_OS_BASE_URL: '' });
   assert.equal(missingUrl.status, 1);
@@ -249,8 +258,11 @@ test('watchdog and heartbeat workflows parse and invoke the extracted scripts on
   assert.equal(watchdog.jobs.sweep.steps.at(-1).run.includes('bash scripts/watchdog-check.sh'), true);
   assert.equal(watchdog.jobs.sweep.steps.at(-1).env.VIDEO_OS_BASE_URL, '${{ vars.VIDEO_OS_BASE_URL }}');
   assert.equal(watchdog.jobs.sweep.steps.at(-1).env.VIDEO_OS_CRON_SECRET, '${{ secrets.VIDEO_OS_CRON_SECRET }}');
-  assert.equal(watchdog.jobs.sweep.steps.at(-1).env.MAIN_PUSHED_AT, '${{ github.event.repository.pushed_at }}');
-  assert.doesNotMatch(watchdogRaw, /git show|--format=%ct/);
+  assert.match(await readFile(watchdogScript, 'utf8'), /Authorization: Bearer \$cron_secret/);
+  const stripeRaw = await readFile(resolve(root, '.github/workflows/stripe-reconciliation.yml'), 'utf8');
+  assert.match(stripeRaw, /Authorization: Bearer \$CRON_SECRET/);
+  assert.match(watchdog.jobs.sweep.steps.at(-1).run, /MAIN_HEAD_EPOCH="\$\(git log -1 --format=%ct HEAD\)"/);
+  assert.doesNotMatch(watchdogRaw, /repository\.pushed_at/);
   assert.match(watchdogRaw, /configured since September 21, 2026/);
   assert.doesNotMatch(watchdogRaw, /skipping this run|neither .* exists yet/i);
 

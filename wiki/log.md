@@ -842,3 +842,6 @@
 - Awaited an `admin.request.completed` audit for admin requests, including login and maintenance denials. Cron credentials are limited to watchdog sweep and Stripe reconciliation. Optional admin write alerts reuse `WATCHDOG_SLACK_WEBHOOK_URL` with bounded Slack text; audit and notification failures preserve responses.
 - Offline verification with `DATABASE_URL` and `HEYGEN_API_KEY` unset: `npm test` passed 1,192 Node tests (50 expected skips) and 4 Vitest tests; `npm run workflow:build`, `npm run db:check`, `npm run check:imports`, and the 11 workflow dry-run tests passed. Generated `.vercel/output` from the local build was removed after verification.
 - Historical preview budget coverage counted 12 functions; these two required API handlers bring the source plus Workflow runtime count to 14. The test now asserts that inventory without claiming Hobby deployability. Live smoke and the current platform limit remain unverified. One local REL-010 commit was made; no push, deployment, live/network call, environment change, migration application, or secret print occurred.
+
+## 2026-10-15 - [closure-writeback] [REL-010] [QA]
+Prefix-only admin IP audit, consolidated health/404 routing (12 functions), bounded async Slack alerts, and main-head watchdog grace. Offline checks passed; local commit blocked by linked Git directory permissions.

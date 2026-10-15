@@ -81,8 +81,8 @@ test('all nine API entrypoints retain their unsupported-method response with mai
   }
 });
 
-test('active mode denies all 29 mapped aliases and direct function paths before input or network side effects', async () => {
-  assert.equal(mappedApiRoutes.length, 29);
+test('active mode denies all 31 mapped aliases and direct function paths before input or network side effects', async () => {
+  assert.equal(mappedApiRoutes.length, 31);
   assert.equal(new Set(mappedApiRoutes.map(({ dest }) => dest)).size, 9);
   assert.deepEqual(new Set(mappedApiRoutes.map(({ dest }) => dest)), new Set(byDestination.keys()));
   const priorMode = process.env.VIDEO_OS_DIAGNOSTIC_MAINTENANCE;

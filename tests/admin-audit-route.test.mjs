@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { handleAuthRequest } from '../api/video-os-lite/auth.js';
 import { adminActorType, createAdminHandler } from '../routes/video-os-lite/admin.js';
 import { makeSession } from '../lib/video-os-account.js';
+import { prepareOpsEvent } from '../lib/ops-log.js';
 
 const TEST_ENV = Object.freeze({
   VIDEO_OS_ADMIN_TOKEN: 'proof-admin-token',
@@ -65,10 +67,10 @@ test('admin mutations persist exact audit rows before sending the response', asy
       assert.deepEqual(Object.fromEntries(['event', 'accountId', 'code', 'details'].map(key => [key, rows[0][key]])), expected);
       assert.deepEqual(rows[1].details, {
         operation, result: 'succeeded', actorType: 'admin_token',
-        ipHash: rows[1].details.ipHash, ipPrefix: '127.0.0.0/24', userAgent: 'unknown',
+        ipPrefix: '127.0.0.0/24', userAgent: 'unknown',
         deploymentId: TEST_ENV.VERCEL_DEPLOYMENT_ID, gitSha: TEST_ENV.VERCEL_GIT_COMMIT_SHA,
       });
-      assert.match(rows[1].details.ipHash, /^[a-f0-9]{24}$/);
+      assert.equal(Object.hasOwn(rows[1].details, 'ipHash'), false);
       assert.equal(rows[1].httpStatus, 200);
       assert.equal(rows[1].code, 'ADMIN_REQUEST_SUCCEEDED');
       assert.equal(JSON.stringify(rows).includes('private.person@example.com'), false);
@@ -261,11 +263,12 @@ test('request audit stores bounded request context without raw credentials or fu
   assert.doesNotMatch(serialized, new RegExp(uaTail));
   const audit = rows.find(row => row.event === 'admin.request.completed');
   assert.equal(audit.details.ipPrefix, '203.0.113.0/24');
-  assert.match(audit.details.ipHash, /^[a-f0-9]{24}$/);
+  assert.equal(Object.hasOwn(audit.details, 'ipHash'), false);
+  assert.doesNotMatch(JSON.stringify(audit.details), new RegExp(createHash('sha256').update(fullIp).digest('hex').slice(0, 24)));
   assert.ok(audit.details.userAgent.length <= 120);
 });
 
-test('request audit reduces IPv6 sources to a /64 prefix', async () => {
+test('request audit reduces IPv6 sources to a /48 prefix', async () => {
   const rows = [];
   const res = response();
   await createAdminHandler({ env: TEST_ENV, opsWriter: async row => rows.push(row) })(request('not-real', undefined, {
@@ -276,7 +279,50 @@ test('request audit reduces IPv6 sources to a /64 prefix', async () => {
     },
   }), res);
   assert.equal(res.statusCode, 400);
-  assert.equal(rows[0].details.ipPrefix, '2001:db8:85a3:1234::/64');
+  assert.equal(rows[0].details.ipPrefix, '2001:db8:85a3::/48');
+  assert.equal(Object.hasOwn(rows[0].details, 'ipHash'), false);
+});
+
+test('admin audit sanitizer bounds userAgent and drops injected IP hashes', () => {
+  const details = prepareOpsEvent({ event: 'admin.request.completed', details: {
+    operation: 'jobs', result: 'rejected', actorType: 'none', ipPrefix: '2001:db8:85a3::/48',
+    ipHash: 'a'.repeat(24), userAgent: 'x'.repeat(500), deploymentId: 'fixture', gitSha: 'a'.repeat(40),
+  } }).row.details;
+  assert.ok(details.userAgent.length <= 120);
+  assert.equal(Object.hasOwn(details, 'ipHash'), false);
+});
+
+test('bare cron secret is rejected without Bearer', async () => {
+  const res = response();
+  await createAdminHandler({ env: TEST_ENV, opsWriter: async () => {} })(request('watchdog-sweep', {}, {
+    headers: { authorization: TEST_ENV.CRON_SECRET },
+  }), res);
+  assert.equal(res.statusCode, 401);
+});
+
+test('failed anonymous alert flood is deduped and responses never wait for Slack', async () => {
+  const env = { ...TEST_ENV, WATCHDOG_SLACK_WEBHOOK_URL: 'https://hooks.slack.invalid/fixture' };
+  let calls = 0;
+  const handler = createAdminHandler({ env, opsWriter: async () => {},
+    fetchImpl: () => { calls += 1; return new Promise(() => {}); } });
+  for (let i = 0; i < 50; i++) {
+    const res = response();
+    await Promise.race([
+      handler(request('grant-credit', {}), res),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('response waited for Slack')), 250)),
+    ]);
+    assert.equal(res.statusCode, 401);
+  }
+  assert.equal(calls, 1);
+});
+
+test('missing Slack URL never calls fetch', async () => {
+  let calls = 0;
+  const res = response();
+  await createAdminHandler({ env: TEST_ENV, opsWriter: async () => {},
+    fetchImpl: () => { calls += 1; throw new Error('unexpected fetch'); } })(request('grant-credit', {}), res);
+  assert.equal(res.statusCode, 401);
+  assert.equal(calls, 0);
 });
 
 test('optional Slack write alert has a four-field text payload and never changes the response', async () => {
