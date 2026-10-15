@@ -829,3 +829,9 @@
 ## 2026-10-15T03:33:21Z - [closure-writeback] [FIX-001b] [QA-security]
 
 - Verified the cursor correction and regression coverage: 1,165 Node tests passed, 50 skipped, and 4 Vitest tests passed. The standalone workflow build test, migration snapshot check, import check, and `git diff --check` passed. All changes remain uncommitted in this worktree.
+
+## 2026-10-15T10:05:43Z - [closure-writeback] [FIX-001c-N1] [test-only]
+
+- Added a Luxify workflow regression using the existing deferred-admission fake. It omits `admissionAttempts` and asserts 5,760 submit attempts and pauses, `PROVIDER_TIMEOUT`, and failed-and-release.
+- The focused test passed on the original code (2/2). Temporarily changing the signature default to `1` made it fail (1/2); the production file was restored byte-for-byte, with an empty `git diff` for `workflows/video-render.js`. Syntax, import, and diff checks passed.
+- Changes remain uncommitted. No deploy, provider or network call, environment change, secret read, or dependency addition occurred.

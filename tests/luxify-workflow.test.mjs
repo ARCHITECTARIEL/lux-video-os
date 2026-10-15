@@ -306,6 +306,23 @@ if (runFixture) {
     assert.equal(workflow.DEFAULT_ADMISSION_ATTEMPTS, 5_760);
   });
 
+  test('workflow uses all default admission attempts before timeout and release', async () => {
+    currentJob = luxifyJob({ id: 'job-luxify-admission-default' });
+    admissionDeferred = true;
+    let pauses = 0;
+    try {
+      await assert.rejects(workflow.videoRenderWorkflow(currentJob.id, {
+        admissionPause: async () => { pauses += 1; },
+      }), { failureCategory: 'PROVIDER_TIMEOUT' });
+    } finally { admissionDeferred = false; }
+    const attempts = calls.transitions.filter(value => value.jobId === currentJob.id && value.stageTo === 'provider_submitting').length;
+    assert.equal(attempts, workflow.DEFAULT_ADMISSION_ATTEMPTS);
+    assert.equal(pauses, workflow.DEFAULT_ADMISSION_ATTEMPTS);
+    assert.equal(calls.failures.at(-1)[0], currentJob.id);
+    assert.equal(calls.failures.at(-1)[1], 'PROVIDER_TIMEOUT');
+    assert.equal(calls.luxifySubmissions.length, 0);
+  });
+
   test('persisted LUXIFY mode selects only the cinematic submit, poll, and finishing adapters', async () => {
     currentJob = luxifyJob();
     const avatarReadsBefore = calls.avatarReads.length;
