@@ -382,7 +382,7 @@ export async function reconcileUnknownHeygenJob(job, {
   if (String(env.VIDEO_OS_HEYGEN_SUBMIT_RECONCILER_ENABLED || '').toLowerCase() !== 'true') return { outcome: 'disabled' };
   if (!job || job.provider !== 'heygen' || job.status !== 'provider_submit_unknown') return { outcome: 'not_held' };
   const metadata = job.output?.heygenSubmission;
-  if (!metadata?.marker || !metadata?.idempotencyKey || !metadata?.claimedAt) return { outcome: 'attention', reason: 'missing_submission_identity' };
+  if (!/^vos-[a-f0-9]{24}$/.test(metadata?.marker || '') || !/^vos-[a-f0-9]{32}$/.test(metadata?.idempotencyKey || '') || !metadata?.claimedAt) return { outcome: 'attention', reason: 'missing_submission_identity' };
   const observedAt = new Date(now());
   const inventory = await lookup(job);
   if (!inventory?.complete || inventory.truncated || !Array.isArray(inventory.items)) return { outcome: 'attention', reason: 'incomplete_inventory' };

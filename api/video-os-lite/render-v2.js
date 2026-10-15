@@ -16,7 +16,7 @@ import { parseOrThrow, renderRequestSchema, scriptedPhotoRenderRequestSchema } f
 import { videoRenderWorkflowMetadata } from '../../workflows/video-render-metadata.js';
 import { standardRenderWorkflowMetadata } from '../../workflows/standard-render-metadata.js';
 import { sanitizeStandardNarrationReason, STANDARD_CONTRACT_VERSION, standardNarrationActivation } from '../../lib/standard-narration-contract.js';
-import { hasScriptedPhotoContractMarker, isScriptedPhotoRequest, scriptedPhotoActivation, validateScriptedPhotoTransport } from '../../lib/scripted-photo-contract.js';
+import { PREMIUM_SCRIPTED_PHOTO_CREDITS, hasScriptedPhotoContractMarker, isScriptedPhotoRequest, scriptedPhotoActivation, validateScriptedPhotoTransport } from '../../lib/scripted-photo-contract.js';
 import { observeProviderAvatarConsent } from '../../lib/provider-avatar-consent.js';
 import { getHeygenPhotoAvatarStatus } from '../../services/heygen.js';
 import {
@@ -703,7 +703,7 @@ async function handlePremiumRender(req, res, session, body, diagnosticRequestId)
       assertTalentSelectionsAvailable(inventory.talent, payload);
     }
     const account = await ensureAccount({ accountId: session.accountId, email: session.email, name: session.email || 'Video OS Account', initialCredits: DEFAULT_TRIAL_CREDITS });
-    const reserved = await reserveRender({ jobId: `job-${crypto.randomUUID()}`, accountId: session.accountId, idempotencyKey: payload.idempotencyKey, correlationId: serverRenderCorrelationId(), provider: payload.provider, title: payload.title, format: payload.format, costCredits: 90, input: authorizedInput });
+    const reserved = await reserveRender({ jobId: `job-${crypto.randomUUID()}`, accountId: session.accountId, idempotencyKey: payload.idempotencyKey, correlationId: serverRenderCorrelationId(), provider: payload.provider, title: payload.title, format: payload.format, costCredits: PREMIUM_SCRIPTED_PHOTO_CREDITS, input: authorizedInput });
     ({ proofId } = renderProofBinding(reserved.proofId));
     reservedJob = reserved.job;
     const claimed = await claimWorkflowStart(reserved.job.id);

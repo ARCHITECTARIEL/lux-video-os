@@ -40,6 +40,7 @@ test('FAILURE_CATEGORIES includes every category this codebase actually throws w
   // from this allowlist caused real, live bugs this file exists to catch a
   // regression of.
   assert.ok(FAILURE_CATEGORIES.includes('PROVIDER_SUBMIT_UNKNOWN'));
+  assert.equal(classifyFailure({ failureCategory: 'PROVIDER_IDENTITY_MISSING' }), 'PROVIDER_IDENTITY_MISSING');
   assert.ok(FAILURE_CATEGORIES.includes('FINISH_REMOTION'));
   for (const category of ['PROVIDER_CANCEL_UNKNOWN', 'PROVIDER_RETRYABLE', 'PROVIDER_RETRY_DEFERRED', 'PROVIDER_RETRY_EXHAUSTED']) {
     assert.equal(classifyFailure({ failureCategory: category }), category);

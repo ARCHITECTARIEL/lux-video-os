@@ -28,7 +28,19 @@ test('submit uses only v3 videos with the persisted key and does not retry 500',
     await assert.rejects(submitHeygen({ ...job, output: { heygenSubmission: { ...identity, attempt: 0, retryCount } } }, { env, fetchImpl, random: () => 0 }), { failureCategory: 'PROVIDER_RETRYABLE' });
   }
   assert.ok(seen.every(call => call.url === 'https://api.heygen.com/v3/videos' && call.key === identity.idempotencyKey));
-  await assert.rejects(submitHeygen(job, { env, fetchImpl: async () => new Response('{}', { status: 500 }) }), error => error.failureCategory !== 'PROVIDER_RETRYABLE');
+  await assert.rejects(submitHeygen({ ...job, output: { heygenSubmission: identity } }, { env, fetchImpl: async () => new Response('{}', { status: 500 }) }), error => error.failureCategory !== 'PROVIDER_RETRYABLE');
+});
+
+test('missing and malformed persisted identities never submit or fall back to the job ID', async () => {
+  let calls = 0;
+  const fetchImpl = async () => { calls++; throw new Error('provider called'); };
+  const valid = heygenSubmissionIdentity(job.id);
+  for (const metadata of [undefined, {}, { ...valid, idempotencyKey: job.id },
+    { ...valid, idempotencyKey: 'vos-' }, { ...valid, marker: 'vos-' }]) {
+    await assert.rejects(submitHeygen({ ...job, output: { heygenSubmission: metadata } }, { env, fetchImpl }),
+      { failureCategory: 'PROVIDER_IDENTITY_MISSING' });
+  }
+  assert.equal(calls, 0);
 });
 
 const base = { ...job, accountId: 'acct', provider: 'heygen', status: 'provider_submit_unknown' };
@@ -51,4 +63,29 @@ test('reconciler requires exact enablement and respects grace, 24h cutoff and ma
   assert.equal((await reconcileUnknownHeygenJob(claimed('2026-10-13T11:59:59Z'), options())).reason, 'idempotency_window_expired');
   assert.equal((await reconcileUnknownHeygenJob(claimed('2026-10-13T12:00:01Z'), options())).outcome, 'released_for_same_key_retry');
   assert.notEqual((await reconcileUnknownHeygenJob(claimed('not-a-date'), options())).outcome, 'released_for_same_key_retry');
+});
+
+test('Luxify held submission uses the marker inventory and releases only verified absence', async () => {
+  const held = { ...claimed('2026-10-14T10:00:00Z'), input: { renderMode: 'luxify_cinematic_v1' } };
+  const marker = held.output.heygenSubmission.marker;
+  let binds = 0;
+  let releases = 0;
+  const fixture = options({
+    bind: async () => { binds++; },
+    release: async () => { releases++; return true; },
+  });
+  const found = await reconcileUnknownHeygenJob(held, { ...fixture, lookup: async () => ({ complete: true, items: [{ title: `Render [${marker}]`, video_id: 'video-1' }] }) });
+  assert.deepEqual(found, { outcome: 'found', providerJobId: 'video-1' });
+  assert.equal(binds, 1);
+  assert.equal(releases, 0);
+  assert.equal((await reconcileUnknownHeygenJob(held, { ...fixture, lookup: async () => ({ complete: false, items: [] }) })).outcome, 'attention');
+  assert.equal((await reconcileUnknownHeygenJob(held, { ...fixture, lookup: async () => ({ complete: true, items: [{ title: `[${marker}]`, video_id: 'video-1' }, { title: `[${marker}]`, video_id: 'video-2' }] }) })).reason, 'multiple_matches');
+  assert.equal(releases, 0);
+  assert.equal((await reconcileUnknownHeygenJob(held, fixture)).outcome, 'released_for_same_key_retry');
+  assert.equal(releases, 1);
+  for (const broken of [{ ...held.output.heygenSubmission, idempotencyKey: 'vos-' }, undefined]) {
+    const result = await reconcileUnknownHeygenJob({ ...held, output: { heygenSubmission: broken } }, fixture);
+    assert.deepEqual(result, { outcome: 'attention', reason: 'missing_submission_identity' });
+  }
+  assert.equal(releases, 1);
 });
