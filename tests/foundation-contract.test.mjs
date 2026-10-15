@@ -41,7 +41,7 @@ test('Sentry request sanitization removes secrets and query strings', () => {
   assert.equal(event.request.url, 'https://video.example/path');
 });
 
-test('Preview deployment stays within the Hobby serverless function budget', () => {
+test('Preview deployment stays within the 12-function budget', () => {
   const apiFunctions = countApiFunctions(path.resolve('api'));
   const workflowRuntimeFunctions = 3;
   assert.equal(apiFunctions, 9);
@@ -50,6 +50,8 @@ test('Preview deployment stays within the Hobby serverless function budget', () 
   const routes = JSON.parse(readFileSync('vercel.json', 'utf8')).routes;
   const workspaceRoutes = routes.filter((route) => route.dest === '/api/video-os-lite/workspace.js').map((route) => route.src).sort();
   assert.deepEqual(workspaceRoutes, [
+    '/api/(.*)',
+    '/api/health',
     '/api/video-os-lite/admin',
     '/api/video-os-lite/asset',
     '/api/video-os-lite/copywriter',
