@@ -2315,11 +2315,14 @@ export async function registerAdminTester({ email, name, credits = 5000, note = 
   const initialCredits = Math.max(100, Number(credits) || 5000);
 
   return database().transaction(async (tx) => {
-    await tx.execute(sql`select set_config('lux.role_write', 'admin', true)`);
     const now = new Date();
     const matches = await tx.select().from(users).where(sql`lower(${users.email}) = ${normalizedEmail}`).for('update').limit(2);
     if (matches.length > 1) throw Object.assign(new Error('Account identity requires reconciliation.'), { statusCode: 409, failureCategory: 'RECONCILIATION' });
     const [existingUser] = matches;
+    if (existingUser && [ROLE.CEO, ROLE.WORKSPACE].includes(existingUser.role)) {
+      throw Object.assign(new Error('A privileged account cannot be registered as a tester.'), { statusCode: 409 });
+    }
+    await tx.execute(sql`select set_config('lux.role_write', 'admin', true)`);
     // Same canonical identity as accountIdForEmail; avoid importing the HTTP/session
     // module into the workflow bundle. Regression coverage binds both algorithms.
     const accountId = existingUser?.id || 'user-' + createHash('sha256').update(normalizedEmail).digest('hex').slice(0, 24);

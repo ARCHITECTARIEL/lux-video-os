@@ -843,3 +843,11 @@
 ## 2026-10-15 - [FIX-002b] [QA-security]
 
 - Recaptured `config/database-schema.lock.json` for 0000-0014 on a throwaway loopback PostgreSQL 18.6 (LF and CRLF identical; schemaSha256 `b9a94a75...`; control 0000-0013 reproduced `fe9a67f3...`). Fixed the opt-in role-guard PG test's psql connection (`-d <url>` instead of `PGDATABASE`) and ran it 1/1 on a throwaway loopback DB. Documented that scripted-photo STANDARD jobs run on heygen, so the 0016 render_mode backfill needs an `input->>'tier'` branch. Kept migration `0014_pre_role_guard`; consents become 0015 and render_mode 0016.
+
+## 2026-10-15 - [FIX-002c] [QA-security]
+
+- Expanded static route/API role-write checks with QA bypass self-tests and transaction-local `set_config` assertions. Added opt-in throwaway PostgreSQL cases for flag variants, CHECK, ON CONFLICT, COPY, and same-session privilege leak using the repository setting text. Registration now rejects existing CEO/workspace identities before any write; the authorization scenario tests both roles. Clarified retained tester labels versus entitlement-based access in the role audit. Node 24 verification: `npm test` passed 1,171 Node tests (51 skipped) and 4 Vitest tests; standalone workflow build, migration snapshot check, import check, and `git diff --check` passed. PostgreSQL cases await the authorized throwaway DB run. No migration or schema-lock change; work remains uncommitted.
+
+## 2026-10-15T13:22:00Z - [closure-writeback] [FIX-002c] [QA-security]
+
+- Confirmed the FIX-002c worktree diff contains the guard, PG tests, privileged-account refusal, and audit documentation. All requested offline Node 24 checks passed; the opt-in PostgreSQL suite remains for a later authorized throwaway DB run. Changes remain uncommitted.

@@ -30,15 +30,26 @@ test('0014 role CHECK, trigger, privilege setting, and legacy precheck on loopba
   const sql = migration.replaceAll('--> statement-breakpoint', '');
   const setup = "BEGIN; CREATE TEMP TABLE users (id text PRIMARY KEY, role text NOT NULL DEFAULT 'customer');";
   const fixture = `${setup}\n${sql}\nINSERT INTO users(id,role) VALUES ('one','customer');`;
+  const repository = await readFile('db/repositories.js', 'utf8');
+  const repositorySetting = repository.match(/select set_config\('lux\.role_write', 'admin', (true|false)\)/)?.[0];
+  assert.equal(repositorySetting, "select set_config('lux.role_write', 'admin', true)", 'execute the repository setting verbatim');
   assert.equal(psql(`${fixture}\nROLLBACK;`).status, 0, 'guard migration must apply to a clean throwaway table');
 
   for (const statement of [
     "UPDATE users SET role='ceo' WHERE id='one';",
     "INSERT INTO users(id,role) VALUES ('two','workspace');",
     "INSERT INTO users(id,role) VALUES ('two','admin');",
+    "INSERT INTO users(id,role) VALUES ('one','customer') ON CONFLICT (id) DO UPDATE SET role='ceo';",
+    "COPY users(id,role) FROM STDIN;\ntwo\tceo\n\\.",
+    `SELECT set_config('lux.role_write','admin',true); UPDATE users SET role='admin' WHERE id='one';`,
+    ...['Admin', 'admin ', 'administrator', ''].map(flag => `SELECT set_config('lux.role_write','${flag}',true); UPDATE users SET role='ceo' WHERE id='one';`),
   ]) {
     assert.notEqual(psql(`${fixture}\n${statement}\nROLLBACK;`).status, 0, statement);
   }
-  assert.equal(psql(`${fixture}\nSELECT set_config('lux.role_write','admin',true); UPDATE users SET role='ceo' WHERE id='one'; ROLLBACK;`).status, 0);
+  assert.equal(psql(`${fixture}\n${repositorySetting}; UPDATE users SET role='ceo' WHERE id='one'; ROLLBACK;`).status, 0);
+  // One psql process models a reused pooled connection. A session-level setting
+  // survives COMMIT and would incorrectly authorize the following UPDATE.
+  const pooledSession = `${fixture}\nCOMMIT;\nBEGIN; ${repositorySetting}; COMMIT;\nUPDATE users SET role='ceo' WHERE id='one';`;
+  assert.notEqual(psql(pooledSession).status, 0, 'transaction-local privilege must not leak to the next transaction on the same session');
   assert.notEqual(psql(`${setup}\nINSERT INTO users(id,role) VALUES ('legacy','unknown');\n${sql}\nROLLBACK;`).status, 0, 'legacy precheck must abort');
 });

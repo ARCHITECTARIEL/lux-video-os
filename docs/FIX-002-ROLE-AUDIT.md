@@ -35,6 +35,8 @@ At `abb2c27`, `video_jobs` has `provider text NOT NULL` and `input jsonb NOT NUL
 
 ## Follow-ups outside FIX-002
 
+De-allowlisted tester accounts can retain `users.role = 'tester'`: later sign-in no longer resets an existing role. Rendering access follows current entitlements, while this role supplies DTO labels and the admin tester listing. Removing an allowlist entry alone does not revoke an existing entitlement; use the entitlement revocation path when access should end. Admin tester registration now refuses an existing `ceo` or `workspace` account before writing, so it cannot demote a privileged identity.
+
 - §R gap d: review the customer-facing shared workspace password and its render entitlements.
 - §R gap e: review domain-based starting credits separately from account roles.
 - Staff tables planned for 0014 are outside this role guard migration.
