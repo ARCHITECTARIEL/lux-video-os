@@ -10,6 +10,7 @@ import ws from 'ws';
 import { list, del } from '@vercel/blob';
 import { putPrivateBlob, getPrivateBlob, deletePrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS } from '../lib/video-os-private-blob.js';
 import { migrationPlan, assertMigrationRows, readSchemaCatalogue, schemaDigest, validateTarget } from './check-migrations.mjs';
+import { isolatedLiveTableNames, assertKnownIsolatedLiveTables } from './isolated-live-tables.mjs';
 
 const mode = process.argv[2] || 'preflight';
 const reportPath = process.env.VIDEO_OS_LIVE_REPORT;
@@ -31,7 +32,6 @@ process.env.VIDEO_OS_SESSION_SECRET = 'isolated-verification-session-not-product
 neonConfig.webSocketConstructor = ws;
 const pool = new Pool({ connectionString: url.href, max: 2, connectionTimeoutMillis: 15000, query_timeout: 30000 });
 const report = { at: new Date().toISOString(), mode, database: { host: url.hostname, name: url.pathname.slice(1), branch: 'br-wandering-violet-ai1egt3g' }, blobStore: 'store_8uyr0JDWkUyha8sy' };
-const tableNames = ['users', 'credit_accounts', 'credit_transactions', 'job_events', 'media_assets', 'rate_limits', 'stripe_events', 'video_jobs', 'auth_challenges', 'auth_sessions', 'entitlements', 'projects', 'identity_consents', 'user_identities', 'standard_narration_consents', 'standard_narration_quotes', 'identity_video_enrollments', 'identity_enrollment_events', 'provider_account_bindings', 'provider_verified_account_scopes', 'provider_account_binding_promotions', 'provider_approval_claims', 'provider_lifecycle_operations', 'provider_resources', 'provider_consumer_references', 'provider_lifecycle_events', 'provider_approval_claim_resources'];
 
 async function objectList() {
   const blobs = []; let cursor;
@@ -40,7 +40,7 @@ async function objectList() {
 }
 async function counts() {
   const names = (await pool.query("select table_name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'")).rows.map(x => x.table_name);
-  assert.ok(names.every(name => tableNames.includes(name)), 'Unexpected table in test database.');
+  assertKnownIsolatedLiveTables(names);
   const result = {};
   for (const name of names) result[name] = Number((await pool.query(`select count(*) as n from public."${name}"`)).rows[0].n);
   return result;
@@ -137,7 +137,7 @@ try {
       await deletePrivateBlob(PRIVATE_BLOB_CLASSIFICATIONS.CUSTOMER_UPLOAD, path, { ifMatch: stored.blob.etag });
     } finally { await del(blob.url, { token: process.env.BLOB_READ_WRITE_TOKEN }).catch(() => {}); }
   } else if (mode === 'tests') {
-    assert.equal(Object.keys(report.before.rows).length, tableNames.length, 'Test schema is incomplete.');
+    assert.equal(Object.keys(report.before.rows).length, isolatedLiveTableNames.length, 'Test schema is incomplete.');
     const files = process.argv.slice(3);
     assert.ok(files.length && files.every(file => /^tests\/[a-z0-9-]+\.test\.mjs$/.test(file)), 'Supply explicit scoped test files.');
     report.testFiles = files;
