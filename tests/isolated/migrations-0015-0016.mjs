@@ -99,6 +99,7 @@ async function main() {
     await seed();
     await job('legacy-heygen', 'heygen', {});
     await job('legacy-sadtalker', 'sadtalker', {});
+    await job('standard-current', 'sadtalker', { contractVersion: 'standard-narration-v1', tier: 'STANDARD' });
     await job('scripted-standard', 'heygen', { contractVersion: 'scripted-photo-v1', tier: 'STANDARD' });
     await job('scripted-premium', 'heygen', { contractVersion: 'scripted-photo-v1', tier: 'PREMIUM', renderMode: 'premium_presenter_v1' });
     await job('luxify', 'heygen', { contractVersion: 'luxify-cinematic-v1',
@@ -128,7 +129,13 @@ async function main() {
     const modes = await query('select id||\':\'||render_mode from video_jobs order by id;');
     for (const expected of ['legacy-heygen:legacy_premium_v1', 'legacy-sadtalker:standard_narration_v1',
       'scripted-standard:scripted_photo_standard_v1', 'scripted-premium:premium_presenter_v1',
-      'luxify:luxify_cinematic_v1']) assert.ok(modes.includes(expected), expected);
+      'luxify:luxify_cinematic_v1', 'standard-current:standard_narration_v1']) assert.ok(modes.includes(expected), expected);
+    assert.equal(await query(`select video_os_render_mode_for_job('sadtalker',
+      '{"contractVersion":"standard-narration-v1","tier":"PREMIUM"}'::jsonb) is null;`), 't');
+    assert.equal(await query(`select video_os_render_mode_for_job('sadtalker',
+      '{"contractVersion":"standard-narration-v1","tier":"STANDARD","providerCapability":"cinematic_avatar"}'::jsonb) is null;`), 't');
+    assert.equal(await query(`select video_os_render_mode_for_job('sadtalker',
+      '{"contractVersion":"standard-narration-v1","tier":"STANDARD","renderMode":"standard_narration_v1","lookBindings":[]}'::jsonb) is null;`), 't');
     await job('old-app-insert', 'heygen', {});
     assert.equal(await query("select render_mode from video_jobs where id='old-app-insert';"), 'legacy_premium_v1');
     await rejected("update video_jobs set render_mode='luxify_cinematic_v1' where id='scripted-standard';", /conflicts with source input/);
@@ -154,7 +161,7 @@ async function main() {
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /unclassifiable render modes/);
     assert.equal(await query("select count(*) from information_schema.columns where table_name='video_jobs' and column_name='render_mode';", 'invalid_history'), '0');
-    return { postgres: version, migrations: files.length, classifiedJobs: 6,
+    return { postgres: version, migrations: files.length, classifiedJobs: 7,
       invalidHistoryRejected: true, failedMigrationRolledBack: true };
   } finally {
     if (created && (await docker(['stop', name])).code !== 0) throw new Error('Disposable container cleanup requires attention.');

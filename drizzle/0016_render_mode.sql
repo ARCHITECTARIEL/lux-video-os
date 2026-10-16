@@ -14,6 +14,8 @@ RETURNS text LANGUAGE sql IMMUTABLE AS $$
         AND NOT (p_input ? 'tier') THEN 'luxify_cinematic_v1'
       WHEN p_provider = 'sadtalker' AND p_input->>'renderMode' = 'standard_narration_v1'
         AND p_input->>'contractVersion' = 'standard-narration-v1'
+        AND p_input->>'tier' = 'STANDARD'
+        AND NOT (p_input ? 'providerCapability') AND NOT (p_input ? 'lookBindings')
         THEN 'standard_narration_v1'
       ELSE NULL END
     WHEN p_input ? 'providerCapability' OR p_input ? 'lookBindings' THEN NULL
@@ -24,7 +26,9 @@ RETURNS text LANGUAGE sql IMMUTABLE AS $$
         THEN 'legacy_premium_v1'
       ELSE NULL END
     WHEN p_input->>'contractVersion' = 'standard-narration-v1' THEN CASE
-      WHEN p_provider = 'sadtalker' THEN 'standard_narration_v1'
+      WHEN p_provider = 'sadtalker' AND p_input->>'tier' = 'STANDARD'
+        AND NOT (p_input ? 'providerCapability') AND NOT (p_input ? 'lookBindings')
+        THEN 'standard_narration_v1'
       ELSE NULL END
     WHEN p_input ? 'contractVersion' OR p_input ? 'tier' OR p_input ? 'providerCapability'
       OR p_input ? 'lookBindings' THEN NULL
