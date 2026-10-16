@@ -22,6 +22,8 @@ The local preview preflight passed with `scope:snapshots-only`, `liveVerified:fa
 
 Independent PR review found that the legacy harness's `upgrade` mode compared an exact migration-prefix database to this tip lock, so no valid prefix could pass. The mode now fails before credentials or target access until a separately reviewed prefix lock is bound. The default-off consent table's active-look index also includes expired but unrevoked grants; renewal and source-consent withdrawal semantics remain an optional-feature activation gate. Before a live migration, qualify historical rows, lock duration and the exact deployed old application's writes against the retained forward schema.
 
+Subsequent [production read-only and local old-app compatibility preparation](PRODUCTION-0016-COMPATIBILITY-20261016.md) measured those bounded checks and preserves the remaining active-binding, full Premium path and production timing limits. The separate [cinematic consent lifecycle plan](LUXIFY-CONSENT-LIFECYCLE-PLAN-20261016.md) keeps renewal and withdrawal as optional activation work. Neither document authorizes a production migration or feature enablement.
+
 **Memory Protocol reversal for this decision note:** revert the documentation-only commit after checking the branch and worktree. No cloud or database state is changed by this note.
 
 **Memory Protocol reversal for PR-review repairs:** revert the later source-and-documentation commit after checking the worktree. That restores the legacy upgrade branch and previous guide text; it does not change any database, Blob object or deployment. Do not run the restored upgrade mode without a matching reviewed prefix lock.
