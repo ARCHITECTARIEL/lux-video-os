@@ -25,10 +25,21 @@ NODE
   printf '%s' "$age_seconds"
 }
 
-# Only the exact tracked SPA bytes may stand in for the older deployment's
-# missing JSON health route. An arbitrary HTML proxy or login page must fail.
+# The pre-health-route deployment served its SPA for /api/health. Only the
+# tracked shell may receive grace. Ignore CRLF versus LF line endings, which
+# can differ between a checked-out workflow file and the hosted response.
 legacy_spa_fallback() {
   local index_file
   index_file="$(dirname "${BASH_SOURCE[0]}")/../public/index.html"
-  [[ -f "$index_file" ]] && cmp -s -- "$1" "$index_file"
+  [[ -f "$index_file" && -f "$1" ]] || return 1
+  cmp -s -- "$1" "$index_file" && return 0
+  diff -q --strip-trailing-cr -- "$1" "$index_file" >/dev/null 2>&1 && return 0
+
+  # Log only a fingerprint, never the response body. This distinguishes an
+  # unexpected app version from a proxy/login page on the next failed run.
+  local body_sha body_bytes
+  body_sha="$(sha256sum "$1")" || return 1
+  body_bytes="$(wc -c < "$1")" || return 1
+  printf '::warning::Unrecognized HTML health response (sha256=%s, bytes=%s); grace denied.\n' "${body_sha%% *}" "$body_bytes" >&2
+  return 1
 }
