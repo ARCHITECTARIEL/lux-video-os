@@ -13,6 +13,7 @@ import { migrationPlan, assertMigrationRows, readSchemaCatalogue, schemaDigest, 
 import { isolatedLiveTableNames, assertKnownIsolatedLiveTables } from './isolated-live-tables.mjs';
 
 const mode = process.argv[2] || 'preflight';
+assert.notEqual(mode, 'upgrade', 'Upgrade mode requires a reviewed prefix schema lock and is disabled for this migration tip.');
 const reportPath = process.env.VIDEO_OS_LIVE_REPORT;
 assert.ok(reportPath, 'An explicit report path is required.');
 const url = new URL(process.env.DATABASE_URL || '');
@@ -106,24 +107,6 @@ try {
     }
     assert.equal(schemaDigest(await readSchemaCatalogue(pool)), schemaBefore, 'Validation must not retain schema changes.');
     report.rollbackVerified = true;
-  } else if (mode === 'upgrade') {
-    // Append migrations only on this pinned, empty verification database. Never
-    // bless drift by applying a migration over an unverified previous baseline.
-    assert.ok(Object.values(report.before.rows).every(value => value === 0), 'Test data must be cleaned before upgrading.');
-    assert.equal(report.before.blobs, 0, 'Test objects must be cleaned before upgrading.');
-    const plan = await migrationPlan();
-    const before = (await pool.query('select hash, created_at from drizzle.__drizzle_migrations order by created_at')).rows;
-    assert.ok(before.length > 0 && before.length < plan.migrations.length, 'Upgrade requires a nonempty exact migration prefix and pending migrations.');
-    assertMigrationRows(before, { migrations: plan.migrations.slice(0, before.length) });
-    const previousLock = JSON.parse(await readFile(new URL('../config/database-schema.lock.json', import.meta.url), 'utf8'));
-    assert.equal(schemaDigest(await readSchemaCatalogue(pool)), previousLock.schemaSha256, 'Existing test schema differs from its previous reviewed baseline.');
-    report.previousMigrationHashes = before.map(row => row.hash);
-    const migrationExit = await run([resolve('node_modules/drizzle-kit/bin.cjs'), 'migrate']);
-    assert.equal(migrationExit, 0, 'Isolated test migration upgrade failed.');
-    const after = (await pool.query('select hash, created_at from drizzle.__drizzle_migrations order by created_at')).rows;
-    assertMigrationRows(after, plan);
-    report.migrationHashes = after.map(row => row.hash);
-    report.migrationSetSha256 = plan.sha256;
   } else if (mode === 'preflight') {
     const bytes = Buffer.from('isolated-private-storage-proof');
     const path = `video-os/uploads/live-verification-${randomUUID()}/proof.txt`;
