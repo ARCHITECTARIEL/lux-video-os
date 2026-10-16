@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "provenance": "recaptured 2026-10-15 (FIX-002b): fresh isolated PostgreSQL 18.6 (major version 18) throwaway local instance (initdb, listening on 127.0.0.1 only, throwaway_* databases, removed after capture) with all 15 migrations (0000-0014) applied from empty via psql, captured twice (LF and CRLF copies of the migration SQL) with identical results. Hashed with readSchemaCatalogue/schemaDigest, migration set via migrationPlan(), sources via schemaSourceHashes(). Control: applying 0000-0013 on the same instance reproduced the MIG-0013 schemaSha256 fe9a67f3... exactly. 0014 adds users_role_ck, users_role_guard() and users_role_guard_tg. The schemaSha256 depends on the PostgreSQL major version; compare only against a PostgreSQL 18 database. Supersedes the 2026-10-14 MIG-0013 capture (14 migrations, 0000-0013).",
-  "capturedAt": "2026-10-15T12:58:30.094Z",
-  "migrationSetSha256": "e503d184287f690e5534e8f0e82d17cdbcc21a7f4b0250f32fccfdad611add09",
+  "provenance": "isolated database initialized from exact repository migrations; review before production use",
+  "capturedAt": "2026-10-16T16:12:46.524Z",
+  "migrationSetSha256": "75dd09fdb7aca3ee90b0bf42a8833fae577008f6a66ee25f8eb772b3a4ef00c2",
   "sourceHashes": {
-    "db/schema.js": "d7e617bd253f83ca80dcf1d4d5b44733c493b533b95b29f57cf13019f762f594",
+    "db/schema.js": "1052712211134fdd995b46df9bbf0573d557faaa0ceb7fae2faac6e27eb970bb",
     "db/standard-narration-schema.js": "be1b5caa8040685ddae706b0e3c7d7357deb8753d917528d3defb88af11b0efd",
     "db/provider-lifecycle-guards.sql": "dbbfe7a06b596283e62f58d3cb050a30d42e489dcd781d1523547aacc897c3df"
   },
-  "schemaSha256": "b9a94a75763c04f15340fa75ef2ec9d4858323e0c8db8233fe48eec76a8ab82b",
-  "tableCount": 28
+  "schemaSha256": "6cbb37c27e0e2f7532f821e92b2d8c21ea2e9e330c8200b22011cb64bd8c5490",
+  "tableCount": 29
 }
