@@ -417,13 +417,31 @@ async function handleRetryJob(jobId) {
 
 async function completeWatchdogSweep(deps, options) {
   const sweep = await (deps.runWatchdogSweep || runWatchdogSweep)(options);
+  // An overlapping delivery cannot certify that its winning peer finished.
+  if (sweep.claimConflicts > 0) return { sweep, heartbeatPersisted: false, overlap: true };
   const { entry, row } = prepareOpsEvent({
     level: 'info', persist: true, event: 'watchdog_heartbeat', status: 200,
     code: 'WATCHDOG_SWEEP_COMPLETED', message: 'Watchdog sweep completed.',
   });
   console.log(JSON.stringify(entry));
   const heartbeatPersisted = await writeOpsEvent(row, deps.opsWriter, { audit: true });
-  return { sweep, heartbeatPersisted };
+  return { sweep, heartbeatPersisted, overlap: false };
+}
+
+async function nativeWatchdogReady(env, probe) {
+  if (![env.DATABASE_URL, env.BLOB_READ_WRITE_TOKEN, env.HEYGEN_API_KEY].every(value => String(value || '').trim())) return false;
+  let timer;
+  try {
+    await Promise.race([
+      Promise.resolve().then(probe),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), 2000); }),
+    ]);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function handlePost(req, res, operation, deps = {}) {
@@ -458,7 +476,9 @@ async function handlePost(req, res, operation, deps = {}) {
   }
   if (operation === 'watchdog-sweep') {
     const staleAfterMinutes = Number(payload.staleAfterMinutes) || undefined;
-    const { sweep } = await completeWatchdogSweep(deps, staleAfterMinutes ? { staleAfterMinutes } : undefined);
+    const { sweep, heartbeatPersisted, overlap } = await completeWatchdogSweep(deps, staleAfterMinutes ? { staleAfterMinutes } : undefined);
+    if (overlap) return send(res, 409, { ok: false, code: 'watchdog_overlap_detected' });
+    if (!heartbeatPersisted) return send(res, 503, { ok: false, code: 'watchdog_heartbeat_unpersisted' });
     return send(res, 200, { ok: true, sweep });
   }
   if (operation === 'stripe-reconciliation') {
@@ -552,7 +572,12 @@ export function createAdminHandler(deps = {}) {
           if (actorType !== 'cron_secret') {
             return send(res, actorType === 'none' ? 401 : 403, { ok: false, code: 'cron_auth_required' });
           }
-          const { heartbeatPersisted } = await completeWatchdogSweep(deps);
+          const probe = deps.watchdogDbProbe || (() => database().execute(sql`select 1`));
+          if (!await nativeWatchdogReady(env, probe)) {
+            return send(res, 503, { ok: false, code: 'watchdog_dependencies_unhealthy' });
+          }
+          const { heartbeatPersisted, overlap } = await completeWatchdogSweep(deps);
+          if (overlap) return send(res, 409, { ok: false, code: 'watchdog_overlap_detected' });
           if (!heartbeatPersisted) return send(res, 503, { ok: false, code: 'watchdog_heartbeat_unpersisted' });
           return send(res, 200, { ok: true });
         }

@@ -9,6 +9,9 @@ import { prepareOpsEvent } from '../lib/ops-log.js';
 const TEST_ENV = Object.freeze({
   VIDEO_OS_ADMIN_TOKEN: 'proof-admin-token',
   CRON_SECRET: 'proof-cron-secret',
+  DATABASE_URL: 'postgres://fixture.invalid/app',
+  BLOB_READ_WRITE_TOKEN: 'fixture-blob-token',
+  HEYGEN_API_KEY: 'fixture-provider-key',
   VERCEL_DEPLOYMENT_ID: 'dpl_admin_audit_fixture',
   VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40),
   VIDEO_OS_DIAGNOSTIC_MAINTENANCE: 'false',
@@ -305,6 +308,7 @@ test('native cron GET is scoped to the cron secret and persists a heartbeat only
   const rows = [];
   const handler = createAdminHandler({
     env: TEST_ENV, opsWriter: async row => rows.push(row),
+    watchdogDbProbe: async () => {},
     runWatchdogSweep: async () => { calls.push('sweep'); return { checked: 0, jobs: { alertedIds: ['private-job'] } }; },
   });
   const url = '/api/video-os-lite/watchdog-cron';
@@ -336,6 +340,7 @@ test('native cron failure cannot advance the persisted heartbeat', async () => {
   const rows = [];
   const handler = createAdminHandler({
     env: TEST_ENV, opsWriter: async row => rows.push(row),
+    watchdogDbProbe: async () => {},
     runWatchdogSweep: async () => { throw new Error('private provider detail'); },
   });
   const res = response();
@@ -352,6 +357,7 @@ test('native cron reports failure when its completed sweep cannot persist the he
   let calls = 0;
   const handler = createAdminHandler({
     env: TEST_ENV,
+    watchdogDbProbe: async () => {},
     opsWriter: async row => { if (row.event === 'watchdog_heartbeat') throw new Error('private database detail'); },
     runWatchdogSweep: async () => { calls += 1; return { checked: 0 }; },
   });
@@ -363,6 +369,64 @@ test('native cron reports failure when its completed sweep cannot persist the he
   assert.equal(calls, 1);
   assert.equal(res.statusCode, 503);
   assert.deepEqual(res.body, { ok: false, code: 'watchdog_heartbeat_unpersisted' });
+});
+
+test('native cron does no sweep when a required dependency is absent or the DB probe fails', async () => {
+  for (const [env, probe] of [
+    [{ ...TEST_ENV, DATABASE_URL: '' }, async () => {}],
+    [{ ...TEST_ENV, BLOB_READ_WRITE_TOKEN: '' }, async () => {}],
+    [{ ...TEST_ENV, HEYGEN_API_KEY: '' }, async () => {}],
+    [{ ...TEST_ENV, HEYGEN_API_KEY: '   ' }, async () => {}],
+    [TEST_ENV, async () => { throw new Error('private DB detail'); }],
+  ]) {
+    let sweeps = 0;
+    const handler = createAdminHandler({
+      env, watchdogDbProbe: probe, opsWriter: async () => {},
+      runWatchdogSweep: async () => { sweeps += 1; return {}; },
+    });
+    const res = response();
+    await handler(request('watchdog-sweep', undefined, {
+      method: 'GET', url: '/api/video-os-lite/watchdog-cron',
+      headers: { authorization: `Bearer ${TEST_ENV.CRON_SECRET}` },
+    }), res);
+    assert.equal(res.statusCode, 503);
+    assert.deepEqual(res.body, { ok: false, code: 'watchdog_dependencies_unhealthy' });
+    assert.equal(sweeps, 0);
+  }
+});
+
+test('GitHub fallback POST fails when the sweep heartbeat cannot be persisted', async () => {
+  const handler = createAdminHandler({
+    env: TEST_ENV,
+    opsWriter: async row => { if (row.event === 'watchdog_heartbeat') throw new Error('private DB detail'); },
+    runWatchdogSweep: async () => ({ checked: 0 }),
+  });
+  const res = response();
+  await handler(request('watchdog-sweep', {}, {
+    headers: { authorization: `Bearer ${TEST_ENV.CRON_SECRET}` },
+  }), res);
+  assert.equal(res.statusCode, 503);
+  assert.deepEqual(res.body, { ok: false, code: 'watchdog_heartbeat_unpersisted' });
+});
+
+test('overlapping watchdog deliveries do not certify a fresh heartbeat', async () => {
+  const rows = [];
+  const handler = createAdminHandler({
+    env: TEST_ENV, watchdogDbProbe: async () => {}, opsWriter: async row => rows.push(row),
+    runWatchdogSweep: async () => ({ claimConflicts: 1 }),
+  });
+  for (const [method, url, body] of [
+    ['GET', '/api/video-os-lite/watchdog-cron', undefined],
+    ['POST', '/api/video-os-lite/admin?operation=watchdog-sweep', {}],
+  ]) {
+    const res = response();
+    await handler(request('watchdog-sweep', body, {
+      method, url, headers: { authorization: `Bearer ${TEST_ENV.CRON_SECRET}` },
+    }), res);
+    assert.equal(res.statusCode, 409);
+    assert.deepEqual(res.body, { ok: false, code: 'watchdog_overlap_detected' });
+  }
+  assert.equal(rows.some(row => row.event === 'watchdog_heartbeat'), false);
 });
 
 test('failed anonymous alert flood is deduped and responses never wait for Slack', async () => {
