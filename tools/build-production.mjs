@@ -80,10 +80,14 @@ await rm(output, { recursive: true, force: true });
 run(vercelCli, ['build', '--target', target]);
 const configUrl = new URL('config.json', output);
 const appConfig = JSON.parse(await readFile(configUrl, 'utf8'));
+const expectedCrons = [{ path: '/api/video-os-lite/watchdog-cron', schedule: '*/15 * * * *' }];
+if (JSON.stringify(appConfig.crons) !== JSON.stringify(expectedCrons)) {
+  throw new Error('Vercel build output omitted or changed the reviewed native watchdog cron.');
+}
 run(workflowCli, ['build', '--target', 'vercel-build-output-api']);
 const workflowConfig = JSON.parse(await readFile(configUrl, 'utf8'));
 const routes = [...(workflowConfig.routes || []), ...(appConfig.routes || [])].filter((route, index, all) => index === all.findIndex((candidate) => JSON.stringify(candidate) === JSON.stringify(route)));
-await writeFile(configUrl, `${JSON.stringify({ ...appConfig, ...workflowConfig, routes }, null, 2)}\n`, 'utf8');
+await writeFile(configUrl, `${JSON.stringify({ ...appConfig, ...workflowConfig, crons: expectedCrons, routes }, null, 2)}\n`, 'utf8');
 
 const workflowManifest = new URL('diagnostics/workflows-manifest.json', output);
 const renderFunction = new URL('functions/api/video-os-lite/render-v2.func/', output);

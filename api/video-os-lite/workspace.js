@@ -17,7 +17,7 @@ import { deferAdminResponse } from '../../lib/admin-request-audit.js';
 import health from '../../lib/health.js';
 import notFound from '../../lib/api-not-found.js';
 
-const handlers = { admin, asset, copywriter, identities, projects, providers, results, standard, enrollments, luxify, 'enrollment-upload': enrollmentUpload, 'scripted-photo': scriptedPhoto, 'provider-consent': providerConsent };
+const handlers = { admin, asset, copywriter, identities, projects, providers, results, standard, enrollments, luxify, 'enrollment-upload': enrollmentUpload, 'scripted-photo': scriptedPhoto, 'provider-consent': providerConsent, 'watchdog-cron': admin };
 
 export default async function handler(req, res) {
   const pathname = String(req.url || '').split('?', 1)[0];
@@ -31,7 +31,7 @@ export default async function handler(req, res) {
   const selected = Object.hasOwn(handlers, route) ? handlers[route] : undefined;
   if (!selected && route !== 'workspace') return send(res, 404, { ok: false, code: 'not_found', error: 'Workspace route not found.' });
   if (selected === admin) {
-    const operation = new URL(req.url, 'https://video-os.invalid').searchParams.get('operation') || 'jobs';
+    const operation = route === 'watchdog-cron' ? 'watchdog-sweep' : new URL(req.url, 'https://video-os.invalid').searchParams.get('operation') || 'jobs';
     const deferred = deferAdminResponse(req, res, {
       operation,
       actorType: () => adminActorType(req),

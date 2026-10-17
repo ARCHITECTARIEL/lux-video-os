@@ -22,7 +22,8 @@ async function health(method = 'GET', overrides = {}, deps = {}) {
       VERCEL_GIT_COMMIT_SHA: 'abc123', VERCEL_GIT_COMMIT_REF: 'main', VERCEL_ENV: 'production',
       ...overrides,
     },
-    dbProbe: async () => {}, lastSweep: async () => '2026-10-15T00:00:00.000Z', ...deps,
+    dbProbe: async () => {}, lastSweep: async () => '2026-10-15T00:00:00.000Z',
+    now: () => new Date('2026-10-15T00:10:00.000Z'), ...deps,
   })({ method }, res);
   return res;
 }
@@ -46,6 +47,24 @@ test('health reports an ok JSON response with identity, checks, and short CDN ca
   assert.deepEqual(body.checks.provider, { ok: true, critical: false, configured: true });
   assert.equal(body.checks.db.ok, true);
   assert.equal(body.checks.watchdog.lastSweepAt, '2026-10-15T00:00:00.000Z');
+  assert.equal(body.checks.watchdog.ok, true);
+});
+
+test('production health degrades when the sweep is missing, future-dated, or over 45 minutes old', async () => {
+  for (const [lastSweepAt, code] of [
+    [null, 'watchdog_missing'],
+    ['2026-10-15T00:10:01.000Z', 'watchdog_invalid'],
+    ['2026-10-14T23:24:59.000Z', 'watchdog_stale'],
+  ]) {
+    const res = await health('GET', {}, { lastSweep: async () => lastSweepAt });
+    const body = JSON.parse(res.body);
+    assert.equal(res.statusCode, 200);
+    assert.equal(body.status, 'degraded');
+    assert.equal(body.checks.watchdog.ok, false);
+    assert.equal(body.checks.watchdog.code, code);
+  }
+  const boundary = await health('GET', {}, { lastSweep: async () => '2026-10-14T23:25:00.000Z' });
+  assert.equal(JSON.parse(boundary.body).checks.watchdog.ok, true);
 });
 
 test('health fails on missing and unavailable DB or Blob; degrades on missing provider', async () => {
@@ -102,7 +121,8 @@ test('API fallback gives JSON 404 for any method and drops query text', () => {
 });
 
 test('Vercel routes preserve explicit API and static destinations before fallback', () => {
-  const routes = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url))).routes;
+  const config = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url)));
+  const routes = config.routes;
   const resolve = path => routes.find(route => new RegExp(`^${route.src}$`).test(path))?.dest;
   assert.equal(resolve('/api/health'), '/api/video-os-lite/workspace.js');
   assert.equal(resolve('/api/zz-unknown'), '/api/video-os-lite/workspace.js');
@@ -115,6 +135,7 @@ test('Vercel routes preserve explicit API and static destinations before fallbac
     ['/api/video-os-lite/checkout', '/api/video-os-lite/checkout-v2.js'],
     ['/api/video-os-lite/stripe-webhook', '/api/video-os-lite/stripe-webhook-v2.js'],
     ['/api/video-os-lite/luxify', '/api/video-os-lite/workspace.js'],
+    ['/api/video-os-lite/watchdog-cron', '/api/video-os-lite/workspace.js'],
     ['/api/video-os/talent', '/api/video-os/talent.js'],
     ['/welcome', '/landing.html'],
     ['/captions.vtt', '/$1'],
@@ -123,4 +144,5 @@ test('Vercel routes preserve explicit API and static destinations before fallbac
   assert.ok(apiFallback > routes.findIndex(route => route.src === '/api/video-os-lite/admin'));
   assert.ok(apiFallback < routes.findIndex(route => route.src === '/(.*\\.vtt)'));
   assert.ok(apiFallback < routes.findIndex(route => route.src === '/(.*)'));
+  assert.deepEqual(config.crons, [{ path: '/api/video-os-lite/watchdog-cron', schedule: '*/15 * * * *' }]);
 });

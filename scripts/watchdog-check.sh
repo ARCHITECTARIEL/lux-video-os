@@ -105,7 +105,18 @@ const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 if (!value || typeof value !== 'object' || Array.isArray(value)) process.exit(1);
 if (typeof value.status !== 'string' || typeof value.gitSha !== 'string') process.exit(1);
 if (!/^[0-9a-f]{7,40}$/i.test(value.gitSha)) process.exit(1);
-process.stdout.write(`${value.status}\n${value.gitSha}\n`);
+const staleOnly = value.status === 'degraded'
+  && value.checks?.watchdog?.ok === false
+  && value.checks?.db?.ok === true
+  && value.checks?.blob?.ok === true
+  && value.checks?.provider?.ok === true;
+const sweepAt = Date.parse(value.checks?.watchdog?.lastSweepAt);
+const nowEpoch = Number(process.env.NOW_EPOCH || Math.floor(Date.now() / 1000));
+const sweepAgeSeconds = nowEpoch - Math.floor(sweepAt / 1000);
+// Leave 20 minutes to recover before the 45-minute heartbeat contract expires.
+const fallbackNotNeeded = value.checks?.watchdog?.ok === true
+  && Number.isFinite(sweepAgeSeconds) && sweepAgeSeconds >= 0 && sweepAgeSeconds <= 25 * 60;
+process.stdout.write(`${value.status}\n${value.gitSha}\n${fallbackNotNeeded}\n${staleOnly}\n`);
 NODE
 ); then
   error 'Health response was not valid JSON with status and gitSha fields.'
@@ -114,8 +125,10 @@ fi
 
 health_status="$(printf '%s\n' "$health_fields" | sed -n '1p')"
 deployed_git_sha="$(printf '%s\n' "$health_fields" | sed -n '2p')"
+fallback_not_needed="$(printf '%s\n' "$health_fields" | sed -n '3p')"
+stale_only="$(printf '%s\n' "$health_fields" | sed -n '4p')"
 
-if [[ "$health_status" != 'ok' ]]; then
+if [[ "$health_status" != 'ok' && "$stale_only" != 'true' ]]; then
   error "Health response reported status '$health_status'; status must be ok before a watchdog sweep."
   exit 1
 fi
@@ -134,6 +147,13 @@ if [[ "$deployed_git_sha" != "$expected_git_sha" ]]; then
 
   error "Production SHA $deployed_git_sha does not match main SHA $expected_git_sha after the 20-minute deployment grace period."
   exit 1
+fi
+
+# Native Vercel Cron is the primary 15-minute clock. GitHub's delayed
+# schedule is a fallback; do not run a second sweep while the first is fresh.
+if [[ "${WATCHDOG_FALLBACK_ONLY:-false}" == 'true' && "$fallback_not_needed" == 'true' ]]; then
+  printf 'Watchdog heartbeat is current; GitHub fallback skipped.\n'
+  exit 0
 fi
 
 request POST 'Watchdog sweep' "$base_url/api/video-os-lite/admin?operation=watchdog-sweep" sweep \

@@ -251,6 +251,35 @@ test('watchdog passes only after health, sweep, and all strict route probes pass
   ]);
 });
 
+test('scheduled GitHub fallback skips a fresh native sweep and runs for a stale-only degraded health state', { skip: !bashAvailable }, async (t) => {
+  const healthy = await runScript(t, watchdogScript, {
+    WATCHDOG_FALLBACK_ONLY: 'true',
+    MOCK_HEALTH_BODY: JSON.stringify({ status: 'ok', gitSha: mainSha,
+      checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true },
+        watchdog: { ok: true, lastSweepAt: new Date((nowEpoch - 600) * 1000).toISOString() } } }),
+  });
+  assert.equal(healthy.status, 0, healthy.stderr);
+  assert.match(healthy.stdout, /GitHub fallback skipped/);
+  assert.equal(healthy.calls, 'GET https://video.example/api/health\n');
+
+  const aging = await runScript(t, watchdogScript, {
+    WATCHDOG_FALLBACK_ONLY: 'true',
+    MOCK_HEALTH_BODY: JSON.stringify({ status: 'ok', gitSha: mainSha,
+      checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true },
+        watchdog: { ok: true, lastSweepAt: new Date((nowEpoch - 26 * 60) * 1000).toISOString() } } }),
+  });
+  assert.equal(aging.status, 0, aging.stderr);
+  assert.match(aging.calls, /POST https:\/\/video\.example\/api\/video-os-lite\/admin\?operation=watchdog-sweep/);
+
+  const stale = await runScript(t, watchdogScript, {
+    WATCHDOG_FALLBACK_ONLY: 'true',
+    MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', gitSha: mainSha,
+      checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true }, watchdog: { ok: false } } }),
+  });
+  assert.equal(stale.status, 0, stale.stderr);
+  assert.match(stale.calls, /POST https:\/\/video\.example\/api\/video-os-lite\/admin\?operation=watchdog-sweep/);
+});
+
 test('watchdog fails on a non-200 sweep and does not run route smoke', { skip: !bashAvailable }, async (t) => {
   const result = await runScript(t, watchdogScript, { MOCK_SWEEP_STATUS: '503' });
   assert.equal(result.status, 1);
@@ -357,6 +386,7 @@ test('watchdog and heartbeat workflows parse and invoke the extracted scripts on
   assert.equal(watchdog.jobs.sweep.steps.at(-1).run.includes('bash scripts/watchdog-check.sh'), true);
   assert.equal(watchdog.jobs.sweep.steps.at(-1).env.VIDEO_OS_BASE_URL, '${{ vars.VIDEO_OS_BASE_URL }}');
   assert.equal(watchdog.jobs.sweep.steps.at(-1).env.VIDEO_OS_CRON_SECRET, '${{ secrets.VIDEO_OS_CRON_SECRET }}');
+  assert.equal(watchdog.jobs.sweep.steps.at(-1).env.WATCHDOG_FALLBACK_ONLY, "${{ github.event_name == 'schedule' }}");
   assert.match(await readFile(watchdogScript, 'utf8'), /Authorization: Bearer \$cron_secret/);
   const stripeRaw = await readFile(resolve(root, '.github/workflows/stripe-reconciliation.yml'), 'utf8');
   assert.match(stripeRaw, /Authorization: Bearer \$CRON_SECRET/);

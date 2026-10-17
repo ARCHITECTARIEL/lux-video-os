@@ -300,6 +300,71 @@ test('bare cron secret is rejected without Bearer', async () => {
   assert.equal(res.statusCode, 401);
 });
 
+test('native cron GET is scoped to the cron secret and persists a heartbeat only after a successful sweep', async () => {
+  const calls = [];
+  const rows = [];
+  const handler = createAdminHandler({
+    env: TEST_ENV, opsWriter: async row => rows.push(row),
+    runWatchdogSweep: async () => { calls.push('sweep'); return { checked: 0, jobs: { alertedIds: ['private-job'] } }; },
+  });
+  const url = '/api/video-os-lite/watchdog-cron';
+  for (const [method, headers, status] of [
+    ['GET', {}, 401],
+    ['GET', { authorization: 'Bearer incorrect' }, 401],
+    ['GET', { authorization: `Bearer ${TEST_ENV.VIDEO_OS_ADMIN_TOKEN}` }, 403],
+    ['POST', { authorization: `Bearer ${TEST_ENV.CRON_SECRET}` }, 405],
+  ]) {
+    const res = response();
+    await handler(request('watchdog-sweep', undefined, { method, headers, url }), res);
+    assert.equal(res.statusCode, status);
+  }
+  assert.deepEqual(calls, []);
+  assert.equal(rows.some(row => row.event === 'watchdog_heartbeat'), false);
+
+  const res = response();
+  await handler(request('watchdog-sweep', undefined, {
+    method: 'GET', headers: { authorization: `Bearer ${TEST_ENV.CRON_SECRET}` }, url,
+  }), res);
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { ok: true });
+  assert.deepEqual(calls, ['sweep']);
+  assert.equal(rows.filter(row => row.event === 'watchdog_heartbeat').length, 1);
+  assert.equal(JSON.stringify(res.body).includes('private-job'), false);
+});
+
+test('native cron failure cannot advance the persisted heartbeat', async () => {
+  const rows = [];
+  const handler = createAdminHandler({
+    env: TEST_ENV, opsWriter: async row => rows.push(row),
+    runWatchdogSweep: async () => { throw new Error('private provider detail'); },
+  });
+  const res = response();
+  await handler(request('watchdog-sweep', undefined, {
+    method: 'GET', url: '/api/video-os-lite/watchdog-cron',
+    headers: { authorization: `Bearer ${TEST_ENV.CRON_SECRET}` },
+  }), res);
+  assert.equal(res.statusCode, 500);
+  assert.equal(rows.some(row => row.event === 'watchdog_heartbeat'), false);
+  assert.equal(JSON.stringify(res.body).includes('private provider detail'), false);
+});
+
+test('native cron reports failure when its completed sweep cannot persist the heartbeat', async () => {
+  let calls = 0;
+  const handler = createAdminHandler({
+    env: TEST_ENV,
+    opsWriter: async row => { if (row.event === 'watchdog_heartbeat') throw new Error('private database detail'); },
+    runWatchdogSweep: async () => { calls += 1; return { checked: 0 }; },
+  });
+  const res = response();
+  await handler(request('watchdog-sweep', undefined, {
+    method: 'GET', url: '/api/video-os-lite/watchdog-cron',
+    headers: { authorization: `Bearer ${TEST_ENV.CRON_SECRET}` },
+  }), res);
+  assert.equal(calls, 1);
+  assert.equal(res.statusCode, 503);
+  assert.deepEqual(res.body, { ok: false, code: 'watchdog_heartbeat_unpersisted' });
+});
+
 test('failed anonymous alert flood is deduped and responses never wait for Slack', async () => {
   const env = { ...TEST_ENV, WATCHDOG_SLACK_WEBHOOK_URL: 'https://hooks.slack.invalid/fixture' };
   let calls = 0;

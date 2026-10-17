@@ -65,6 +65,7 @@ test('Preview deployment stays within the 12-function budget', () => {
     '/api/video-os-lite/results',
     '/api/video-os-lite/scripted-photo',
     '/api/video-os-lite/standard',
+    '/api/video-os-lite/watchdog-cron',
     '/api/video-os-lite/workspace',
   ]);
 });

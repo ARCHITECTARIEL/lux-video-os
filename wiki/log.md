@@ -884,3 +884,9 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 ## 2026-10-15T13:22:00Z - [closure-writeback] [FIX-002c] [QA-security]
 
 - Confirmed the FIX-002c worktree diff contains the guard, PG tests, privileged-account refusal, and audit documentation. All requested offline Node 24 checks passed; the opt-in PostgreSQL suite remains for a later authorized throwaway DB run. Changes remain uncommitted.
+
+## 2026-10-17T14:06:18Z - [watchdog-cadence] [native-cron-candidate] [production-hold]
+
+- Diagnosed a 4-hour-38-minute gap between successful scheduled GitHub sweeps while the production `13cd882` deployment reported a watchdog heartbeat over three hours old. The last GitHub heartbeat correctly passed when the sweep was 11 minutes old; later scheduled heartbeat runs were absent. The current Vercel team is Pro, so the repository's Hobby-only Cron comment is obsolete.
+- Prepared an isolated native Vercel Cron candidate at a 15-minute cadence through the existing workspace function and cron-only Bearer GET. A completed sweep must persist its heartbeat before the native route reports success. Production health degrades after 45 minutes; scheduled GitHub sweeps become fallback-only after 25 minutes while manual dispatch remains available. The release build fails if the native Cron is lost from prebuilt output.
+- Focused route, health, fallback and maintenance tests passed. Final local `test:unit`: 1,252 Node passed, 51 configured live skips, zero failures; Vitest four passed. Import, Workflow validation, client privacy, migration-snapshot check and preview preflight passed. No production schedule, deployment, provider, database, job, credit or environment change was made. Native delivery, exact-head remote CI and artifact readback remain required before claiming the 45-minute contract.

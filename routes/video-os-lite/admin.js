@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { dispatchClaimedJob } from '../../api/video-os-lite/render-v2.js';
 import { database } from '../../db/client.js';
-import { logOpsEventAwaited, redactOpsValue } from '../../lib/ops-log.js';
+import { logOpsEventAwaited, prepareOpsEvent, redactOpsValue, writeOpsEvent } from '../../lib/ops-log.js';
 import {
   adminResolveJob, claimWorkflowStart, getAdminOverview, getJob, getJobEventTimeline, grantAdminCredit, listAdminTesters, listFailedOrStuckJobs,
   listMediaAssetsForJob, listRecentAccounts, listRecentCreditTransactions, listRecentJobs, listRecentStripeEvents,
@@ -45,6 +45,7 @@ const ACTIVITY_MAX_LIMIT = 100;
 const ACTIVITY_MAX_OFFSET = 10_000;
 const OPS_LEVELS = new Set(['info', 'warn', 'error']);
 const CRON_OPERATIONS = new Set(['watchdog-sweep', 'stripe-reconciliation']);
+const WATCHDOG_CRON_PATH = '/api/video-os-lite/watchdog-cron';
 
 function boundedQueryText(value, label, maxLength = 128) {
   const text = String(value || '').trim();
@@ -414,6 +415,17 @@ async function handleRetryJob(jobId) {
   return getJob(reserved.job.id);
 }
 
+async function completeWatchdogSweep(deps, options) {
+  const sweep = await (deps.runWatchdogSweep || runWatchdogSweep)(options);
+  const { entry, row } = prepareOpsEvent({
+    level: 'info', persist: true, event: 'watchdog_heartbeat', status: 200,
+    code: 'WATCHDOG_SWEEP_COMPLETED', message: 'Watchdog sweep completed.',
+  });
+  console.log(JSON.stringify(entry));
+  const heartbeatPersisted = await writeOpsEvent(row, deps.opsWriter, { audit: true });
+  return { sweep, heartbeatPersisted };
+}
+
 async function handlePost(req, res, operation, deps = {}) {
   const payload = await readJson(req, 5_000);
   if (operation === 'resolve-job') {
@@ -446,11 +458,7 @@ async function handlePost(req, res, operation, deps = {}) {
   }
   if (operation === 'watchdog-sweep') {
     const staleAfterMinutes = Number(payload.staleAfterMinutes) || undefined;
-    const sweep = await (deps.runWatchdogSweep || runWatchdogSweep)(staleAfterMinutes ? { staleAfterMinutes } : undefined);
-    await logOpsEventAwaited({
-      level: 'info', persist: true, event: 'watchdog_heartbeat', status: 200,
-      code: 'WATCHDOG_SWEEP_COMPLETED', message: 'Watchdog sweep completed.',
-    }, { writer: deps.opsWriter });
+    const { sweep } = await completeWatchdogSweep(deps, staleAfterMinutes ? { staleAfterMinutes } : undefined);
     return send(res, 200, { ok: true, sweep });
   }
   if (operation === 'stripe-reconciliation') {
@@ -504,7 +512,8 @@ export function createAdminHandler(deps = {}) {
   return async function handler(req, res) {
     const env = deps.env || process.env;
     const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
-    const operation = url.searchParams.get('operation') || 'jobs';
+    const nativeCron = url.pathname === WATCHDOG_CRON_PATH;
+    const operation = nativeCron ? 'watchdog-sweep' : url.searchParams.get('operation') || 'jobs';
     let actorType = 'none';
     try {
       if (deps.resolveAdminActor) actorType = deps.resolveAdminActor(req, env);
@@ -535,6 +544,18 @@ export function createAdminHandler(deps = {}) {
       if (handleOptions(req, res)) return;
       if (!['GET', 'POST'].includes(req.method)) return send(res, 405, { ok: false, error: 'Use GET or POST for admin requests.' });
       try {
+        if (nativeCron) {
+          if (req.method !== 'GET') {
+            res.setHeader('Allow', 'GET');
+            return send(res, 405, { ok: false, code: 'method_not_allowed' });
+          }
+          if (actorType !== 'cron_secret') {
+            return send(res, actorType === 'none' ? 401 : 403, { ok: false, code: 'cron_auth_required' });
+          }
+          const { heartbeatPersisted } = await completeWatchdogSweep(deps);
+          if (!heartbeatPersisted) return send(res, 503, { ok: false, code: 'watchdog_heartbeat_unpersisted' });
+          return send(res, 200, { ok: true });
+        }
         if (actorType === 'none') return send(res, 401, { ok: false, error: 'Admin login required.' });
         if (req.method === 'POST') return await handlePost(req, res, operation, deps);
         return await handleGet(req, res, operation, url);
