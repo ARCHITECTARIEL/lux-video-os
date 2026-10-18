@@ -5,6 +5,8 @@ import { spawnSync } from 'node:child_process';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureSourceIdentity, inspectWorkflowBoundary } from './release-build-manifest.mjs';
+import { loadPinnedHeygenSpaceAnchorProjection } from '../lib/heygen-space-anchor.js';
+import { assertHeygenRefreshReleaseWindow } from '../lib/heygen-space-refresh.js';
 
 // This tool re-verifies the AUTOMATABLE gates on an already-quarantined
 // `npm run build:production` candidate, immediately before a deploy. It
@@ -49,7 +51,7 @@ export function checkCurrentCandidateCi(checkRuns, requiredChecks = CI_REQUIRED_
   return { passed, detail };
 }
 
-export function computeAuthorizationResult({ manifest, currentSource, liveOutputSha256, freshDatabaseCheck, workflowBoundary, ciResult, ownerAuthorized }) {
+export function computeAuthorizationResult({ manifest, currentSource, liveOutputSha256, freshDatabaseCheck, workflowBoundary, ciResult, refreshCheck, ownerAuthorized }) {
   const checks = {
     sourceUnchangedSincePackaging: Boolean(
       manifest.source && currentSource.head === manifest.source.head
@@ -65,6 +67,7 @@ export function computeAuthorizationResult({ manifest, currentSource, liveOutput
     ),
     workflowBoundaryVerifiedNow: workflowBoundary?.verified === true,
     currentCandidateCiPassed: Boolean(ciResult?.passed),
+    refreshReleaseWindowValid: manifest.target === 'production' ? refreshCheck?.verified === true : true,
   };
 
   const automatableGatesCleared = Object.values(checks).every(Boolean);
@@ -85,6 +88,24 @@ export function computeAuthorizationResult({ manifest, currentSource, liveOutput
     outstandingLaunchGates: manifest.remainingReleaseGates || [],
     note: 'routineDeployAuthorized means this exact, re-verified artifact may be deployed to production code-wise (`vercel deploy --prebuilt --prod`). It does NOT mean the P0/launch release gate is satisfied -- see outstandingLaunchGates, which require real-world evidence no script can produce.',
   };
+}
+
+export async function checkQuarantinedRefresh(root, output, { now = new Date() } = {}) {
+  const relativePaths = [
+    'functions/api/video-os-lite/workspace.func/config/heygen-space-refresh.json',
+    'functions/.well-known/workflow/v1/step.func/runtime-repository/config/heygen-space-refresh.json',
+  ];
+  try {
+    const source = await readFile(join(root, 'config/heygen-space-refresh.json'));
+    for (const path of relativePaths) {
+      if (!(await readFile(join(output, path))).equals(source)) return { verified: false };
+    }
+    const anchor = await loadPinnedHeygenSpaceAnchorProjection({ now });
+    const remainingMs = assertHeygenRefreshReleaseWindow(anchor, { now });
+    return { verified: true, expiresAt: anchor.anchorExpiresAt, remainingMs };
+  } catch {
+    return { verified: false };
+  }
 }
 
 function argument(name) {
@@ -123,7 +144,8 @@ export async function main() {
     try { ciResult = checkCurrentCandidateCi(JSON.parse(ciRun.stdout).check_runs); } catch { /* leave as failed */ }
   }
 
-  const result = computeAuthorizationResult({ manifest, currentSource, liveOutputSha256, freshDatabaseCheck, workflowBoundary, ciResult, ownerAuthorized });
+  const refreshCheck = await checkQuarantinedRefresh(root, manifest.output.location);
+  const result = computeAuthorizationResult({ manifest, currentSource, liveOutputSha256, freshDatabaseCheck, workflowBoundary, ciResult, refreshCheck, ownerAuthorized });
   console.log(JSON.stringify(result, null, 2));
 
   if (result.routineDeployAuthorized) {

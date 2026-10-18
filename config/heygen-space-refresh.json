@@ -1,0 +1,45 @@
+{
+  "version": "heygen-space-refresh/v1",
+  "observation": {
+    "policy": "reviewed-neutral-asset-reprobe-24h/v1",
+    "originIdentityDigest": "87f750424f61b502b0a7afd9340d131e5937f702ba979590f4600fbb5b504891",
+    "originProbeResultSha256": "526f2e63e7a2e61e45c4a79f117a7e4d8bdaddfe694ab77f5be852501aa202e6",
+    "originSpaceObservedAt": "2026-10-01T15:11:53.953Z",
+    "credentialKeyFingerprint": "6a51bc8c4ab4b77378fef1af714e376ff7188e167211369c3debb37f14bf551e",
+    "credentialScopeFingerprint": "b2e833e2f6eb5a5ebf2874e28f0a10f2657f5cbc53f04cbad2fffef0c7fbf2d8",
+    "keyIdDigest": "59f92a84e66dcc179e9a01114d694510e3dbcb92fb844a33df2403006d901118",
+    "keyCreatedAt": "2026-10-01T14:35:48.000Z",
+    "usernameDigest": "3cf3d4f247dbe1540d7854f4dab202cab1862950a25204a38e15c1dac3398a3e",
+    "providerSpaceFingerprint": "1c1b9eac97b6e38e481d30ddf12e4332ecb04d08f727a4ff55997a733b3f584a",
+    "canonicalScopeKey": "c0d1badbcbd71c0b1d2815336a0a173ed87b5c59381fb7eedc6adcbb3ae75d0c",
+    "spaceObservedAt": "2026-10-18T13:29:40.282Z",
+    "completedAt": "2026-10-18T13:29:53.240Z",
+    "expiresAt": "2026-10-19T13:29:40.282Z",
+    "maxAgeSeconds": 86400,
+    "freshQualificationMaxAgeSeconds": 60,
+    "fixtureSha256": "f96c86519d1502fd319cdb106ca2a5277a83e09ad4d6e85279756ce77f05563e",
+    "files": {
+      "qualification.json": {
+        "bytes": 1326,
+        "sha256": "5400431b126c00f887b652cd1947a4a579d823559372a2ec81c933d77a108cd3"
+      },
+      "upload.json": {
+        "bytes": 376,
+        "sha256": "57a20ab759ec1ab02246425a4fcbd5d4ef58d00e75ed5318f3a0288ef69c2991"
+      },
+      "read.json": {
+        "bytes": 435,
+        "sha256": "5415f021517120cfc24c2a0c45b2246d182176cdb4e2ae8e5d90175990f723f6"
+      },
+      "delete.json": {
+        "bytes": 349,
+        "sha256": "78290f8378f41dbc3064eac83885942069395249079b13b42306d22424b8ddff"
+      },
+      "readback.json": {
+        "bytes": 322,
+        "sha256": "3d86d79d780d098fb1ec66a0d021dd633c27417db3fa9058841b69766c73680a"
+      }
+    },
+    "bundleSha256": "6dcc57c1b31a7f59c5ce6341077a6f95138c64e84107c869297d5b18fe22e8c4"
+  }
+}
