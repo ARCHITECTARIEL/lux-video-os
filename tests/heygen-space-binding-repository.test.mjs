@@ -423,11 +423,12 @@ test('production environment with the wrong confirmation value still fails befor
   assert.equal(executor.operations.length, 0);
 });
 
-test('a running Vercel production runtime is rejected regardless of requested environment or confirmation', async () => {
+test('a running Vercel production runtime rejects a conflicting environment before any access', async () => {
   const executor = createExecutor();
   const repository = createHeygenSpaceBindingRepository({
     env: () => ({
       VERCEL_ENV: 'production',
+      VERCEL_PROJECT_ID: 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW',
       VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'verification',
       DATABASE_URL: 'postgresql://do-not-use',
       HEYGEN_API_KEY: 'do-not-use',
@@ -439,6 +440,40 @@ test('a running Vercel production runtime is rejected regardless of requested en
     repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID }),
     error => error.code === 'CANONICAL_TARGET_UNVERIFIED',
   );
+  assert.equal(executor.operations.length, 0);
+});
+
+test('deployed production resolution requires exact application project before any access', async () => {
+  for (const projectId of [undefined, '', ' prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW', 'prj_other']) {
+    const executor = createExecutor();
+    let fileAccesses = 0;
+    const repository = createHeygenSpaceBindingRepository({
+      env: () => ({ VERCEL_ENV: 'production', VERCEL_PROJECT_ID: projectId,
+        DATABASE_URL: 'postgresql://do-not-use', HEYGEN_API_KEY: 'do-not-use' }),
+      executor,
+      lstat: async () => { fileAccesses += 1; throw new Error('must not run'); },
+    });
+    await assert.rejects(repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID }),
+      error => error.code === 'CANONICAL_TARGET_UNVERIFIED');
+    assert.equal(fileAccesses, 0);
+    assert.equal(executor.operations.length, 0);
+  }
+});
+
+test('deployed production bootstrap remains forbidden with exact project and confirmation', async () => {
+  const executor = createExecutor();
+  let fileAccesses = 0;
+  const repository = createHeygenSpaceBindingRepository({
+    env: () => ({ VERCEL_ENV: 'production', VERCEL_PROJECT_ID: 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW',
+      VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production',
+      VIDEO_OS_PRODUCTION_BINDING_CONFIRMED: PRODUCTION_BINDING_CONFIRMATION_PHRASE,
+      DATABASE_URL: 'postgresql://do-not-use', HEYGEN_API_KEY: 'do-not-use' }),
+    executor,
+    lstat: async () => { fileAccesses += 1; throw new Error('must not run'); },
+  });
+  await assert.rejects(repository.bootstrapVerifiedHeygenSpaceBinding({ accountId: ACCOUNT_ID,
+    privateEvidenceDir: PRIVATE_EVIDENCE_DIR }), error => error.code === 'CANONICAL_TARGET_UNVERIFIED');
+  assert.equal(fileAccesses, 0);
   assert.equal(executor.operations.length, 0);
 });
 
@@ -779,6 +814,17 @@ test('default target preflight validates the pinned production target only with 
     error => error.code === 'HEYGEN_SPACE_BINDING_NOT_ACTIVE',
   );
   assert.deepEqual(order.slice(0, 5), ['load-target', 'validate-url:canonical', 'load-schema-lock', 'check-schema', 'load-anchor']);
+
+  order.length = 0;
+  env.VERCEL_ENV = 'production';
+  env.VERCEL_PROJECT_ID = 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW';
+  delete env.VIDEO_OS_SPACE_BINDING_ENVIRONMENT;
+  delete env.VIDEO_OS_PRODUCTION_BINDING_CONFIRMED;
+  const before = executor.operations.length;
+  await assert.rejects(repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID }),
+    error => error.code === 'HEYGEN_SPACE_BINDING_NOT_ACTIVE');
+  assert.deepEqual(order.slice(0, 5), ['load-target', 'validate-url:canonical', 'load-schema-lock', 'check-schema', 'load-anchor']);
+  assert.equal(executor.operations.slice(before).some(operation => /^(insert|update|delete):/.test(operation)), false);
 });
 
 test('bootstrap succeeds end to end for the confirmed production environment and yields a production-tagged binding', async () => {
@@ -807,4 +853,39 @@ test('bootstrap succeeds end to end for the confirmed production environment and
   assert.equal(status.environment, 'production');
   assert.equal(status.runtimeActivation, false);
   assert.equal(repository.assertFreshHeygenSpaceBinding(binding), binding);
+});
+
+test('deployed production resolves an existing binding without provisioning or operator confirmation', async () => {
+  const env = {
+    VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production',
+    VIDEO_OS_PRODUCTION_BINDING_CONFIRMED: PRODUCTION_BINDING_CONFIRMATION_PHRASE,
+    DATABASE_URL: 'postgresql://user:secret@production.example.test/database?sslmode=require',
+    HEYGEN_API_KEY: 'secret-test-key',
+  };
+  const { repository, executor } = fixture({
+    env,
+    targetPreflight: async (_env, _dependencies, operation) => {
+      assert.equal(operation, env.VERCEL_ENV === 'production' ? 'resolve' : 'bootstrap');
+      return Object.freeze({
+        environment: 'production',
+        projectId: 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW',
+        databaseBindingSha256: DIGESTS.database,
+        databaseUrl: env.DATABASE_URL,
+        unpooledUrl: null,
+      });
+    },
+  });
+  await repository.bootstrapVerifiedHeygenSpaceBinding({ accountId: ACCOUNT_ID, privateEvidenceDir: PRIVATE_EVIDENCE_DIR });
+  const before = executor.operations.length;
+  env.VERCEL_ENV = 'production';
+  env.VERCEL_PROJECT_ID = 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW';
+  delete env.VIDEO_OS_SPACE_BINDING_ENVIRONMENT;
+  delete env.VIDEO_OS_PRODUCTION_BINDING_CONFIRMED;
+  const binding = await repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID });
+  assert.equal(binding.environment, 'production');
+  assert.equal(repository.assertFreshHeygenSpaceBinding(binding), binding);
+  assert.equal(executor.operations.slice(before).some(operation => /^(insert|update|delete):/.test(operation)), false);
+  env.VERCEL_PROJECT_ID = 'prj_wrong';
+  assert.throws(() => repository.assertFreshHeygenSpaceBinding(binding),
+    error => error.code === 'CANONICAL_TARGET_UNVERIFIED');
 });

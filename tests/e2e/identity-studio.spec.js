@@ -104,6 +104,7 @@ async function mockApp(page, {
   swapHashOnConsent = false,
   callbackAdvanceOnReconcile = false,
   reconsentAbortAfterCommit = false,
+  submitMode = 'processing',
 } = {}) {
   let identities = [...initialIdentities];
   let currentEnrollment = initialEnrollment;
@@ -144,7 +145,25 @@ async function mockApp(page, {
     if (body.action === 'retry') identities = identities.map(item => ({ ...item, overallStatus: 'PROCESSING', [`${body.component}Status`]: 'PROCESSING', [`${body.component}Failure`]: null }));
     if (body.action === 'refresh') identities = identities.map(item => ({ ...item, overallStatus: 'READY', avatarStatus: 'READY', voiceStatus: 'READY', ready: true, voicePreviewUrl: `/api/video-os-lite/identities?voicePreview=${item.id}` }));
     if (body.action === 'archive') identities = identities.filter(item => item.id !== body.identityId);
-    if (body.action === 'submit') identities = identities.map(item => item.id === body.identityId ? { ...item, overallStatus: 'PROCESSING', avatarStatus: 'PROCESSING', voiceStatus: 'PROCESSING' } : item);
+    if (body.action === 'submit' && submitMode === 'held') {
+      return route.fulfill({ status: 503, json: {
+        ok: false,
+        code: 'PROVIDER_SUBMISSION_HELD',
+        error: 'Presenter creation is held before provider submission. No provider request was sent.',
+      } });
+    }
+    if (body.action === 'submit') {
+      identities = identities.map(item => item.id === body.identityId ? { ...item, overallStatus: 'PROCESSING', avatarStatus: 'PROCESSING', voiceStatus: 'PROCESSING' } : item);
+      if (submitMode === 'reconciliation') {
+        return route.fulfill({ status: 202, json: {
+          ok: true,
+          state: 'reconciliation_required',
+          code: 'PROVIDER_RECONCILIATION_REQUIRED',
+          message: 'Provider submission could not be confirmed. Creation is held for reconciliation; do not start it again.',
+          identity: identities.find(item => item.id === body.identityId),
+        } });
+      }
+    }
     return route.fulfill({ json: { ok: true, identity: identities.find(item => item.id === body.identityId) || draft } });
   });
   await page.route('**/api/video-os-lite/enrollments*', async route => {
@@ -331,6 +350,9 @@ test('two captures and six unchecked consents create a v2 hash-bound enrollment 
   await page.locator('#consent-provider-exposure').check();
   await page.locator('#next-button').click();
   await expect(page.getByRole('heading', { name: 'Enrollment is ready.' })).toBeVisible({ timeout: 12_000 });
+  const heldCreatePresenter = page.getByRole('button', { name: 'Create my presenter' });
+  await expect(heldCreatePresenter).toBeDisabled();
+  await expect(page.locator('#ready-provider-hold')).toContainText('privacy, entitlement, and cost checks');
   await expect(page.locator('#ready-use-link')).toHaveAttribute('aria-disabled', 'true');
   await expect(page.locator('#ready-copy')).toContainText('Final presenter creation has not started');
   await expect(page.locator('#ready-media-review')).toBeVisible();
@@ -354,6 +376,24 @@ test('two captures and six unchecked consents create a v2 hash-bound enrollment 
   await page.getByRole('button', { name: 'Back to My identities' }).click();
   await expect(page.getByRole('button', { name: 'Start creation' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Preview extracted voice sample' })).toBeVisible();
+});
+
+test('an existing ready enrollment can start provider creation once from the Ready step', async ({ page }) => {
+  const mock = await mockApp(page, { providerEnabled: true, initialIdentities: [{ ...draft }], initialEnrollment: enrollment('IDENTITY_READY') });
+  await page.addInitScript(({ id }) => localStorage.setItem('luxVideoOsEnrollmentResumeV1:owner-a', JSON.stringify({
+    enrollmentId: id, createIdempotencyKey: '11111111-1111-4111-8111-111111111111', consentIdempotencyKey: null,
+    retryIdempotencyKey: null, revokeIdempotencyKey: null,
+  })), { id: IDS.enrollment });
+  await page.goto('/identity.html');
+  await page.getByRole('button', { name: 'Continue setup' }).click();
+  const createPresenter = page.getByRole('button', { name: 'Create my presenter' });
+  await expect(createPresenter).toBeEnabled();
+  await expect(createPresenter).toBeFocused();
+  expect(mock.calls.filter(call => call.endpoint === 'identities' && call.body.action === 'submit')).toHaveLength(0);
+
+  await createPresenter.evaluate(button => { button.click(); button.click(); });
+
+  await expect.poll(() => mock.calls.filter(call => call.endpoint === 'identities' && call.body.action === 'submit').length).toBe(1);
 });
 
 test('extracted and HeyGen cloned voice previews stay distinct and keyboard usable on mobile', async ({ page }) => {
@@ -577,6 +617,40 @@ test('unavailable legacy sources keep provider creation held without offering a 
   await expect(page.getByRole('button', { name: 'Review provider consent' })).toHaveCount(0);
   await expect(page.getByText('Updated provider consent needs attention because the original owned sources are unavailable.')).toBeVisible();
   await expect(page.getByText('Needs attention', { exact: true })).toBeVisible();
+});
+
+test('zero-admission provider hold exits Creating and does not retry either component', async ({ page }) => {
+  const mock = await mockApp(page, {
+    providerEnabled: true,
+    initialIdentities: [{ ...draft }],
+    initialEnrollment: enrollment('IDENTITY_READY'),
+    submitMode: 'held',
+  });
+  await page.goto('/identity.html');
+  await page.getByRole('button', { name: 'Start creation' }).click();
+
+  await expect(page.locator('#wizard')).toBeHidden();
+  await expect(page.locator('#notice')).toContainText('No provider request was sent');
+  await expect(page.getByText('Draft', { exact: true }).first()).toBeVisible();
+  expect(mock.calls.filter(call => call.endpoint === 'identities' && call.body.action === 'submit')).toHaveLength(1);
+  expect(mock.calls.some(call => call.endpoint === 'identities' && call.body.action === 'refresh')).toBe(false);
+});
+
+test('ambiguous provider admission stays on an explicit reconciliation hold without retrying', async ({ page }) => {
+  const mock = await mockApp(page, {
+    providerEnabled: true,
+    initialIdentities: [{ ...draft }],
+    initialEnrollment: enrollment('IDENTITY_READY'),
+    submitMode: 'reconciliation',
+  });
+  await page.goto('/identity.html');
+  await page.getByRole('button', { name: 'Start creation' }).click();
+
+  await expect(page.locator('#wizard')).toBeVisible();
+  await expect(page.locator('#compact-step-label')).toContainText('4 of 5: Creating');
+  await expect(page.locator('#wizard-status')).toContainText('held for reconciliation');
+  expect(mock.calls.filter(call => call.endpoint === 'identities' && call.body.action === 'submit')).toHaveLength(1);
+  expect(mock.calls.some(call => call.endpoint === 'identities' && call.body.action === 'refresh')).toBe(false);
 });
 
 test('existing provider processing still resumes to a genuinely ready identity and enabled link', async ({ page }) => {

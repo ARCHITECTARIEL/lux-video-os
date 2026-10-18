@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkCurrentCandidateCi, computeAuthorizationResult, outputInventory, fingerprint } from '../tools/authorize-release.mjs';
+import { checkCurrentCandidateCi, checkQuarantinedRefresh, computeAuthorizationResult, outputInventory, fingerprint } from '../tools/authorize-release.mjs';
 
 const baseManifest = {
   source: { head: 'abc123', sha256: 'srchash', projectLinkSha256: 'linkhash' },
@@ -145,5 +145,36 @@ test('computeAuthorizationResult never reports releaseAuthorized true under any 
       freshDatabaseCheck: passingDb, workflowBoundary: passingBoundary, ciResult: passingCi, ownerAuthorized,
     });
     assert.equal(result.releaseAuthorized, false);
+  }
+});
+
+test('production authorization requires an artifact-bound refresh with six hours remaining', async () => {
+  const candidate = await mkdtemp(join(tmpdir(), 'authorize-refresh-'));
+  const paths = [
+    'functions/api/video-os-lite/workspace.func/config/heygen-space-refresh.json',
+    'functions/.well-known/workflow/v1/step.func/runtime-repository/config/heygen-space-refresh.json',
+  ];
+  try {
+    const source = await readFile(join(process.cwd(), 'config/heygen-space-refresh.json'));
+    const refresh = JSON.parse(source);
+    const now = new Date(Date.parse(refresh.observation.completedAt) + 1000);
+    for (const path of paths) {
+      await mkdir(join(candidate, path, '..'), { recursive: true });
+      await writeFile(join(candidate, path), source);
+    }
+    const valid = await checkQuarantinedRefresh(process.cwd(), candidate, { now });
+    assert.equal(valid.verified, true);
+    assert.equal(computeAuthorizationResult({ manifest: { ...baseManifest, target: 'production' },
+      currentSource: cleanSource, liveOutputSha256: 'outhash', freshDatabaseCheck: passingDb,
+      workflowBoundary: passingBoundary, ciResult: passingCi, refreshCheck: valid, ownerAuthorized: true,
+    }).routineDeployAuthorized, true);
+    const late = await checkQuarantinedRefresh(process.cwd(), candidate, {
+      now: new Date(Date.parse(refresh.observation.expiresAt) - 6 * 60 * 60 * 1000 + 1),
+    });
+    assert.equal(late.verified, false);
+    await writeFile(join(candidate, paths[0]), '{}');
+    assert.equal((await checkQuarantinedRefresh(process.cwd(), candidate, { now })).verified, false);
+  } finally {
+    await rm(candidate, { recursive: true, force: true });
   }
 });

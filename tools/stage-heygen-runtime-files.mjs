@@ -9,6 +9,7 @@ export async function heygenRuntimeFiles(root) {
   }
   return [
     'config/heygen-space-anchor.json',
+    'config/heygen-space-refresh.json',
     'config/database-target.verification.json',
     'config/database-target.production.json',
     'config/database-schema.lock.json',

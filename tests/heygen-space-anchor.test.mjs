@@ -25,6 +25,8 @@ import {
 
 const SPACE_OBSERVED_AT = '2026-10-01T15:11:53.953Z';
 const FRESH_NOW = '2026-10-01T16:00:00.000Z';
+const PINNED_REFRESH = JSON.parse(await readFile(new URL('../config/heygen-space-refresh.json', import.meta.url), 'utf8'));
+const REFRESH_NOW = new Date(Date.parse(PINNED_REFRESH.observation.completedAt) + 1000).toISOString();
 const USERNAME_DOMAIN = Buffer.from('LUX_VIDEO_OS\0HEYGEN_PROFILE_USERNAME\0V1\0', 'utf8');
 
 function sha(value) {
@@ -116,7 +118,7 @@ function syntheticAnchorForQualification(qualification) {
 }
 
 test('pinned runtime projection is safe, immutable, distinctly branded, and verification-only', async () => {
-  const anchor = await loadPinnedHeygenSpaceAnchorProjection({ now: FRESH_NOW });
+  const anchor = await loadPinnedHeygenSpaceAnchorProjection({ now: REFRESH_NOW });
   assert.equal(anchor.version, HEYGEN_SPACE_ANCHOR_VERSION);
   assert.equal(anchor.provider, 'heygen');
   assert.equal(anchor.providerNativeScopeType, 'space');
@@ -124,13 +126,13 @@ test('pinned runtime projection is safe, immutable, distinctly branded, and veri
   assert.equal(anchor.verificationMode, 'pinned_projection');
   assert.equal(anchor.policy.anchorMaxAgeSeconds, 86_400);
   assert.equal(anchor.policy.freshQualificationMaxAgeSeconds, 60);
-  assert.equal(anchor.policy.productionReprobePolicy, 'UNSET');
-  assert.equal(anchor.policy.productionReprobeMaxAgeSeconds, null);
+  assert.equal(anchor.policy.productionReprobePolicy, 'reviewed-neutral-asset-reprobe-24h/v1');
+  assert.equal(anchor.policy.productionReprobeMaxAgeSeconds, 86_400);
   assert.equal(Object.isFrozen(anchor), true);
   assert.equal(Object.isFrozen(anchor.policy), true);
-  assert.strictEqual(assertPinnedHeygenSpaceAnchor(anchor, { now: FRESH_NOW }), anchor);
-  assert.strictEqual(assertPinnedHeygenSpaceAnchorProjection(anchor, { now: FRESH_NOW }), anchor);
-  assert.throws(() => assertVerifiedHeygenSpaceAnchor(anchor, { now: FRESH_NOW }), { code: 'UNVERIFIED_HEYGEN_SPACE_ANCHOR' });
+  assert.strictEqual(assertPinnedHeygenSpaceAnchor(anchor, { now: REFRESH_NOW }), anchor);
+  assert.strictEqual(assertPinnedHeygenSpaceAnchorProjection(anchor, { now: REFRESH_NOW }), anchor);
+  assert.throws(() => assertVerifiedHeygenSpaceAnchor(anchor, { now: REFRESH_NOW }), { code: 'UNVERIFIED_HEYGEN_SPACE_ANCHOR' });
   assert.throws(() => { anchor.provider = 'other'; }, TypeError);
 
   const serialized = JSON.stringify(anchor);
@@ -138,18 +140,18 @@ test('pinned runtime projection is safe, immutable, distinctly branded, and veri
   assert.equal(serialized.includes('AppData'), false);
   assert.equal(serialized.includes('private-key-id'), false);
   assert.equal(serialized.includes('synthetic-private-user'), false);
-  assert.throws(() => assertPinnedHeygenSpaceAnchor(JSON.parse(serialized), { now: FRESH_NOW }), { code: 'UNVERIFIED_HEYGEN_SPACE_ANCHOR' });
+  assert.throws(() => assertPinnedHeygenSpaceAnchor(JSON.parse(serialized), { now: REFRESH_NOW }), { code: 'UNVERIFIED_HEYGEN_SPACE_ANCHOR' });
 });
 
-test('anchor freshness is future-safe and expires at the exact 24-hour boundary', async () => {
+test('refreshed anchor is future-safe and expires at the exact 24-hour boundary', async () => {
   await assert.rejects(
-    loadPinnedHeygenSpaceAnchorProjection({ now: '2026-10-01T15:11:53.952Z' }),
-    { code: 'HEYGEN_SPACE_ANCHOR_STALE' },
+    loadPinnedHeygenSpaceAnchorProjection({ now: new Date(Date.parse(PINNED_REFRESH.observation.completedAt) - 1).toISOString() }),
+    { code: 'HEYGEN_SPACE_REFRESH_STALE' },
   );
-  await loadPinnedHeygenSpaceAnchorProjection({ now: '2026-10-02T15:11:53.952Z' });
+  await loadPinnedHeygenSpaceAnchorProjection({ now: new Date(Date.parse(PINNED_REFRESH.observation.expiresAt) - 1).toISOString() });
   await assert.rejects(
-    loadPinnedHeygenSpaceAnchorProjection({ now: '2026-10-02T15:11:53.953Z' }),
-    { code: 'HEYGEN_SPACE_ANCHOR_STALE' },
+    loadPinnedHeygenSpaceAnchorProjection({ now: PINNED_REFRESH.observation.expiresAt }),
+    { code: 'HEYGEN_SPACE_REFRESH_STALE' },
   );
 });
 
@@ -165,12 +167,13 @@ test('reviewed private bundle and runtime manifest project the same safe identit
     privateEvidenceDirectory: result.privateEvidenceDirectory,
     now: FRESH_NOW,
   });
-  const projectionAnchor = await loadPinnedHeygenSpaceAnchorProjection({ now: FRESH_NOW });
+  const projectionAnchor = await loadPinnedHeygenSpaceAnchorProjection({ now: REFRESH_NOW });
   for (const field of [
     'probeResultSha256', 'probeResultCanonicalSha256', 'credentialKeyFingerprint', 'credentialScopeFingerprint',
     'keyIdDigest', 'keyCreatedAt', 'usernameDigest', 'providerSpaceFingerprint', 'canonicalScopeKey',
-    'preflightEvidenceSha256', 'spaceProofSha256', 'identityDigest', 'spaceObservedAt', 'anchorExpiresAt',
+    'preflightEvidenceSha256', 'spaceProofSha256', 'identityDigest',
   ]) assert.equal(privateAnchor[field], projectionAnchor[field], field);
+  assert.equal(privateAnchor.spaceObservedAt, projectionAnchor.originSpaceObservedAt);
   assert.equal(privateAnchor.verificationMode, 'private_evidence_verified');
   assert.equal(projectionAnchor.verificationMode, 'pinned_projection');
   assert.strictEqual(assertVerifiedHeygenSpaceAnchor(privateAnchor, { now: FRESH_NOW }), privateAnchor);
@@ -184,7 +187,7 @@ test('reviewed private bundle and runtime manifest project the same safe identit
     { code: 'UNVERIFIED_HEYGEN_QUALIFICATION' },
   );
   assert.throws(
-    () => validateFreshHeygenQualification(projectionAnchor, qualification, { now: FRESH_NOW }),
+    () => validateFreshHeygenQualification(projectionAnchor, { ...qualification, observedAt: REFRESH_NOW }, { now: REFRESH_NOW }),
     { code: 'UNVERIFIED_HEYGEN_QUALIFICATION' },
   );
 });
@@ -243,9 +246,9 @@ test('qualification snapshot enforces exact identity, null-expiry holds, permiss
   assert.throws(() => assertFreshHeygenSpaceProof(proof, { now: qualification.observedAt }), { code: 'UNVERIFIED_HEYGEN_SPACE_PROOF' });
   assert.throws(() => assertFreshHeygenBootstrapProof(proof, { now: qualification.observedAt }), { code: 'UNVERIFIED_HEYGEN_SPACE_PROOF' });
 
-  validateHeygenQualificationSnapshotForTests(anchor, qualification, { now: '2026-10-01T16:01:00.000Z' });
+  validateHeygenQualificationSnapshotForTests(anchor, qualification, { now: '2026-10-01T16:00:59.999Z' });
   assert.throws(
-    () => validateHeygenQualificationSnapshotForTests(anchor, qualification, { now: '2026-10-01T16:01:00.001Z' }),
+    () => validateHeygenQualificationSnapshotForTests(anchor, qualification, { now: '2026-10-01T16:01:00.000Z' }),
     { code: 'HEYGEN_QUALIFICATION_STALE' },
   );
 

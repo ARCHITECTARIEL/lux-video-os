@@ -40,7 +40,8 @@ test('actual bundled Node entrypoint loads the pinned anchor from function-local
       bundle: true, platform: 'node', format: 'esm', outfile: join(directory, 'index.js'), logLevel: 'silent',
     });
     const runtime = await import(pathToFileURL(join(directory, 'index.js')).href);
-    const anchor = await runtime.loadPinnedHeygenSpaceAnchorProjection({ now: new Date('2026-10-01T16:00:00.000Z') });
+    const refresh = JSON.parse(await readFile(join(directory, 'runtime-repository/config/heygen-space-refresh.json'), 'utf8'));
+    const anchor = await runtime.loadPinnedHeygenSpaceAnchorProjection({ now: new Date(Date.parse(refresh.observation.completedAt) + 1000) });
     assert.equal(anchor.providerSpaceFingerprint, '1c1b9eac97b6e38e481d30ddf12e4332ecb04d08f727a4ff55997a733b3f584a');
   } finally {
     await rm(directory, { recursive: true, force: true });
