@@ -350,6 +350,9 @@ test('two captures and six unchecked consents create a v2 hash-bound enrollment 
   await page.locator('#consent-provider-exposure').check();
   await page.locator('#next-button').click();
   await expect(page.getByRole('heading', { name: 'Enrollment is ready.' })).toBeVisible({ timeout: 12_000 });
+  const heldCreatePresenter = page.getByRole('button', { name: 'Create my presenter' });
+  await expect(heldCreatePresenter).toBeDisabled();
+  await expect(page.locator('#ready-provider-hold')).toContainText('privacy, entitlement, and cost checks');
   await expect(page.locator('#ready-use-link')).toHaveAttribute('aria-disabled', 'true');
   await expect(page.locator('#ready-copy')).toContainText('Final presenter creation has not started');
   await expect(page.locator('#ready-media-review')).toBeVisible();
@@ -373,6 +376,24 @@ test('two captures and six unchecked consents create a v2 hash-bound enrollment 
   await page.getByRole('button', { name: 'Back to My identities' }).click();
   await expect(page.getByRole('button', { name: 'Start creation' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Preview extracted voice sample' })).toBeVisible();
+});
+
+test('an existing ready enrollment can start provider creation once from the Ready step', async ({ page }) => {
+  const mock = await mockApp(page, { providerEnabled: true, initialIdentities: [{ ...draft }], initialEnrollment: enrollment('IDENTITY_READY') });
+  await page.addInitScript(({ id }) => localStorage.setItem('luxVideoOsEnrollmentResumeV1:owner-a', JSON.stringify({
+    enrollmentId: id, createIdempotencyKey: '11111111-1111-4111-8111-111111111111', consentIdempotencyKey: null,
+    retryIdempotencyKey: null, revokeIdempotencyKey: null,
+  })), { id: IDS.enrollment });
+  await page.goto('/identity.html');
+  await page.getByRole('button', { name: 'Continue setup' }).click();
+  const createPresenter = page.getByRole('button', { name: 'Create my presenter' });
+  await expect(createPresenter).toBeEnabled();
+  await expect(createPresenter).toBeFocused();
+  expect(mock.calls.filter(call => call.endpoint === 'identities' && call.body.action === 'submit')).toHaveLength(0);
+
+  await createPresenter.evaluate(button => { button.click(); button.click(); });
+
+  await expect.poll(() => mock.calls.filter(call => call.endpoint === 'identities' && call.body.action === 'submit').length).toBe(1);
 });
 
 test('extracted and HeyGen cloned voice previews stay distinct and keyboard usable on mobile', async ({ page }) => {
