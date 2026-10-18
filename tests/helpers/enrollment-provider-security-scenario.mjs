@@ -70,7 +70,12 @@ mock.module('../../db/repositories.js', { namedExports: {
     return asset;
   },
   listOwnedIdentities: async () => [identity],
-  markIdentityComponentFailed: async input => { calls.componentFailures.push(input); return identity; },
+  markIdentityComponentFailed: async input => {
+    calls.componentFailures.push(input);
+    if (input.component === 'avatar') identity.avatarStatus = 'FAILED';
+    else identity.voiceStatus = 'FAILED';
+    return identity;
+  },
   markIdentityComponentReady: async () => identity,
   prepareIdentityProviderRead: async ({ accountId: requestedAccountId, identityId: requestedIdentityId, component }) => Object.freeze({
     version: 'heygen-identity-read-claim/v1',
@@ -104,6 +109,8 @@ mock.module('../../db/repositories.js', { namedExports: {
   reserveIdentityComponentCreation: async input => {
     assert.equal(providerBindings.has(input.providerBinding), true, 'component reservation must use a fresh provider binding');
     calls.reservations.push(input);
+    if (input.component === 'avatar') identity.avatarStatus = 'CREATING';
+    else identity.voiceStatus = 'CREATING';
     return { identity, replayed: false };
   },
 } });
@@ -301,7 +308,9 @@ if (scenario === 'bytes') {
   identity.avatarStatus = 'READY';
   identity.voiceStatus = 'DRAFT';
   const first = await submit();
-  assert.equal(first.statusCode, 200);
+  assert.equal(first.statusCode, 202);
+  assert.equal(first.body.state, 'reconciliation_required');
+  assert.equal(first.body.code, 'PROVIDER_RECONCILIATION_REQUIRED');
   assert.equal(calls.uploads.length, 1);
   assert.equal(calls.failures.length, 1);
   assert.equal(calls.failures[0].ambiguous, true);
@@ -309,7 +318,8 @@ if (scenario === 'bytes') {
   assert.equal(calls.receipts.length, 0);
   assert.equal(calls.voiceCreates.length, 0);
   const second = await submit();
-  assert.equal(second.statusCode, 200);
+  assert.equal(second.statusCode, 202);
+  assert.equal(second.body.state, 'reconciliation_required');
   assert.equal(calls.uploads.length, 1, 'ambiguous provider submission must not be repeated while reconciliation is pending');
 } else if (scenario === 'resume') {
   identity.avatarStatus = 'DRAFT';
@@ -325,10 +335,13 @@ if (scenario === 'bytes') {
   assert.equal(calls.failures.length, 0);
 } else if (scenario === 'binding-reserve-failure') {
   const res = await submit();
-  assert.equal(res.statusCode, 200);
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.code, 'PROVIDER_SUBMISSION_HELD');
+  assert.match(res.body.error, /No provider request was sent/i);
   assert.equal(calls.reservations.length, 0, 'binding resolution must precede component reservation');
   assert.equal(calls.claims.length, 0);
   assert.equal(calls.uploads.length, 0);
+  assert.equal(calls.voiceCreates.length, 0, 'zero-admission failure must hold the sibling component');
   assert.equal(calls.componentFailures.length, 0, 'no reservation means no component status write');
 } else if (scenario === 'binding-claim-failure') {
   identity.voiceStatus = 'READY';

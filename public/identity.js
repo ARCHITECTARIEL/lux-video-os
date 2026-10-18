@@ -1400,15 +1400,33 @@ async function submitIdentity(identityId, openProgress = true) {
   }
   setWizardBusy(true, 'Starting provider presenter creation.');
   try {
-    await api('/api/video-os-lite/identities', { method: 'POST', body: JSON.stringify({ action: 'submit', identityId }) });
+    const result = await api('/api/video-os-lite/identities', { method: 'POST', body: JSON.stringify({ action: 'submit', identityId }) });
+    if (result.state === 'reconciliation_required') {
+      if (result.identity?.id) {
+        const index = state.identities.findIndex(identity => identity.id === result.identity.id);
+        if (index >= 0) state.identities[index] = result.identity; else state.identities.push(result.identity);
+        renderIdentities();
+      }
+      await loadEnrollments().catch(() => {});
+      updateProgress();
+      const message = result.message || 'Provider submission could not be confirmed. Creation is held for reconciliation; do not start it again.';
+      notice(message, 'error');
+      wizardStatus(message, 'error');
+      return;
+    }
     await Promise.all([loadIdentities(), loadEnrollments()]);
     updateProgress();
     scheduleIdentityPolling();
   } catch (error) {
-    notice(error.message, 'error');
-    wizardStatus(error.message, 'error');
     await Promise.all([loadIdentities(), loadEnrollments()]).catch(() => {});
     updateProgress();
+    if (error.code === 'PROVIDER_SUBMISSION_HELD') {
+      closeWizard(true);
+      notice(error.message, 'error');
+      return;
+    }
+    notice(error.message, 'error');
+    wizardStatus(error.message, 'error');
   } finally { setWizardBusy(false); }
 }
 
