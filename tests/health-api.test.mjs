@@ -19,7 +19,7 @@ async function health(method = 'GET', overrides = {}, deps = {}) {
     env: {
       DATABASE_URL: 'postgres://db-secret.invalid/app', BLOB_READ_WRITE_TOKEN: 'blob-secret',
       HEYGEN_API_KEY: 'provider-secret', VERCEL_DEPLOYMENT_ID: 'deployment-123',
-      VERCEL_GIT_COMMIT_SHA: 'abc123', VERCEL_GIT_COMMIT_REF: 'main', VERCEL_ENV: 'production',
+      VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40), VERCEL_GIT_COMMIT_REF: 'main', VERCEL_ENV: 'production',
       ...overrides,
     },
     dbProbe: async () => {}, lastSweep: async () => '2026-10-15T00:00:00.000Z',
@@ -38,7 +38,8 @@ test('health reports an ok JSON response with identity, checks, and short CDN ca
   assert.equal(body.status, 'ok');
   assert.equal(body.service, 'lux-video-os');
   assert.equal(body.deploymentId, 'deployment-123');
-  assert.equal(body.gitSha, 'abc123');
+  assert.equal(body.gitSha, 'a'.repeat(40));
+  assert.deepEqual(body.checks.releaseIdentity, { ok: true, critical: false });
   assert.equal(body.gitRef, 'main');
   assert.equal(body.env, 'production');
   assert.ok(Date.parse(body.startedAt));
@@ -110,10 +111,14 @@ test('prebuilt production health reports the source SHA sealed into its function
     VERCEL_GIT_COMMIT_SHA: 'c'.repeat(40), VIDEO_OS_RELEASE_GIT_SHA: sourceSha,
   });
   assert.equal(JSON.parse(conflict.body).gitSha, null);
+  assert.equal(JSON.parse(conflict.body).status, 'degraded');
+  assert.equal(JSON.parse(conflict.body).checks.releaseIdentity.code, 'release_identity_mismatch');
   const invalid = await health('GET', {
     VERCEL_GIT_COMMIT_SHA: '', VIDEO_OS_RELEASE_GIT_SHA: 'not-a-commit',
   });
   assert.equal(JSON.parse(invalid.body).gitSha, null);
+  assert.equal(JSON.parse(invalid.body).status, 'degraded');
+  assert.equal(JSON.parse(invalid.body).checks.releaseIdentity.code, 'release_identity_invalid');
 });
 
 test('health HEAD is bodyless and POST returns 405 JSON', async () => {
