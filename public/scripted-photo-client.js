@@ -216,7 +216,7 @@ export function createScriptedPhotoClient({ request, createId = () => crypto.ran
     const quote = quoteStatus(tier, value);
     if (!quote.valid) throw clientError(quote.code, quote.code === 'quote_expired' ? 'This quote expired. Get a new quote before retrying.' : 'Review a current quote before submitting.');
     try {
-      const response = await request('/api/video-os-lite/render-v2', {
+      const response = await request('/api/video-os-lite/render', {
         method: 'POST',
         body: JSON.stringify({
           contractVersion: SCRIPTED_PHOTO_CONTRACT_VERSION,

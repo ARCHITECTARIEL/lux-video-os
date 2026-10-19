@@ -34,7 +34,7 @@ async function installPremiumRoutes(page, renderHandler, { available = true } = 
     quoteBodies.push(body);
     return route.fulfill({ status: 201, json: { ok: true, quote: { token: 'premium-quote-token', credits: 90, expiresAt: new Date(Date.now() + 300_000).toISOString(), pricingVersion: 'scripted-photo-pricing-v1' }, project: { id: body.projectId, identityId, title: projectBody.title, script: projectBody.script, tier: body.tier, format: body.format, contractVersion: 'scripted-photo-v1' } } });
   });
-  await page.route('**/api/video-os-lite/render-v2', async route => {
+  await page.route('**/api/video-os-lite/render', async route => {
     const body = route.request().postDataJSON();
     renderBodies.push(body);
     const response = await renderHandler(route, body, renderBodies.length, results);
