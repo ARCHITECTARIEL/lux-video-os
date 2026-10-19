@@ -632,9 +632,12 @@ function setStep(step) {
   $('#next-button').textContent = state.providerReconsentMode && step === 3 ? 'Save updated consent' : 'Continue';
   $('#wizard-actions').hidden = step === 5;
   if (step === 4) updateProgress();
+  const readyCreate = $('#ready-create-provider');
   const focusTarget = state.providerReconsentMode && step === 3
     ? '#consent-face'
-    : { 1: '#photo-input', 2: '#record-button', 3: '#identity-name', 4: '#close-wizard', 5: '#ready-done' }[step];
+    : step === 5 && !readyCreate.hidden && !readyCreate.disabled
+      ? '#ready-create-provider'
+      : { 1: '#photo-input', 2: '#record-button', 3: '#identity-name', 4: '#close-wizard', 5: '#ready-done' }[step];
   if ($('#wizard').open) requestAnimationFrame(() => {
     if (activePanel) activePanel.scrollTop = 0;
     $(focusTarget)?.focus({ preventScroll: true });
@@ -896,6 +899,8 @@ function setWizardBusy(busy, message = '') {
   $('#close-wizard').disabled = busy;
   $('#next-button').disabled = busy || Boolean(state.uncertainCommit);
   $('#back-button').disabled = busy || state.step === 1 || state.step >= 4;
+  if (busy) $('#ready-create-provider').disabled = true;
+  else updateReadyProviderAction();
   if (message) wizardStatus(message);
 }
 
@@ -1237,6 +1242,29 @@ function providerProgressCards(identity) {
   return [progressCard('Photo avatar', statusLabel(identity?.avatarStatus || 'DRAFT')), progressCard('Reusable voice', statusLabel(identity?.voiceStatus || 'DRAFT'))];
 }
 
+function updateReadyProviderAction(identity = null, linkedEnrollment = null) {
+  identity ||= state.identities.find(item => item.id === state.activeIdentityId) || state.activeEnrollment?.identity || null;
+  linkedEnrollment ||= state.activeEnrollment?.identity?.id === identity?.id
+    ? state.activeEnrollment
+    : linkedEnrollmentForIdentity(identity?.id);
+  const createPresenter = $('#ready-create-provider');
+  const providerCreationNotStarted = identity?.avatarStatus === 'DRAFT' && identity?.voiceStatus === 'DRAFT';
+  const providerConsentReady = providerBridgeConsentActive(linkedEnrollment);
+  createPresenter.hidden = !providerCreationNotStarted;
+  createPresenter.disabled = state.submitting || !state.providerSubmissionEnabled || !providerConsentReady || !identity?.id;
+  const heldMessage = !providerConsentReady
+    ? 'Review the updated provider exposure permission before provider creation.'
+    : !state.providerSubmissionEnabled
+      ? 'Provider creation is held until privacy, entitlement, and cost checks pass.'
+      : !identity?.id
+        ? 'Reload this identity before starting provider creation.'
+        : '';
+  createPresenter.title = heldMessage;
+  const hold = $('#ready-provider-hold');
+  hold.textContent = heldMessage;
+  hold.hidden = !providerCreationNotStarted || !heldMessage;
+}
+
 function updateProgress() {
   const identity = state.identities.find(item => item.id === state.activeIdentityId) || state.activeEnrollment?.identity || null;
   const linkedEnrollment = state.activeEnrollment?.identity?.id === identity?.id
@@ -1251,12 +1279,14 @@ function updateProgress() {
   $('#ready-copy').textContent = identity?.ready
     ? 'Your authorized presenter and reusable voice are ready for Standard and Premium scripts.'
     : 'Your photo and reusable voice are prepared. Final presenter creation has not started.';
+  updateReadyProviderAction(identity, linkedEnrollment);
   syncReadyMediaReview(linkedEnrollment);
   const lifecycleStatus = $('#ready-provider-status');
   const lifecycle = providerLifecyclePresentation(linkedEnrollment?.providerLifecycle);
   lifecycleStatus.hidden = !lifecycle;
   lifecycleStatus.textContent = lifecycle ? `${lifecycle.label}. ${lifecycle.detail}` : '';
   if (lifecycle) lifecycleStatus.dataset.state = lifecycle.state; else lifecycleStatus.removeAttribute('data-state');
+  if ($('#wizard').open && state.step === 4 && !showingEnrollment && identity?.ready) setStep(5);
 }
 
 function showEnrollmentRecovery(message, retryAllowed) {
@@ -1387,6 +1417,7 @@ function openProviderReconsent(enrollment) {
 }
 
 async function submitIdentity(identityId, openProgress = true) {
+  if (state.submitting) return;
   if (!state.providerSubmissionEnabled) return notice('Provider creation is held until privacy, entitlement, and cost checks pass.', 'error');
   if (!providerBridgeConsentActive(linkedEnrollmentForIdentity(identityId))) {
     return notice('Review the updated provider exposure permission before provider creation.', 'error');
@@ -1400,15 +1431,33 @@ async function submitIdentity(identityId, openProgress = true) {
   }
   setWizardBusy(true, 'Starting provider presenter creation.');
   try {
-    await api('/api/video-os-lite/identities', { method: 'POST', body: JSON.stringify({ action: 'submit', identityId }) });
+    const result = await api('/api/video-os-lite/identities', { method: 'POST', body: JSON.stringify({ action: 'submit', identityId }) });
+    if (result.state === 'reconciliation_required') {
+      if (result.identity?.id) {
+        const index = state.identities.findIndex(identity => identity.id === result.identity.id);
+        if (index >= 0) state.identities[index] = result.identity; else state.identities.push(result.identity);
+        renderIdentities();
+      }
+      await loadEnrollments().catch(() => {});
+      updateProgress();
+      const message = result.message || 'Provider submission could not be confirmed. Creation is held for reconciliation; do not start it again.';
+      notice(message, 'error');
+      wizardStatus(message, 'error');
+      return;
+    }
     await Promise.all([loadIdentities(), loadEnrollments()]);
     updateProgress();
     scheduleIdentityPolling();
   } catch (error) {
-    notice(error.message, 'error');
-    wizardStatus(error.message, 'error');
     await Promise.all([loadIdentities(), loadEnrollments()]).catch(() => {});
     updateProgress();
+    if (error.code === 'PROVIDER_SUBMISSION_HELD') {
+      closeWizard(true);
+      notice(error.message, 'error');
+      return;
+    }
+    notice(error.message, 'error');
+    wizardStatus(error.message, 'error');
   } finally { setWizardBusy(false); }
 }
 
@@ -1716,6 +1765,10 @@ $('#commit-retry-anyway').addEventListener('click', retryCommitSameRequest);
 $('#resume-polling').addEventListener('click', resumeIdentityPolling);
 $('#retry-enrollment').addEventListener('click', retryEnrollment);
 $('#check-enrollment').addEventListener('click', checkActiveEnrollment);
+$('#ready-create-provider').addEventListener('click', () => {
+  if (!state.activeIdentityId) return notice('Reload this identity before starting provider creation.', 'error');
+  void submitIdentity(state.activeIdentityId);
+});
 $('#ready-done').addEventListener('click', () => closeWizard(true));
 $('#photo-input').addEventListener('change', event => handlePhotoFile(event.target.files[0] || null, event.target));
 $('#photo-capture-input').addEventListener('change', event => handlePhotoFile(event.target.files[0] || null, event.target));

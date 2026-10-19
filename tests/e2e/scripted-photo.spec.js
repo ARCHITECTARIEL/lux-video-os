@@ -70,7 +70,7 @@ async function setup(page, options = {}) {
     }
     return reply(route, { ok: false, code: 'invalid_request', error: 'Invalid request.' }, 400);
   });
-  await page.route('**/api/video-os-lite/render-v2', async route => {
+  await page.route('**/api/video-os-lite/render', async route => {
     const body = route.request().postDataJSON();
     calls.renders.push(body);
     renderCount += 1;

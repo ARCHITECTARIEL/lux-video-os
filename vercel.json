@@ -53,6 +53,10 @@
             "dest": "/api/video-os-lite/render-v2.js"
         },
         {
+            "src": "/api/video-os-lite/render-v2",
+            "dest": "/api/video-os-lite/render-v2.js"
+        },
+        {
             "src": "/api/video-os-lite/finalize",
             "dest": "/api/video-os-lite/finalize-v2.js"
         },

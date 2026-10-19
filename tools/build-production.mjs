@@ -5,6 +5,9 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { videoRenderWorkflowMetadata } from '../workflows/video-render-metadata.js';
 import { stageHeygenRuntimeFiles } from './stage-heygen-runtime-files.mjs';
+import { loadPinnedHeygenSpaceAnchorIdentity, loadPinnedHeygenSpaceAnchorProjection } from '../lib/heygen-space-anchor.js';
+import { assertHeygenRefreshReleaseWindow } from '../lib/heygen-space-refresh.js';
+import { assertConfiguredHeygenSpaceMarker, loadPinnedHeygenSpaceMarkerManifest } from '../lib/heygen-space-marker.js';
 import { identityEnrollmentHashWorkflowMetadata, identityEnrollmentExtractionWorkflowMetadata, identityEnrollmentCleanupWorkflowMetadata, identityEnrollmentExpiryWorkflowMetadata } from '../workflows/identity-enrollment-metadata.js';
 import { writeReleaseBuildManifest, assertProductionWorkflowBoundary, captureSourceIdentity, assertStableDatabase, assertUnchangedBuildSource, quarantineBuildOutput, assertNoDefaultBuildOutput } from './release-build-manifest.mjs';
 import { assertDiagnosticBuildInputs, diagnosticChangedPaths, diagnosticDatabaseEvidence } from './db-binding-diagnostic-build-policy.mjs';
@@ -42,6 +45,17 @@ const target = process.argv.includes('--preview') ? 'preview' : 'production';
 const preflightOnly = process.argv.includes('--preflight-only');
 const diagnosticOnly = process.argv.includes('--diagnostic-db-binding');
 async function build() {
+if (target === 'production' && !preflightOnly && !diagnosticOnly) {
+  const origin = await loadPinnedHeygenSpaceAnchorIdentity();
+  const marker = await loadPinnedHeygenSpaceMarkerManifest(origin);
+  if (marker) {
+    assertConfiguredHeygenSpaceMarker(marker);
+  } else {
+    const now = new Date();
+    const anchor = await loadPinnedHeygenSpaceAnchorProjection({ now });
+    assertHeygenRefreshReleaseWindow(anchor, { now });
+  }
+}
 let diagnosticSource = null;
 if (diagnosticOnly) {
   if (target !== 'production' || preflightOnly) throw new Error('Diagnostic packaging requires a full production-target build.');

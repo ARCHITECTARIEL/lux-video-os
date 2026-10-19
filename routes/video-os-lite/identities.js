@@ -48,6 +48,7 @@ import {
 } from '../../services/heygen.js';
 
 const ACTIVE = new Set(['CREATING', 'PROCESSING']);
+const TERMINAL_COMPONENT = new Set(['FAILED', 'READY']);
 const SAFE_PROVIDER_HOSTS = ['heygen.ai', 'heygen.com'];
 const ALLOW_TEST_DEPENDENCIES = String(process.env.NODE_TEST_CONTEXT || '').startsWith('child');
 const PROVIDER_FAILURE_BINDINGS = new WeakMap();
@@ -132,6 +133,24 @@ function validateName(value) {
 
 function operationKey() {
   return crypto.randomUUID();
+}
+
+async function sendProviderReconciliationHold(res, accountId, identity) {
+  const projected = (await projectIdentitiesForClient(accountId, [identity]))[0];
+  return send(res, 202, {
+    ok: true,
+    state: 'reconciliation_required',
+    code: 'PROVIDER_RECONCILIATION_REQUIRED',
+    message: 'Provider submission could not be confirmed. Creation is held for reconciliation; do not start it again.',
+    identity: projected,
+  });
+}
+
+function zeroAdmissionHold() {
+  return Object.assign(
+    new Error('Presenter creation is held before provider submission. No provider request was sent.'),
+    { statusCode: 503, failureCategory: 'PROVIDER_SUBMISSION_HELD' },
+  );
 }
 
 export function createIdentityProviderBindingBoundary(dependencies = {}) {
@@ -591,6 +610,9 @@ export default async function handler(req, res) {
     } else if (body.action === 'submit') {
       const current = await getOwnedIdentity(session.accountId, body.identityId);
       if (!current || current.archivedAt) throw Object.assign(new Error('Identity not found.'), { statusCode: 404 });
+      if (['avatar', 'voice'].some((component) => ACTIVE.has(current[`${component}Status`]))) {
+        return sendProviderReconciliationHold(res, session.accountId, current);
+      }
       const draftComponents = ['avatar', 'voice'].filter((component) => current[`${component}Status`] === 'DRAFT');
       for (const component of draftComponents) {
         try {
@@ -598,8 +620,14 @@ export default async function handler(req, res) {
         } catch (error) {
           if (['IDENTITY_PROVIDER_DISABLED', 'IDENTITY_ASSET_PRIVACY_UNCONFIRMED', 'CONFIG_MISSING', 'ENTITLEMENT', 'CONSENT', 'OWNERSHIP', 'VALIDATION'].includes(error.failureCategory)) throw error;
           logOpsEvent({ level: 'error', event: 'identity.provider_creation.contained_failure', accountId: session.accountId, identityId: body.identityId, status: error.statusCode || 502, code: error.failureCategory || 'PROVIDER_FAILURE', message: 'Identity provider component failure was contained.', details: { component } });
-          // A contained component-level provider failure must not prevent its
-          // sibling from reaching its own durable terminal state.
+          const durable = await getOwnedIdentity(session.accountId, body.identityId);
+          const durableStatus = durable?.[`${component}Status`];
+          if (durableStatus === 'DRAFT') throw zeroAdmissionHold();
+          if (ACTIVE.has(durableStatus) || !TERMINAL_COMPONENT.has(durableStatus)) {
+            return sendProviderReconciliationHold(res, session.accountId, durable);
+          }
+          // A durably terminal component failure can safely allow its sibling
+          // to reach its own durable terminal state in this request.
         }
       }
       identity = await getOwnedIdentity(session.accountId, body.identityId);
@@ -620,7 +648,9 @@ export default async function handler(req, res) {
     return send(res, 200, { ok: true, identity: (await projectIdentitiesForClient(session.accountId, [identity]))[0] });
   } catch (error) {
     const status = error.statusCode || 500;
-    const publicMessage = status < 500 || error.failureCategory === 'CAPABILITY_BLOCKED' ? error.message : 'Identity Studio could not complete this request.';
+    const publicMessage = status < 500 || ['CAPABILITY_BLOCKED', 'PROVIDER_SUBMISSION_HELD'].includes(error.failureCategory)
+      ? error.message
+      : 'Identity Studio could not complete this request.';
     logOpsEvent({ level: status >= 500 ? 'error' : 'warn', event: 'identity.request.rejected', accountId: session?.accountId, identityId: undefined, status, code: String(error.failureCategory || 'IDENTITY_ERROR').slice(0, 80), message: 'Identity request was rejected.' });
     return send(res, status, { ok: false, error: publicMessage, code: String(error.failureCategory || 'IDENTITY_ERROR').slice(0, 80) });
   }
