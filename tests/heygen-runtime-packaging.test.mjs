@@ -19,6 +19,7 @@ test('packaged Workflow verification assets resolve inside the function and pres
     assert.equal(schemaLock.migrationSetSha256, (await migrationPlan()).sha256);
     assert.deepEqual(schemaLock.sourceHashes, await schemaSourceHashes());
     assert.deepEqual(files, await heygenRuntimeFiles(process.cwd()));
+    assert.ok(files.includes('config/heygen-space-marker.json'));
     assert.ok(files.every(file => !file.startsWith('docs/') && !file.includes('.env') && !file.includes('private')));
     for (const file of files) assert.deepEqual(await readFile(join(root, file)), await readFile(join(process.cwd(), file)));
     // Restaging must be idempotent and must reject, rather than overwrite, drift.

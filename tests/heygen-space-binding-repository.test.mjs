@@ -236,6 +236,7 @@ function fixture(options = {}) {
       events.push('account-lock');
       executor.operations.push('account-lock');
     },
+    ...(options.markerDependencies || {}),
   });
   return { repository, executor, env, events, verifiedProof };
 }
@@ -807,6 +808,7 @@ test('default target preflight validates the pinned production target only with 
     qualifyHeygenCredential: async () => { order.push('qualify'); return Object.freeze({}); },
     validateFreshHeygenQualification: () => verifiedProof,
     assertFreshHeygenSpaceProof: () => verifiedProof,
+    loadPinnedHeygenSpaceMarkerManifest: async () => null,
     acquireProviderLifecycleLock: async () => executor.operations.push('account-lock'),
   });
   await assert.rejects(
@@ -855,7 +857,7 @@ test('bootstrap succeeds end to end for the confirmed production environment and
   assert.equal(repository.assertFreshHeygenSpaceBinding(binding), binding);
 });
 
-test('deployed production resolves an existing binding without provisioning or operator confirmation', async () => {
+test('legacy static mode resolves an existing binding without provisioning or operator confirmation', async () => {
   const env = {
     VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production',
     VIDEO_OS_PRODUCTION_BINDING_CONFIRMED: PRODUCTION_BINDING_CONFIRMATION_PHRASE,
@@ -864,6 +866,7 @@ test('deployed production resolves an existing binding without provisioning or o
   };
   const { repository, executor } = fixture({
     env,
+    markerDependencies: { loadPinnedHeygenSpaceMarkerManifest: async () => null },
     targetPreflight: async (_env, _dependencies, operation) => {
       assert.equal(operation, env.VERCEL_ENV === 'production' ? 'resolve' : 'bootstrap');
       return Object.freeze({
@@ -888,4 +891,48 @@ test('deployed production resolves an existing binding without provisioning or o
   env.VERCEL_PROJECT_ID = 'prj_wrong';
   assert.throws(() => repository.assertFreshHeygenSpaceBinding(binding),
     error => error.code === 'CANONICAL_TARGET_UNVERIFIED');
+});
+
+test('deployed marker mode resolves the existing production graph read-only and rejects secret drift', async () => {
+  const executor = createExecutor();
+  const databaseUrl = 'postgresql://user:secret@production.example.test/database?sslmode=require';
+  const targetPreflight = async () => Object.freeze({
+    environment: 'production', projectId: 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW',
+    databaseBindingSha256: DIGESTS.database, databaseUrl, unpooledUrl: null,
+  });
+  const bootstrap = fixture({ executor, targetPreflight, env: {
+    VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production',
+    VIDEO_OS_PRODUCTION_BINDING_CONFIRMED: PRODUCTION_BINDING_CONFIRMATION_PHRASE,
+    DATABASE_URL: databaseUrl, HEYGEN_API_KEY: 'secret-test-key',
+  } });
+  await bootstrap.repository.bootstrapVerifiedHeygenSpaceBinding({ accountId: ACCOUNT_ID, privateEvidenceDir: PRIVATE_EVIDENCE_DIR });
+  const origin = proof();
+  const refreshedProof = Object.freeze({ ...origin,
+    originSpaceObservedAt: origin.spaceObservedAt,
+    spaceObservedAt: '2026-10-01T16:00:00.500Z',
+    anchorExpiresAt: '2026-10-01T16:01:00.500Z',
+    freshnessEvidenceSha256: 'b'.repeat(64),
+  });
+  const env = { VERCEL_ENV: 'production', VERCEL_PROJECT_ID: 'prj_jZYuVgIAk1cwx8MRKE5kGNxn4ItW',
+    DATABASE_URL: databaseUrl, HEYGEN_API_KEY: 'secret-test-key', HEYGEN_SPACE_MARKER_ASSET_ID: 'synthetic-marker-id' };
+  const calls = [];
+  const marker = fixture({ executor, env, proof: refreshedProof, targetPreflight, markerDependencies: {
+    loadPinnedHeygenSpaceMarkerManifest: async () => { calls.push('manifest'); return { marker: true }; },
+    loadPinnedHeygenSpaceAnchorIdentity: async () => { calls.push('identity'); return { credentialKeyFingerprint: DIGESTS.credentialKey }; },
+    loadPinnedHeygenSpaceAnchorProjection: async () => { throw new Error('expired static refresh must not be used'); },
+    observePinnedHeygenSpaceMarker: async input => {
+      calls.push('marker-get');
+      assert.equal(input.markerAssetId, 'synthetic-marker-id');
+      return { observedAt: refreshedProof.spaceObservedAt, freshnessEvidenceSha256: refreshedProof.freshnessEvidenceSha256 };
+    },
+    projectObservedHeygenSpaceMarker: () => { calls.push('projection'); return { credentialKeyFingerprint: DIGESTS.credentialKey }; },
+  } });
+  const before = executor.operations.length;
+  const binding = await marker.repository.resolveFreshHeygenSpaceBinding({ accountId: ACCOUNT_ID });
+  assert.equal(binding.environment, 'production');
+  assert.equal(binding.originSpaceObservedAt, origin.spaceObservedAt);
+  assert.deepEqual(calls, ['manifest', 'identity', 'marker-get', 'projection']);
+  assert.equal(executor.operations.slice(before).some(operation => /^(insert|update|delete):/.test(operation)), false);
+  env.HEYGEN_SPACE_MARKER_ASSET_ID = 'changed-marker-id';
+  assert.throws(() => marker.repository.assertFreshHeygenSpaceBinding(binding), { code: 'HEYGEN_BINDING_INPUT_DRIFT' });
 });

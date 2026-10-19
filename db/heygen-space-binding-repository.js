@@ -19,10 +19,13 @@ import {
 import {
   assertFreshHeygenBootstrapProof,
   assertFreshHeygenSpaceProof,
+  loadPinnedHeygenSpaceAnchorIdentity,
   loadPinnedHeygenSpaceAnchorProjection,
   loadVerifiedHeygenSpaceAnchor,
+  projectObservedHeygenSpaceMarker,
   validateFreshHeygenQualification,
 } from '../lib/heygen-space-anchor.js';
+import { loadPinnedHeygenSpaceMarkerManifest, observePinnedHeygenSpaceMarker } from '../lib/heygen-space-marker.js';
 import { canonicalJsonBytes } from '../lib/heygen-reconciliation-contract.js';
 import { databaseBindingSha256 } from '../lib/provider-reconciliation-target.js';
 import { qualifyHeygenCredential } from '../services/heygen-account-qualification.js';
@@ -299,11 +302,12 @@ async function defaultTargetPreflight(env, dependencies, operation) {
   });
 }
 
-function assertRuntimeInputsStable(env, preflight, credential, operation) {
+function assertRuntimeInputsStable(env, preflight, credential, operation, markerAssetId = null) {
   if (assertBindingEnvironment(env, operation) !== preflight.environment
     || canonicalDatabaseUrl(env) !== preflight.databaseUrl
     || String(env.DATABASE_URL_UNPOOLED || '') !== String(preflight.unpooledUrl || '')
-    || selectCredential(env) !== credential) {
+    || selectCredential(env) !== credential
+    || (markerAssetId !== null && env.HEYGEN_SPACE_MARKER_ASSET_ID !== markerAssetId)) {
     throw failure('HEYGEN_BINDING_INPUT_DRIFT', 'Binding inputs changed during qualification.');
   }
 }
@@ -477,7 +481,13 @@ function assertBindingIdentity(binding) {
   const spaceObservedAt = Date.parse(exactIso(binding.spaceObservedAt, 'binding provider space observation time'));
   const expiresAt = Date.parse(exactIso(binding.expiresAt, 'binding expiry time'));
   const anchorExpiresAt = Date.parse(exactIso(binding.anchorExpiresAt, 'binding anchor expiry time'));
-  if (spaceObservedAt > qualifiedAt || qualifiedAt >= expiresAt || expiresAt > anchorExpiresAt) {
+  const refreshed = Object.hasOwn(binding, 'originSpaceObservedAt');
+  const originObservedAt = refreshed ? Date.parse(exactIso(binding.originSpaceObservedAt, 'binding original space observation time')) : null;
+  if (refreshed) exactDigest(binding.freshnessEvidenceSha256, 'binding freshness evidence digest');
+  if ((!refreshed && spaceObservedAt > qualifiedAt)
+    || (refreshed && (originObservedAt >= spaceObservedAt || originObservedAt > qualifiedAt
+      || Math.abs(spaceObservedAt - qualifiedAt) >= 60_000))
+    || qualifiedAt >= expiresAt || spaceObservedAt >= expiresAt || expiresAt > anchorExpiresAt) {
     throw failure('HEYGEN_SPACE_BINDING_UNVERIFIED', 'HeyGen space binding identity is invalid.');
   }
   return { binding, qualifiedAt, expiresAt, anchorExpiresAt };
@@ -586,6 +596,8 @@ function dependenciesFor(trusted = {}) {
     'env', 'now', 'executor', 'targetPreflight', 'lstat', 'loadTargetManifest', 'loadSchemaLock',
     'validateTarget', 'checkDatabaseMigrations', 'databaseBindingSha256', 'qualifyHeygenCredential',
     'loadVerifiedHeygenSpaceAnchor', 'loadPinnedHeygenSpaceAnchorProjection',
+    'loadPinnedHeygenSpaceAnchorIdentity', 'projectObservedHeygenSpaceMarker',
+    'loadPinnedHeygenSpaceMarkerManifest', 'observePinnedHeygenSpaceMarker',
     'validateFreshHeygenQualification', 'assertFreshHeygenSpaceProof', 'assertFreshHeygenBootstrapProof',
     'acquireProviderLifecycleLock',
   ]);
@@ -609,6 +621,10 @@ function dependenciesFor(trusted = {}) {
     qualifyHeygenCredential: trusted.qualifyHeygenCredential || qualifyHeygenCredential,
     loadVerifiedHeygenSpaceAnchor: trusted.loadVerifiedHeygenSpaceAnchor || loadVerifiedHeygenSpaceAnchor,
     loadPinnedHeygenSpaceAnchorProjection: trusted.loadPinnedHeygenSpaceAnchorProjection || loadPinnedHeygenSpaceAnchorProjection,
+    loadPinnedHeygenSpaceAnchorIdentity: trusted.loadPinnedHeygenSpaceAnchorIdentity || loadPinnedHeygenSpaceAnchorIdentity,
+    projectObservedHeygenSpaceMarker: trusted.projectObservedHeygenSpaceMarker || projectObservedHeygenSpaceMarker,
+    loadPinnedHeygenSpaceMarkerManifest: trusted.loadPinnedHeygenSpaceMarkerManifest || loadPinnedHeygenSpaceMarkerManifest,
+    observePinnedHeygenSpaceMarker: trusted.observePinnedHeygenSpaceMarker || observePinnedHeygenSpaceMarker,
     validateFreshHeygenQualification: trusted.validateFreshHeygenQualification || validateFreshHeygenQualification,
     assertFreshHeygenSpaceProof: trusted.assertFreshHeygenSpaceProof || assertFreshHeygenSpaceProof,
     assertFreshHeygenBootstrapProof: trusted.assertFreshHeygenBootstrapProof || assertFreshHeygenBootstrapProof,
@@ -628,9 +644,13 @@ export function createHeygenSpaceBindingRepository(trustedDependencies = {}) {
     const preflight = await dependencies.targetPreflight(env, dependencies, operation);
     const anchorNow = exactDate(dependencies.now());
     const bootstrap = privateEvidenceDir !== null;
-    const anchor = bootstrap
+    const markerManifest = !bootstrap && preflight.environment === 'production' && String(env.VERCEL_ENV || '').trim() === 'production'
+      ? await dependencies.loadPinnedHeygenSpaceMarkerManifest()
+      : null;
+    const identityRoot = markerManifest ? await dependencies.loadPinnedHeygenSpaceAnchorIdentity() : null;
+    let anchor = bootstrap
       ? await dependencies.loadVerifiedHeygenSpaceAnchor({ privateEvidenceDirectory: privateEvidenceDir, now: anchorNow })
-      : await dependencies.loadPinnedHeygenSpaceAnchorProjection({ now: anchorNow });
+      : identityRoot || await dependencies.loadPinnedHeygenSpaceAnchorProjection({ now: anchorNow });
     const credential = selectCredential(env);
     if (typeof anchor?.credentialKeyFingerprint !== 'string'
       || credentialKeyFingerprint(credential) !== anchor.credentialKeyFingerprint) {
@@ -638,17 +658,24 @@ export function createHeygenSpaceBindingRepository(trustedDependencies = {}) {
     }
     const observedAt = exactDate(dependencies.now());
     const qualification = await dependencies.qualifyHeygenCredential({ apiKey: credential, now: observedAt });
+    const markerAssetId = markerManifest ? env.HEYGEN_SPACE_MARKER_ASSET_ID : null;
+    if (markerManifest) {
+      const markerObservation = await dependencies.observePinnedHeygenSpaceMarker({
+        origin: identityRoot, manifest: markerManifest, qualification, apiKey: credential, markerAssetId,
+      });
+      anchor = dependencies.projectObservedHeygenSpaceMarker(identityRoot, markerObservation, { now: exactDate(dependencies.now()) });
+    }
     const proofNow = exactDate(dependencies.now());
     const proof = assertProofShape(dependencies.validateFreshHeygenQualification(anchor, qualification, { now: proofNow }));
     const assertFreshProof = bootstrap ? dependencies.assertFreshHeygenBootstrapProof : dependencies.assertFreshHeygenSpaceProof;
     assertFreshProof(proof, { now: proofNow });
-    assertRuntimeInputsStable(env, preflight, credential, operation);
-    return { env, preflight, credential, operation, proof, assertFreshProof, refs: evidenceRefs(proof) };
+    assertRuntimeInputsStable(env, preflight, credential, operation, markerAssetId);
+    return { env, preflight, credential, operation, markerAssetId, proof, assertFreshProof, refs: evidenceRefs(proof) };
   }
 
   async function withExecutor(prepared, callback, { requireCurrentInputs = true } = {}) {
     if (dependencies.executor) return dependencies.executor.transaction(callback);
-    if (requireCurrentInputs) assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation);
+    if (requireCurrentInputs) assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation, prepared.markerAssetId);
     neonConfig.webSocketConstructor = ws;
     const pool = new Pool({
       connectionString: prepared.preflight.databaseUrl,
@@ -679,7 +706,7 @@ export function createHeygenSpaceBindingRepository(trustedDependencies = {}) {
       assertCurrent() {
         const now = exactDate(dependencies.now());
         prepared.assertFreshProof(prepared.proof, { now });
-        assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation);
+        assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation, prepared.markerAssetId);
         assertBindingShape(binding, now);
       },
     }));
@@ -697,7 +724,7 @@ export function createHeygenSpaceBindingRepository(trustedDependencies = {}) {
     const result = await withExecutor(prepared, async tx => {
       await dependencies.acquireProviderLifecycleLock(tx, accountId);
       prepared.assertFreshProof(prepared.proof, { now: exactDate(dependencies.now()) });
-      assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation);
+      assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation, prepared.markerAssetId);
       await requireAccountTx(tx, accountId);
       const scope = await ensureVerifiedScopeTx(tx, prepared.proof, prepared.refs);
       const binding = await ensureBootstrapBindingTx(tx, {
@@ -730,7 +757,7 @@ export function createHeygenSpaceBindingRepository(trustedDependencies = {}) {
     const result = await withExecutor(prepared, async tx => {
       await dependencies.acquireProviderLifecycleLock(tx, accountId);
       prepared.assertFreshProof(prepared.proof, { now: exactDate(dependencies.now()) });
-      assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation);
+      assertRuntimeInputsStable(prepared.env, prepared.preflight, prepared.credential, prepared.operation, prepared.markerAssetId);
       await requireAccountTx(tx, accountId);
       const bindings = await tx.select().from(providerAccountBindings).where(and(
         eq(providerAccountBindings.applicationAccountId, accountId),
