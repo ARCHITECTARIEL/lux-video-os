@@ -379,6 +379,7 @@ test('two captures and six unchecked consents create a v2 hash-bound enrollment 
 });
 
 test('an existing ready enrollment can start provider creation once from the Ready step', async ({ page }) => {
+  await page.clock.install();
   const mock = await mockApp(page, { providerEnabled: true, initialIdentities: [{ ...draft }], initialEnrollment: enrollment('IDENTITY_READY') });
   await page.addInitScript(({ id }) => localStorage.setItem('luxVideoOsEnrollmentResumeV1:owner-a', JSON.stringify({
     enrollmentId: id, createIdempotencyKey: '11111111-1111-4111-8111-111111111111', consentIdempotencyKey: null,
@@ -394,6 +395,11 @@ test('an existing ready enrollment can start provider creation once from the Rea
   await createPresenter.evaluate(button => { button.click(); button.click(); });
 
   await expect.poll(() => mock.calls.filter(call => call.endpoint === 'identities' && call.body.action === 'submit').length).toBe(1);
+  await expect(page.locator('#compact-step-label')).toContainText('4 of 5: Creating');
+  await page.clock.fastForward(8_500);
+  await expect(page.locator('#compact-step-label')).toContainText('5 of 5: Ready');
+  await expect(page.locator('#ready-use-link')).toHaveAttribute('aria-disabled', 'false');
+  expect(mock.calls.filter(call => call.endpoint === 'identities' && call.body.action === 'submit')).toHaveLength(1);
 });
 
 test('extracted and HeyGen cloned voice previews stay distinct and keyboard usable on mobile', async ({ page }) => {

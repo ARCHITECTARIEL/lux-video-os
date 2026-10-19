@@ -1286,6 +1286,7 @@ function updateProgress() {
   lifecycleStatus.hidden = !lifecycle;
   lifecycleStatus.textContent = lifecycle ? `${lifecycle.label}. ${lifecycle.detail}` : '';
   if (lifecycle) lifecycleStatus.dataset.state = lifecycle.state; else lifecycleStatus.removeAttribute('data-state');
+  if ($('#wizard').open && state.step === 4 && !showingEnrollment && identity?.ready) setStep(5);
 }
 
 function showEnrollmentRecovery(message, retryAllowed) {
