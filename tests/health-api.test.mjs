@@ -100,6 +100,22 @@ test('health never echoes configuration secrets and nulls absent deployment iden
   assert.doesNotMatch(res.body, /SENTINEL_|postgres:\/\//);
 });
 
+test('prebuilt production health reports the source SHA sealed into its function', async () => {
+  const sourceSha = 'b'.repeat(40);
+  const res = await health('GET', {
+    VERCEL_GIT_COMMIT_SHA: '', VIDEO_OS_RELEASE_GIT_SHA: sourceSha,
+  });
+  assert.equal(JSON.parse(res.body).gitSha, sourceSha);
+  const conflict = await health('GET', {
+    VERCEL_GIT_COMMIT_SHA: 'c'.repeat(40), VIDEO_OS_RELEASE_GIT_SHA: sourceSha,
+  });
+  assert.equal(JSON.parse(conflict.body).gitSha, null);
+  const invalid = await health('GET', {
+    VERCEL_GIT_COMMIT_SHA: '', VIDEO_OS_RELEASE_GIT_SHA: 'not-a-commit',
+  });
+  assert.equal(JSON.parse(invalid.body).gitSha, null);
+});
+
 test('health HEAD is bodyless and POST returns 405 JSON', async () => {
   const head = await health('HEAD');
   assert.equal(head.statusCode, 200);
