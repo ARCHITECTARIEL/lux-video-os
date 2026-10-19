@@ -5,8 +5,10 @@ import { spawnSync } from 'node:child_process';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureSourceIdentity, inspectWorkflowBoundary } from './release-build-manifest.mjs';
-import { loadPinnedHeygenSpaceAnchorProjection } from '../lib/heygen-space-anchor.js';
+import { loadPinnedHeygenSpaceAnchorIdentity, loadPinnedHeygenSpaceAnchorProjection } from '../lib/heygen-space-anchor.js';
 import { assertHeygenRefreshReleaseWindow } from '../lib/heygen-space-refresh.js';
+import { assertConfiguredHeygenSpaceMarker, loadPinnedHeygenSpaceMarkerManifest } from '../lib/heygen-space-marker.js';
+import { canonicalJsonBytes } from '../lib/heygen-reconciliation-contract.js';
 
 // This tool re-verifies the AUTOMATABLE gates on an already-quarantined
 // `npm run build:production` candidate, immediately before a deploy. It
@@ -67,7 +69,7 @@ export function computeAuthorizationResult({ manifest, currentSource, liveOutput
     ),
     workflowBoundaryVerifiedNow: workflowBoundary?.verified === true,
     currentCandidateCiPassed: Boolean(ciResult?.passed),
-    refreshReleaseWindowValid: manifest.target === 'production' ? refreshCheck?.verified === true : true,
+    spaceAuthorityVerified: manifest.target === 'production' ? refreshCheck?.verified === true : true,
   };
 
   const automatableGatesCleared = Object.values(checks).every(Boolean);
@@ -90,7 +92,30 @@ export function computeAuthorizationResult({ manifest, currentSource, liveOutput
   };
 }
 
-export async function checkQuarantinedRefresh(root, output, { now = new Date() } = {}) {
+export async function checkQuarantinedMarkerFiles(root, output, manifest, env = process.env) {
+  const relativePaths = [
+    'functions/api/video-os-lite/workspace.func/config/heygen-space-marker.json',
+    'functions/.well-known/workflow/v1/step.func/runtime-repository/config/heygen-space-marker.json',
+  ];
+  try {
+    assertConfiguredHeygenSpaceMarker(manifest, env);
+    const source = await readFile(join(root, 'config/heygen-space-marker.json'));
+    if (createHash('sha256').update(canonicalJsonBytes(JSON.parse(source))).digest('hex') !== manifest.manifestSha256) {
+      return { verified: false };
+    }
+    for (const path of relativePaths) {
+      if (!(await readFile(join(output, path))).equals(source)) return { verified: false };
+    }
+    return { verified: true, mode: 'retained-marker' };
+  } catch {
+    return { verified: false };
+  }
+}
+
+export async function checkQuarantinedSpaceAuthority(root, output, { now = new Date() } = {}) {
+  const origin = await loadPinnedHeygenSpaceAnchorIdentity();
+  const marker = await loadPinnedHeygenSpaceMarkerManifest(origin);
+  if (marker) return checkQuarantinedMarkerFiles(root, output, marker);
   const relativePaths = [
     'functions/api/video-os-lite/workspace.func/config/heygen-space-refresh.json',
     'functions/.well-known/workflow/v1/step.func/runtime-repository/config/heygen-space-refresh.json',
@@ -144,7 +169,7 @@ export async function main() {
     try { ciResult = checkCurrentCandidateCi(JSON.parse(ciRun.stdout).check_runs); } catch { /* leave as failed */ }
   }
 
-  const refreshCheck = await checkQuarantinedRefresh(root, manifest.output.location);
+  const refreshCheck = await checkQuarantinedSpaceAuthority(root, manifest.output.location);
   const result = computeAuthorizationResult({ manifest, currentSource, liveOutputSha256, freshDatabaseCheck, workflowBoundary, ciResult, refreshCheck, ownerAuthorized });
   console.log(JSON.stringify(result, null, 2));
 
