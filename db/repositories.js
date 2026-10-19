@@ -36,6 +36,8 @@ export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 
 export const IDENTITY_OVERALL_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING', 'READY', 'PARTIAL_FAILURE', 'FAILED', 'ARCHIVED']);
 const AUTH_ENTITLEMENT_SOURCE = 'validated_auth';
 export const ROLE = Object.freeze({ CUSTOMER: 'customer', TESTER: 'tester', WORKSPACE: 'workspace', CEO: 'ceo' });
+export const ADMIN_TESTER_CREDIT_MIN = 100;
+export const ADMIN_TESTER_CREDIT_MAX = 180;
 const ROLE_VALUES = new Set(Object.values(ROLE));
 
 function assertRole(role) {
@@ -2308,11 +2310,14 @@ export async function consumeRateLimit({ accountId, key, limit, windowMs }) {
   return row.count <= limit;
 }
 
-export async function registerAdminTester({ email, name, credits = 5000, note = 'Registered via Admin Console' }) {
+export async function registerAdminTester({ email, name, credits, note = 'Registered via Admin Console' }) {
   if (!email || !String(email).includes('@')) throw Object.assign(new Error('Valid email address is required.'), { statusCode: 400 });
+  if (!Number.isSafeInteger(credits) || credits < ADMIN_TESTER_CREDIT_MIN || credits > ADMIN_TESTER_CREDIT_MAX) {
+    throw Object.assign(new Error(`Credits must be a whole number from ${ADMIN_TESTER_CREDIT_MIN} to ${ADMIN_TESTER_CREDIT_MAX}.`), { statusCode: 400 });
+  }
   const normalizedEmail = String(email).trim().toLowerCase();
   const { createHash } = await import('node:crypto');
-  const initialCredits = Math.max(100, Number(credits) || 5000);
+  const initialCredits = credits;
 
   return database().transaction(async (tx) => {
     const now = new Date();

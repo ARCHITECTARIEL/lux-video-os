@@ -108,8 +108,9 @@ if (scenario === 'claim') {
   let credits;
   let grants = [];
   let writes = 0;
+  let transactions = 0;
   const db = {
-    transaction: async fn => fn(db),
+    transaction: async fn => { transactions += 1; return fn(db); },
     async execute() { writes += 1; return []; },
     select(fields) {
       let table;
@@ -127,20 +128,37 @@ if (scenario === 'claim') {
   };
   mock.module('../../db/client.js', { namedExports: { database: () => db } });
   const { registerAdminTester, authenticatedAccountId } = await import('../../db/repositories.js');
-  const created = await registerAdminTester({ email, credits: 1234 });
+  const invalidCreditInputs = [
+    { label: 'missing', input: { email } },
+    { label: 'null', input: { email, credits: null } },
+    { label: 'numeric string', input: { email, credits: '180' } },
+    { label: 'zero', input: { email, credits: 0 } },
+    { label: 'below range', input: { email, credits: 99 } },
+    { label: 'fractional', input: { email, credits: 100.5 } },
+    { label: 'above range', input: { email, credits: 181 } },
+    { label: 'unsafe integer', input: { email, credits: Number.MAX_SAFE_INTEGER + 1 } },
+  ];
+  for (const { label, input } of invalidCreditInputs) {
+    const beforeWrites = writes;
+    const beforeTransactions = transactions;
+    await assert.rejects(registerAdminTester(input), { statusCode: 400, message: /credits must be a whole number from 100 to 180/i });
+    assert.equal(writes, beforeWrites, `${label} must fail before any database write`);
+    assert.equal(transactions, beforeTransactions, `${label} must fail before opening a transaction`);
+  }
+  const created = await registerAdminTester({ email, credits: 180 });
   assert.equal(created.user.id, accountIdForEmail(email), 'admin and sign-in must address the same new account');
-  assert.equal(created.credits.balance, 1234);
+  assert.equal(created.credits.balance, 180);
   assert.equal(created.entitlements.liveRendering, true);
   assert.equal(REGISTERED_TESTER_ACCOUNTS.size, 0);
   user = { ...user, id: 'legacy-existing-account' };
   grants = [];
-  const existing = await registerAdminTester({ email });
+  const existing = await registerAdminTester({ email, credits: 100 });
   assert.equal(existing.user.id, 'legacy-existing-account', 'existing identities are preserved');
   assert.equal(await authenticatedAccountId(accountIdForEmail(email), email), 'legacy-existing-account', 'verified sign-in resolves the original grant owner');
   for (const role of ['ceo', 'workspace']) {
     user.role = role;
     const before = writes;
-    await assert.rejects(registerAdminTester({ email }), { statusCode: 409, message: /privileged account cannot be registered as a tester/i });
+    await assert.rejects(registerAdminTester({ email, credits: 100 }), { statusCode: 409, message: /privileged account cannot be registered as a tester/i });
     assert.equal(writes, before, 'privileged account rejection must precede all writes');
     assert.equal(user.role, role);
   }
@@ -150,7 +168,7 @@ if (scenario === 'claim') {
   assert.match(conditions.at(-1), /lower\(/, 'stored email must be normalized by the query, not only its parameter');
   duplicate = true;
   await assert.rejects(authenticatedAccountId(accountIdForEmail(email), email), { statusCode: 409 });
-  await assert.rejects(registerAdminTester({ email }), { statusCode: 409 });
+  await assert.rejects(registerAdminTester({ email, credits: 100 }), { statusCode: 409 });
 
 } else if (scenario === 'signin') {
   const account = await import('../../lib/video-os-account.js');

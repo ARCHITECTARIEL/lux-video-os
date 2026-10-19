@@ -121,12 +121,12 @@
 
       <section id="panel-testers" class="admin-panel" role="tabpanel" hidden>
         <div class="notice" role="status" style="margin-bottom:1.5rem">
-          <strong>⚡ Automatic Tester Access</strong>: All sign-ins ending with <code>@luxmarketingcompany.com</code> automatically receive full Standard & Premium rendering access and 5,000 testing credits.
+          <p style="min-width:0; margin:0; line-height:1.55"><strong>Register approved pilot testers before their first sign-in.</strong> The existing <code>@luxmarketingcompany.com</code> domain policy can establish a 5,000-credit balance on first sign-in. This form never lowers an existing balance, so it cannot retroactively cap an account that has already signed in. Domain membership alone does not authorize Premium rendering; Premium still depends on provider account binding, identity consent, and active runtime gates.</p>
         </div>
 
         <div class="admin-tester-card" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:8px; padding:1.25rem; margin-bottom:1.5rem">
-          <h2 class="admin-subheading" style="margin-top:0">Register New Tester</h2>
-          <p class="section-copy">Whitelist any email to grant full Standard and Premium rendering capabilities and test credits without payment gates.</p>
+          <h2 class="admin-subheading" style="margin-top:0">Register Approved Tester</h2>
+          <p class="section-copy">Registering an email assigns tester entitlements and establishes the approved pilot credit floor entered here. Complete registration before the tester signs in; the 180-credit limit applies only to this registration control. It does not guarantee Premium provider access.</p>
           <form id="register-tester-form" style="display:flex; flex-wrap:wrap; gap:1rem; align-items:flex-end">
             <div style="flex:1; min-width:200px">
               <label for="tester-email" style="display:block; font-size:0.875rem; font-weight:600; margin-bottom:0.25rem">Tester Email *</label>
@@ -136,15 +136,16 @@
               <label for="tester-name" style="display:block; font-size:0.875rem; font-weight:600; margin-bottom:0.25rem">Full Name</label>
               <input id="tester-name" type="text" placeholder="Tester Name" style="width:100%; padding:0.5rem; border:1px solid #cbd5e1; border-radius:6px">
             </div>
-            <div style="width:130px">
-              <label for="tester-credits" style="display:block; font-size:0.875rem; font-weight:600; margin-bottom:0.25rem">Credits</label>
-              <input id="tester-credits" type="number" value="5000" min="100" max="100000" style="width:100%; padding:0.5rem; border:1px solid #cbd5e1; border-radius:6px">
+            <div style="width:180px">
+              <label for="tester-credits" style="display:block; font-size:0.875rem; font-weight:600; margin-bottom:0.25rem">Approved pilot credits *</label>
+              <input id="tester-credits" type="number" min="100" max="180" step="1" placeholder="100–180" required aria-describedby="tester-credits-help" style="width:100%; padding:0.5rem; border:1px solid #cbd5e1; border-radius:6px">
+              <small id="tester-credits-help" style="display:block; margin-top:0.25rem; color:var(--muted); font-size:0.75rem; line-height:1.35">Required. 100–180 credits; existing higher balances are unchanged.</small>
             </div>
             <div style="flex:1; min-width:180px">
               <label for="tester-note" style="display:block; font-size:0.875rem; font-weight:600; margin-bottom:0.25rem">Notes</label>
               <input id="tester-note" type="text" placeholder="e.g. VIP Pilot Partner" style="width:100%; padding:0.5rem; border:1px solid #cbd5e1; border-radius:6px">
             </div>
-            <button class="button primary" id="register-tester-submit" type="submit" style="height:38px">Register Tester</button>
+            <button class="button primary" id="register-tester-submit" type="submit" style="height:38px">Register &amp; grant credits</button>
           </form>
           <p id="register-tester-status" role="status" aria-live="polite" style="margin-top:0.5rem"></p>
         </div>

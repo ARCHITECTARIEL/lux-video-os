@@ -5,7 +5,7 @@ import { dispatchClaimedJob } from '../../api/video-os-lite/render-v2.js';
 import { database } from '../../db/client.js';
 import { logOpsEventAwaited, redactOpsValue } from '../../lib/ops-log.js';
 import {
-  adminResolveJob, claimWorkflowStart, getAdminOverview, getJob, getJobEventTimeline, grantAdminCredit, listAdminTesters, listFailedOrStuckJobs,
+  ADMIN_TESTER_CREDIT_MAX, ADMIN_TESTER_CREDIT_MIN, adminResolveJob, claimWorkflowStart, getAdminOverview, getJob, getJobEventTimeline, grantAdminCredit, listAdminTesters, listFailedOrStuckJobs,
   listMediaAssetsForJob, listRecentAccounts, listRecentCreditTransactions, listRecentJobs, listRecentStripeEvents,
   markJobReviewed, markJobVideoDeleted, quarantineMediaAsset, registerAdminTester, reserveRender, revokeAdminTester,
 } from '../../db/repositories.js';
@@ -483,9 +483,12 @@ async function handlePost(req, res, operation, deps = {}) {
   if (operation === 'register-tester') {
     const email = String(payload.email || '').trim();
     const name = String(payload.name || '').trim();
-    const credits = Number(payload.credits) || 5000;
+    const credits = payload.credits;
     const note = String(payload.note || '').trim();
     if (!email) return send(res, 400, { ok: false, error: 'email is required.' });
+    if (!Number.isSafeInteger(credits) || credits < ADMIN_TESTER_CREDIT_MIN || credits > ADMIN_TESTER_CREDIT_MAX) {
+      return send(res, 400, { ok: false, error: `credits must be a whole number from ${ADMIN_TESTER_CREDIT_MIN} to ${ADMIN_TESTER_CREDIT_MAX}.` });
+    }
     const tester = await (deps.registerAdminTester || registerAdminTester)({ email, name, credits, note });
     await logOpsEventAwaited({ level: 'info', persist: true, event: 'admin.tester.registered', accountId: tester.account?.id, message: 'Admin tester registration was recorded.', details: { adminActor: 'admin', testerDomain: /^[^@\s]+@([a-z0-9.-]+)$/i.exec(email)?.[1] || '[redacted]' } }, { writer: deps.opsWriter });
     return send(res, 200, { ok: true, tester });
