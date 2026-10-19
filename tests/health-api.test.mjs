@@ -19,7 +19,8 @@ async function health(method = 'GET', overrides = {}, deps = {}) {
     env: {
       DATABASE_URL: 'postgres://db-secret.invalid/app', BLOB_READ_WRITE_TOKEN: 'blob-secret',
       HEYGEN_API_KEY: 'provider-secret', VERCEL_DEPLOYMENT_ID: 'deployment-123',
-      VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40), VERCEL_GIT_COMMIT_REF: 'main', VERCEL_ENV: 'production',
+      VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40), VIDEO_OS_RELEASE_GIT_SHA: 'a'.repeat(40),
+      VERCEL_GIT_COMMIT_REF: 'main', VERCEL_ENV: 'production',
       ...overrides,
     },
     dbProbe: async () => {}, lastSweep: async () => '2026-10-15T00:00:00.000Z',
@@ -94,7 +95,7 @@ test('health never echoes configuration secrets and nulls absent deployment iden
   const res = await health('GET', {
     DATABASE_URL: 'postgres://SENTINEL_DB@private.invalid/app',
     BLOB_READ_WRITE_TOKEN: 'SENTINEL_BLOB', HEYGEN_API_KEY: 'SENTINEL_PROVIDER',
-    VERCEL_DEPLOYMENT_ID: '', VERCEL_GIT_COMMIT_SHA: '',
+    VERCEL_DEPLOYMENT_ID: '', VERCEL_GIT_COMMIT_SHA: '', VIDEO_OS_RELEASE_GIT_SHA: '',
   });
   assert.equal(JSON.parse(res.body).deploymentId, null);
   assert.equal(JSON.parse(res.body).gitSha, null);
@@ -119,6 +120,12 @@ test('prebuilt production health reports the source SHA sealed into its function
   assert.equal(JSON.parse(invalid.body).gitSha, null);
   assert.equal(JSON.parse(invalid.body).status, 'degraded');
   assert.equal(JSON.parse(invalid.body).checks.releaseIdentity.code, 'release_identity_invalid');
+  const unsealed = await health('GET', {
+    VERCEL_GIT_COMMIT_SHA: sourceSha, VIDEO_OS_RELEASE_GIT_SHA: '',
+  });
+  assert.equal(JSON.parse(unsealed.body).gitSha, null);
+  assert.equal(JSON.parse(unsealed.body).status, 'degraded');
+  assert.equal(JSON.parse(unsealed.body).checks.releaseIdentity.code, 'release_identity_missing');
 });
 
 test('health HEAD is bodyless and POST returns 405 JSON', async () => {
