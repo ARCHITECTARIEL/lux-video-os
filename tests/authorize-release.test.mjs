@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkCurrentCandidateCi, checkQuarantinedMarkerFiles, checkQuarantinedSpaceAuthority, computeAuthorizationResult, outputInventory, fingerprint } from '../tools/authorize-release.mjs';
+import { checkCurrentCandidateCi, checkQuarantinedMarkerFiles, checkQuarantinedRefreshFiles, checkQuarantinedSpaceAuthority, computeAuthorizationResult, outputInventory, fingerprint } from '../tools/authorize-release.mjs';
 import { heygenSpaceMarkerAssetIdDigest, reviewHeygenSpaceMarkerForTests } from '../lib/heygen-space-marker.js';
 
 const baseManifest = {
@@ -163,18 +163,18 @@ test('production authorization requires an artifact-bound refresh with six hours
       await mkdir(join(candidate, path, '..'), { recursive: true });
       await writeFile(join(candidate, path), source);
     }
-    const valid = await checkQuarantinedSpaceAuthority(process.cwd(), candidate, { now });
+    const valid = await checkQuarantinedRefreshFiles(process.cwd(), candidate, { now });
     assert.equal(valid.verified, true);
     assert.equal(computeAuthorizationResult({ manifest: { ...baseManifest, target: 'production' },
       currentSource: cleanSource, liveOutputSha256: 'outhash', freshDatabaseCheck: passingDb,
       workflowBoundary: passingBoundary, ciResult: passingCi, refreshCheck: valid, ownerAuthorized: true,
     }).routineDeployAuthorized, true);
-    const late = await checkQuarantinedSpaceAuthority(process.cwd(), candidate, {
+    const late = await checkQuarantinedRefreshFiles(process.cwd(), candidate, {
       now: new Date(Date.parse(refresh.observation.expiresAt) - 6 * 60 * 60 * 1000 + 1),
     });
     assert.equal(late.verified, false);
     await writeFile(join(candidate, paths[0]), '{}');
-    assert.equal((await checkQuarantinedSpaceAuthority(process.cwd(), candidate, { now })).verified, false);
+    assert.equal((await checkQuarantinedRefreshFiles(process.cwd(), candidate, { now })).verified, false);
   } finally {
     await rm(candidate, { recursive: true, force: true });
   }
@@ -222,6 +222,26 @@ test('retained marker authorization binds both packaged copies and the private a
     assert.equal((await checkQuarantinedMarkerFiles(sourceRoot, candidate, manifest, { HEYGEN_SPACE_MARKER_ASSET_ID: assetId })).verified, false);
   } finally {
     await rm(sourceRoot, { recursive: true, force: true });
+    await rm(candidate, { recursive: true, force: true });
+  }
+});
+
+test('active source marker never falls back to packaged static refresh evidence', async () => {
+  const candidate = await mkdtemp(join(tmpdir(), 'authorize-marker-no-fallback-'));
+  try {
+    const refresh = await readFile(join(process.cwd(), 'config/heygen-space-refresh.json'));
+    const paths = [
+      'functions/api/video-os-lite/workspace.func/config/heygen-space-refresh.json',
+      'functions/.well-known/workflow/v1/step.func/runtime-repository/config/heygen-space-refresh.json',
+    ];
+    for (const path of paths) {
+      await mkdir(join(candidate, path, '..'), { recursive: true });
+      await writeFile(join(candidate, path), refresh);
+    }
+    const now = new Date(Date.parse(JSON.parse(refresh).observation.completedAt) + 1000);
+    assert.equal((await checkQuarantinedRefreshFiles(process.cwd(), candidate, { now })).verified, true);
+    assert.equal((await checkQuarantinedSpaceAuthority(process.cwd(), candidate, { now })).verified, false);
+  } finally {
     await rm(candidate, { recursive: true, force: true });
   }
 });

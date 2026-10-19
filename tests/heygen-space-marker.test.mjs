@@ -64,8 +64,14 @@ const providerResponse = (spaceId = SPACE_ID, status = 200) => new Response(JSON
   ? { data: { id: ASSET_ID, owner: USERNAME, space_id: spaceId, type: 'image', uploaded_at: UPLOADED_AT } }
   : { error: { code: 'asset_not_found' } }), { status });
 
-test('inactive source-declared marker grants no authority', async () => {
-  assert.equal(await loadPinnedHeygenSpaceMarkerManifest(), null);
+test('active source-declared marker is pinned to the immutable identity without raw provider IDs', async () => {
+  const origin = await loadPinnedHeygenSpaceAnchorIdentity();
+  const marker = await loadPinnedHeygenSpaceMarkerManifest(origin);
+  assert.equal(marker.providerSpaceFingerprint, origin.providerSpaceFingerprint);
+  assert.equal(marker.originIdentityDigest, origin.identityDigest);
+  assert.equal(marker.fixtureSha256, origin.fixtureSha256);
+  assert.match(marker.assetIdDigest, /^[a-f0-9]{64}$/);
+  assert.equal(Object.hasOwn(marker, 'assetId'), false);
 });
 
 test('reviewed synthetic marker accepts one live read and discards private fields', async () => {

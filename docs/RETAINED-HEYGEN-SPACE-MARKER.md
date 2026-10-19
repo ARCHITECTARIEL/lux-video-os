@@ -8,7 +8,7 @@ The marker is the existing 95-byte synthetic gray PNG fixture. It contains no cu
 
 ## Authority boundary
 
-`config/heygen-space-marker.json` declares the authority mode. Its current `marker: null` leaves the released 24-hour refresh path in force. An active reviewed marker selects the live-read path in deployed production with **no fallback** to the static refresh. No browser field or environment flag can select a weaker mode.
+`config/heygen-space-marker.json` declares the authority mode. `marker: null` leaves the released 24-hour refresh path in force. An active reviewed marker selects the live-read path in deployed production with **no fallback** to the static refresh. No browser field or environment flag can select a weaker mode.
 
 An active manifest pins the digest of one asset ID, original fixture and credential identity, owner digest, provider-space fingerprint, upload time and type, and protected upload/read receipt digests. The raw asset ID belongs only in the production `HEYGEN_SPACE_MARKER_ASSET_ID` secret and protected operator evidence. The manifest and exact packaged copies must match the source pin; the secret must match its asset-ID digest.
 

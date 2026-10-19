@@ -112,10 +112,7 @@ export async function checkQuarantinedMarkerFiles(root, output, manifest, env = 
   }
 }
 
-export async function checkQuarantinedSpaceAuthority(root, output, { now = new Date() } = {}) {
-  const origin = await loadPinnedHeygenSpaceAnchorIdentity();
-  const marker = await loadPinnedHeygenSpaceMarkerManifest(origin);
-  if (marker) return checkQuarantinedMarkerFiles(root, output, marker);
+export async function checkQuarantinedRefreshFiles(root, output, { now = new Date() } = {}) {
   const relativePaths = [
     'functions/api/video-os-lite/workspace.func/config/heygen-space-refresh.json',
     'functions/.well-known/workflow/v1/step.func/runtime-repository/config/heygen-space-refresh.json',
@@ -131,6 +128,14 @@ export async function checkQuarantinedSpaceAuthority(root, output, { now = new D
   } catch {
     return { verified: false };
   }
+}
+
+export async function checkQuarantinedSpaceAuthority(root, output, { now = new Date() } = {}) {
+  const origin = await loadPinnedHeygenSpaceAnchorIdentity();
+  const marker = await loadPinnedHeygenSpaceMarkerManifest(origin);
+  return marker
+    ? checkQuarantinedMarkerFiles(root, output, marker)
+    : checkQuarantinedRefreshFiles(root, output, { now });
 }
 
 function argument(name) {

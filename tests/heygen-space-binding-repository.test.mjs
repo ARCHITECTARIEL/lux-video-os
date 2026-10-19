@@ -808,6 +808,7 @@ test('default target preflight validates the pinned production target only with 
     qualifyHeygenCredential: async () => { order.push('qualify'); return Object.freeze({}); },
     validateFreshHeygenQualification: () => verifiedProof,
     assertFreshHeygenSpaceProof: () => verifiedProof,
+    loadPinnedHeygenSpaceMarkerManifest: async () => null,
     acquireProviderLifecycleLock: async () => executor.operations.push('account-lock'),
   });
   await assert.rejects(
@@ -856,7 +857,7 @@ test('bootstrap succeeds end to end for the confirmed production environment and
   assert.equal(repository.assertFreshHeygenSpaceBinding(binding), binding);
 });
 
-test('deployed production resolves an existing binding without provisioning or operator confirmation', async () => {
+test('legacy static mode resolves an existing binding without provisioning or operator confirmation', async () => {
   const env = {
     VIDEO_OS_SPACE_BINDING_ENVIRONMENT: 'production',
     VIDEO_OS_PRODUCTION_BINDING_CONFIRMED: PRODUCTION_BINDING_CONFIRMATION_PHRASE,
@@ -865,6 +866,7 @@ test('deployed production resolves an existing binding without provisioning or o
   };
   const { repository, executor } = fixture({
     env,
+    markerDependencies: { loadPinnedHeygenSpaceMarkerManifest: async () => null },
     targetPreflight: async (_env, _dependencies, operation) => {
       assert.equal(operation, env.VERCEL_ENV === 'production' ? 'resolve' : 'bootstrap');
       return Object.freeze({
