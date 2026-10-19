@@ -38,7 +38,7 @@ mock.module('../../db/repositories.js', { namedExports: {
   },
 } });
 mock.module('../../lib/video-os-render-driver.js', { namedExports: {
-  driveJobSafely: async () => { recoveryCalls++; await new Promise(resolve => setTimeout(resolve, 20)); },
+  driveJob: async () => { recoveryCalls++; await new Promise(resolve => setTimeout(resolve, 20)); },
 } });
 mock.module('../../lib/video-os-observability.js', { namedExports: {
   captureJobError: () => { alerts++; },

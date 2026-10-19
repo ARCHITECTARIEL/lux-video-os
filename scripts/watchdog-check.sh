@@ -104,7 +104,8 @@ const fs = require('node:fs');
 const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 if (!value || typeof value !== 'object' || Array.isArray(value)) process.exit(1);
 if (typeof value.status !== 'string' || typeof value.gitSha !== 'string') process.exit(1);
-if (!/^[0-9a-f]{7,40}$/i.test(value.gitSha)) process.exit(1);
+if (value.env !== 'production' || value.checks?.releaseIdentity?.ok !== true) process.exit(1);
+if (!/^[0-9a-f]{40}$/i.test(value.gitSha)) process.exit(1);
 const staleOnly = value.status === 'degraded'
   && value.checks?.watchdog?.ok === false
   && value.checks?.db?.ok === true
@@ -119,7 +120,7 @@ const fallbackNotNeeded = value.checks?.watchdog?.ok === true
 process.stdout.write(`${value.status}\n${value.gitSha}\n${fallbackNotNeeded}\n${staleOnly}\n`);
 NODE
 ); then
-  error 'Health response was not valid JSON with status and gitSha fields.'
+  error 'Health response lacks a verified production release identity.'
   exit 1
 fi
 
