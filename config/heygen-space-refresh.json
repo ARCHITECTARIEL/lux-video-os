@@ -12,34 +12,34 @@
     "usernameDigest": "3cf3d4f247dbe1540d7854f4dab202cab1862950a25204a38e15c1dac3398a3e",
     "providerSpaceFingerprint": "1c1b9eac97b6e38e481d30ddf12e4332ecb04d08f727a4ff55997a733b3f584a",
     "canonicalScopeKey": "c0d1badbcbd71c0b1d2815336a0a173ed87b5c59381fb7eedc6adcbb3ae75d0c",
-    "spaceObservedAt": "2026-10-18T13:29:40.282Z",
-    "completedAt": "2026-10-18T13:29:53.240Z",
-    "expiresAt": "2026-10-19T13:29:40.282Z",
+    "spaceObservedAt": "2026-10-19T14:10:08.514Z",
+    "completedAt": "2026-10-19T14:10:18.410Z",
+    "expiresAt": "2026-10-20T14:10:08.514Z",
     "maxAgeSeconds": 86400,
     "freshQualificationMaxAgeSeconds": 60,
     "fixtureSha256": "f96c86519d1502fd319cdb106ca2a5277a83e09ad4d6e85279756ce77f05563e",
     "files": {
       "qualification.json": {
         "bytes": 1326,
-        "sha256": "5400431b126c00f887b652cd1947a4a579d823559372a2ec81c933d77a108cd3"
+        "sha256": "6c1e837f4debcd717a80f7902af03cc042af0e29743f861b51efb6cb9435e255"
       },
       "upload.json": {
         "bytes": 376,
-        "sha256": "57a20ab759ec1ab02246425a4fcbd5d4ef58d00e75ed5318f3a0288ef69c2991"
+        "sha256": "53d524e33695a35e4e65e99ed2c7a29982ccef7b3cb81f042bd0208b24db64f3"
       },
       "read.json": {
         "bytes": 435,
-        "sha256": "5415f021517120cfc24c2a0c45b2246d182176cdb4e2ae8e5d90175990f723f6"
+        "sha256": "2ffc6a02b9dc4a4286a8b923224a7048ab9d103471429e2342f1cf3096f4483e"
       },
       "delete.json": {
         "bytes": 349,
-        "sha256": "78290f8378f41dbc3064eac83885942069395249079b13b42306d22424b8ddff"
+        "sha256": "052117afeb8850cadfdd2b0485eb7dbdd46528ae711da2141a2b857bacb6551f"
       },
       "readback.json": {
         "bytes": 322,
-        "sha256": "3d86d79d780d098fb1ec66a0d021dd633c27417db3fa9058841b69766c73680a"
+        "sha256": "e1d0dd92ad98541ffb6d44c8702d269a9458bb6d25a5a304c61c4d3269e9b733"
       }
     },
-    "bundleSha256": "6dcc57c1b31a7f59c5ce6341077a6f95138c64e84107c869297d5b18fe22e8c4"
+    "bundleSha256": "57775afdaed5f2efb772df6a5656da982851093ca6f3b149e5810904ee3b786e"
   }
 }
