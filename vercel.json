@@ -4,6 +4,9 @@
             "excludeFiles": "{.vercel**,.vercel/**,.git**,.git/**,.omx**,.omx/**,.codex**,.codex/**,.agents**,.agents/**,.aws**,.aws/**,.env,.env.*,docs**,docs/**,tests**,tests/**,archive**,archive/**,data**,data/**}"
         }
     },
+    "crons": [
+        { "path": "/api/video-os-lite/watchdog-cron", "schedule": "*/15 * * * *" }
+    ],
     "routes": [
         {
             "src": "/api/health",
@@ -127,6 +130,10 @@
         },
         {
             "src": "/api/video-os-lite/admin",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
+            "src": "/api/video-os-lite/watchdog-cron",
             "dest": "/api/video-os-lite/workspace.js"
         },
         {

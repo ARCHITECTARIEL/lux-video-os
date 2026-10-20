@@ -1,9 +1,9 @@
-name: Watchdog sweep
+name: Watchdog sweep fallback
 
-# Triggers the deployed stalled-job sweep every 15 minutes. Production has
+# Backs up the native Vercel Cron sweep. Production has
 # had VIDEO_OS_BASE_URL and VIDEO_OS_CRON_SECRET configured since September 21, 2026.
-# Missing configuration is an operational failure, so this workflow fails
-# closed instead of treating a skipped sweep as healthy.
+# Missing configuration is an operational failure. Scheduled runs skip the
+# mutation when the native sweep is fresh; manual dispatch remains available.
 on:
   schedule:
     - cron: '*/15 * * * *'
@@ -32,6 +32,7 @@ jobs:
         env:
           VIDEO_OS_BASE_URL: ${{ vars.VIDEO_OS_BASE_URL }}
           VIDEO_OS_CRON_SECRET: ${{ secrets.VIDEO_OS_CRON_SECRET }}
+          WATCHDOG_FALLBACK_ONLY: ${{ github.event_name == 'schedule' }}
         run: |
           export EXPECTED_GIT_SHA="$(git rev-parse HEAD)"
           export MAIN_HEAD_EPOCH="$(git log -1 --format=%ct HEAD)"
