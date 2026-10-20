@@ -20,6 +20,11 @@ const posixPath = (value) => value.replaceAll('\\', '/');
 const mainSha = 'a'.repeat(40);
 const deployedSha = 'b'.repeat(40);
 const nowEpoch = Date.parse('2026-10-15T12:00:00.000Z') / 1000;
+const productionHealth = (value) => JSON.stringify({
+  ...value,
+  env: 'production',
+  checks: { releaseIdentity: { ok: true }, ...value.checks },
+});
 
 const mockCurlSource = `#!/usr/bin/env bash
 set -u
@@ -98,7 +103,8 @@ async function runScript(t, script, overrides = {}) {
   const healthBody = JSON.stringify({
     status: 'ok',
     gitSha: mainSha,
-    checks: { watchdog: { lastSweepAt: new Date((nowEpoch - 600) * 1000).toISOString() } },
+    env: 'production',
+    checks: { releaseIdentity: { ok: true }, watchdog: { lastSweepAt: new Date((nowEpoch - 600) * 1000).toISOString() } },
   });
   const env = {
     ...process.env,
@@ -147,6 +153,17 @@ test('watchdog fails closed when the production URL or cron secret is missing', 
   assert.equal(missingSecret.calls, '');
 });
 
+test('watchdog rejects a same-SHA Preview or an unsealed production health before POST', { skip: !bashAvailable }, async (t) => {
+  for (const health of [
+    { status: 'ok', gitSha: mainSha, env: 'preview', checks: { releaseIdentity: { ok: true } } },
+    { status: 'ok', gitSha: mainSha, env: 'production', checks: { releaseIdentity: { ok: false } } },
+  ]) {
+    const result = await runScript(t, watchdogScript, { MOCK_HEALTH_BODY: JSON.stringify(health) });
+    assert.equal(result.status, 1);
+    assert.equal(result.calls, 'GET https://video.example/api/health\n');
+  }
+});
+
 test('watchdog rejects HTML and degraded health responses before the sweep', { skip: !bashAvailable }, async (t) => {
   const html = await runScript(t, watchdogScript, {
     MOCK_HEALTH_TYPE: 'text/html',
@@ -157,7 +174,7 @@ test('watchdog rejects HTML and degraded health responses before the sweep', { s
   assert.equal(html.calls.trim().split(/\r?\n/).length, 1);
 
   const degraded = await runScript(t, watchdogScript, {
-    MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', gitSha: mainSha }),
+    MOCK_HEALTH_BODY: productionHealth({ status: 'degraded', gitSha: mainSha }),
   });
   assert.equal(degraded.status, 1);
   assert.match(degraded.stderr, /::error::.*status 'degraded'/i);
@@ -166,7 +183,7 @@ test('watchdog rejects HTML and degraded health responses before the sweep', { s
 
 test('watchdog rejects a stale deployed SHA after the main push grace period', { skip: !bashAvailable }, async (t) => {
   const result = await runScript(t, watchdogScript, {
-    MOCK_HEALTH_BODY: JSON.stringify({ status: 'ok', gitSha: deployedSha }),
+    MOCK_HEALTH_BODY: productionHealth({ status: 'ok', gitSha: deployedSha }),
     MAIN_HEAD_EPOCH: String(nowEpoch - 1201),
   });
   assert.equal(result.status, 1);
@@ -174,7 +191,7 @@ test('watchdog rejects a stale deployed SHA after the main push grace period', {
   assert.equal(result.calls.trim().split(/\r?\n/).length, 1);
 
   const missingPushTime = await runScript(t, watchdogScript, {
-    MOCK_HEALTH_BODY: JSON.stringify({ status: 'ok', gitSha: deployedSha }),
+    MOCK_HEALTH_BODY: productionHealth({ status: 'ok', gitSha: deployedSha }),
     MAIN_HEAD_EPOCH: '',
   });
   assert.equal(missingPushTime.status, 1);
@@ -184,7 +201,7 @@ test('watchdog rejects a stale deployed SHA after the main push grace period', {
 
 test('watchdog allows deployment grace for a fresh main push and does not sweep the old deployment', { skip: !bashAvailable }, async (t) => {
   const result = await runScript(t, watchdogScript, {
-    MOCK_HEALTH_BODY: JSON.stringify({ status: 'ok', gitSha: deployedSha }),
+    MOCK_HEALTH_BODY: productionHealth({ status: 'ok', gitSha: deployedSha }),
     MAIN_HEAD_EPOCH: String(nowEpoch - 1200),
   });
   assert.equal(result.status, 0, result.stderr);
@@ -208,7 +225,7 @@ test('watchdog allows only the known legacy HTML health fallback during deployme
   assert.equal(alternateLineEndings.calls, 'GET https://video.example/api/health\n');
 
   const degraded = await runScript(t, watchdogScript, {
-    MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', gitSha: mainSha }),
+    MOCK_HEALTH_BODY: productionHealth({ status: 'degraded', gitSha: mainSha }),
     MAIN_HEAD_EPOCH: String(nowEpoch - 600),
   });
   assert.equal(degraded.status, 1);
@@ -249,6 +266,35 @@ test('watchdog passes only after health, sweep, and all strict route probes pass
     'GET https://video.example/api/video-os-lite/workspace',
     'GET https://video.example/api/zz-unknown',
   ]);
+});
+
+test('scheduled GitHub fallback skips a fresh native sweep and runs for a stale-only degraded health state', { skip: !bashAvailable }, async (t) => {
+  const healthy = await runScript(t, watchdogScript, {
+    WATCHDOG_FALLBACK_ONLY: 'true',
+    MOCK_HEALTH_BODY: productionHealth({ status: 'ok', gitSha: mainSha,
+      checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true },
+        watchdog: { ok: true, lastSweepAt: new Date((nowEpoch - 600) * 1000).toISOString() } } }),
+  });
+  assert.equal(healthy.status, 0, healthy.stderr);
+  assert.match(healthy.stdout, /GitHub fallback skipped/);
+  assert.equal(healthy.calls, 'GET https://video.example/api/health\n');
+
+  const aging = await runScript(t, watchdogScript, {
+    WATCHDOG_FALLBACK_ONLY: 'true',
+    MOCK_HEALTH_BODY: productionHealth({ status: 'ok', gitSha: mainSha,
+      checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true },
+        watchdog: { ok: true, lastSweepAt: new Date((nowEpoch - 26 * 60) * 1000).toISOString() } } }),
+  });
+  assert.equal(aging.status, 0, aging.stderr);
+  assert.match(aging.calls, /POST https:\/\/video\.example\/api\/video-os-lite\/admin\?operation=watchdog-sweep/);
+
+  const stale = await runScript(t, watchdogScript, {
+    WATCHDOG_FALLBACK_ONLY: 'true',
+    MOCK_HEALTH_BODY: productionHealth({ status: 'degraded', gitSha: mainSha,
+      checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true }, watchdog: { ok: false } } }),
+  });
+  assert.equal(stale.status, 0, stale.stderr);
+  assert.match(stale.calls, /POST https:\/\/video\.example\/api\/video-os-lite\/admin\?operation=watchdog-sweep/);
 });
 
 test('watchdog fails on a non-200 sweep and does not run route smoke', { skip: !bashAvailable }, async (t) => {
@@ -357,6 +403,7 @@ test('watchdog and heartbeat workflows parse and invoke the extracted scripts on
   assert.equal(watchdog.jobs.sweep.steps.at(-1).run.includes('bash scripts/watchdog-check.sh'), true);
   assert.equal(watchdog.jobs.sweep.steps.at(-1).env.VIDEO_OS_BASE_URL, '${{ vars.VIDEO_OS_BASE_URL }}');
   assert.equal(watchdog.jobs.sweep.steps.at(-1).env.VIDEO_OS_CRON_SECRET, '${{ secrets.VIDEO_OS_CRON_SECRET }}');
+  assert.equal(watchdog.jobs.sweep.steps.at(-1).env.WATCHDOG_FALLBACK_ONLY, "${{ github.event_name == 'schedule' }}");
   assert.match(await readFile(watchdogScript, 'utf8'), /Authorization: Bearer \$cron_secret/);
   const stripeRaw = await readFile(resolve(root, '.github/workflows/stripe-reconciliation.yml'), 'utf8');
   assert.match(stripeRaw, /Authorization: Bearer \$CRON_SECRET/);
