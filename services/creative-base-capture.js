@@ -2,16 +2,10 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 
 import { isCreativeBasePathname } from '../lib/creative-finish-contract.js';
-import {
-  MAX_FINISHED_CUSTOMER_VIDEO_BYTES,
-  PRIVATE_BLOB_CLASSIFICATIONS,
-  deletePrivateBlob,
-  getPrivateBlob,
-  putPrivateBlob,
-} from '../lib/video-os-private-blob.js';
 import { inspectMedia } from './final-media-validation.js';
 
 const SHA256 = /^[a-f0-9]{64}$/;
+const MAX_CREATIVE_BASE_BYTES = 100 * 1024 * 1024;
 export const CREATIVE_BASE_RETENTION_DAYS = 30;
 export const CREATIVE_BASE_STAGED_MAX_HOURS = 24;
 
@@ -36,7 +30,7 @@ async function digestReadback(pathname, get) {
   let bytes = 0;
   for await (const chunk of result.stream) {
     bytes += chunk.length;
-    if (bytes > MAX_FINISHED_CUSTOMER_VIDEO_BYTES) {
+    if (bytes > MAX_CREATIVE_BASE_BYTES) {
       result.stream.destroy?.();
       throw failure('CREATIVE_BASE_READBACK_INVALID', 'Creative base readback exceeds the size limit.');
     }
@@ -45,14 +39,40 @@ async function digestReadback(pathname, get) {
   return { sha256: hash.digest('hex'), bytes, etag: result.blob.etag };
 }
 
+function storageAdapter(storage, required) {
+  if (!storage || required.some(name => typeof storage[name] !== 'function')) {
+    throw new TypeError('Creative base capture requires an injected private storage adapter.');
+  }
+  return storage;
+}
+
+async function digestSourceFile(sourcePath, expectedBytes) {
+  const hash = createHash('sha256');
+  let bytes = 0;
+  try {
+    for await (const chunk of createReadStream(sourcePath)) {
+      bytes += chunk.length;
+      if (bytes > expectedBytes || bytes > MAX_CREATIVE_BASE_BYTES) {
+        throw failure('CREATIVE_BASE_SOURCE_CHANGED', 'Creative base source changed during capture.');
+      }
+      hash.update(chunk);
+    }
+  } catch (error) {
+    if (error?.code === 'CREATIVE_BASE_SOURCE_CHANGED') throw error;
+    throw failure('CREATIVE_BASE_SOURCE_CHANGED', 'Creative base source changed during capture.');
+  }
+  return { bytes, sha256: hash.digest('hex') };
+}
+
 /** Re-read an already staged private object before a locked promotion. */
-export async function verifyCreativeBaseForPromotion(base, { getPrivateBlob: get = getPrivateBlob } = {}) {
+export async function verifyCreativeBaseForPromotion(base, storage) {
   if (!base || !isCreativeBasePathname(base.privatePathname)
     || !SHA256.test(base.sha256) || !Number.isSafeInteger(base.bytes) || base.bytes < 1
-    || base.bytes > MAX_FINISHED_CUSTOMER_VIDEO_BYTES
+    || base.bytes > MAX_CREATIVE_BASE_BYTES
     || typeof base.blobVersion !== 'string' || !base.blobVersion) {
     throw failure('CREATIVE_BASE_PROMOTION_INVALID', 'Staged creative base evidence is invalid.');
   }
+  const { getPrivateObject: get } = storageAdapter(storage, ['getPrivateObject']);
   const observed = await digestReadback(base.privatePathname, get);
   if (!observed || observed.sha256 !== base.sha256 || observed.bytes !== base.bytes
     || observed.etag !== base.blobVersion) {
@@ -71,18 +91,19 @@ export async function verifyCreativeBaseForPromotion(base, { getPrivateBlob: get
  * then promote only after the job's distinct final artifact is accepted.
  * No route, catalogue mutation, or feature activation calls this service yet.
  */
-export async function captureCreativeBase({ baseId, sourcePath, expectedSha256, expectedBytes }, storage = {}) {
+export async function captureCreativeBase({ baseId, sourcePath, expectedSha256, expectedBytes }, storage) {
   const pathname = `video-os/creative-base/${baseId}.mp4`;
   if (typeof baseId !== 'string' || !isCreativeBasePathname(pathname) || baseId !== baseId.toLowerCase()
     || !SHA256.test(expectedSha256)
     || !Number.isSafeInteger(expectedBytes) || expectedBytes < 1
-    || expectedBytes > MAX_FINISHED_CUSTOMER_VIDEO_BYTES) {
+    || expectedBytes > MAX_CREATIVE_BASE_BYTES) {
     throw failure('CREATIVE_BASE_INPUT_INVALID', 'Creative base capture evidence is invalid.');
   }
-  const inspect = storage.inspectMedia || inspectMedia;
-  const put = storage.putPrivateBlob || putPrivateBlob;
-  const get = storage.getPrivateBlob || getPrivateBlob;
-  const del = storage.deletePrivateBlob || deletePrivateBlob;
+  const adapter = storageAdapter(storage, ['putPrivateObject', 'getPrivateObject', 'deletePrivateObject']);
+  const inspect = adapter.inspectMedia || inspectMedia;
+  const put = adapter.putPrivateObject;
+  const get = adapter.getPrivateObject;
+  const del = adapter.deletePrivateObject;
   const inspected = await inspect(sourcePath);
   if (!inspected.fullDecode || inspected.sha256 !== expectedSha256 || inspected.bytes !== expectedBytes) {
     throw failure('CREATIVE_BASE_SOURCE_MISMATCH', 'Creative base source does not match accepted final media.');
@@ -104,14 +125,17 @@ export async function captureCreativeBase({ baseId, sourcePath, expectedSha256, 
   let blob;
   let writeError;
   try {
-    blob = await put(PRIVATE_BLOB_CLASSIFICATIONS.CREATIVE_BASE, pathname, source(), {
+    blob = await put(pathname, source(), {
       contentType: 'video/mp4', addRandomSuffix: false, allowOverwrite: false,
     });
   } catch (error) {
     writeError = error;
   }
-  const sourceMatches = streamComplete && streamedBytes === expectedBytes
-    && sourceHash.digest('hex') === expectedSha256;
+  const sourceEvidence = streamComplete
+    ? { bytes: streamedBytes, sha256: sourceHash.digest('hex') }
+    : writeError ? await digestSourceFile(sourcePath, expectedBytes) : null;
+  const sourceMatches = sourceEvidence?.bytes === expectedBytes
+    && sourceEvidence.sha256 === expectedSha256;
   let readback;
   try {
     readback = await digestReadback(pathname, get);
@@ -130,7 +154,7 @@ export async function captureCreativeBase({ baseId, sourcePath, expectedSha256, 
   if (blob?.etag && readback?.etag === blob.etag && !readbackMatches) {
     // Only compensate the exact object version this call created. A conflict
     // with a pre-existing object must never delete that object's bytes.
-    await del(PRIVATE_BLOB_CLASSIFICATIONS.CREATIVE_BASE, pathname, { ifMatch: blob.etag });
+    await del(pathname, { ifMatch: blob.etag });
   }
   if (readback && !readbackMatches) {
     throw failure('CREATIVE_BASE_IMMUTABILITY_CONFLICT', 'Private creative base bytes conflict with accepted final media.', 409);

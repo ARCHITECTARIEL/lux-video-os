@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 
+import { stableJson } from '../lib/video-os-render-authorization.js';
 import { createCreativeFinishRevisionService } from '../services/creative-finish-revision.js';
 
 const NOW = Date.UTC(2026, 9, 14, 12);
@@ -12,6 +14,25 @@ const ENV = {
   VIDEO_OS_CREATIVE_FINISH_ACCOUNT_ID: 'account-one',
   VIDEO_OS_CREATIVE_FINISH_REVISION_CREDITS: '7',
 };
+const RESERVATION_BINDING_KEYS = [
+  'accountId', 'projectId', 'sourceJobId', 'idempotencyKey', 'projectBindingSha256',
+  'projectMode', 'format', 'baseSha256', 'basePrivatePathname', 'baseBytes',
+  'baseBlobVersion', 'baseAcceptedAt', 'baseRetentionExpiresAt', 'catalogRevision',
+  'selection', 'assetBinding', 'selectionDigest', 'credits', 'quoteProof', 'mode',
+];
+const hashValue = value => createHash('sha256').update(String(value)).digest('hex');
+
+function reservationDigest(value) {
+  const binding = Object.fromEntries(RESERVATION_BINDING_KEYS.map(key => [key, value[key]]));
+  return hashValue(JSON.stringify(stableJson(binding)));
+}
+
+function selfConsistentMutation(job, mutate) {
+  const changed = structuredClone(job);
+  mutate(changed);
+  changed.requestDigest = reservationDigest(changed);
+  return changed;
+}
 
 function selection() {
   return {
@@ -38,13 +59,17 @@ function fixture() {
     project: { id: PROJECT, accountId: 'account-one', bindingSha256: '9'.repeat(64), mode: 'premium_presenter', format: 'landscape', distributionScope: 'social' },
     base: {
       accountId: 'account-one', projectId: PROJECT, sourceJobId: 'provider-job-one',
-      projectMode: 'premium_presenter', acceptance: 'accepted', withdrawnAt: null,
+      projectMode: 'premium_presenter', captureState: 'ready', acceptance: 'accepted',
+      acceptedAt: new Date(NOW - 60_000).toISOString(),
+      retentionExpiresAt: new Date(NOW + 86_400_000).toISOString(),
+      withdrawnAt: null, deletedAt: null, bytes: 120_000, blobVersion: 'synthetic-blob-v1',
       sha256: 'f'.repeat(64), privatePathname: 'video-os/creative-base/55555555-5555-4555-8555-555555555555.mp4',
     },
     catalog: catalog(),
     authorizationCalls: 0,
     reserveCalls: [],
     jobs: new Map(),
+    replayMutation: null,
   };
   const repository = {
     async getProject() { return state.project; },
@@ -53,18 +78,21 @@ function fixture() {
       state.reserveCalls.push(input);
       const prior = state.jobs.get(input.idempotencyKey);
       if (prior) {
-        if (prior.selectionDigest !== input.selectionDigest || prior.sourceJobId !== input.sourceJobId) {
+        if (prior.requestDigest !== input.requestDigest) {
           throw Object.assign(new Error('Revision binding changed.'), { statusCode: 409 });
         }
-        return prior;
+        const replay = structuredClone(prior);
+        return state.replayMutation ? state.replayMutation(replay, input) : replay;
       }
-      const job = { id: 'finish-revision-one', status: 'reserved', accountId: input.accountId,
-        projectId: input.projectId, idempotencyKey: input.idempotencyKey, sourceJobId: input.sourceJobId,
-        selectionDigest: input.selectionDigest, mode: input.mode, privatePathname: input.basePrivatePathname };
+      const job = { id: 'finish-revision-one', status: 'reserved', ...structuredClone(input) };
       state.jobs.set(input.idempotencyKey, job);
-      return job;
+      const reserved = structuredClone(job);
+      return state.replayMutation ? state.replayMutation(reserved, input) : reserved;
     },
-    async findRevision({ idempotencyKey }) { return state.jobs.get(idempotencyKey) || null; },
+    async findRevision({ idempotencyKey }) {
+      const job = state.jobs.get(idempotencyKey);
+      return job ? structuredClone(job) : null;
+    },
   };
   const service = createCreativeFinishRevisionService({
     repository,
@@ -92,6 +120,11 @@ test('held service issues a project-bound quote and passes only approved assets 
   assert.equal(state.reserveCalls[0].assetBinding.music.licenseReceiptSha256, 'b'.repeat(64));
   assert.equal(state.reserveCalls[0].assetBinding.graphic.logo.sha256, 'd'.repeat(64));
   assert.equal(state.reserveCalls[0].credits, 7);
+  assert.equal(state.reserveCalls[0].baseBytes, state.base.bytes);
+  assert.equal(state.reserveCalls[0].baseBlobVersion, state.base.blobVersion);
+  assert.equal(state.reserveCalls[0].baseRetentionExpiresAt, state.base.retentionExpiresAt);
+  assert.equal(state.reserveCalls[0].quoteProof.expiresAt, NOW + 5 * 60_000);
+  assert.match(state.reserveCalls[0].requestDigest, /^[a-f0-9]{64}$/);
   assert.ok(state.authorizationCalls >= 2);
   assert.deepEqual(await service.reserveRevision('account-one', request(), offered.quote.token), reserved);
   assert.equal(state.jobs.size, 1, 'same-key retry must remain one revision');
@@ -113,6 +146,75 @@ test('changed selection, project revision, base bytes and catalog cannot consume
     await assert.rejects(service.reserveRevision('account-one', req, offered.quote.token),
       { code: 'CREATIVE_FINISH_QUOTE_INVALID' });
     assert.equal(state.reserveCalls.length, 0);
+  }
+});
+
+test('retained bases must be ready, live, unexpired, bounded and versioned at reservation time', async () => {
+  const invalidations = [
+    base => { base.captureState = 'staged'; },
+    base => { base.deletedAt = new Date(NOW).toISOString(); },
+    base => { delete base.deletedAt; },
+    base => { delete base.withdrawnAt; },
+    base => { base.acceptedAt = new Date(NOW + 1).toISOString(); },
+    base => { base.retentionExpiresAt = new Date(NOW).toISOString(); },
+    base => { base.bytes = 0; },
+    base => { base.bytes = 100 * 1024 * 1024 + 1; },
+    base => { base.blobVersion = ''; },
+    base => { base.blobVersion = 'x'.repeat(257); },
+  ];
+  for (const invalidate of invalidations) {
+    const { state, service } = fixture();
+    const offered = await service.quoteRevision('account-one', request());
+    invalidate(state.base);
+    await assert.rejects(service.reserveRevision('account-one', request(), offered.quote.token),
+      { code: 'CREATIVE_FINISH_BASE_UNAVAILABLE' });
+    assert.equal(state.reserveCalls.length, 0);
+  }
+});
+
+test('an atomic reservation replay must return the exact complete binding supplied by the service', async () => {
+  const mutations = [
+    job => {
+      job.sourceJobId = 'provider-job-two';
+      job.quoteProof.sourceJobIdSha256 = hashValue(job.sourceJobId);
+    },
+    job => {
+      job.selectionDigest = '1'.repeat(64);
+      job.quoteProof.selectionSha256 = job.selectionDigest;
+    },
+    job => {
+      job.baseSha256 = '1'.repeat(64);
+      job.quoteProof.baseSha256 = job.baseSha256;
+    },
+    job => {
+      job.basePrivatePathname = 'video-os/creative-base/66666666-6666-4666-8666-666666666666.mp4';
+      job.quoteProof.basePathSha256 = hashValue(job.basePrivatePathname);
+    },
+    job => { job.baseBytes += 1; },
+    job => { job.baseBlobVersion = 'synthetic-blob-v2'; },
+    job => { job.catalogRevision = 'approved-catalog-v2'; },
+    job => { job.selection.graphic.headline = 'Changed after reservation'; },
+    job => {
+      job.credits += 1;
+      job.quoteProof.credits = job.credits;
+    },
+    job => {
+      job.quoteProof.issuedAt += 1_000;
+      job.quoteProof.expiresAt += 1_000;
+    },
+    job => {
+      job.projectBindingSha256 = '8'.repeat(64);
+      job.quoteProof.projectBindingSha256 = job.projectBindingSha256;
+    },
+  ];
+
+  for (const mutate of mutations) {
+    const { state, service } = fixture();
+    const offered = await service.quoteRevision('account-one', request());
+    state.replayMutation = job => selfConsistentMutation(job, mutate);
+    await assert.rejects(service.reserveRevision('account-one', request(), offered.quote.token),
+      { code: 'CREATIVE_FINISH_REVISION_INVALID', statusCode: 503 });
+    assert.equal(state.reserveCalls.length, 1);
   }
 });
 
@@ -171,9 +273,10 @@ test('the same held contract accepts a correctly bound LUXIFY project', async ()
 });
 
 test('new quote/reservation stays disabled while owned recovery remains available after closure', async () => {
-  const { state, repository } = fixture();
-  state.jobs.set(KEY, { id: 'existing', status: 'reserved', accountId: 'account-one', projectId: PROJECT,
-    idempotencyKey: KEY, mode: 'finish_only_v1' });
+  const { state, service: activeService, repository } = fixture();
+  const offered = await activeService.quoteRevision('account-one', request());
+  await activeService.reserveRevision('account-one', request(), offered.quote.token);
+  state.jobs.get(KEY).id = 'existing';
   const service = createCreativeFinishRevisionService({
     repository,
     catalogFor: async () => catalog(),
