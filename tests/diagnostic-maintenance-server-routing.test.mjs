@@ -19,7 +19,8 @@ test('the shared route table denies mapped APIs while its fallback stays 404', a
   try {
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const origin = `http://127.0.0.1:${server.address().port}`;
-    assert.equal(aliases.length, 32);
+    assert.equal(aliases.length, 33);
+    assert.ok(aliases.includes('/api/video-os-lite/render-v2'));
     for (const alias of aliases) {
       for (const method of ['GET', 'POST']) {
         const response = await fetch(`${origin}${alias}`, {

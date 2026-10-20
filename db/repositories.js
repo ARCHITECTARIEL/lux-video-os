@@ -2037,13 +2037,15 @@ export async function listRecentJobs(limit = 100) {
   return database().select().from(videoJobs).orderBy(desc(videoJobs.updatedAt)).limit(Math.min(100, limit));
 }
 
-export async function markJobFailedAndRelease(jobId, failureCategory, message, rejectedArtifact, { expectedStatuses, protectedStatuses } = {}) {
+export async function markJobFailedAndRelease(jobId, failureCategory, message, rejectedArtifact, { expectedStatuses, expectedUpdatedAt, protectedStatuses, withTransition = false } = {}) {
   return database().transaction(async (tx) => {
+    const result = (job, transitioned) => withTransition ? { job, transitioned } : job;
     const job = (await tx.select().from(videoJobs).where(eq(videoJobs.id, jobId)).for('update').limit(1))[0];
-    if (!job) return null;
-    if (['ready', 'failed', 'cancelled'].includes(job.status)) return job;
-    if (protectedStatuses?.includes(job.status)) return job;
-    if (expectedStatuses && !expectedStatuses.includes(job.status)) return job;
+    if (!job) return result(null, false);
+    if (['ready', 'failed', 'cancelled'].includes(job.status)) return result(job, false);
+    if (protectedStatuses?.includes(job.status)) return result(job, false);
+    if (expectedStatuses && !expectedStatuses.includes(job.status)) return result(job, false);
+    if (expectedUpdatedAt !== undefined && new Date(job.updatedAt).getTime() !== new Date(expectedUpdatedAt).getTime()) return result(job, false);
     const charged = await tx.select().from(creditTransactions).where(and(eq(creditTransactions.sourceType, 'render'), eq(creditTransactions.sourceId, `render:${job.id}`))).limit(1);
     if (!charged[0]) {
       const account = (await tx.select().from(creditAccounts).where(eq(creditAccounts.accountId, job.accountId)).for('update').limit(1))[0];
@@ -2053,7 +2055,7 @@ export async function markJobFailedAndRelease(jobId, failureCategory, message, r
       ? { rejectedArtifact: { sha256: rejectedArtifact.sha256, bytes: rejectedArtifact.bytes } } : {};
     const [failed] = await tx.update(videoJobs).set({ status: 'failed', failureCategory, output: { message, ...rejected }, updatedAt: new Date(), completedAt: new Date() }).where(eq(videoJobs.id, jobId)).returning();
     await tx.insert(jobEvents).values({ jobId, correlationId: job.correlationId, eventType: 'workflow.failed', stageFrom: job.status, stageTo: 'failed', failureCategory, details: { message, ...rejected } });
-    return failed;
+    return result(failed, true);
   });
 }
 
@@ -2293,10 +2295,10 @@ export async function markJobVideoDeleted(jobId) {
 // existing window already expired) or increments the live one. Used by the
 // AI Copywriter route to cap requests per account without a second
 // read-then-write round trip that could race.
-export async function consumeRateLimit({ accountId, key, limit, windowMs }) {
+export async function consumeRateLimit({ accountId, key, limit, windowMs, executor = database() }) {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + windowMs);
-  const [row] = await database().insert(rateLimits)
+  const [row] = await executor.insert(rateLimits)
     .values({ key, accountId, windowStart: now, count: 1, expiresAt })
     .onConflictDoUpdate({
       target: rateLimits.key,
@@ -2308,6 +2310,28 @@ export async function consumeRateLimit({ accountId, key, limit, windowMs }) {
     })
     .returning();
   return row.count <= limit;
+}
+
+export async function claimWatchdogJobs(jobs) {
+  if (jobs.length === 0) return true;
+  const conflict = new Error('Watchdog claim conflict.');
+  try {
+    // Claim the entire selected set in one short transaction. Concurrent
+    // deliveries cannot split the jobs and leave both sweeps incomplete.
+    await database().transaction(async tx => {
+      for (const job of jobs) {
+        const won = await consumeRateLimit({
+          accountId: job.accountId, key: `watchdog:claim:v1:${job.id}`,
+          limit: 1, windowMs: 10 * 60_000, executor: tx,
+        });
+        if (!won) throw conflict;
+      }
+    });
+    return true;
+  } catch (error) {
+    if (error === conflict) return false;
+    throw error;
+  }
 }
 
 export async function registerAdminTester({ email, name, credits, note = 'Registered via Admin Console' }) {

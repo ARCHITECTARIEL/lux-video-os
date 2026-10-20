@@ -11,6 +11,7 @@ import { assertConfiguredHeygenSpaceMarker, loadPinnedHeygenSpaceMarkerManifest 
 import { identityEnrollmentHashWorkflowMetadata, identityEnrollmentExtractionWorkflowMetadata, identityEnrollmentCleanupWorkflowMetadata, identityEnrollmentExpiryWorkflowMetadata } from '../workflows/identity-enrollment-metadata.js';
 import { writeReleaseBuildManifest, assertProductionWorkflowBoundary, captureSourceIdentity, assertStableDatabase, assertUnchangedBuildSource, quarantineBuildOutput, assertNoDefaultBuildOutput } from './release-build-manifest.mjs';
 import { assertDiagnosticBuildInputs, diagnosticChangedPaths, diagnosticDatabaseEvidence } from './db-binding-diagnostic-build-policy.mjs';
+import { stampWorkspaceGitIdentity } from './release-git-identity.mjs';
 
 const root = new URL('../', import.meta.url);
 const output = new URL('../.vercel/output/', import.meta.url);
@@ -85,6 +86,7 @@ if (preflightOnly) {
 
 run(new URL('build-browser-clients.mjs', import.meta.url), []);
 const expectedSource = await captureSourceIdentity(fileURLToPath(root));
+if (target === 'production' && expectedSource.dirty) throw new Error('Production packaging requires a clean exact Git source.');
 if (diagnosticSource) {
   assertUnchangedBuildSource(diagnosticSource, expectedSource);
   if (expectedSource.dirty) throw new Error('Diagnostic browser build dirtied the reviewed source.');
@@ -94,10 +96,14 @@ await rm(output, { recursive: true, force: true });
 run(vercelCli, ['build', '--target', target]);
 const configUrl = new URL('config.json', output);
 const appConfig = JSON.parse(await readFile(configUrl, 'utf8'));
+const expectedCrons = [{ path: '/api/video-os-lite/watchdog-cron', schedule: '*/15 * * * *' }];
+if (JSON.stringify(appConfig.crons) !== JSON.stringify(expectedCrons)) {
+  throw new Error('Vercel build output omitted or changed the reviewed native watchdog cron.');
+}
 run(workflowCli, ['build', '--target', 'vercel-build-output-api']);
 const workflowConfig = JSON.parse(await readFile(configUrl, 'utf8'));
 const routes = [...(workflowConfig.routes || []), ...(appConfig.routes || [])].filter((route, index, all) => index === all.findIndex((candidate) => JSON.stringify(candidate) === JSON.stringify(route)));
-await writeFile(configUrl, `${JSON.stringify({ ...appConfig, ...workflowConfig, routes }, null, 2)}\n`, 'utf8');
+await writeFile(configUrl, `${JSON.stringify({ ...appConfig, ...workflowConfig, crons: expectedCrons, routes }, null, 2)}\n`, 'utf8');
 
 const workflowManifest = new URL('diagnostics/workflows-manifest.json', output);
 const renderFunction = new URL('functions/api/video-os-lite/render-v2.func/', output);
@@ -109,6 +115,10 @@ if (!existsSync(workflowManifest) || !existsSync(renderFunction) || !existsSync(
   || !existsSync(new URL('api/video-os-lite/workspace.js', workspaceFunction))) {
   throw new Error(`${target} build is incomplete: render function, workflow handlers, or workflow manifest is missing.`);
 }
+// Prebuilt deployments omit Vercel's Git system variables. Seal the reviewed
+// source SHA into the workspace function that serves /api/health before output
+// hashing, so the GitHub fallback can bind a sweep to the deployed source.
+if (target === 'production') await stampWorkspaceGitIdentity(fileURLToPath(workspaceFunction), expectedSource.head);
 await stageWorkflowFfmpeg(workflowStepFunction);
 await stageHeygenRuntimeFiles(fileURLToPath(root), fileURLToPath(workflowStepFunction), { bundled: true });
 await stageHeygenRuntimeFiles(fileURLToPath(root), fileURLToPath(workspaceFunction));

@@ -136,6 +136,30 @@ test('notifyWatchdogSweep treats an auto-released reserved-only job as notable a
   assert.match(body, /job-reserved-only/, 'the released job\'s ID must be included in the notification');
 });
 
+test('notification distinguishes failed provider recovery from ambiguous submission', async (t) => {
+  t.after(restore);
+  process.env.RESEND_API_KEY = 'resend-key-proof';
+  process.env.AUTH_FROM_EMAIL = 'no-reply@video-os.example';
+  process.env.WATCHDOG_ALERT_EMAIL = 'ariel@luxmarketingcompany.com';
+  delete process.env.WATCHDOG_SLACK_WEBHOOK_URL;
+  let body = '';
+  globalThis.fetch = async (_url, options) => {
+    body = String(options?.body || '');
+    return new Response(JSON.stringify({ id: 'proof' }), { status: 200 });
+  };
+  await notifyWatchdogSweep(cleanResult({
+    alerted: 3,
+    jobs: { recovery: [
+      { jobId: 'job-provider', outcome: 'recovery_failed' },
+      { jobId: 'job-contained', outcome: 'recovery_failed', status: 'finish_contained' },
+    ], alertedIds: ['job-provider', 'job-contained', 'job-ambiguous'] },
+  }));
+  assert.match(body, /provider state was not confirmed/);
+  assert.match(body, /provider media ready but finishing was contained/);
+  assert.match(body, /no confirmed provider engagement/);
+  assert.match(body, /credits remain reserved/);
+});
+
 test('notifyWatchdogSweep never throws when only one channel is configured (the other 501s)', async (t) => {
   t.after(restore);
   process.env.RESEND_API_KEY = 'resend-key-proof';

@@ -5,7 +5,7 @@ import { mock, test } from 'node:test';
 if (process.argv.includes('--release-fixture')) {
   const schema = await import('../db/schema.js');
   const job = { id: 'job-release-once', accountId: 'owner', status: 'workflow_started',
-    costCredits: 90, correlationId: 'corr-release-once' };
+    costCredits: 90, correlationId: 'corr-release-once', updatedAt: new Date('2026-10-17T00:00:00.000Z') };
   const account = { accountId: 'owner', reserved: 90 };
   const events = [];
   let accountUpdates = 0;
@@ -38,8 +38,19 @@ if (process.argv.includes('--release-fixture')) {
   };
   mock.module('../db/client.js', { namedExports: { database: () => db } });
   const { markJobFailedAndRelease } = await import('../db/repositories.js');
-  await markJobFailedAndRelease(job.id, 'PROVIDER_TIMEOUT', 'Timed out.');
-  await markJobFailedAndRelease(job.id, 'PROVIDER_TIMEOUT', 'Timed out.');
+  const wrongStage = await markJobFailedAndRelease(job.id, 'PROVIDER_TIMEOUT', 'Timed out.', undefined,
+    { expectedStatuses: ['reserved'], withTransition: true });
+  assert.equal(wrongStage.transitioned, false);
+  const staleRead = await markJobFailedAndRelease(job.id, 'PROVIDER_TIMEOUT', 'Timed out.', undefined,
+    { expectedStatuses: ['workflow_started'], expectedUpdatedAt: new Date('2026-10-16T00:00:00.000Z'), withTransition: true });
+  assert.equal(staleRead.transitioned, false);
+  assert.equal(accountUpdates, 0);
+  const completed = await markJobFailedAndRelease(job.id, 'PROVIDER_TIMEOUT', 'Timed out.', undefined,
+    { expectedStatuses: ['workflow_started'], expectedUpdatedAt: job.updatedAt, withTransition: true });
+  assert.equal(completed.transitioned, true);
+  const replay = await markJobFailedAndRelease(job.id, 'PROVIDER_TIMEOUT', 'Timed out.', undefined,
+    { expectedStatuses: ['workflow_started'], withTransition: true });
+  assert.equal(replay.transitioned, false);
   assert.equal(job.status, 'failed');
   assert.equal(account.reserved, 0);
   assert.equal(accountUpdates, 1, 'terminal replay must not release reserved credits twice');
