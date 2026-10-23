@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkCurrentCandidateCi, computeAuthorizationResult, outputInventory, fingerprint } from '../tools/authorize-release.mjs';
+import { checkCurrentCandidateCi, checkQuarantinedMarkerFiles, checkQuarantinedRefreshFiles, checkQuarantinedSpaceAuthority, computeAuthorizationResult, outputInventory, fingerprint } from '../tools/authorize-release.mjs';
+import { heygenSpaceMarkerAssetIdDigest, reviewHeygenSpaceMarkerForTests } from '../lib/heygen-space-marker.js';
 
 const baseManifest = {
   source: { head: 'abc123', sha256: 'srchash', projectLinkSha256: 'linkhash' },
@@ -145,5 +146,102 @@ test('computeAuthorizationResult never reports releaseAuthorized true under any 
       freshDatabaseCheck: passingDb, workflowBoundary: passingBoundary, ciResult: passingCi, ownerAuthorized,
     });
     assert.equal(result.releaseAuthorized, false);
+  }
+});
+
+test('production authorization requires an artifact-bound refresh with six hours remaining', async () => {
+  const candidate = await mkdtemp(join(tmpdir(), 'authorize-refresh-'));
+  const paths = [
+    'functions/api/video-os-lite/workspace.func/config/heygen-space-refresh.json',
+    'functions/.well-known/workflow/v1/step.func/runtime-repository/config/heygen-space-refresh.json',
+  ];
+  try {
+    const source = await readFile(join(process.cwd(), 'config/heygen-space-refresh.json'));
+    const refresh = JSON.parse(source);
+    const now = new Date(Date.parse(refresh.observation.completedAt) + 1000);
+    for (const path of paths) {
+      await mkdir(join(candidate, path, '..'), { recursive: true });
+      await writeFile(join(candidate, path), source);
+    }
+    const valid = await checkQuarantinedRefreshFiles(process.cwd(), candidate, { now });
+    assert.equal(valid.verified, true);
+    assert.equal(computeAuthorizationResult({ manifest: { ...baseManifest, target: 'production' },
+      currentSource: cleanSource, liveOutputSha256: 'outhash', freshDatabaseCheck: passingDb,
+      workflowBoundary: passingBoundary, ciResult: passingCi, refreshCheck: valid, ownerAuthorized: true,
+    }).routineDeployAuthorized, true);
+    const late = await checkQuarantinedRefreshFiles(process.cwd(), candidate, {
+      now: new Date(Date.parse(refresh.observation.expiresAt) - 6 * 60 * 60 * 1000 + 1),
+    });
+    assert.equal(late.verified, false);
+    await writeFile(join(candidate, paths[0]), '{}');
+    assert.equal((await checkQuarantinedRefreshFiles(process.cwd(), candidate, { now })).verified, false);
+  } finally {
+    await rm(candidate, { recursive: true, force: true });
+  }
+});
+
+test('retained marker authorization binds both packaged copies and the private asset ID', async () => {
+  const sourceRoot = await mkdtemp(join(tmpdir(), 'authorize-marker-source-'));
+  const candidate = await mkdtemp(join(tmpdir(), 'authorize-marker-output-'));
+  const assetId = 'synthetic-marker-id';
+  const origin = {
+    fixtureSha256: '1'.repeat(64), credentialKeyFingerprint: '2'.repeat(64),
+    credentialScopeFingerprint: '3'.repeat(64), keyIdDigest: '4'.repeat(64),
+    keyCreatedAt: '2026-10-01T14:35:48.000Z', usernameDigest: '5'.repeat(64),
+    providerSpaceFingerprint: '6'.repeat(64), canonicalScopeKey: '7'.repeat(64),
+    identityDigest: '8'.repeat(64), spaceObservedAt: '2026-10-01T15:11:53.953Z',
+  };
+  const document = { version: 'heygen-space-marker/v1', marker: {
+    assetIdDigest: heygenSpaceMarkerAssetIdDigest(assetId), fixtureSha256: origin.fixtureSha256,
+    expectedType: 'image', uploadedAt: 1_792_400_000,
+    credentialKeyFingerprint: origin.credentialKeyFingerprint,
+    credentialScopeFingerprint: origin.credentialScopeFingerprint,
+    keyIdDigest: origin.keyIdDigest, keyCreatedAt: origin.keyCreatedAt,
+    usernameDigest: origin.usernameDigest, providerSpaceFingerprint: origin.providerSpaceFingerprint,
+    canonicalScopeKey: origin.canonicalScopeKey, originIdentityDigest: origin.identityDigest,
+    originSpaceObservedAt: origin.spaceObservedAt,
+    uploadReceiptSha256: '9'.repeat(64), readReceiptSha256: 'a'.repeat(64),
+  } };
+  const manifest = reviewHeygenSpaceMarkerForTests(document, origin);
+  const bytes = Buffer.from(`${JSON.stringify(document)}\n`);
+  const paths = [
+    'functions/api/video-os-lite/workspace.func/config/heygen-space-marker.json',
+    'functions/.well-known/workflow/v1/step.func/runtime-repository/config/heygen-space-marker.json',
+  ];
+  try {
+    await mkdir(join(sourceRoot, 'config'));
+    await writeFile(join(sourceRoot, 'config/heygen-space-marker.json'), bytes);
+    for (const path of paths) {
+      await mkdir(join(candidate, path, '..'), { recursive: true });
+      await writeFile(join(candidate, path), bytes);
+    }
+    assert.deepEqual(await checkQuarantinedMarkerFiles(sourceRoot, candidate, manifest, { HEYGEN_SPACE_MARKER_ASSET_ID: assetId }),
+      { verified: true, mode: 'retained-marker' });
+    assert.equal((await checkQuarantinedMarkerFiles(sourceRoot, candidate, manifest, { HEYGEN_SPACE_MARKER_ASSET_ID: 'other-id' })).verified, false);
+    await writeFile(join(candidate, paths[0]), '{}');
+    assert.equal((await checkQuarantinedMarkerFiles(sourceRoot, candidate, manifest, { HEYGEN_SPACE_MARKER_ASSET_ID: assetId })).verified, false);
+  } finally {
+    await rm(sourceRoot, { recursive: true, force: true });
+    await rm(candidate, { recursive: true, force: true });
+  }
+});
+
+test('active source marker never falls back to packaged static refresh evidence', async () => {
+  const candidate = await mkdtemp(join(tmpdir(), 'authorize-marker-no-fallback-'));
+  try {
+    const refresh = await readFile(join(process.cwd(), 'config/heygen-space-refresh.json'));
+    const paths = [
+      'functions/api/video-os-lite/workspace.func/config/heygen-space-refresh.json',
+      'functions/.well-known/workflow/v1/step.func/runtime-repository/config/heygen-space-refresh.json',
+    ];
+    for (const path of paths) {
+      await mkdir(join(candidate, path, '..'), { recursive: true });
+      await writeFile(join(candidate, path), refresh);
+    }
+    const now = new Date(Date.parse(JSON.parse(refresh).observation.completedAt) + 1000);
+    assert.equal((await checkQuarantinedRefreshFiles(process.cwd(), candidate, { now })).verified, true);
+    assert.equal((await checkQuarantinedSpaceAuthority(process.cwd(), candidate, { now })).verified, false);
+  } finally {
+    await rm(candidate, { recursive: true, force: true });
   }
 });

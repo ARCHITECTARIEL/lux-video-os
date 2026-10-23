@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { dispatchClaimedJob } from '../../api/video-os-lite/render-v2.js';
 import { database } from '../../db/client.js';
-import { logOpsEvent, logOpsEventAwaited, redactOpsValue } from '../../lib/ops-log.js';
+import { logOpsEventAwaited, prepareOpsEvent, redactOpsValue, writeOpsEvent } from '../../lib/ops-log.js';
 import {
   adminResolveJob, claimWorkflowStart, getAdminOverview, getJob, getJobEventTimeline, grantAdminCredit, listAdminTesters, listFailedOrStuckJobs,
   listMediaAssetsForJob, listRecentAccounts, listRecentCreditTransactions, listRecentJobs, listRecentStripeEvents,
@@ -18,26 +18,19 @@ import { handleProductionDbBindingDiagnostic } from '../../lib/production-db-bin
 import { handleCanaryScopeDiagnostic } from '../../lib/canary-scope-diagnostic.js';
 import { reconcileStripePayments } from '../../lib/video-os-stripe-reconciliation.js';
 import { runWatchdogSweep } from '../../lib/video-os-watchdog.js';
+import { ADMIN_ACTOR_TYPES, deferAdminResponse } from '../../lib/admin-request-audit.js';
 
-function isAdminRequest(req) {
-  const token = String(process.env.VIDEO_OS_ADMIN_TOKEN || '').trim();
-  const cronSecret = String(process.env.CRON_SECRET || '').trim();
-  const auth = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  const diagnosticToken = String(process.env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN || '').trim();
-  if (diagnosticToken && timingSafeMatch(auth, diagnosticToken)) return false;
+export function adminActorType(req, env = process.env) {
+  const token = String(env.VIDEO_OS_ADMIN_TOKEN || '').trim();
+  const cronSecret = String(env.CRON_SECRET || '').trim();
+  const auth = /^Bearer ([^\s]+)$/i.exec(String(req.headers.authorization || ''))?.[1] || '';
+  const diagnosticToken = String(env.VIDEO_OS_DB_BINDING_DIAGNOSTIC_OPERATOR_TOKEN || '').trim();
+  if (diagnosticToken && timingSafeMatch(auth, diagnosticToken)) return 'none';
+  if (token && timingSafeMatch(auth, token)) return 'admin_token';
+  if (cronSecret && timingSafeMatch(auth, cronSecret)) return 'cron_secret';
   let cookieAdmin = false;
   try { cookieAdmin = verifySessionToken(parseCookies(req).vos_admin).accountId === 'admin'; } catch {}
-  // CRON_SECRET follows Vercel's own documented cron-auth convention
-  // (https://vercel.com/docs/cron-jobs/manage-cron-jobs) even though this
-  // repo's watchdog sweep is actually triggered by a GitHub Actions
-  // schedule, not a native Vercel Cron -- see
-  // .github/workflows/watchdog-sweep.yml for why. Reusing the same env var
-  // name keeps the option open to switch triggers later without an admin
-  // route change. timingSafeMatch (not ===) matches every other secret
-  // comparison in this codebase -- this route now also guards a real
-  // credit-minting mutation (operation=grant-credit), which raised the
-  // value of this check beyond what a plain string compare should protect.
-  return (Boolean(token) && timingSafeMatch(auth, token)) || (Boolean(cronSecret) && timingSafeMatch(auth, cronSecret)) || cookieAdmin;
+  return cookieAdmin ? 'session' : 'none';
 }
 
 function isDiagnosticOperatorRequest(req, env = process.env) {
@@ -51,6 +44,8 @@ const ACTIVITY_DEFAULT_LIMIT = 50;
 const ACTIVITY_MAX_LIMIT = 100;
 const ACTIVITY_MAX_OFFSET = 10_000;
 const OPS_LEVELS = new Set(['info', 'warn', 'error']);
+const CRON_OPERATIONS = new Set(['watchdog-sweep', 'stripe-reconciliation']);
+const WATCHDOG_CRON_PATH = '/api/video-os-lite/watchdog-cron';
 
 function boundedQueryText(value, label, maxLength = 128) {
   const text = String(value || '').trim();
@@ -420,6 +415,35 @@ async function handleRetryJob(jobId) {
   return getJob(reserved.job.id);
 }
 
+async function completeWatchdogSweep(deps, options) {
+  const sweep = await (deps.runWatchdogSweep || runWatchdogSweep)(options);
+  // An overlapping delivery cannot certify that its winning peer finished.
+  if (sweep.claimConflicts > 0) return { sweep, heartbeatPersisted: false, overlap: true };
+  const { entry, row } = prepareOpsEvent({
+    level: 'info', persist: true, event: 'watchdog_heartbeat', status: 200,
+    code: 'WATCHDOG_SWEEP_COMPLETED', message: 'Watchdog sweep completed.',
+  });
+  console.log(JSON.stringify(entry));
+  const heartbeatPersisted = await writeOpsEvent(row, deps.opsWriter, { audit: true });
+  return { sweep, heartbeatPersisted, overlap: false };
+}
+
+async function nativeWatchdogReady(env, probe) {
+  if (![env.DATABASE_URL, env.BLOB_READ_WRITE_TOKEN, env.HEYGEN_API_KEY].every(value => String(value || '').trim())) return false;
+  let timer;
+  try {
+    await Promise.race([
+      Promise.resolve().then(probe),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), 2000); }),
+    ]);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function handlePost(req, res, operation, deps = {}) {
   const payload = await readJson(req, 5_000);
   if (operation === 'resolve-job') {
@@ -439,7 +463,7 @@ async function handlePost(req, res, operation, deps = {}) {
   if (operation === 'delete-video') {
     const jobId = String(payload.jobId || '').trim();
     if (!jobId) return send(res, 400, { ok: false, error: 'jobId is required.' });
-    const job = await handleDeleteVideo(jobId);
+    const job = await (deps.handleDeleteVideo || handleDeleteVideo)(jobId);
     if (!job) return send(res, 404, { ok: false, error: 'Job not found.' });
     return send(res, 200, { ok: true, job });
   }
@@ -452,11 +476,14 @@ async function handlePost(req, res, operation, deps = {}) {
   }
   if (operation === 'watchdog-sweep') {
     const staleAfterMinutes = Number(payload.staleAfterMinutes) || undefined;
-    return send(res, 200, { ok: true, sweep: await runWatchdogSweep(staleAfterMinutes ? { staleAfterMinutes } : undefined) });
+    const { sweep, heartbeatPersisted, overlap } = await completeWatchdogSweep(deps, staleAfterMinutes ? { staleAfterMinutes } : undefined);
+    if (overlap) return send(res, 409, { ok: false, code: 'watchdog_overlap_detected' });
+    if (!heartbeatPersisted) return send(res, 503, { ok: false, code: 'watchdog_heartbeat_unpersisted' });
+    return send(res, 200, { ok: true, sweep });
   }
   if (operation === 'stripe-reconciliation') {
     const lookbackHours = Number(payload.lookbackHours) || undefined;
-    const reconciliation = await reconcileStripePayments(lookbackHours ? { lookbackHours } : undefined);
+    const reconciliation = await (deps.reconcileStripePayments || reconcileStripePayments)(lookbackHours ? { lookbackHours } : undefined);
     console.log(JSON.stringify({ event: 'video_os_stripe_reconciliation', mismatchCount: reconciliation.mismatchCount, sessionsChecked: reconciliation.sessionsChecked }));
     return send(res, 200, { ok: true, reconciliation });
   }
@@ -503,31 +530,68 @@ async function handlePost(req, res, operation, deps = {}) {
 
 export function createAdminHandler(deps = {}) {
   return async function handler(req, res) {
+    const env = deps.env || process.env;
     const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
-    const operation = url.searchParams.get('operation') || 'jobs';
-    if (operation === 'p0-attestation') return handleP0AttestationRequest(req, res);
-    if (operation === 'canary-scope') {
-      if (req.method !== 'GET') {
-        res.setHeader('Allow', 'GET');
-        return send(res, 405, { ok: false, error: 'Canary scope requires GET.' });
-      }
-      return handleCanaryScopeDiagnostic(req, res);
-    }
-    if (operation === 'db-binding' && req.method === 'GET') {
-      return handleProductionDbBindingDiagnostic(req, res, { requireOperator: true });
-    }
-    if (handleOptions(req, res)) return;
-    if (!['GET', 'POST'].includes(req.method)) return send(res, 405, { ok: false, error: 'Use GET or POST for admin requests.' });
+    const nativeCron = url.pathname === WATCHDOG_CRON_PATH;
+    const operation = nativeCron ? 'watchdog-sweep' : url.searchParams.get('operation') || 'jobs';
+    let actorType = 'none';
     try {
-      if (!(deps.isAdminRequest || isAdminRequest)(req)) return send(res, 401, { ok: false, error: 'Admin login required.' });
-      if (req.method === 'POST') return await handlePost(req, res, operation, deps);
-      return await handleGet(req, res, operation, url);
-    } catch (error) {
-      captureRouteError(error, { route: 'admin', failureCategory: error?.failureCategory || 'ADMIN' });
-      if (res.headersSent) return; // a streaming response (operation=video) may have already started
-      const status = Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode <= 599 ? error.statusCode : 500;
-      logOpsEvent({ level: status >= 500 ? 'error' : 'warn', event: 'admin.request.failed', status, code: error?.failureCategory || 'ADMIN', message: error?.message || 'Admin request failed.' });
-      send(res, status, { ok: false, error: status < 500 ? error.message : 'Admin request failed.' });
+      if (deps.resolveAdminActor) actorType = deps.resolveAdminActor(req, env);
+      else if (deps.isAdminRequest) actorType = deps.isAdminRequest(req) ? 'admin_token' : 'none';
+      else actorType = adminActorType(req, env);
+    } catch {
+      actorType = 'none';
+    }
+    if (!ADMIN_ACTOR_TYPES.has(actorType)) actorType = 'none';
+    const deferred = deferAdminResponse(req, res, {
+      operation, actorType, env, writer: deps.opsWriter, fetchImpl: deps.fetchImpl,
+    });
+    try {
+      if (actorType === 'cron_secret' && !CRON_OPERATIONS.has(operation)) {
+        return send(res, 403, { ok: false, code: 'cron_scope_forbidden' });
+      }
+      if (operation === 'p0-attestation') return await handleP0AttestationRequest(req, res);
+      if (operation === 'canary-scope') {
+        if (req.method !== 'GET') {
+          res.setHeader('Allow', 'GET');
+          return send(res, 405, { ok: false, error: 'Canary scope requires GET.' });
+        }
+        return await handleCanaryScopeDiagnostic(req, res);
+      }
+      if (operation === 'db-binding' && req.method === 'GET') {
+        return await handleProductionDbBindingDiagnostic(req, res, { requireOperator: true });
+      }
+      if (handleOptions(req, res)) return;
+      if (!['GET', 'POST'].includes(req.method)) return send(res, 405, { ok: false, error: 'Use GET or POST for admin requests.' });
+      try {
+        if (nativeCron) {
+          if (req.method !== 'GET') {
+            res.setHeader('Allow', 'GET');
+            return send(res, 405, { ok: false, code: 'method_not_allowed' });
+          }
+          if (actorType !== 'cron_secret') {
+            return send(res, actorType === 'none' ? 401 : 403, { ok: false, code: 'cron_auth_required' });
+          }
+          const probe = deps.watchdogDbProbe || (() => database().execute(sql`select 1`));
+          if (!await nativeWatchdogReady(env, probe)) {
+            return send(res, 503, { ok: false, code: 'watchdog_dependencies_unhealthy' });
+          }
+          const { heartbeatPersisted, overlap } = await completeWatchdogSweep(deps);
+          if (overlap) return send(res, 409, { ok: false, code: 'watchdog_overlap_detected' });
+          if (!heartbeatPersisted) return send(res, 503, { ok: false, code: 'watchdog_heartbeat_unpersisted' });
+          return send(res, 200, { ok: true });
+        }
+        if (actorType === 'none') return send(res, 401, { ok: false, error: 'Admin login required.' });
+        if (req.method === 'POST') return await handlePost(req, res, operation, deps);
+        return await handleGet(req, res, operation, url);
+      } catch (error) {
+        captureRouteError(error, { route: 'admin', failureCategory: error?.failureCategory || 'ADMIN' });
+        if (res.headersSent) return; // a streaming response (operation=video) may have already started
+        const status = Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode <= 599 ? error.statusCode : 500;
+        send(res, status, { ok: false, error: status < 500 ? error.message : 'Admin request failed.' });
+      }
+    } finally {
+      await deferred.wait();
     }
   };
 }

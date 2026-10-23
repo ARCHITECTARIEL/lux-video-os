@@ -836,6 +836,21 @@
 - The focused test passed on the original code (2/2). Temporarily changing the signature default to `1` made it fail (1/2); the production file was restored byte-for-byte, with an empty `git diff` for `workflows/video-render.js`. Syntax, import, and diff checks passed.
 - Changes remain uncommitted. No deploy, provider or network call, environment change, secret read, or dependency addition occurred.
 
+## 2026-10-15T12:56:39Z - [closure-writeback] [REL-010] [health-watchdog] [admin-audit]
+
+- Added JSON `/api/health` and API 404 handlers, ordered Vercel routes, strict watchdog and hourly heartbeat checks, and the pinned closed-PR Neon preview cleanup workflow. Successful watchdog sweeps record `watchdog_heartbeat` in the existing `ops_events` table; no migration was needed.
+- Awaited an `admin.request.completed` audit for admin requests, including login and maintenance denials. Cron credentials are limited to watchdog sweep and Stripe reconciliation. Optional admin write alerts reuse `WATCHDOG_SLACK_WEBHOOK_URL` with bounded Slack text; audit and notification failures preserve responses.
+- Offline verification with `DATABASE_URL` and `HEYGEN_API_KEY` unset: `npm test` passed 1,192 Node tests (50 expected skips) and 4 Vitest tests; `npm run workflow:build`, `npm run db:check`, `npm run check:imports`, and the 11 workflow dry-run tests passed. Generated `.vercel/output` from the local build was removed after verification.
+- Historical preview budget coverage counted 12 functions; these two required API handlers bring the source plus Workflow runtime count to 14. The test now asserts that inventory without claiming Hobby deployability. Live smoke and the current platform limit remain unverified. One local REL-010 commit was made; no push, deployment, live/network call, environment change, migration application, or secret print occurred.
+
+## 2026-10-15 - [closure-writeback] [REL-010] [QA]
+Prefix-only admin IP audit, consolidated health/404 routing (12 functions), bounded async Slack alerts, and main-head watchdog grace. Offline checks passed; local commit blocked by linked Git directory permissions.
+
+## 2026-10-15T14:08:43Z - [closure-writeback] [REL-010] [QA-follow-up]
+
+- Restricted the shared workspace dispatcher to exact request paths. Nested admin and health aliases, trailing slashes, and dot-segment paths now return JSON 404 before any route handler runs; unknown workspace paths include `code: "not_found"`. Kept the existing single-segment workspace login response and health route. Updated maintenance tests for the fallback's 404 contract.
+- Registered the optional Slack admin alert promise with Vercel request-context `waitUntil` when available, with a nonblocking fallback. Added regressions for waitUntil delivery, response independence, and admin-login rejection of bare or non-Bearer cron tokens.
+- With `DATABASE_URL` and `HEYGEN_API_KEY` unset, `node --test tests/*.test.mjs` passed 1,200 tests with 50 expected skips; `npx vitest run` passed 4 tests; `npm run check:imports` and `git diff --check` passed. The 12-function budget test passed. Changes remain uncommitted; no push, merge, deploy, migration, database connection, or provider call occurred.
 ## 2026-10-15T12:53:29Z - [closure-writeback] [RECON-001] [heygen-shadow]
 
 - Added explicit `off`/`shadow`/`act` reconciler mode with fail-closed precedence over the legacy flag. Shadow uses the existing bounded v3 video inventory and decision branches while skipping binding resolution, job transitions, and retry release. The VPS worker keeps its 60-second cadence.
@@ -869,3 +884,14 @@
 ## 2026-10-15T13:22:00Z - [closure-writeback] [FIX-002c] [QA-security]
 
 - Confirmed the FIX-002c worktree diff contains the guard, PG tests, privileged-account refusal, and audit documentation. All requested offline Node 24 checks passed; the opt-in PostgreSQL suite remains for a later authorized throwaway DB run. Changes remain uncommitted.
+
+## 2026-10-17T14:06:18Z - [watchdog-cadence] [native-cron-candidate] [production-hold]
+
+- Diagnosed a 4-hour-38-minute gap between successful scheduled GitHub sweeps while the production `13cd882` deployment reported a watchdog heartbeat over three hours old. The last GitHub heartbeat correctly passed when the sweep was 11 minutes old; later scheduled heartbeat runs were absent. The current Vercel team is Pro, so the repository's Hobby-only Cron comment is obsolete.
+- Prepared an isolated native Vercel Cron candidate at a 15-minute cadence through the existing workspace function and cron-only Bearer GET. A completed sweep must persist its heartbeat before the native route reports success. Production health degrades after 45 minutes; scheduled GitHub sweeps become fallback-only after 25 minutes while manual dispatch remains available. The release build fails if the native Cron is lost from prebuilt output.
+- Focused route, health, fallback and maintenance tests passed. Final local `test:unit`: 1,252 Node passed, 51 configured live skips, zero failures; Vitest four passed. Import, Workflow validation, client privacy, migration-snapshot check and preview preflight passed. No production schedule, deployment, provider, database, job, credit or environment change was made. Native delivery, exact-head remote CI and artifact readback remain required before claiming the 45-minute contract.
+
+## 2026-10-17T19:26:17Z - [watchdog-cadence] [independent-review-fixes] [production-hold]
+
+- Independent review found missing native dependency preflight, a false-green GitHub fallback on heartbeat persistence failure, and duplicate-side-effect risk from overlapping sweeps. Added fail-closed DB/Blob/provider checks, shared persisted-heartbeat failure responses, and an atomic ten-minute whole-batch claim using the existing rate-limit table. A later review also found a reserved-job transition race; timeout and reserved-only releases now require the exact selected status/update timestamp and report only completed transitions. Claim conflicts do no provider/job/alert work and cannot advance the heartbeat.
+- Synthetic concurrent-delivery, batch rollback, transition-race and HTTP regression checks passed. Full local unit gate: 1,257 Node passed, 51 configured live skips, zero failures; Vitest four passed. Import, strict Workflow, client privacy, migration-snapshot, preview preflight and diff checks passed. Independent re-review found no remaining concrete high or medium source issue. These are local results pending a new exact-head remote check. No production sweep, deployment, provider, database migration, credit or environment change occurred.

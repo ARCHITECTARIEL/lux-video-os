@@ -47,7 +47,7 @@ const byDestination = new Map([
   ['/api/video-os/talent.js', talent],
 ]);
 const mappedApiRoutes = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'))
-  .routes.filter(({ dest }) => dest.startsWith('/api/'));
+  .routes.filter(({ dest }) => byDestination.has(dest));
 
 function setMode(value) {
   if (value === undefined) delete process.env.VIDEO_OS_DIAGNOSTIC_MAINTENANCE;
@@ -81,8 +81,9 @@ test('all nine API entrypoints retain their unsupported-method response with mai
   }
 });
 
-test('active mode denies all 29 mapped aliases and direct function paths before input or network side effects', async () => {
-  assert.equal(mappedApiRoutes.length, 29);
+test('active mode denies mapped APIs while unknown workspace paths stay 404 without side effects', async () => {
+  assert.equal(mappedApiRoutes.length, 33);
+  assert.ok(mappedApiRoutes.some(({ src }) => src === '/api/video-os-lite/render-v2'));
   assert.equal(new Set(mappedApiRoutes.map(({ dest }) => dest)).size, 9);
   assert.deepEqual(new Set(mappedApiRoutes.map(({ dest }) => dest)), new Set(byDestination.keys()));
   const priorMode = process.env.VIDEO_OS_DIAGNOSTIC_MAINTENANCE;
@@ -99,10 +100,13 @@ test('active mode denies all 29 mapped aliases and direct function paths before 
       for (const method of ['GET', 'POST', 'OPTIONS', 'DELETE']) {
         const res = response();
         await handler(poisonedRequest(method, url), res);
-        assert.equal(res.statusCode, 503, `${method} ${url}`);
-        assert.deepEqual(JSON.parse(res.body), { ok: false, code: 'diagnostic_maintenance_active' });
-        assert.equal(res.headers['cache-control'], 'private, no-store, max-age=0');
-        assert.equal(res.headers['retry-after'], '60');
+        const unknownWorkspacePath = handler === workspace && (url === '/api/(.*)' || url === '/api/video-os-lite/workspace.js');
+        assert.equal(res.statusCode, unknownWorkspacePath ? 404 : 503, `${method} ${url}`);
+        assert.equal(JSON.parse(res.body).code, unknownWorkspacePath ? 'not_found' : 'diagnostic_maintenance_active');
+        if (!unknownWorkspacePath) {
+          assert.equal(res.headers['cache-control'], 'private, no-store, max-age=0');
+          assert.equal(res.headers['retry-after'], '60');
+        }
         assert.equal(res.endCalls, 1);
       }
     }
@@ -174,12 +178,16 @@ test('diagnostic authentication remains separate while active; expiry never reop
     process.env.CRON_SECRET = 'synthetic-cron-token';
     process.env.VERCEL_ENV = 'production';
     const url = '/api/video-os-lite/admin?operation=db-binding';
-    for (const authorization of [undefined, 'Bearer wrong', 'Bearer synthetic-admin-token', 'Bearer synthetic-cron-token']) {
+    for (const authorization of [undefined, 'Bearer wrong', 'Bearer synthetic-admin-token']) {
       const res = response();
       await workspace({ method: 'GET', url, headers: { host: 'lux-video-os.vercel.app', authorization } }, res);
       assert.equal(res.statusCode, 401);
       assert.equal(JSON.parse(res.body).code, 'operator_required');
     }
+    const cron = response();
+    await workspace({ method: 'GET', url, headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-cron-token' } }, cron);
+    assert.equal(cron.statusCode, 403);
+    assert.equal(JSON.parse(cron.body).code, 'cron_scope_forbidden');
     const accepted = response();
     await workspace({ method: 'GET', url, headers: { host: 'lux-video-os.vercel.app', authorization: 'Bearer synthetic-diagnostic-token' } }, accepted);
     assert.equal(accepted.statusCode, 400);

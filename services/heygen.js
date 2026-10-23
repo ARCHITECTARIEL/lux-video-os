@@ -676,9 +676,19 @@ export async function pollHeygen(providerJobId, { fetchImpl = fetch, env = proce
   if (retry) throw retry;
   const parsed = parseOrThrow(providerStatusSchema, await responseJson(response, 'PROVIDER_POLL'), 'HeyGen status response was invalid.');
   const data = parsed.data || parsed;
-  const status = String(data.status || parsed.status || '').toLowerCase();
+  const rawStatus = data.status ?? parsed.status;
+  if (typeof rawStatus !== 'string' || !rawStatus.trim()) {
+    throw Object.assign(new Error('HeyGen status response did not contain a state.'), { failureCategory: 'PROVIDER_RESPONSE' });
+  }
+  const status = rawStatus.trim().toLowerCase();
+  if (!['pending', 'queued', 'processing', 'rendering', 'in_progress', 'waiting', 'completed', 'failed', 'error'].includes(status)) {
+    throw Object.assign(new Error('HeyGen status response contained an unknown state.'), { failureCategory: 'PROVIDER_RESPONSE' });
+  }
   const sourceUrl = [data.video_url, data.videoUrl, data.download_url, data.downloadUrl, data.url].find((value) => typeof value === 'string');
   if (status === 'failed' || status === 'error') throw Object.assign(new Error('HeyGen render failed.'), { failureCategory: 'PROVIDER_REJECTED' });
+  if (status === 'completed' && !sourceUrl) {
+    throw Object.assign(new Error('HeyGen completed without a media URL.'), { failureCategory: 'PROVIDER_RESPONSE' });
+  }
   if (status === 'completed' && sourceUrl) logEvent('provider.media_ready', { providerHostname: providerMediaHostname(sourceUrl) });
-  return { ready: status === 'completed' && Boolean(sourceUrl), status: status || 'processing', sourceUrl: sourceUrl || null };
+  return { ready: status === 'completed', status, sourceUrl: sourceUrl || null };
 }

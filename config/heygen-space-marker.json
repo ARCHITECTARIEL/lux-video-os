@@ -1,0 +1,20 @@
+{
+  "version": "heygen-space-marker/v1",
+  "marker": {
+    "assetIdDigest": "1967985f8b6a45d5c48f7fbfbeab2830ef2295a3a629c970f9a0326d625be8e3",
+    "fixtureSha256": "f96c86519d1502fd319cdb106ca2a5277a83e09ad4d6e85279756ce77f05563e",
+    "expectedType": "image",
+    "uploadedAt": 1792423952,
+    "credentialKeyFingerprint": "6a51bc8c4ab4b77378fef1af714e376ff7188e167211369c3debb37f14bf551e",
+    "credentialScopeFingerprint": "b2e833e2f6eb5a5ebf2874e28f0a10f2657f5cbc53f04cbad2fffef0c7fbf2d8",
+    "keyIdDigest": "59f92a84e66dcc179e9a01114d694510e3dbcb92fb844a33df2403006d901118",
+    "keyCreatedAt": "2026-10-01T14:35:48.000Z",
+    "usernameDigest": "3cf3d4f247dbe1540d7854f4dab202cab1862950a25204a38e15c1dac3398a3e",
+    "providerSpaceFingerprint": "1c1b9eac97b6e38e481d30ddf12e4332ecb04d08f727a4ff55997a733b3f584a",
+    "canonicalScopeKey": "c0d1badbcbd71c0b1d2815336a0a173ed87b5c59381fb7eedc6adcbb3ae75d0c",
+    "originIdentityDigest": "87f750424f61b502b0a7afd9340d131e5937f702ba979590f4600fbb5b504891",
+    "originSpaceObservedAt": "2026-10-01T15:11:53.953Z",
+    "uploadReceiptSha256": "23851317e5796442436cd7bf3ce1564f11a690836366a01b0b1118e634c5a9c8",
+    "readReceiptSha256": "3467d871b7de66c9afac5fb81b88e10a92d8f7d09e1a50d98b3334483278c02d"
+  }
+}

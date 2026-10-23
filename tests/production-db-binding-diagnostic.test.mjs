@@ -306,7 +306,7 @@ test('dedicated diagnostic bearer cannot access ordinary admin operations', asyn
         let body;
         const res = { setHeader: (key, value) => { headers[key] = value; }, end: (value) => { body = value; } };
         await adminHandler(req, res);
-        assert.equal(res.statusCode, 401);
+        assert.equal(res.statusCode, auth === 'Bearer synthetic-cron-token' ? 403 : 401);
         assert.match(headers['Cache-Control'], /no-store/);
         assert.notEqual(JSON.parse(body).ok, true);
       }
