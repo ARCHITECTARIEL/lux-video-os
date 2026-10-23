@@ -39,7 +39,7 @@
         "stripe": "^22.6.2",
         "workflow": "^4.8.9",
         "ws": "^8.21.3",
-        "zod": "^4.4.3"
+        "zod": "^4.6.6"
     },
     "devDependencies": {
         "@playwright/test": "^1.63.0",
@@ -66,6 +66,7 @@
             "undici": "7.29.1"
         },
         "tar": "7.5.22",
-        "http-cache-semantics": "4.3.0"
+        "http-cache-semantics": "4.3.0",
+        "zod@^4": "$zod"
     }
 }
