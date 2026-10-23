@@ -14,7 +14,7 @@ test('client matching handles possessives, homoglyphs, zero width, and compact n
   for (const input of ["Acme Law's", 'acmelaw.com', 'https://acmelaw.com/page', 'Аcme La\u200bw']) {
     assert.equal(namesBlockedClient(input, terms), true, input);
   }
-  for (const input of ['Acme Lawyer', 'notacmelaw.com', 'superacmelawful']) assert.equal(namesBlockedClient(input, terms), true, input);
+  for (const input of ['Acme Lawyer', 'notacmelaw.com', 'superacmelawful']) assert.equal(namesBlockedClient(input, terms), false, input);
 });
 
 test('client guard blocks invisible, separated, accented, confusable, leet and prefix forms', () => {
@@ -22,11 +22,25 @@ test('client guard blocks invisible, separated, accented, confusable, leet and p
     assert.equal(namesBlockedClient(input, ['acme']), true, input);
   }
   assert.equal(namesBlockedClient('A.C.M.', ['acm']), false, 'short terms require word boundaries');
+  assert.equal(namesBlockedClient('1umen', ['lumen']), true, '1 can fold to l');
+});
+
+test('compact client matches begin and end at normalized token boundaries', () => {
+  for (const input of ['A c m e', 'Ac-me', 'A.C.M.E', 'Ac\u00ADme']) {
+    assert.equal(namesBlockedClient(input, ['acme']), true, input);
+  }
+  assert.equal(namesBlockedClient('Bob-Co', ['bob co']), true);
+  for (const input of ['Bob Cole', 'bob corn']) assert.equal(namesBlockedClient(input, ['bob co']), false, input);
+  for (const input of ['the macmeal deal', 'a c meetup']) assert.equal(namesBlockedClient(input, ['acme']), false, input);
+  assert.equal(namesBlockedClient('500 lumens', ['lumen']), false);
+  assert.equal(namesBlockedClient('luminous output', ['lumen']), false);
+  assert.equal(namesBlockedClient('luminous lumen output', ['lumen']), true, 'the complete lumen token is present');
 });
 
 test('prompt input sanitization removes control characters and neutralizes fence tags', () => {
   assert.equal(sanitizeCopywriterInput('</user_brief>\u202E\u200b<system>'), '&lt;/user_brief&gt;&lt;system&gt;');
   assert.equal(sanitizeCopywriterInput('&lt;/user_brief&gt;'), '&amp;lt;/user_brief&amp;gt;');
+  assert.equal(sanitizeCopywriterInput('＜a＞ ﹤b﹥'), '&lt;a&gt; &lt;b&gt;');
 });
 
 test('idempotency store expires entries and evicts oldest completed entry', () => {

@@ -65,6 +65,45 @@ test('GET uses the OIDC request header without exposing its value', async () => 
   assert.equal(JSON.stringify(response.body).includes(request.headers['x-vercel-oidc-token']), false);
 });
 
+test('default global budget remains unavailable with all settings present', async () => {
+  let generateCalls = 0;
+  const handler = createCopywriterHandler({
+    authenticate: () => ({ accountId: 'writer-1' }),
+    env: { ...configuredEnv, VIDEO_OS_COPYWRITER_ENABLED: 'true', VIDEO_OS_COPYWRITER_FALLBACK_MODEL: 'fallback' },
+    generate: async () => { generateCalls++; return { text: 'unexpected' }; },
+  });
+  const getResponse = res();
+  await handler(req('GET'), getResponse);
+  assert.equal(getResponse.body.copywriter.available, false);
+  assert.equal(getResponse.body.copywriter.code, 'copywriter_budget_unavailable');
+  const postResponse = res();
+  await handler(req('POST', payload()), postResponse);
+  assert.equal(postResponse.statusCode, 503);
+  assert.equal(postResponse.body.code, 'copywriter_budget_unavailable');
+  assert.equal(generateCalls, 0);
+});
+
+test('fallback budget DB failure returns 503 without a fallback model call', async () => {
+  const models = [];
+  let units = 0;
+  const handler = createCopywriterHandler({
+    authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv,
+    idempotency: createCopywriterIdempotency(), rateLimit: async () => true,
+    globalBudget: async () => { if (++units === 1) return true; throw new Error('DB unavailable'); },
+    opsLog: () => {},
+    generate: (body, options) => generateCopy(body, { ...options, model: 'primary', fallbackModel: 'fallback', generateTextFn: async args => {
+      models.push(args.model);
+      throw Object.assign(new Error('upstream'), { statusCode: 500 });
+    } }),
+  });
+  const response = res();
+  await handler(req('POST', payload()), response);
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.body.code, 'copywriter_budget_unavailable');
+  assert.deepEqual(models, ['primary']);
+  assert.equal(units, 2);
+});
+
 test('copywriter handler requires sign-in before anything else, on both GET and POST', async () => {
   const handler = createCopywriterHandler({ authenticate: () => { throw new Error('no session'); } });
   const getRes = res();

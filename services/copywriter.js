@@ -13,6 +13,7 @@ export const MAX_COPYWRITER_OUTPUT_TOKENS = 4096;
 // is set for the workspace function in vercel.json or its API module; confirm
 // the effective deployment limit before claiming a function-duration margin.
 export const COPYWRITER_REQUEST_TIMEOUT_MS = 28_000;
+const FALLBACK_TIMEOUT_RESERVE_MS = 3_000;
 
 export function describeProviderError(error) {
   const retryWrapped = error?.name === 'AI_RetryError' || Array.isArray(error?.errors);
@@ -123,6 +124,7 @@ export async function generateCopy({ operation, brief, draft, instructions }, {
   const system = systemPrompt();
   const prompt = promptFor({ operation, brief, draft, instructions });
   const deadline = AbortSignal.timeout(timeoutMs);
+  const deadlineAt = performance.now() + timeoutMs;
   const run = (selectedModel, maxRetries) => generateTextFn({
       model: selectedModel,
       system,
@@ -136,15 +138,21 @@ export async function generateCopy({ operation, brief, draft, instructions }, {
   } catch (error) {
     let providerDetail = describeProviderError(error);
     let category = statusClass(providerDetail);
-    if (fallbackModel && ['rate_limit', 'upstream', 'timeout'].includes(category)) {
+    const remainingMs = () => deadlineAt - performance.now();
+    if (fallbackModel && ['rate_limit', 'upstream', 'timeout'].includes(category)
+      && !deadline.aborted && remainingMs() > (category === 'timeout' ? FALLBACK_TIMEOUT_RESERVE_MS : 0)) {
       let allowed;
       try { allowed = await consumeFallbackBudget(); }
-      catch { allowed = false; }
+      catch {
+        throw Object.assign(new Error('AI writing budget could not be checked.'), { statusCode: 503, code: 'copywriter_budget_unavailable', statusClass: 'internal' });
+      }
       if (!allowed) {
         throw Object.assign(new Error('AI writing budget reached.'), { statusCode: 429, code: 'copywriter_budget_reached', statusClass: 'rate_limit' });
       }
-      try { result = await run(fallbackModel, 0); }
-      catch (fallbackError) { providerDetail = describeProviderError(fallbackError); category = statusClass(providerDetail); }
+      if (!deadline.aborted && remainingMs() > (category === 'timeout' ? FALLBACK_TIMEOUT_RESERVE_MS : 0)) {
+        try { result = await run(fallbackModel, 0); }
+        catch (fallbackError) { providerDetail = describeProviderError(fallbackError); category = statusClass(providerDetail); }
+      }
     }
     if (!result) {
       throw Object.assign(new Error('AI writing could not be completed.'), {
