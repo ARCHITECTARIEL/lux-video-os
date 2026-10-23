@@ -74,6 +74,7 @@ export const videoJobs = pgTable('video_jobs', {
   workflowRunId: text('workflow_run_id').unique(),
   correlationId: text('correlation_id').notNull(),
   provider: text('provider').notNull(),
+  renderMode: text('render_mode').notNull(),
   providerJobId: text('provider_job_id').unique(),
   status: text('status').notNull(),
   title: text('title').notNull(),
@@ -95,7 +96,12 @@ export const videoJobs = pgTable('video_jobs', {
   // unavailable regardless of `status` still saying 'ready'.
   reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
   videoDeletedAt: timestamp('video_deleted_at', { withTimezone: true }),
-}, (table) => [uniqueIndex('video_jobs_account_idempotency_uq').on(table.accountId, table.idempotencyKey), index('video_jobs_account_updated_idx').on(table.accountId, table.updatedAt), index('video_jobs_status_updated_idx').on(table.status, table.updatedAt)]);
+}, (table) => [
+  uniqueIndex('video_jobs_account_idempotency_uq').on(table.accountId, table.idempotencyKey),
+  index('video_jobs_account_updated_idx').on(table.accountId, table.updatedAt),
+  index('video_jobs_status_updated_idx').on(table.status, table.updatedAt),
+  check('video_jobs_render_mode_ck', sql`${table.renderMode} in ('standard', 'premium', 'luxified')`),
+]);
 
 export const jobEvents = pgTable('job_events', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -206,6 +212,7 @@ export const userIdentities = pgTable('user_identities', {
   uniqueIndex('user_identities_provider_group_uq').on(table.provider, table.providerAvatarGroupId).where(sql`${table.providerAvatarGroupId} is not null`),
   uniqueIndex('user_identities_provider_avatar_uq').on(table.provider, table.providerRenderableAvatarId).where(sql`${table.providerRenderableAvatarId} is not null`),
   uniqueIndex('user_identities_provider_voice_uq').on(table.provider, table.providerVoiceId).where(sql`${table.providerVoiceId} is not null`),
+  uniqueIndex('user_identities_id_account_uq').on(table.id, table.accountId),
   uniqueIndex('user_identities_avatar_operation_uq').on(table.avatarOperationKey).where(sql`${table.avatarOperationKey} is not null`),
   uniqueIndex('user_identities_voice_operation_uq').on(table.voiceOperationKey).where(sql`${table.voiceOperationKey} is not null`),
   check('user_identities_overall_status_ck', sql`${table.overallStatus} in ('DRAFT', 'UPLOADING', 'CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING', 'READY', 'PARTIAL_FAILURE', 'FAILED', 'ARCHIVED')`),
@@ -235,6 +242,7 @@ export const identityConsents = pgTable('identity_consents', {
   index('identity_consents_account_identity_idx').on(table.accountId, table.identityId, table.acceptedAt),
   uniqueIndex('identity_consents_account_idempotency_uq').on(table.accountId, table.idempotencyKey).where(sql`${table.idempotencyKey} is not null`),
   uniqueIndex('identity_consents_active_policy_uq').on(table.identityId, table.policyVersion).where(sql`${table.revokedAt} is null`),
+  uniqueIndex('identity_consents_id_account_identity_uq').on(table.id, table.accountId, table.identityId),
   check('identity_consents_authorizations_ck', sql`(
     ${table.policyVersion} = 'identity-provider-subject-consent-v3'
     and ${table.faceAuthorization}
@@ -254,6 +262,47 @@ export const identityConsents = pgTable('identity_consents', {
   check('identity_consents_hosted_v3_purpose_ck', sql`${table.policyVersion} <> 'identity-provider-subject-consent-v3' or ${table.consentPurpose} is not distinct from 'hosted-avatar-consent'`),
   check('identity_consents_source_video_hash_ck', sql`${table.sourceVideoSha256} is null or ${table.sourceVideoSha256} ~ '^[a-f0-9]{64}$'`),
   check('identity_consents_bridge_v2_ck', sql`${table.policyVersion} <> 'identity-provider-bridge-v2' or (${table.audioExtractionAuthorization} and ${table.temporaryPublicProviderExposureAuthorization} and ${table.sourceVideoSha256} is not null and ${table.consentPurpose} is not null and ${table.consentPurpose} = 'identity-voice-enrollment')`),
+]);
+
+// Separate cinematic-use approval for one exact private look. No route writes
+// this table while LUXIFY creation remains held.
+export const luxifyCinematicConsents = pgTable('luxify_cinematic_consents', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  identityId: uuid('identity_id').notNull(),
+  sourceIdentityConsentId: uuid('source_identity_consent_id').notNull(),
+  idempotencyKey: uuid('idempotency_key').notNull(),
+  providerLookId: text('provider_look_id').notNull(),
+  providerSpaceFingerprint: text('provider_space_fingerprint').notNull(),
+  policyVersion: text('policy_version').notNull(),
+  purpose: text('purpose').notNull(),
+  cinematicGenerationAuthorization: boolean('cinematic_generation_authorization').notNull(),
+  providerProcessingAuthorization: boolean('provider_processing_authorization').notNull(),
+  approvalEvidenceSha256: text('approval_evidence_sha256').notNull(),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({
+    name: 'luxify_cinematic_consents_identity_owner_fk',
+    columns: [table.identityId, table.accountId],
+    foreignColumns: [userIdentities.id, userIdentities.accountId],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'luxify_cinematic_consents_source_consent_fk',
+    columns: [table.sourceIdentityConsentId, table.accountId, table.identityId],
+    foreignColumns: [identityConsents.id, identityConsents.accountId, identityConsents.identityId],
+  }).onDelete('restrict'),
+  uniqueIndex('luxify_cinematic_consents_account_key_uq').on(table.accountId, table.idempotencyKey),
+  uniqueIndex('luxify_cinematic_consents_active_look_uq').on(table.accountId, table.identityId, table.providerLookId, table.providerSpaceFingerprint)
+    .where(sql`${table.revokedAt} is null`),
+  index('luxify_cinematic_consents_expiry_idx').on(table.expiresAt).where(sql`${table.revokedAt} is null`),
+  check('luxify_cinematic_consents_policy_ck', sql`${table.policyVersion} = 'luxify-cinematic-consent/v1' and ${table.purpose} = 'luxify-cinematic-generation'`),
+  check('luxify_cinematic_consents_authorization_ck', sql`${table.cinematicGenerationAuthorization} and ${table.providerProcessingAuthorization}`),
+  check('luxify_cinematic_consents_look_ck', sql`${table.providerLookId} ~ '^[A-Za-z0-9_.:-]{1,255}$'`),
+  check('luxify_cinematic_consents_hash_ck', sql`${table.providerSpaceFingerprint} ~ '^[a-f0-9]{64}$' and ${table.approvalEvidenceSha256} ~ '^[a-f0-9]{64}$'`),
+  check('luxify_cinematic_consents_window_ck', sql`${table.expiresAt} > ${table.acceptedAt} and ${table.expiresAt} <= ${table.acceptedAt} + interval '8760 hours' and (${table.revokedAt} is null or ${table.revokedAt} >= ${table.acceptedAt})`),
 ]);
 
 export const identityVideoEnrollments = pgTable('identity_video_enrollments', {
