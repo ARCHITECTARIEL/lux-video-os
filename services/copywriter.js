@@ -1,4 +1,5 @@
 import { generateText } from 'ai';
+import { copywriterDiagnostic } from '../lib/copywriter-diagnostics.js';
 
 // A real, confirmed-current AI Gateway model id (verified against Vercel AI
 // SDK docs at the time this was built) -- override via
@@ -6,44 +7,22 @@ import { generateText } from 'ai';
 // to move to a different tier later.
 export const DEFAULT_COPYWRITER_MODEL = 'anthropic/claude-sonnet-4.6';
 
-const safeField = value => typeof value === 'string' && /^[a-zA-Z0-9_.:/-]{1,100}$/.test(value) && !/(?:key|token|secret|bearer|authorization|https?:|vck_|eyJ\.|(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{20,})/i.test(value) ? value : null;
+export const MAX_COPYWRITER_OUTPUT_TOKENS = 4096;
 
-export function sanitizeProviderMessage(message) {
-  if (typeof message !== 'string') return null;
-  // Provider prose is optional diagnostic data. Drop the whole message when it
-  // contains a possible credential, contact, URL, or opaque user payload.
-  if (/(?:key|token|secret|bearer|auth(?:orization)?|https?:|www\.|@|vck_|eyJ\.|[A-Za-z0-9+/_=-]{20,})/i.test(message)) return null;
-  return message.slice(0, 200);
-}
-
-export function describeProviderError(error, { forbidden = [] } = {}) {
+export function describeProviderError(error) {
   const retryWrapped = error?.name === 'AI_RetryError' || Array.isArray(error?.errors);
   const attempts = retryWrapped && Array.isArray(error?.errors) ? error.errors.length : null;
   let detail = retryWrapped ? error?.lastError || error?.errors?.at(-1) || error : error;
   for (let i = 0; i < 3 && detail?.cause && !detail?.statusCode && !detail?.status && !/^Gateway.*Error$|^(?:Abort|Timeout)Error$/.test(detail?.name || ''); i++) detail = detail.cause;
-  const safe = value => {
-    const candidate = safeField(value);
-    if (!candidate || candidate.length < 8) return candidate;
-    return forbidden.some(value => String(value || '').includes(candidate)) ? null : candidate;
-  };
-  const rawMessage = detail?.message;
-  let message = sanitizeProviderMessage(rawMessage);
-  if (message && forbidden.some(value => {
-    const source = String(value || '');
-    for (let i = 0; i + 8 <= source.length; i++) {
-      if (message.includes(source.slice(i, i + 8))) return true;
-    }
-    return false;
-  })) message = null;
   return {
-    errorName: safe(detail?.name),
-    errorCode: safe(detail?.code),
+    errorName: copywriterDiagnostic('errorName', detail?.name),
+    errorCode: copywriterDiagnostic('errorCode', detail?.code),
     providerStatus: Number.isInteger(detail?.statusCode ?? detail?.status) ? (detail.statusCode ?? detail.status) : null,
-    providerErrorType: safe(detail?.errorType ?? detail?.type),
-    generationId: safe(detail?.generationId),
+    providerErrorType: copywriterDiagnostic('providerErrorType', detail?.errorType ?? detail?.type),
+    generationId: null,
     retryWrapped,
     attempts,
-    message,
+    message: 'AI writing could not be completed.',
   };
 }
 
@@ -61,9 +40,9 @@ export function statusClass(detail) {
   return 'upstream';
 }
 
-export function gatewayAuthMode(env = process.env) {
+export function gatewayAuthMode(env = process.env, headers = {}) {
   if (String(env.AI_GATEWAY_API_KEY || '').trim()) return 'api-key';
-  if (String(env.VERCEL_OIDC_TOKEN || '').trim()) return 'oidc';
+  if (String(env.VERCEL_OIDC_TOKEN || '').trim() || Object.entries(headers || {}).some(([name, value]) => name.toLowerCase() === 'x-vercel-oidc-token' && typeof value === 'string' && value.trim())) return 'oidc';
   return 'none';
 }
 
@@ -117,10 +96,10 @@ export async function generateCopy({ operation, brief, draft, instructions }, {
       abortSignal: AbortSignal.timeout(timeoutMs),
       // Set to 0 only when a fallback model is added (P1 follow-up).
       maxRetries: 2,
-      maxOutputTokens: Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0 ? maxOutputTokens : 400,
+      maxOutputTokens: Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0 ? Math.min(maxOutputTokens, MAX_COPYWRITER_OUTPUT_TOKENS) : 400,
     });
   } catch (error) {
-    const providerDetail = { ...describeProviderError(error, { forbidden: [prompt, system] }), model: safeField(model) };
+    const providerDetail = { ...describeProviderError(error), model: null };
     const category = statusClass(providerDetail);
     throw Object.assign(new Error('AI writing could not be completed.'), {
       statusCode: category === 'timeout' ? 504 : 502,

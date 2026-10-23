@@ -65,11 +65,11 @@ Contained durable rendering requires all of the following in the same non-produc
 
 `/api/video-os-lite/copywriter` (`routes/video-os-lite/copywriter.js`, via `services/copywriter.js`) drafts, shortens, improves the hook of, or revises a working video script through the Vercel AI Gateway (`generateText` from the `ai` package -- no separate provider SDK).
 
-- `AI_GATEWAY_API_KEY`: Gateway authentication option. Without this or `VERCEL_OIDC_TOKEN`, the endpoint reports `setup_required`.
-- `VERCEL_OIDC_TOKEN`: alternate Gateway authentication when a Gateway API key is absent.
+- `AI_GATEWAY_API_KEY`: Gateway authentication option. Without this, the Vercel OIDC environment token, or the `x-vercel-oidc-token` request header, the endpoint reports `setup_required`.
+- `VERCEL_OIDC_TOKEN`: alternate Gateway authentication supplied by Vercel when a Gateway API key is absent; do not set it in the env example.
 - `VIDEO_OS_COPYWRITER_ENABLED`: optional owner kill-switch, independent of whether the Gateway key is set -- defaults to `true`. Set to `false` to turn generation off for cost control without unsetting the key.
 - `VIDEO_OS_COPYWRITER_MODEL`: optional override for the Gateway model id. Defaults to `anthropic/claude-sonnet-4.6` (`services/copywriter.js`'s `DEFAULT_COPYWRITER_MODEL`).
-- `VIDEO_OS_COPYWRITER_MAX_OUTPUT_TOKENS`: optional output token cap.
+- `VIDEO_OS_COPYWRITER_MAX_OUTPUT_TOKENS`: optional output token cap, limited to 4096.
 - `VIDEO_OS_COPYWRITER_HOURLY_LIMIT`: optional per-account request cap per rolling hour. Defaults to `30`. Backed by the existing `rate_limits` table (`db/repositories.js`'s `consumeRateLimit`) -- no new migration needed.
 
 Every request is a real, billed AI Gateway call once configured -- there is no simulation mode for this feature (unlike Standard-tier rendering).

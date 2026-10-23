@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { RetryError } from 'ai';
 import { GatewayAuthenticationError, GatewayModelNotFoundError } from '@ai-sdk/gateway';
-import { DEFAULT_COPYWRITER_MODEL, describeProviderError, gatewayAuthMode, generateCopy, sanitizeProviderMessage, statusClass } from '../services/copywriter.js';
+import { DEFAULT_COPYWRITER_MODEL, MAX_COPYWRITER_OUTPUT_TOKENS, describeProviderError, gatewayAuthMode, generateCopy, statusClass } from '../services/copywriter.js';
 
 const validPayload = {
   operation: 'draft',
@@ -108,8 +108,7 @@ test('provider classifications use SDK error shapes and retry lastError', async 
 test('provider detail contains only safe keys and prompt echo is discarded', () => {
   const detail = describeProviderError(Object.assign(new Error('Topic: SENTINEL_TOPIC_7f3a'), { headers: { Authorization: 'Bearer secret' }, requestBodyValues: 'secret' }), { forbidden: ['Topic: SENTINEL_TOPIC_7f3a'] });
   assert.deepEqual(Object.keys(detail), ['errorName', 'errorCode', 'providerStatus', 'providerErrorType', 'generationId', 'retryWrapped', 'attempts', 'message']);
-  assert.equal(detail.message, null);
-  assert.equal(sanitizeProviderMessage('Bearer secret'), null);
+  assert.equal(detail.message, 'AI writing could not be completed.');
   assert.equal(statusClass(detail), 'upstream');
   assert.equal(describeProviderError(new Error('wrapper', { cause: Object.assign(new Error('limited'), { statusCode: 429 }) })).providerStatus, 429);
   assert.equal(statusClass(describeProviderError(Object.assign(new Error('timeout', { cause: new Error('inner') }), { name: 'GatewayTimeoutError' }))), 'timeout');
@@ -119,6 +118,8 @@ test('gateway auth mode prioritizes key, then OIDC, without returning credential
   assert.equal(gatewayAuthMode({}), 'none');
   assert.equal(gatewayAuthMode({ VERCEL_OIDC_TOKEN: 'fake-oidc' }), 'oidc');
   assert.equal(gatewayAuthMode({ VERCEL_OIDC_TOKEN: 'fake-oidc', AI_GATEWAY_API_KEY: 'fake-key' }), 'api-key');
+  assert.equal(gatewayAuthMode({}, { 'x-vercel-oidc-token': 'header-value' }), 'oidc');
+  assert.equal(gatewayAuthMode({}, { 'X-Vercel-Oidc-Token': 'header-value' }), 'oidc');
 });
 
 test('the configured model and prompt are actually passed through to the SDK call, and default to DEFAULT_COPYWRITER_MODEL', async () => {
@@ -138,6 +139,8 @@ test('configured output token cap is passed to the mocked SDK call', async () =>
   let received;
   await generateCopy(validPayload, { maxOutputTokens: 123, generateTextFn: async args => { received = args; return { text: 'ok', finishReason: 'stop' }; } });
   assert.equal(received.maxOutputTokens, 123);
+  await generateCopy(validPayload, { maxOutputTokens: 100_000, generateTextFn: async args => { received = args; return { text: 'ok', finishReason: 'stop' }; } });
+  assert.equal(received.maxOutputTokens, MAX_COPYWRITER_OUTPUT_TOKENS);
 });
 
 test('an explicit model override is honored instead of the default', async () => {
