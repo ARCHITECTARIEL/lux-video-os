@@ -9,6 +9,10 @@ import { sanitizeCopywriterInput } from '../lib/copywriter-client-guard.js';
 export const DEFAULT_COPYWRITER_MODEL = 'anthropic/claude-sonnet-4.6';
 
 export const MAX_COPYWRITER_OUTPUT_TOKENS = 4096;
+// Primary and fallback share this 28-second deadline. No explicit maxDuration
+// is set for the workspace function in vercel.json or its API module; confirm
+// the effective deployment limit before claiming a function-duration margin.
+export const COPYWRITER_REQUEST_TIMEOUT_MS = 28_000;
 
 export function describeProviderError(error) {
   const retryWrapped = error?.name === 'AI_RetryError' || Array.isArray(error?.errors);
@@ -81,13 +85,24 @@ function promptFor({ operation, brief, draft, instructions }) {
 export function trimCopywriterText(value, maxLength = 900) {
   const text = String(value || '').trim();
   if (text.length <= maxLength) return { text, truncated: false };
-  const head = text.slice(0, maxLength);
-  let end = 0;
-  for (const match of head.matchAll(/[.!?](?=[\s"'”’]|$)/g)) end = match.index + 1;
-  if (!end) {
-    const cut = head.search(/\s+\S*$/);
-    end = text[maxLength] === ' ' ? maxLength : (cut > 0 ? cut : 0);
+  const segments = new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text);
+  let boundary = 0;
+  for (const { index, segment } of segments) {
+    if (index + segment.length > maxLength) break;
+    boundary = index + segment.length;
   }
+  const head = text.slice(0, boundary);
+  const minimum = maxLength * 0.6;
+  let end = 0;
+  for (const match of head.matchAll(/(?:[.!?](?=[\s"'”’]|$)|[。！？．])/g)) {
+    if (match.index + match[0].length >= minimum) end = match.index + match[0].length;
+  }
+  if (!end) {
+    for (const match of head.matchAll(/\s+/g)) {
+      if (match.index >= minimum) end = match.index;
+    }
+  }
+  if (!end) end = boundary;
   return { text: head.slice(0, end).trimEnd(), truncated: true };
 }
 
@@ -95,7 +110,8 @@ export async function generateCopy({ operation, brief, draft, instructions }, {
   model = String(process.env.VIDEO_OS_COPYWRITER_MODEL || '').trim() || DEFAULT_COPYWRITER_MODEL,
   fallbackModel = String(process.env.VIDEO_OS_COPYWRITER_FALLBACK_MODEL || '').trim() || null,
   maxOutputTokens = Number(process.env.VIDEO_OS_COPYWRITER_MAX_OUTPUT_TOKENS) || 400,
-  timeoutMs = 28_000,
+  timeoutMs = COPYWRITER_REQUEST_TIMEOUT_MS,
+  consumeFallbackBudget = async () => true,
   // Injectable for tests only -- every real caller leaves this at the
   // default, so this is a no-op change for production. Lets
   // tests/copywriter-service.test.mjs exercise the real timeout/
@@ -106,21 +122,28 @@ export async function generateCopy({ operation, brief, draft, instructions }, {
   let result;
   const system = systemPrompt();
   const prompt = promptFor({ operation, brief, draft, instructions });
-  const run = selectedModel => generateTextFn({
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const run = (selectedModel, maxRetries) => generateTextFn({
       model: selectedModel,
       system,
       prompt,
-      abortSignal: AbortSignal.timeout(timeoutMs),
-      maxRetries: 2,
+      abortSignal: deadline,
+      maxRetries,
       maxOutputTokens: Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0 ? Math.min(maxOutputTokens, MAX_COPYWRITER_OUTPUT_TOKENS) : 400,
     });
   try {
-    result = await run(model);
+    result = await run(model, 2);
   } catch (error) {
     let providerDetail = describeProviderError(error);
     let category = statusClass(providerDetail);
     if (fallbackModel && ['rate_limit', 'upstream', 'timeout'].includes(category)) {
-      try { result = await run(fallbackModel); }
+      let allowed;
+      try { allowed = await consumeFallbackBudget(); }
+      catch { allowed = false; }
+      if (!allowed) {
+        throw Object.assign(new Error('AI writing budget reached.'), { statusCode: 429, code: 'copywriter_budget_reached', statusClass: 'rate_limit' });
+      }
+      try { result = await run(fallbackModel, 0); }
       catch (fallbackError) { providerDetail = describeProviderError(fallbackError); category = statusClass(providerDetail); }
     }
     if (!result) {

@@ -248,8 +248,8 @@ export function createCopywriterController(options) {
       setStatus('AI writing budget could not be checked. Please try again later.', 'error');
     } else if (code === 'copywriter_budget_reached') {
       setStatus('The daily AI writing budget has been reached. Try again tomorrow.', 'rate-limited');
-    } else if (code === 'client_reference_in_brief') {
-      setStatus('Remove client names from the brief or draft and try again.', 'error');
+    } else if (code === 'copywriter_request_rejected') {
+      setStatus('AI writing cannot process this request. Please revise it and try again.', 'error');
     } else if (code === 'client_reference_blocked') {
       setStatus('The suggestion included a client name and was blocked. Please try again.', 'error');
     } else if (code === 'idempotency_conflict') {
