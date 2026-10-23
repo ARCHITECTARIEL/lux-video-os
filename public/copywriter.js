@@ -252,7 +252,9 @@ export function createCopywriterController(options) {
       setStatus(message, 'refusal');
     } else if (code === 'generation_timeout' || code === 'network_timeout' || error?.status === 504) {
       if (availabilityCheck) setAvailability(false, 'error', 'Availability check failed');
-      setStatus(message, 'timeout');
+      setStatus('AI writing timed out. Please try again.', 'timeout');
+    } else if (code === 'copywriter_provider_error' || code === 'copywriter_internal_error') {
+      setStatus('AI writing could not be completed. Please try again.', 'error');
     } else {
       if (availabilityCheck) setAvailability(false, 'error', 'Availability check failed');
       setStatus(message, 'error');

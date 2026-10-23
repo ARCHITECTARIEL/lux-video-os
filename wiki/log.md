@@ -902,3 +902,31 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Changed only the persisted `video_jobs.render_mode` outputs and CHECK set to `standard`, `premium`, `luxified`. Input JSON `renderMode` contract strings remain unchanged. Updated isolated migration expectations and added unknown-contract and ordering cases plus a static SQL/schema regression test. Added dated owner-decision notes to the three 0015/0016 documents.
 - `npm run db:check`, focused migration tests, syntax checks, and `git diff --check` passed. Full `node --test tests/*.test.mjs`: 1,272 passed, 42 failed, 51 skipped. One failure is the expected stale schema lock; 41 media tests failed because the local `ffmpeg.exe` is missing. The isolated PostgreSQL rehearsal was not run under the no-DB instruction.
 - `config/database-schema.lock.json` was left unchanged for owner recapture. Work remains uncommitted; no network, push, DB, environment-file, or secret operation occurred.
+
+## 2026-10-23T14:25:10Z - [closure-writeback] [premium-allowlist-1023] [fail-closed]
+
+- Replaced single-account identity creation checks with a shared, frozen account allowlist. A nonempty `VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS` overrides legacy pins; differing legacy pins or no configured account deny all provider creation. Enrollment and HeyGen now use the same account decision. Production enrollment still requires the canary start timestamp, while the prior preview reconsent boundary remains intact.
+- Diagnostics now report only the allowlist source and count alongside the compatibility pin-match boolean. Added parser, gate, diagnostic, and enrollment tests; documented the new variable and deprecated-but-honored legacy pin names. No `drizzle/` or role-guard files changed.
+- Final focused Node run: 87 passed, one opt-in throwaway PostgreSQL role-guard test skipped. `npm run check:imports` and `git diff --check` passed. Final full `node --test tests/*.test.mjs`: 1,273 passed, 44 failed, 51 skipped. The remaining failures are in media/proof paths; sampled failures show FFmpeg fixture processes exiting with null before assertions. No network, push, commit, deployment, environment-file edit, secret, provider call, or database operation was performed.
+
+## 2026-10-23T14:43:48Z - [closure-writeback] [premium-allowlist-1023] [test-fixtures]
+
+- Pinned the test account with the existing enrollment canary setting in the LUXIFY route runtime fixture and workflow child fixture. This preserves the intended fail-closed provider creation behavior and all existing assertions; production code was unchanged.
+- `node --test tests/luxify-route.test.mjs tests/luxify-workflow.test.mjs tests/identity-account-allowlist.test.mjs` passed 18/18. `git diff --check` passed. No network call or commit was made.
+
+## 2026-10-23T15:57:31Z - [closure-writeback] [premium-allowlist-1023] [QA-M1-M2-L1-L3]
+
+- Replaced NFKC and quote folding with exact lowercase ASCII account ID validation. Invalid entries never match; quoted whole lists fail closed even with a legacy pin. Diagnostics count invalid entries without exposing IDs.
+- Preserved the owner-approved legacy pins across enrollment and provider creation. Corrected pin agreement, mismatched-pin reasons, and canary allowlist scope checks. Added regressions for Unicode/case rejection, literal `*`, quoted lists, and Preview list-only enrollment.
+- With `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset, 86 focused Node tests passed. Import, syntax, and diff checks passed. The requested QA report was absent from its supplied path; the user-provided QA items were used as acceptance criteria. No environment-file edit, migration, network/provider call, or push occurred.
+
+## 2026-10-23T14:25:42Z - [closure-writeback] [copywriter-retries] [P1-follow-up]
+
+- Set `generateCopy` to `maxRetries: 2` with a comment to use 0 only when a fallback model is added; updated the service assertion to expect 2.
+- `node --test tests/copywriter.test.mjs tests/copywriter-service.test.mjs`: 33 passed, 1 environment-gated skip, 0 failed. No commit or network access.
+
+## 2026-10-23T15:57:55Z - [closure-writeback] [CORE-COPY-FIX-1023] [QA-security]
+
+- Replaced provider free-text and permissive diagnostic filtering with fixed messages and allow-listed codes, categories, names, and types at both log and `ops_events` boundaries. Added short-brief and nested-error leak regressions; kept the client error category unchanged.
+- Accepted Vercel OIDC from the request header or environment, removed the token line from the example file, and capped copywriter output at 4096 tokens.
+- Offline focused tests with `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset: 37 passed, 1 DB-gated skip, 0 failed. Import and diff checks passed. Gitleaks found no findings in changed files; the full worktree still has 26 findings elsewhere. The requested QA report was absent from its supplied path. No provider, network, migration, deployment, or push action occurred.

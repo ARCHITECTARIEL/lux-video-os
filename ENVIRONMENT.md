@@ -19,6 +19,8 @@ http://127.0.0.1:8789/dashboard
 - `VIDEO_OS_SESSION_SECRET`: required before any public or client-facing deployment. Use a long random value, keep it server-side, and rotate it if exposed. Without this variable the app runs in local-dev session mode and the Account panel will show `Local only`.
 ## Optional Environment Variables
 
+- `VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS`: comma or whitespace separated account IDs authorized for provider-backed identity creation. Each ID must match `^[a-z0-9_-]{1,80}$` and is compared exactly. Invalid entries are ignored and counted in operator diagnostics; a whole-list quoted value is invalid and denies everyone. Empty or unset without a legacy pin denies every account, even when `VIDEO_OS_PROVIDER_CREATION_ENABLED=true`. A configured list overrides legacy pins.
+- `VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID` and `VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID`: deprecated but honored when the new allowlist is empty or unset. If both are set, they must match; differing pins deny every account.
 - `HEYGEN_API_KEY` or `HEYGEN_TOKEN`: enables HeyGen talent sync and live submission.
 - `HEYGEN_SYNC_TALENT=1`: refreshes HeyGen avatar and voice inventory on startup.
 - `HEYGEN_AVATARS_URL`: override for HeyGen avatar inventory endpoint.
@@ -65,9 +67,11 @@ Contained durable rendering requires all of the following in the same non-produc
 
 `/api/video-os-lite/copywriter` (`routes/video-os-lite/copywriter.js`, via `services/copywriter.js`) drafts, shortens, improves the hook of, or revises a working video script through the Vercel AI Gateway (`generateText` from the `ai` package -- no separate provider SDK).
 
-- `AI_GATEWAY_API_KEY`: required for the feature to report `ready`. Without it, the endpoint stays reachable and honest (`setup_required`) rather than failing at generation time.
+- `AI_GATEWAY_API_KEY`: Gateway authentication option. Without this, the Vercel OIDC environment token, or the `x-vercel-oidc-token` request header, the endpoint reports `setup_required`.
+- `VERCEL_OIDC_TOKEN`: alternate Gateway authentication supplied by Vercel when a Gateway API key is absent; do not set it in the env example.
 - `VIDEO_OS_COPYWRITER_ENABLED`: optional owner kill-switch, independent of whether the Gateway key is set -- defaults to `true`. Set to `false` to turn generation off for cost control without unsetting the key.
 - `VIDEO_OS_COPYWRITER_MODEL`: optional override for the Gateway model id. Defaults to `anthropic/claude-sonnet-4.6` (`services/copywriter.js`'s `DEFAULT_COPYWRITER_MODEL`).
+- `VIDEO_OS_COPYWRITER_MAX_OUTPUT_TOKENS`: optional output token cap, limited to 4096.
 - `VIDEO_OS_COPYWRITER_HOURLY_LIMIT`: optional per-account request cap per rolling hour. Defaults to `30`. Backed by the existing `rate_limits` table (`db/repositories.js`'s `consumeRateLimit`) -- no new migration needed.
 
 Every request is a real, billed AI Gateway call once configured -- there is no simulation mode for this feature (unlike Standard-tier rendering).

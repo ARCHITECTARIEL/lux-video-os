@@ -55,6 +55,9 @@ test('identity provider creation requires the exact server-configured account', 
   assert.equal(assertIdentityProviderAccountAuthorized('acct-proof', env), true);
   assert.throws(() => assertIdentityProviderAccountAuthorized('acct-other', env), { failureCategory: 'ENTITLEMENT' });
   assert.throws(() => assertIdentityProviderAccountAuthorized('acct-proof', {}), { failureCategory: 'CONFIG_MISSING' });
+  const listed = { VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS: 'acct-proof,acct-second' };
+  assert.equal(assertIdentityProviderAccountAuthorized('acct-second', listed), true);
+  assert.throws(() => assertIdentityProviderAccountAuthorized('acct-other', listed), { failureCategory: 'ENTITLEMENT' });
 });
 
 test('an unauthorized account is rejected before any provider request', async () => {
@@ -81,7 +84,8 @@ test('identity submission admits only the pinned canary when provider creation i
     process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = 'acct-proof';
     assert.equal(assertIdentitySubmissionAllowed('acct-proof'), true);
     process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = 'other-account';
-    assert.throws(() => assertIdentitySubmissionAllowed('acct-proof'), { failureCategory: 'IDENTITY_PROVIDER_DISABLED' });
+    // Mismatched legacy pins now produce an empty allowlist before provider submission.
+    assert.throws(() => assertIdentitySubmissionAllowed('acct-proof'), { failureCategory: 'CONFIG_MISSING' });
     process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = 'acct-proof';
     process.env.VIDEO_OS_PROVIDER_CREATION_ENABLED = 'false';
     assert.throws(() => assertIdentitySubmissionAllowed('acct-proof'), { failureCategory: 'IDENTITY_PROVIDER_DISABLED' });

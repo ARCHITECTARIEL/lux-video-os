@@ -1,6 +1,7 @@
 import { LUXIFY_PROMPT_MAX_CHARS } from '../lib/luxify-contract.js';
 import { parseOrThrow, providerStatusSchema, providerSubmitSchema } from '../lib/video-os-validation.js';
-import { logEvent, timingSafeMatch } from '../lib/video-os-security.js';
+import { logEvent } from '../lib/video-os-security.js';
+import { identityAllowedAccountIds, isIdentityAccountAllowed } from '../lib/identity-account-allowlist.js';
 import { heygenRetryableResponse } from '../lib/heygen-provider-safety.js';
 
 const API_ORIGIN = 'https://api.heygen.com';
@@ -214,9 +215,8 @@ export function assertIdentityProviderMutationEnabled(env = process.env) {
 }
 
 export function assertIdentityProviderAccountAuthorized(accountId, env = process.env) {
-  const allowed = String(env.VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID || '').trim();
-  if (!allowed) throw Object.assign(new Error('Identity provider account is not configured.'), { statusCode: 503, failureCategory: 'CONFIG_MISSING' });
-  if (!timingSafeMatch(accountId, allowed)) throw Object.assign(new Error('This account is not authorized for identity provider creation.'), { statusCode: 403, failureCategory: 'ENTITLEMENT' });
+  if (!identityAllowedAccountIds(env).length) throw Object.assign(new Error('Identity provider account is not configured.'), { statusCode: 503, failureCategory: 'CONFIG_MISSING' });
+  if (!isIdentityAccountAllowed(accountId, env)) throw Object.assign(new Error('This account is not authorized for identity provider creation.'), { statusCode: 403, failureCategory: 'ENTITLEMENT' });
   return true;
 }
 

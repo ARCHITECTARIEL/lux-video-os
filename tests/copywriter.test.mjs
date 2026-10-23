@@ -6,6 +6,10 @@ import { assertDatabaseConfigured, database } from '../db/client.js';
 import { consumeRateLimit, ensureAccount } from '../db/repositories.js';
 import { rateLimits, users } from '../db/schema.js';
 import { copywriterAvailability, createCopywriterHandler } from '../routes/video-os-lite/copywriter.js';
+import { copywriterFailureRecord } from '../routes/video-os-lite/copywriter.js';
+import { generateCopy } from '../services/copywriter.js';
+import { RetryError } from 'ai';
+import { prepareOpsEvent } from '../lib/ops-log.js';
 
 function req(method, body = {}) {
   return { method, headers: {}, url: '/api/video-os-lite/copywriter', async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify(body)); } };
@@ -37,6 +41,22 @@ test('copywriterAvailability reflects the enable flag and Gateway key independen
     if (original.enabled === undefined) delete process.env.VIDEO_OS_COPYWRITER_ENABLED; else process.env.VIDEO_OS_COPYWRITER_ENABLED = original.enabled;
     if (original.key === undefined) delete process.env.AI_GATEWAY_API_KEY; else process.env.AI_GATEWAY_API_KEY = original.key;
   }
+});
+
+test('copywriter availability accepts OIDC as Gateway authentication', () => {
+  assert.equal(copywriterAvailability({ VERCEL_OIDC_TOKEN: 'fake-oidc' }).reason, 'ready');
+  assert.equal(copywriterAvailability({}, { 'x-vercel-oidc-token': 'header-value' }).reason, 'ready');
+  assert.equal(copywriterAvailability({}).reason, 'setup_required');
+});
+
+test('GET uses the OIDC request header without exposing its value', async () => {
+  const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: {} });
+  const request = req('GET');
+  request.headers['x-vercel-oidc-token'] = 'FAKE_HEADER_VALUE_FOR_TESTS';
+  const response = res();
+  await handler(request, response);
+  assert.equal(response.body.copywriter.reason, 'ready');
+  assert.equal(JSON.stringify(response.body).includes(request.headers['x-vercel-oidc-token']), false);
 });
 
 test('copywriter handler requires sign-in before anything else, on both GET and POST', async () => {
@@ -133,11 +153,124 @@ test('a typed generation failure maps to its own status and code instead of a ge
     availability: () => ({ available: true, reason: 'ready' }),
     rateLimit: async () => true,
     generate: async () => { throw Object.assign(new Error('The AI declined this request.'), { statusCode: 422, code: 'generation_refused' }); },
+    opsLog: () => {},
   });
   const response = res();
   await handler(req('POST', { operation: 'draft', idempotencyKey: crypto.randomUUID(), brief: validBrief }), response);
   assert.equal(response.statusCode, 422);
   assert.equal(response.body.code, 'generation_refused');
+  assert.equal(response.body.statusClass, 'internal');
+  assert.ok(response.body.requestId);
+});
+
+test('failure record has exactly the allowed fields and ops gets one matching event', async () => {
+  const events = [];
+  const requestId = crypto.randomUUID();
+  const record = copywriterFailureRecord({ code: 'copywriter_provider_error', statusCode: 502, statusClass: 'upstream' }, { requestId, stage: 'generate', env: {} });
+  assert.deepEqual(Object.keys(record), ['event', 'requestId', 'stage', 'code', 'statusClass', 'providerStatus', 'providerErrorType', 'errorName', 'errorCode', 'message', 'model', 'gatewayAuthMode', 'retryWrapped', 'attempts', 'generationId']);
+  const projected = prepareOpsEvent({ event: 'copywriter.failure', details: { ...record, headers: { authorization: 'Bearer secret' }, requestBodyValues: fakeKey } }).entry.details;
+  assert.deepEqual(Object.keys(projected), Object.keys(record));
+  const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, generate: async () => { throw Object.assign(new Error('failed'), { statusCode: 502, code: 'copywriter_provider_error' }); }, opsLog: event => events.push(event) });
+  const response = res();
+  await handler(req('POST', { operation: 'draft', idempotencyKey: requestId, brief: validBrief }), response);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event, 'copywriter.failure');
+  assert.equal(events[0].correlationId, requestId);
+  assert.equal(events[0].details.requestId, requestId);
+});
+
+test('ops failure does not alter 502 response and rate limit throw records its stage', async () => {
+  const original = console.error;
+  const lines = [];
+  console.error = line => lines.push(line);
+  try {
+    const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => { throw new Error('db unavailable'); }, opsLog: () => { throw new Error('ops unavailable'); } });
+    const response = res();
+    await handler(req('POST', { operation: 'draft', idempotencyKey: crypto.randomUUID(), brief: validBrief }), response);
+    assert.equal(response.statusCode, 502);
+    assert.equal(response.body.code, 'copywriter_internal_error');
+    assert.ok(response.body.requestId);
+    assert.equal(JSON.parse(lines[0]).stage, 'rate_limit');
+  } finally { console.error = original; }
+});
+
+const fakeKey = 'FAKE';
+const fakeOidc = 'OIDC';
+const promptBrief = { ...validBrief, topic: 'SENTINEL_TOPIC_7f3a', keyPoints: 'KP99' };
+const promptPayload = { operation: 'revise', idempotencyKey: crypto.randomUUID(), brief: promptBrief, draft: 'SENTINEL_DRAFT_11ab', instructions: 'SENTINEL_INSTRUCTIONS_22cd' };
+const secretErrors = [
+  () => Object.assign(new Error(`Gateway key ${fakeKey}`), { statusCode: 502 }),
+  () => Object.assign(new Error(`token ${fakeOidc}`), { statusCode: 502 }),
+  () => Object.assign(new Error('Gateway failed'), { responseHeaders: { authorization: `Bearer ${fakeKey}` } }),
+  () => Object.assign(new Error('Gateway failed'), { requestBodyValues: { key: fakeKey } }),
+  () => Object.assign(new Error('Gateway failed'), { responseBody: `${fakeKey} https://invalid.example contact@example.com` }),
+  () => Object.assign(new Error('Gateway failed'), { cause: { message: fakeKey, authorization: `Bearer ${fakeOidc}` } }),
+  () => new Error('SENTINEL_TOPIC_7f3a KP99 SENTINEL_DRAFT_11ab SENTINEL_INSTRUCTIONS_22cd'),
+  () => new RetryError({ message: `Bearer ${fakeKey}`, reason: 'maxRetriesExceeded', errors: [new Error('retry'), Object.assign(new Error(`SENTINEL_TOPIC_7f3a ${fakeKey} https://invalid.example contact@example.com`), { responseHeaders: { authorization: `Bearer ${fakeOidc}` }, requestBodyValues: { key: fakeKey }, responseBody: fakeKey, cause: { message: fakeOidc } })] }),
+];
+for (const [index, makeError] of secretErrors.entries()) {
+  test(`secret-leak ${index + 1}`, async () => {
+    const lines = [];
+    const events = [];
+    const original = console.error;
+    console.error = line => lines.push(line);
+    try {
+      const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, opsLog: event => events.push(event), generate: payload => generateCopy(payload, { generateTextFn: async () => { throw makeError(); } }) });
+      const response = res();
+      await handler(req('POST', promptPayload), response);
+      assert.equal(response.statusCode, 502);
+      assert.equal(events.length, 1);
+      const projected = events.map(event => prepareOpsEvent(event).entry.details);
+      const observed = JSON.stringify({ lines, events, projected, body: response.body });
+      for (const forbidden of [fakeKey, fakeOidc, 'Bearer', 'authorization', 'http', '@', 'headers', 'requestBodyValues', 'SENTINEL_TOPIC_7f3a', 'KP99', 'SENTINEL_DRAFT_11ab', 'SENTINEL_INSTRUCTIONS_22cd']) {
+        assert.equal(observed.toLowerCase().includes(forbidden.toLowerCase()), false, `leaked ${forbidden}`);
+      }
+    } finally { console.error = original; }
+  });
+}
+
+test('short brief words in provider prose never enter stderr or ops events', async () => {
+  const lines = [];
+  const events = [];
+  const original = console.error;
+  console.error = line => lines.push(line);
+  try {
+    const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, opsLog: event => events.push(event), generate: payload => generateCopy(payload, { generateTextFn: async () => { throw new Error('Acme Bob Co Zed9'); } }) });
+    const response = res();
+    await handler(req('POST', promptPayload), response);
+    const observed = JSON.stringify({ lines, events, projected: events.map(event => prepareOpsEvent(event).entry.details) });
+    for (const word of ['Acme', 'Bob Co', 'Zed9']) assert.equal(observed.includes(word), false);
+    assert.equal(response.body.statusClass, 'upstream');
+  } finally { console.error = original; }
+});
+
+test('secrets in provider metadata and nested retry errors never enter stderr or ops events', async () => {
+  const secrets = ['FAKE_CODE_SENTINEL', 'FAKE_NAME_SENTINEL', 'FAKE_TYPE_SENTINEL', 'FAKE_CAUSE_SENTINEL', 'FAKE_LASTERROR_SENTINEL', 'FAKE_ARRAY_SENTINEL'];
+  const lines = [];
+  const events = [];
+  const original = console.error;
+  console.error = line => lines.push(line);
+  try {
+    const nested = Object.assign(new Error(secrets[4]), { name: secrets[1], code: secrets[0], type: secrets[2], cause: new Error(secrets[3]) });
+    const retry = Object.assign(new Error('retry'), { name: 'AI_RetryError', lastError: nested, errors: [new Error(secrets[5])], code: secrets[0], type: secrets[2] });
+    const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, opsLog: event => events.push(event), generate: payload => generateCopy(payload, { generateTextFn: async () => { throw retry; } }) });
+    const response = res();
+    await handler(req('POST', promptPayload), response);
+    assert.equal(events.length, 1);
+    const observed = JSON.stringify({ lines, events, projected: events.map(event => prepareOpsEvent(event).entry.details), body: response.body });
+    for (const secret of secrets) assert.equal(observed.includes(secret), false);
+    assert.equal(response.body.statusClass, 'upstream');
+  } finally { console.error = original; }
+});
+
+test('ops persistence projection rejects injected diagnostic fields', () => {
+  const injected = 'FAKE_FIELD_VALUE_FOR_TESTS';
+  const details = prepareOpsEvent({ event: 'copywriter.failure', details: {
+    event: 'copywriter.failure', code: injected, statusClass: injected,
+    errorName: injected, errorCode: injected, providerErrorType: injected,
+    message: injected, model: injected, generationId: injected,
+  } }).entry.details;
+  assert.equal(JSON.stringify(details).includes(injected), false);
 });
 
 test('shorten/improve_hook/revise require a working draft; revise also requires instructions', async () => {
