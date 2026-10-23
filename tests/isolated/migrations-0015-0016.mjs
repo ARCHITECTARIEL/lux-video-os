@@ -101,7 +101,9 @@ async function main() {
     await job('legacy-sadtalker', 'sadtalker', {});
     await job('standard-current', 'sadtalker', { contractVersion: 'standard-narration-v1', tier: 'STANDARD' });
     await job('scripted-standard', 'heygen', { contractVersion: 'scripted-photo-v1', tier: 'STANDARD' });
+    await job('scripted-premium-legacy', 'heygen', { contractVersion: 'scripted-photo-v1', tier: 'PREMIUM' });
     await job('scripted-premium', 'heygen', { contractVersion: 'scripted-photo-v1', tier: 'PREMIUM', renderMode: 'premium_presenter_v1' });
+    await job('standard-current-strict', 'sadtalker', { contractVersion: 'standard-narration-v1', tier: 'STANDARD', renderMode: 'standard_narration_v1' });
     await job('luxify', 'heygen', { contractVersion: 'luxify-cinematic-v1',
       renderMode: 'luxify_cinematic_v1', providerCapability: 'cinematic_avatar' });
     let result = await apply(files[15]);
@@ -127,18 +129,19 @@ async function main() {
     result = await apply(files[16], 'vos_migrations', true);
     assert.equal(result.code, 0, result.stderr.slice(-700));
     const modes = await query('select id||\':\'||render_mode from video_jobs order by id;');
-    for (const expected of ['legacy-heygen:legacy_premium_v1', 'legacy-sadtalker:standard_narration_v1',
-      'scripted-standard:scripted_photo_standard_v1', 'scripted-premium:premium_presenter_v1',
-      'luxify:luxify_cinematic_v1', 'standard-current:standard_narration_v1']) assert.ok(modes.includes(expected), expected);
+    for (const expected of ['legacy-heygen:premium', 'legacy-sadtalker:standard',
+      'scripted-standard:standard', 'scripted-premium:premium', 'scripted-premium-legacy:premium',
+      'luxify:luxified', 'standard-current:standard', 'standard-current-strict:standard']) assert.ok(modes.includes(expected), expected);
     assert.equal(await query(`select video_os_render_mode_for_job('sadtalker',
       '{"contractVersion":"standard-narration-v1","tier":"PREMIUM"}'::jsonb) is null;`), 't');
     assert.equal(await query(`select video_os_render_mode_for_job('sadtalker',
       '{"contractVersion":"standard-narration-v1","tier":"STANDARD","providerCapability":"cinematic_avatar"}'::jsonb) is null;`), 't');
     assert.equal(await query(`select video_os_render_mode_for_job('sadtalker',
       '{"contractVersion":"standard-narration-v1","tier":"STANDARD","renderMode":"standard_narration_v1","lookBindings":[]}'::jsonb) is null;`), 't');
+    assert.equal(await query("select video_os_render_mode_for_job('unknown', '{}'::jsonb) is null;"), 't');
     await job('old-app-insert', 'heygen', {});
-    assert.equal(await query("select render_mode from video_jobs where id='old-app-insert';"), 'legacy_premium_v1');
-    await rejected("update video_jobs set render_mode='luxify_cinematic_v1' where id='scripted-standard';", /conflicts with source input/);
+    assert.equal(await query("select render_mode from video_jobs where id='old-app-insert';"), 'premium');
+    await rejected("update video_jobs set render_mode='luxified' where id='scripted-standard';", /conflicts with source input/);
     await rejected("update video_jobs set input='{\"contractVersion\":\"scripted-photo-v1\",\"tier\":\"PREMIUM\"}'::jsonb where id='scripted-standard';", /conflicts with source input/);
     await rejected(`insert into video_jobs(id,account_id,project_id,idempotency_key,correlation_id,provider,status,title,format,cost_credits,input)
       values('invalid',${q(account)},${q(project)}::uuid,'key-invalid','synthetic','heygen','reserved',
@@ -146,6 +149,9 @@ async function main() {
     await rejected(`insert into video_jobs(id,account_id,project_id,idempotency_key,correlation_id,provider,status,title,format,cost_credits,input)
       values('partial-tier',${q(account)},${q(project)}::uuid,'key-partial','synthetic','heygen','reserved',
       'Synthetic','landscape',7,'{"tier":"STANDARD"}'::jsonb);`, /cannot be classified/);
+    await rejected(`insert into video_jobs(id,account_id,project_id,idempotency_key,correlation_id,provider,status,title,format,cost_credits,input)
+      values('unknown-contract',${q(account)},${q(project)}::uuid,'key-unknown-contract','synthetic','heygen','reserved',
+      'Synthetic','landscape',7,'{"contractVersion":"unknown-v1"}'::jsonb);`, /cannot be classified/);
     assert.equal(await query('select count(*) from video_jobs where render_mode is null;'), '0');
 
     await required(['exec', name, 'createdb', '-U', 'postgres', 'invalid_history']);
@@ -154,14 +160,14 @@ async function main() {
       assert.equal(result.code, 0, `${file}: ${result.stderr.slice(-700)}`);
     }
     await seed('invalid_history');
-    await job('unknown-provider', 'unknown', {}, 'invalid_history');
+    await job('unknown-contract', 'heygen', { contractVersion: 'unknown-v1' }, 'invalid_history');
     result = await apply(files[15], 'invalid_history');
     assert.equal(result.code, 0, result.stderr.slice(-700));
     result = await apply(files[16], 'invalid_history', true);
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /unclassifiable render modes/);
     assert.equal(await query("select count(*) from information_schema.columns where table_name='video_jobs' and column_name='render_mode';", 'invalid_history'), '0');
-    return { postgres: version, migrations: files.length, classifiedJobs: 7,
+    return { postgres: version, migrations: files.length, classifiedJobs: 9,
       invalidHistoryRejected: true, failedMigrationRolledBack: true };
   } finally {
     if (created && (await docker(['stop', name])).code !== 0) throw new Error('Disposable container cleanup requires attention.');

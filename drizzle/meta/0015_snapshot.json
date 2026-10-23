@@ -1785,7 +1785,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "luxify_cinematic_consents_identity_owner_fk": {
@@ -1800,7 +1800,7 @@
             "id",
             "account_id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "luxify_cinematic_consents_source_consent_fk": {
@@ -1817,7 +1817,7 @@
             "account_id",
             "identity_id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         }
       },

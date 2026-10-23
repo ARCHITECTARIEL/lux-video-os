@@ -100,7 +100,7 @@ export const videoJobs = pgTable('video_jobs', {
   uniqueIndex('video_jobs_account_idempotency_uq').on(table.accountId, table.idempotencyKey),
   index('video_jobs_account_updated_idx').on(table.accountId, table.updatedAt),
   index('video_jobs_status_updated_idx').on(table.status, table.updatedAt),
-  check('video_jobs_render_mode_ck', sql`${table.renderMode} in ('standard_narration_v1', 'scripted_photo_standard_v1', 'premium_presenter_v1', 'luxify_cinematic_v1', 'legacy_premium_v1')`),
+  check('video_jobs_render_mode_ck', sql`${table.renderMode} in ('standard', 'premium', 'luxified')`),
 ]);
 
 export const jobEvents = pgTable('job_events', {
@@ -268,7 +268,7 @@ export const identityConsents = pgTable('identity_consents', {
 // this table while LUXIFY creation remains held.
 export const luxifyCinematicConsents = pgTable('luxify_cinematic_consents', {
   id: uuid('id').defaultRandom().primaryKey(),
-  accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
   identityId: uuid('identity_id').notNull(),
   sourceIdentityConsentId: uuid('source_identity_consent_id').notNull(),
   idempotencyKey: uuid('idempotency_key').notNull(),
@@ -288,12 +288,12 @@ export const luxifyCinematicConsents = pgTable('luxify_cinematic_consents', {
     name: 'luxify_cinematic_consents_identity_owner_fk',
     columns: [table.identityId, table.accountId],
     foreignColumns: [userIdentities.id, userIdentities.accountId],
-  }).onDelete('cascade'),
+  }).onDelete('restrict'),
   foreignKey({
     name: 'luxify_cinematic_consents_source_consent_fk',
     columns: [table.sourceIdentityConsentId, table.accountId, table.identityId],
     foreignColumns: [identityConsents.id, identityConsents.accountId, identityConsents.identityId],
-  }).onDelete('cascade'),
+  }).onDelete('restrict'),
   uniqueIndex('luxify_cinematic_consents_account_key_uq').on(table.accountId, table.idempotencyKey),
   uniqueIndex('luxify_cinematic_consents_active_look_uq').on(table.accountId, table.identityId, table.providerLookId, table.providerSpaceFingerprint)
     .where(sql`${table.revokedAt} is null`),

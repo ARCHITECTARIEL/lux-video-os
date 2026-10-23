@@ -24,9 +24,9 @@ CREATE TABLE "luxify_cinematic_consents" (
 --> statement-breakpoint
 CREATE UNIQUE INDEX "identity_consents_id_account_identity_uq" ON "identity_consents" USING btree ("id","account_id","identity_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "user_identities_id_account_uq" ON "user_identities" USING btree ("id","account_id");--> statement-breakpoint
-ALTER TABLE "luxify_cinematic_consents" ADD CONSTRAINT "luxify_cinematic_consents_account_id_users_id_fk" FOREIGN KEY ("account_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "luxify_cinematic_consents" ADD CONSTRAINT "luxify_cinematic_consents_identity_owner_fk" FOREIGN KEY ("identity_id","account_id") REFERENCES "public"."user_identities"("id","account_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "luxify_cinematic_consents" ADD CONSTRAINT "luxify_cinematic_consents_source_consent_fk" FOREIGN KEY ("source_identity_consent_id","account_id","identity_id") REFERENCES "public"."identity_consents"("id","account_id","identity_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "luxify_cinematic_consents" ADD CONSTRAINT "luxify_cinematic_consents_account_id_users_id_fk" FOREIGN KEY ("account_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "luxify_cinematic_consents" ADD CONSTRAINT "luxify_cinematic_consents_identity_owner_fk" FOREIGN KEY ("identity_id","account_id") REFERENCES "public"."user_identities"("id","account_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "luxify_cinematic_consents" ADD CONSTRAINT "luxify_cinematic_consents_source_consent_fk" FOREIGN KEY ("source_identity_consent_id","account_id","identity_id") REFERENCES "public"."identity_consents"("id","account_id","identity_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "luxify_cinematic_consents_account_key_uq" ON "luxify_cinematic_consents" USING btree ("account_id","idempotency_key");--> statement-breakpoint
 CREATE UNIQUE INDEX "luxify_cinematic_consents_active_look_uq" ON "luxify_cinematic_consents" USING btree ("account_id","identity_id","provider_look_id","provider_space_fingerprint") WHERE "luxify_cinematic_consents"."revoked_at" is null;--> statement-breakpoint
 CREATE INDEX "luxify_cinematic_consents_expiry_idx" ON "luxify_cinematic_consents" USING btree ("expires_at") WHERE "luxify_cinematic_consents"."revoked_at" is null;

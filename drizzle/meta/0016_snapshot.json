@@ -1785,7 +1785,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "luxify_cinematic_consents_identity_owner_fk": {
@@ -1800,7 +1800,7 @@
             "id",
             "account_id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         },
         "luxify_cinematic_consents_source_consent_fk": {
@@ -1817,7 +1817,7 @@
             "account_id",
             "identity_id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         }
       },
@@ -5335,7 +5335,7 @@
       "checkConstraints": {
         "video_jobs_render_mode_ck": {
           "name": "video_jobs_render_mode_ck",
-          "value": "\"video_jobs\".\"render_mode\" in ('standard_narration_v1', 'scripted_photo_standard_v1', 'premium_presenter_v1', 'luxify_cinematic_v1', 'legacy_premium_v1')"
+          "value": "\"video_jobs\".\"render_mode\" in ('standard', 'premium', 'luxified')"
         }
       },
       "isRLSEnabled": false

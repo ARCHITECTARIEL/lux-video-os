@@ -1,5 +1,7 @@
 # Production 0016 compatibility preparation — October 16, 2026
 
+**2026-10-23 owner decision:** This historical rehearsal predates the correction. The current 0015 FKs use `ON DELETE restrict`; current 0016 persists only `standard`, `premium`, `luxified` while retaining input JSON `renderMode` strings. Rehearsal values below describe the older SQL and do not qualify the revised source.
+
 **Candidate:** draft PR #111, `76e3ecac5f788916d778dc8cea12af0992ef9259`. **Scope:** read-only production observations and disposable local PostgreSQL 18.6 rehearsal. No production migration, row write, provider call, deployment, schema-lock change or feature activation occurred. Detailed private source-archive hashes and local fixture custody are under ignored `.omx/artifacts/production-0016-compat/`.
 
 ## Identity and production readback

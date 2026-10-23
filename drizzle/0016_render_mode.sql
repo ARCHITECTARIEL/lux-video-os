@@ -4,36 +4,36 @@ CREATE FUNCTION video_os_render_mode_for_job(p_provider text, p_input jsonb)
 RETURNS text LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE
     WHEN p_input ? 'renderMode' THEN CASE
-      WHEN p_provider = 'heygen' AND p_input->>'renderMode' = 'premium_presenter_v1'
-        AND p_input->>'contractVersion' = 'scripted-photo-v1' AND p_input->>'tier' = 'PREMIUM'
-        AND NOT (p_input ? 'providerCapability') AND NOT (p_input ? 'lookBindings')
-        THEN 'premium_presenter_v1'
       WHEN p_provider = 'heygen' AND p_input->>'renderMode' = 'luxify_cinematic_v1'
         AND p_input->>'contractVersion' = 'luxify-cinematic-v1'
         AND p_input->>'providerCapability' = 'cinematic_avatar'
-        AND NOT (p_input ? 'tier') THEN 'luxify_cinematic_v1'
+        AND NOT (p_input ? 'tier') THEN 'luxified'
+      WHEN p_provider = 'heygen' AND p_input->>'renderMode' = 'premium_presenter_v1'
+        AND p_input->>'contractVersion' = 'scripted-photo-v1' AND p_input->>'tier' = 'PREMIUM'
+        AND NOT (p_input ? 'providerCapability') AND NOT (p_input ? 'lookBindings')
+        THEN 'premium'
       WHEN p_provider = 'sadtalker' AND p_input->>'renderMode' = 'standard_narration_v1'
         AND p_input->>'contractVersion' = 'standard-narration-v1'
         AND p_input->>'tier' = 'STANDARD'
         AND NOT (p_input ? 'providerCapability') AND NOT (p_input ? 'lookBindings')
-        THEN 'standard_narration_v1'
+        THEN 'standard'
       ELSE NULL END
     WHEN p_input ? 'providerCapability' OR p_input ? 'lookBindings' THEN NULL
     WHEN p_input->>'contractVersion' = 'scripted-photo-v1' THEN CASE
       WHEN p_provider = 'heygen' AND p_input->>'tier' = 'STANDARD'
-        THEN 'scripted_photo_standard_v1'
+        THEN 'standard'
       WHEN p_provider = 'heygen' AND p_input->>'tier' = 'PREMIUM'
-        THEN 'legacy_premium_v1'
+        THEN 'premium'
       ELSE NULL END
     WHEN p_input->>'contractVersion' = 'standard-narration-v1' THEN CASE
       WHEN p_provider = 'sadtalker' AND p_input->>'tier' = 'STANDARD'
         AND NOT (p_input ? 'providerCapability') AND NOT (p_input ? 'lookBindings')
-        THEN 'standard_narration_v1'
+        THEN 'standard'
       ELSE NULL END
     WHEN p_input ? 'contractVersion' OR p_input ? 'tier' OR p_input ? 'providerCapability'
       OR p_input ? 'lookBindings' THEN NULL
-    WHEN p_provider = 'sadtalker' THEN 'standard_narration_v1'
-    WHEN p_provider = 'heygen' THEN 'legacy_premium_v1'
+    WHEN p_provider = 'sadtalker' THEN 'standard'
+    WHEN p_provider = 'heygen' THEN 'premium'
     ELSE NULL
   END
 $$;
@@ -68,5 +68,4 @@ WHERE render_mode IS NULL;
 ALTER TABLE video_jobs ALTER COLUMN render_mode SET NOT NULL;
 --> statement-breakpoint
 ALTER TABLE video_jobs ADD CONSTRAINT video_jobs_render_mode_ck
-CHECK (render_mode IN ('standard_narration_v1', 'scripted_photo_standard_v1',
-  'premium_presenter_v1', 'luxify_cinematic_v1', 'legacy_premium_v1'));
+CHECK (render_mode IN ('standard', 'premium', 'luxified'));
