@@ -1,6 +1,6 @@
 # Release preparation and rollback
 
-Updated September 30, 2026. These commands prepare evidence; none authorizes deployment, migrations, billing, or provider spend.
+Originally updated September 30, 2026; schema-lock status refreshed October 16. These commands prepare evidence; none authorizes deployment, migrations, billing, or provider spend.
 
 ## Database checks
 
@@ -12,7 +12,7 @@ For production, the checker validates the application canonical DATABASE_URL and
 
 Drizzle's journal timestamps and SHA-256 of actual migration SQL must match every applied migration. Only exact LF/CRLF variants are accepted to accommodate Git's Windows checkout conversion; equal counts or sequential IDs cannot pass by themselves. The schema fingerprint includes columns/defaults/nullability, constraints, indexes, policies, triggers, views, routines, enums and sequence definitions. It excludes customer rows and sequence counters.
 
-`config/database-schema.lock.json` now comes from the isolated verification database with eleven repository migrations and 27 tables, including the provider ledger and additive source-provenance guard. Its capture is not production verification. It is bound to migration, schema-module and manual guard-SQL source hashes. Recapture is permitted only on a distinct, explicitly isolated verification child branch/database; inspect changes before accepting a new lock. Never capture production drift and call it the expected schema. See the [bridge foundation evidence](execution-notes/20260930-bridge-foundation.md).
+`config/database-schema.lock.json` now binds 17 repository migrations (`0000–0016`) and 29 public tables. Its exact candidate was captured and strictly read back on a dedicated PostgreSQL 18.6 verification child, then independently reviewed; see the [0016 qualification](SCHEMA-LOCK-0016-QUALIFICATION-20261016.md). This is not production verification. The lock binds migration, schema-module and manual guard-SQL source hashes. Recapture is permitted only on a distinct, explicitly isolated verification child branch/database; inspect changes before accepting a new lock. Never capture production drift and call it the expected schema.
 
 ## Packaging
 

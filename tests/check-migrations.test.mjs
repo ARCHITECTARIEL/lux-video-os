@@ -158,7 +158,11 @@ test('live identity, missing schema-qualified journal, stale baseline and schema
   assert.equal('providerBinding' in good, false);
 });
 test('repository plan accounts for every migration and only LF/CRLF source encodings', async () => {
-  const actual = await migrationPlan(); assert.equal(actual.migrations.length, 15);
+  const actual = await migrationPlan();
+  assert.equal(actual.migrations.length, 17);
+  assert.deepEqual(actual.migrations.slice(-2).map(item => item.tag), [
+    '0015_luxify_cinematic_consent', '0016_render_mode',
+  ]);
   assert.ok(actual.migrations.every(entry => entry.hashes.length >= 1 && entry.hashes.length <= 2));
 });
 test('unreachable reviewed target fails with no credentials in CLI output', () => {
