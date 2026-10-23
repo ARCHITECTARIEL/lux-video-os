@@ -18,6 +18,9 @@ const sessionSecret = 'enrollment-api-test-session-secret-32';
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 
 function environment(enabled = true) {
+  // Enrollment now requires an explicit identity allowlist in every environment.
+  process.env.VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS = accountId;
+  process.env.VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT = '2026-10-04T14:00:00.000Z';
   process.env.VIDEO_OS_PHONE_VIDEO_ENROLLMENT_ENABLED = enabled ? 'true' : '';
   process.env.VIDEO_OS_PHONE_VIDEO_EXTRACTION_ENABLED = enabled ? 'true' : '';
   process.env.VIDEO_OS_ENROLLMENT_BLOB_STORE_ID = 'store123';
@@ -35,7 +38,7 @@ function enrollment(overrides = {}) {
     declaredFilename: 'phone.mov', declaredContentType: 'video/quicktime', declaredBytes: 80_000_000,
     uploadPathname: `video-os/enrollment-sources/account/${enrollmentId}/phone.mov`, uploadEtag: null,
     uploadOperationKey: operationKey, uploadExpiresAt: new Date(Date.now() + 600_000), expiresAt: new Date(Date.now() + 3_600_000),
-    sourceMetadata: {}, attemptCount: 0, cleanupStatus: 'NOT_REQUIRED', createdAt: 'now', updatedAt: 'now', ...overrides,
+    sourceMetadata: {}, attemptCount: 0, cleanupStatus: 'NOT_REQUIRED', createdAt: '2026-10-04T14:00:01.000Z', updatedAt: '2026-10-04T14:00:01.000Z', ...overrides,
   };
 }
 
@@ -96,7 +99,7 @@ test('provider reconsent binds the authenticated owner and never dispatches medi
     },
     getOwnedIdentity: async (owner, id) => {
       assert.equal(owner, accountId); assert.equal(id, identityId);
-      return { id, overallStatus: 'DRAFT', avatarStatus: 'DRAFT', voiceStatus: 'DRAFT' };
+      return { id, createdAt: '2026-10-04T14:00:01.000Z', overallStatus: 'DRAFT', avatarStatus: 'DRAFT', voiceStatus: 'DRAFT' };
     },
     start: async () => assert.fail('Reconsent must not dispatch a workflow.'),
     getPrivateBlob: async () => assert.fail('Reconsent must not upload or process media.'),
@@ -155,6 +158,7 @@ test('create returns resumable private multipart instructions and revoke remains
 
 test('production canary hides enrollment from other accounts and denies their new writes', async () => {
   environment(true);
+  delete process.env.VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS;
   process.env.VERCEL_ENV = 'production';
   process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = accountId;
   process.env.VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT = '2026-10-04T14:00:00.000Z';

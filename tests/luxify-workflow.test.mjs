@@ -141,7 +141,7 @@ if (runFixture) {
   process.env.VIDEO_OS_HOSTED_FINISHING_ENABLED = 'true';
   process.env.VIDEO_OS_COMPOSITION_ENGINE = 'ffmpeg';
   process.env.VIDEO_OS_PROVIDER_CREATION_ENABLED = 'true';
-  delete process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID;
+  process.env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID = ACCOUNT;
 
   let currentJob = luxifyJob();
   let failLuxifySubmit = false;

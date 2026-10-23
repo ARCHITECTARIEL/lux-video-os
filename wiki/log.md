@@ -896,6 +896,23 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Independent review found missing native dependency preflight, a false-green GitHub fallback on heartbeat persistence failure, and duplicate-side-effect risk from overlapping sweeps. Added fail-closed DB/Blob/provider checks, shared persisted-heartbeat failure responses, and an atomic ten-minute whole-batch claim using the existing rate-limit table. A later review also found a reserved-job transition race; timeout and reserved-only releases now require the exact selected status/update timestamp and report only completed transitions. Claim conflicts do no provider/job/alert work and cannot advance the heartbeat.
 - Synthetic concurrent-delivery, batch rollback, transition-race and HTTP regression checks passed. Full local unit gate: 1,257 Node passed, 51 configured live skips, zero failures; Vitest four passed. Import, strict Workflow, client privacy, migration-snapshot, preview preflight and diff checks passed. Independent re-review found no remaining concrete high or medium source issue. These are local results pending a new exact-head remote check. No production sweep, deployment, provider, database migration, credit or environment change occurred.
 
+## 2026-10-23T14:25:10Z - [closure-writeback] [premium-allowlist-1023] [fail-closed]
+
+- Replaced single-account identity creation checks with a shared, frozen account allowlist. A nonempty `VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS` overrides legacy pins; differing legacy pins or no configured account deny all provider creation. Enrollment and HeyGen now use the same account decision. Production enrollment still requires the canary start timestamp, while the prior preview reconsent boundary remains intact.
+- Diagnostics now report only the allowlist source and count alongside the compatibility pin-match boolean. Added parser, gate, diagnostic, and enrollment tests; documented the new variable and deprecated-but-honored legacy pin names. No `drizzle/` or role-guard files changed.
+- Final focused Node run: 87 passed, one opt-in throwaway PostgreSQL role-guard test skipped. `npm run check:imports` and `git diff --check` passed. Final full `node --test tests/*.test.mjs`: 1,273 passed, 44 failed, 51 skipped. The remaining failures are in media/proof paths; sampled failures show FFmpeg fixture processes exiting with null before assertions. No network, push, commit, deployment, environment-file edit, secret, provider call, or database operation was performed.
+
+## 2026-10-23T14:43:48Z - [closure-writeback] [premium-allowlist-1023] [test-fixtures]
+
+- Pinned the test account with the existing enrollment canary setting in the LUXIFY route runtime fixture and workflow child fixture. This preserves the intended fail-closed provider creation behavior and all existing assertions; production code was unchanged.
+- `node --test tests/luxify-route.test.mjs tests/luxify-workflow.test.mjs tests/identity-account-allowlist.test.mjs` passed 18/18. `git diff --check` passed. No network call or commit was made.
+
+## 2026-10-23T15:57:31Z - [closure-writeback] [premium-allowlist-1023] [QA-M1-M2-L1-L3]
+
+- Replaced NFKC and quote folding with exact lowercase ASCII account ID validation. Invalid entries never match; quoted whole lists fail closed even with a legacy pin. Diagnostics count invalid entries without exposing IDs.
+- Preserved the owner-approved legacy pins across enrollment and provider creation. Corrected pin agreement, mismatched-pin reasons, and canary allowlist scope checks. Added regressions for Unicode/case rejection, literal `*`, quoted lists, and Preview list-only enrollment.
+- With `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset, 86 focused Node tests passed. Import, syntax, and diff checks passed. The requested QA report was absent from its supplied path; the user-provided QA items were used as acceptance criteria. No environment-file edit, migration, network/provider call, or push occurred.
+
 ## 2026-10-23T14:25:42Z - [closure-writeback] [copywriter-retries] [P1-follow-up]
 
 - Set `generateCopy` to `maxRetries: 2` with a comment to use 0 only when a fallback model is added; updated the service assertion to expect 2.

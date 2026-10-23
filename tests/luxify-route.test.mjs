@@ -93,6 +93,7 @@ function runtimeEnv(overrides = {}) {
     BLOB_READ_WRITE_TOKEN: 'synthetic-private-storage-token',
     VIDEO_OS_PROVIDER_MEDIA_HOSTS: 'files.heygen.ai',
     VIDEO_OS_PROVIDER_CREATION_ENABLED: 'true',
+    VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: ACCOUNT,
     VIDEO_OS_DURABLE_WORKFLOW_ENABLED: 'true',
     VIDEO_OS_HOSTED_FINISHING_ENABLED: 'true',
     ...overrides,

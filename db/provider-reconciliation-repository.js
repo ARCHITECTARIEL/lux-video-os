@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { allowlistSource, identityAllowedAccountIds, isIdentityAccountAllowed } from '../lib/identity-account-allowlist.js';
 import { and, desc, eq, inArray, or } from 'drizzle-orm';
 
 import { database } from './client.js';
@@ -1122,20 +1123,25 @@ export function providerReconciliationExecutionStatus() {
   return Object.freeze({ enabled: false, reason: 'execution_not_implemented' });
 }
 
-// Default-disabled, contained by VIDEO_OS_PROVIDER_CREATION_ENABLED so it can
-// be turned on/off instantly without a redeploy. Real blast radius is still
+// Default-disabled and restricted to the identity account allowlist even when
+// VIDEO_OS_PROVIDER_CREATION_ENABLED is true. Real blast radius is also
 // bounded separately: only accounts already holding a standardRendering/
 // liveRendering entitlement (testers/allowlisted accounts, never granted to
 // an ordinary new sign-up -- see lib/video-os-security.js's
 // containedRenderingEntitlementKeys) can actually reach a HeyGen submission
 // even while this reports enabled.
 export function providerCreationActivationStatus(env = process.env, accountId) {
-  const pinnedAccountId = String(env.VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID || '').trim();
-  const privateEnrollmentCanary = Boolean(pinnedAccountId);
-  const canaryAccountAllowed = !privateEnrollmentCanary || (typeof accountId === 'string' && accountId.length > 0 && accountId === pinnedAccountId);
+  const allowedIds = identityAllowedAccountIds(env);
+  const canaryAccountAllowed = isIdentityAccountAllowed(accountId, env);
   const enabled = canaryAccountAllowed && String(env.VIDEO_OS_PROVIDER_CREATION_ENABLED || '').trim().toLowerCase() === 'true';
   let reason = 'verified_provider_account_binding_not_wired';
-  if (privateEnrollmentCanary && !canaryAccountAllowed) reason = 'private_enrollment_canary_active';
+  if (!allowedIds.length) {
+    const source = allowlistSource(env);
+    reason = source === 'legacy_pin_mismatch' ? 'legacy_pin_mismatch'
+      : source === 'allowlist_invalid' || source === 'legacy_pin_invalid' ? 'identity_allowlist_invalid'
+        : 'identity_allowlist_empty';
+  }
+  else if (!canaryAccountAllowed) reason = 'private_enrollment_canary_active';
   else if (enabled) reason = 'owner_authorized_contained_activation';
   return Object.freeze({
     enabled,
