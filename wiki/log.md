@@ -912,3 +912,14 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Replaced NFKC and quote folding with exact lowercase ASCII account ID validation. Invalid entries never match; quoted whole lists fail closed even with a legacy pin. Diagnostics count invalid entries without exposing IDs.
 - Preserved the owner-approved legacy pins across enrollment and provider creation. Corrected pin agreement, mismatched-pin reasons, and canary allowlist scope checks. Added regressions for Unicode/case rejection, literal `*`, quoted lists, and Preview list-only enrollment.
 - With `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset, 86 focused Node tests passed. Import, syntax, and diff checks passed. The requested QA report was absent from its supplied path; the user-provided QA items were used as acceptance criteria. No environment-file edit, migration, network/provider call, or push occurred.
+
+## 2026-10-23T14:25:42Z - [closure-writeback] [copywriter-retries] [P1-follow-up]
+
+- Set `generateCopy` to `maxRetries: 2` with a comment to use 0 only when a fallback model is added; updated the service assertion to expect 2.
+- `node --test tests/copywriter.test.mjs tests/copywriter-service.test.mjs`: 33 passed, 1 environment-gated skip, 0 failed. No commit or network access.
+
+## 2026-10-23T15:57:55Z - [closure-writeback] [CORE-COPY-FIX-1023] [QA-security]
+
+- Replaced provider free-text and permissive diagnostic filtering with fixed messages and allow-listed codes, categories, names, and types at both log and `ops_events` boundaries. Added short-brief and nested-error leak regressions; kept the client error category unchanged.
+- Accepted Vercel OIDC from the request header or environment, removed the token line from the example file, and capped copywriter output at 4096 tokens.
+- Offline focused tests with `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset: 37 passed, 1 DB-gated skip, 0 failed. Import and diff checks passed. Gitleaks found no findings in changed files; the full worktree still has 26 findings elsewhere. The requested QA report was absent from its supplied path. No provider, network, migration, deployment, or push action occurred.
