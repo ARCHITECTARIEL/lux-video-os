@@ -943,8 +943,8 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Checked the global cap before hourly quota and counted fallback model runs separately, with zero fallback SDK retries and one 28-second deadline. The existing `rate_limits` row cannot be account-independent because its required user FK cascades on deletion. Generation now fails closed pending an Architecture & Data schema change; no reserved user or migration was added. Documented per-instance replay, output-guard retry charges, best-effort human review, and the unconfirmed effective function `maxDuration`.
 - Code committed locally as `893ce38` on `core/copywriter-followups-1023`. The required offline copywriter suite passed 57 tests with one live-DB integration test skipped. `git diff --check` passed. No network, provider call, deployment, schema change, or push occurred.
 
-## 2026-10-23 - [COPY-FOLLOWUPS-1023] [QA-r2-low]
+## 2026-10-23T22:20:43Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [QA-r2-low]
 
 - Bounded compact client-name matches to normalized token edges, retained the round-one Acmelabs prefix case, and escaped Unicode angle brackets in prompt fences. Documented the risk of short and common client terms.
 - Skipped fallback and its budget check when the shared deadline is spent or a timeout leaves under three seconds. A failed fallback budget check now returns 503 `copywriter_budget_unavailable`; a refusal remains 429.
-- Offline copywriter suite: 63 passed, one live-DB test skipped. Import, syntax, and diff checks passed. No network, provider call, migration, schema change, deployment, or push.
+- Code committed locally as `1419210`. Offline copywriter suite: 63 passed, one live-DB test skipped. Import, syntax, and diff checks passed. No network, provider call, migration, schema change, deployment, or push. The phrase "luminous lumen output" remains blocked because it contains the exact "lumen" token; user clarification was requested for the contradictory allow example.
