@@ -156,6 +156,15 @@ test('pinned provider creation reports canary scope without disclosing the accou
   assert.equal(JSON.stringify(result).includes(canaryAccount), false);
 });
 
+test('DB binding reports allowlist metadata without disclosing IDs', async () => {
+  const input = options({ env: { VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS: 'secret-one,secret-two' } });
+  const result = await evaluateProductionDbBinding(input);
+  assert.equal(result.body.allowlistSource, 'allowlist');
+  assert.equal(result.body.allowlistCount, 2);
+  assert.equal(result.body.identityProviderPinMatchesCanaryPin, true);
+  assert.equal(JSON.stringify(result.body).includes('secret-one'), false);
+});
+
 test('pinned provider creation with its switch off remains disabled for containment', async () => {
   const input = options({ env: {
     VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: 'fixture-canary-account',

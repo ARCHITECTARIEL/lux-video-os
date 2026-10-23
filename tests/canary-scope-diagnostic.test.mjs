@@ -127,6 +127,19 @@ test('scope matrix preserves pin containment and checks synthetic account separa
   assert.equal(result.body.providerCreationEnabledForSyntheticAccount, false);
 });
 
+test('diagnostic reports allowlist metadata without disclosing account IDs', async () => {
+  const ids = 'opaque-fixture-pin,second-secret-account';
+  const input = fixture({ env: { VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS: ids } });
+  const result = await evaluateCanaryScope(input);
+  assert.equal(result.body.allowlistSource, 'allowlist');
+  assert.equal(result.body.allowlistCount, 2);
+  assert.equal(result.body.identityProviderPinMatchesCanaryPin, true);
+  assert.equal(JSON.stringify(result.body).includes('second-secret-account'), false);
+  const mismatch = await evaluateCanaryScope(fixture({ env: { VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID: 'other' } }));
+  assert.equal(mismatch.body.allowlistSource, 'legacy_pin_mismatch');
+  assert.equal(mismatch.body.allowlistCount, 0);
+});
+
 test('every required scope condition independently fails the all-expected baseline', async () => {
   assert.equal((await evaluateCanaryScope(fixture())).status, 200);
   const cases = [

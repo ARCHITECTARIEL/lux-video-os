@@ -92,7 +92,11 @@ test('production enrollment canary permits only its pinned account', () => {
   assert.equal(enrollmentAccountAllowed('other-account', env), false);
   assert.equal(enrollmentAccountAllowed('owner-account', { VERCEL_ENV: 'production' }), false);
   assert.equal(enrollmentAccountAllowed('owner-account', { VERCEL_ENV: 'production', VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: ' owner-account ' }), true);
-  assert.equal(enrollmentAccountAllowed('other-account', { VERCEL_ENV: 'preview' }), true);
+  const listed = { VERCEL_ENV: 'production', VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS: 'owner-account,second-account' };
+  assert.equal(enrollmentAccountAllowed('second-account', listed), true);
+  assert.equal(enrollmentAccountAllowed('other-account', listed), false);
+  // Preview enrollment is provider backed too; an empty allowlist now denies it.
+  assert.equal(enrollmentAccountAllowed('other-account', { VERCEL_ENV: 'preview' }), false);
   assert.equal(enrollmentAccountAllowed('other-account', { ...env, VERCEL_ENV: 'preview' }), false);
   assert.throws(() => assertEnrollmentAccountAllowed('other-account', env), { statusCode: 403, failureCategory: 'ENTITLEMENT' });
 });
@@ -103,6 +107,10 @@ test('private canary boundary rejects historical enrollment records and missing 
     VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT: '2026-10-04T14:00:00.000Z',
   };
   assert.equal(enrollmentCanaryStartedAt(env).toISOString(), env.VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT);
+  assert.equal(enrollmentCanaryStartedAt({
+    VERCEL_ENV: 'production', VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS: 'owner-account,second-account',
+    VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT: env.VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT,
+  }).toISOString(), env.VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT);
   assert.doesNotThrow(() => assertEnrollmentCanaryRecord({ createdAt: '2026-10-04T14:00:01.000Z' }, env));
   assert.throws(() => assertEnrollmentCanaryRecord({ createdAt: '2026-10-04T13:59:59.000Z' }, env), { statusCode: 403, failureCategory: 'ENTITLEMENT' });
   assert.doesNotThrow(() => assertEnrollmentCanaryPhoto({ createdAt: '2026-10-04T14:00:01.000Z' }, env));
