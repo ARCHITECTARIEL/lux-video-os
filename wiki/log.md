@@ -948,3 +948,9 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Bounded compact client-name matches to normalized token edges, retained the round-one Acmelabs prefix case, and escaped Unicode angle brackets in prompt fences. Documented the risk of short and common client terms.
 - Skipped fallback and its budget check when the shared deadline is spent or a timeout leaves under three seconds. A failed fallback budget check now returns 503 `copywriter_budget_unavailable`; a refusal remains 429.
 - Code committed locally as `1419210`. Offline copywriter suite: 63 passed, one live-DB test skipped. Import, syntax, and diff checks passed. No network, provider call, migration, schema change, deployment, or push. The phrase "luminous lumen output" remains blocked because it contains the exact "lumen" token; user clarification was requested for the contradictory allow example.
+
+## 2026-10-23T22:35:28Z - [closure-writeback] [GLOBAL-COUNTERS-1023] [copywriter-budget] [local-only]
+
+- Added an account-independent `global_counters` table, offline-generated migration `0017` with journal and snapshot, and an atomic fixed-window `consumeGlobalCounter` upsert. The copywriter default handler now uses it for the configured daily model-run cap; an explicitly null budget still fails closed.
+- Added fake-database unit coverage, migration SQL/snapshot checks, and a loopback-only PostgreSQL race test for 100 concurrent consumes at limit 25 plus window reset. Updated the historical 0015/0016 rehearsal range and documented that 0017 must be applied before enabling the cap.
+- Committed locally as `1ff3bc3` on `core/global-counters-1023`. The required wrapper ran 94 related Node tests: 90 passed, 4 environment-gated skips, 0 failed. Offline `drizzle-kit check`, syntax checks, and diff checks passed. The race test skipped because `VIDEO_OS_PG_RACE_TEST_URL` was unset. No network, live DB, migration application, deployment, or push occurred.
