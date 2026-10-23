@@ -6,6 +6,67 @@ import { generateText } from 'ai';
 // to move to a different tier later.
 export const DEFAULT_COPYWRITER_MODEL = 'anthropic/claude-sonnet-4.6';
 
+const safeField = value => typeof value === 'string' && /^[a-zA-Z0-9_.:/-]{1,100}$/.test(value) && !/(?:key|token|secret|bearer|authorization|https?:|vck_|eyJ\.|(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{20,})/i.test(value) ? value : null;
+
+export function sanitizeProviderMessage(message) {
+  if (typeof message !== 'string') return null;
+  // Provider prose is optional diagnostic data. Drop the whole message when it
+  // contains a possible credential, contact, URL, or opaque user payload.
+  if (/(?:key|token|secret|bearer|auth(?:orization)?|https?:|www\.|@|vck_|eyJ\.|[A-Za-z0-9+/_=-]{20,})/i.test(message)) return null;
+  return message.slice(0, 200);
+}
+
+export function describeProviderError(error, { forbidden = [] } = {}) {
+  const retryWrapped = error?.name === 'AI_RetryError' || Array.isArray(error?.errors);
+  const attempts = retryWrapped && Array.isArray(error?.errors) ? error.errors.length : null;
+  let detail = retryWrapped ? error?.lastError || error?.errors?.at(-1) || error : error;
+  for (let i = 0; i < 3 && detail?.cause && !detail?.statusCode && !detail?.status && !/^Gateway.*Error$|^(?:Abort|Timeout)Error$/.test(detail?.name || ''); i++) detail = detail.cause;
+  const safe = value => {
+    const candidate = safeField(value);
+    if (!candidate || candidate.length < 8) return candidate;
+    return forbidden.some(value => String(value || '').includes(candidate)) ? null : candidate;
+  };
+  const rawMessage = detail?.message;
+  let message = sanitizeProviderMessage(rawMessage);
+  if (message && forbidden.some(value => {
+    const source = String(value || '');
+    for (let i = 0; i + 8 <= source.length; i++) {
+      if (message.includes(source.slice(i, i + 8))) return true;
+    }
+    return false;
+  })) message = null;
+  return {
+    errorName: safe(detail?.name),
+    errorCode: safe(detail?.code),
+    providerStatus: Number.isInteger(detail?.statusCode ?? detail?.status) ? (detail.statusCode ?? detail.status) : null,
+    providerErrorType: safe(detail?.errorType ?? detail?.type),
+    generationId: safe(detail?.generationId),
+    retryWrapped,
+    attempts,
+    message,
+  };
+}
+
+export function statusClass(detail) {
+  const status = detail?.providerStatus;
+  const type = detail?.providerErrorType;
+  const name = detail?.errorName;
+  if (status === 402 || ['insufficient_funds', 'quota_for_entity_exceeded', 'customer_verification_required'].includes(type)) return 'billing';
+  if (status === 401) return 'auth';
+  if (status === 404 || name === 'GatewayModelNotFoundError') return 'model';
+  if (status === 403) return 'forbidden';
+  if (status === 429) return 'rate_limit';
+  if (status === 408 || ['GatewayTimeoutError', 'AbortError', 'TimeoutError'].includes(name)) return 'timeout';
+  if (status === 400) return 'invalid_request';
+  return 'upstream';
+}
+
+export function gatewayAuthMode(env = process.env) {
+  if (String(env.AI_GATEWAY_API_KEY || '').trim()) return 'api-key';
+  if (String(env.VERCEL_OIDC_TOKEN || '').trim()) return 'oidc';
+  return 'none';
+}
+
 function systemPrompt() {
   return [
     'You are an on-camera video script copywriter for LUX Video OS, a tool that lets small businesses create short avatar-presented videos.',
@@ -36,6 +97,7 @@ function promptFor({ operation, brief, draft, instructions }) {
 
 export async function generateCopy({ operation, brief, draft, instructions }, {
   model = String(process.env.VIDEO_OS_COPYWRITER_MODEL || '').trim() || DEFAULT_COPYWRITER_MODEL,
+  maxOutputTokens = Number(process.env.VIDEO_OS_COPYWRITER_MAX_OUTPUT_TOKENS) || 400,
   timeoutMs = 28_000,
   // Injectable for tests only -- every real caller leaves this at the
   // default, so this is a no-op change for production. Lets
@@ -45,18 +107,27 @@ export async function generateCopy({ operation, brief, draft, instructions }, {
   generateTextFn = generateText,
 } = {}) {
   let result;
+  const system = systemPrompt();
+  const prompt = promptFor({ operation, brief, draft, instructions });
   try {
     result = await generateTextFn({
       model,
-      system: systemPrompt(),
-      prompt: promptFor({ operation, brief, draft, instructions }),
+      system,
+      prompt,
       abortSignal: AbortSignal.timeout(timeoutMs),
+      // Set to 0 only when a fallback model is added (P1 follow-up).
+      maxRetries: 2,
+      maxOutputTokens: Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0 ? maxOutputTokens : 400,
     });
   } catch (error) {
-    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
-      throw Object.assign(new Error('The AI writing request timed out.'), { statusCode: 504, code: 'generation_timeout' });
-    }
-    throw Object.assign(new Error('The AI writing request failed.'), { statusCode: 502, code: 'generation_failed', cause: error });
+    const providerDetail = { ...describeProviderError(error, { forbidden: [prompt, system] }), model: safeField(model) };
+    const category = statusClass(providerDetail);
+    throw Object.assign(new Error('AI writing could not be completed.'), {
+      statusCode: category === 'timeout' ? 504 : 502,
+      code: category === 'timeout' ? 'generation_timeout' : 'copywriter_provider_error',
+      statusClass: category,
+      providerDetail,
+    });
   }
   if (result.finishReason === 'content-filter') {
     throw Object.assign(new Error('The AI declined this request.'), { statusCode: 422, code: 'generation_refused' });
