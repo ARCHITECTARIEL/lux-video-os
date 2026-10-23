@@ -368,6 +368,18 @@ test('ops persistence diagnostic allow-lists fields and counts failures without 
   assert.doesNotMatch(lines[0], /postgres:\/\/|password=|person@example|SENTINEL|FAKE1/);
 });
 
+test('ops persistence failures age out of the health window', async () => {
+  const { getOpsPersistFailureCount } = await import('../lib/ops-log.js');
+  const original = console.error;
+  console.error = () => {};
+  try {
+    await writeOpsEvent({ event: 'watchdog_heartbeat' }, async () => { throw new Error('offline'); });
+  } finally { console.error = original; }
+  assert.ok(getOpsPersistFailureCount() >= 1);
+  assert.equal(getOpsPersistFailureCount({ now: () => Date.now() + 15 * 60_000 }), 0);
+  assert.ok(getOpsPersistFailureCount({ windowMs: 20 * 60_000, now: () => Date.now() + 15 * 60_000 }) >= 1);
+});
+
 test('ops persistence remains best effort when diagnostic output fails', async () => {
   const original = console.error;
   console.error = () => { throw new Error('FAKE1'); };

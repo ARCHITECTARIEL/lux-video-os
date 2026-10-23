@@ -81,10 +81,10 @@ require_json_content_type() {
   fi
 }
 
-# Health is intentionally first: do not invoke a mutating admin operation on
-# an unhealthy deployment or on a deployment that is not the current main SHA.
+# Health is intentionally first: only watchdog-only failures may trigger a
+# recovery sweep; never sweep a deployment that is not the current main SHA.
 request GET 'Health' "$base_url/api/health" health || exit 1
-if [[ "$HTTP_STATUS" != '200' ]]; then
+if [[ "$HTTP_STATUS" != '200' && "$HTTP_STATUS" != '503' ]]; then
   error "Health request failed with HTTP $HTTP_STATUS."
   exit 1
 fi
@@ -106,11 +106,12 @@ if (!value || typeof value !== 'object' || Array.isArray(value)) process.exit(1)
 if (typeof value.status !== 'string' || typeof value.gitSha !== 'string') process.exit(1);
 if (value.env !== 'production' || value.checks?.releaseIdentity?.ok !== true) process.exit(1);
 if (!/^[0-9a-f]{40}$/i.test(value.gitSha)) process.exit(1);
-const staleOnly = value.status === 'degraded'
+const staleOnly = (value.status === 'degraded' || value.status === 'fail')
   && value.checks?.watchdog?.ok === false
   && value.checks?.db?.ok === true
   && value.checks?.blob?.ok === true
-  && value.checks?.provider?.ok === true;
+  && value.checks?.provider?.ok === true
+  && value.checks?.opsPersist?.status === 'ok';
 const sweepAt = Date.parse(value.checks?.watchdog?.lastSweepAt);
 const nowEpoch = Number(process.env.NOW_EPOCH || Math.floor(Date.now() / 1000));
 const sweepAgeSeconds = nowEpoch - Math.floor(sweepAt / 1000);
@@ -129,8 +130,9 @@ deployed_git_sha="$(printf '%s\n' "$health_fields" | sed -n '2p')"
 fallback_not_needed="$(printf '%s\n' "$health_fields" | sed -n '3p')"
 stale_only="$(printf '%s\n' "$health_fields" | sed -n '4p')"
 
-if [[ "$health_status" != 'ok' && "$stale_only" != 'true' ]]; then
-  error "Health response reported status '$health_status'; status must be ok before a watchdog sweep."
+if { [[ "$HTTP_STATUS" == '200' ]] && [[ "$health_status" != 'ok' && ( "$health_status" != 'degraded' || "$stale_only" != 'true' ) ]]; } ||
+  { [[ "$HTTP_STATUS" == '503' ]] && [[ "$health_status" != 'fail' || "$stale_only" != 'true' ]]; }; then
+  error "Health response reported status '$health_status'; only ok or watchdog-only degraded/fail permits a sweep."
   exit 1
 fi
 

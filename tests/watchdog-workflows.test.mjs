@@ -291,10 +291,32 @@ test('scheduled GitHub fallback skips a fresh native sweep and runs for a stale-
   const stale = await runScript(t, watchdogScript, {
     WATCHDOG_FALLBACK_ONLY: 'true',
     MOCK_HEALTH_BODY: productionHealth({ status: 'degraded', gitSha: mainSha,
-      checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true }, watchdog: { ok: false } } }),
+      checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true },
+        opsPersist: { status: 'ok' }, watchdog: { ok: false } } }),
   });
   assert.equal(stale.status, 0, stale.stderr);
   assert.match(stale.calls, /POST https:\/\/video\.example\/api\/video-os-lite\/admin\?operation=watchdog-sweep/);
+});
+
+test('watchdog recovers watchdog-only health 503 but rejects ops persistence 503', { skip: !bashAvailable }, async (t) => {
+  for (const lastSweepAt of [null, new Date((nowEpoch - 61 * 60) * 1000).toISOString()]) {
+    const result = await runScript(t, watchdogScript, {
+      MOCK_HEALTH_STATUS: '503',
+      MOCK_HEALTH_BODY: productionHealth({ status: 'fail', gitSha: mainSha,
+        checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true },
+          opsPersist: { status: 'ok' }, watchdog: { ok: false, status: 'fail', lastSweepAt } } }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.calls, /POST https:\/\/video\.example\/api\/video-os-lite\/admin\?operation=watchdog-sweep/);
+  }
+  const opsFailure = await runScript(t, watchdogScript, {
+    MOCK_HEALTH_STATUS: '503',
+    MOCK_HEALTH_BODY: productionHealth({ status: 'fail', gitSha: mainSha,
+      checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true },
+        opsPersist: { status: 'fail' }, watchdog: { ok: true } } }),
+  });
+  assert.equal(opsFailure.status, 1);
+  assert.equal(opsFailure.calls, 'GET https://video.example/api/health\n');
 });
 
 test('watchdog fails on a non-200 sweep and does not run route smoke', { skip: !bashAvailable }, async (t) => {
@@ -354,6 +376,16 @@ test('heartbeat fails closed when the URL or persisted heartbeat is unconfigured
   });
   assert.equal(missingHeartbeat.status, 1);
   assert.match(missingHeartbeat.stderr, /::error::.*unconfigured or missing/i);
+
+  const failedHealth = await runScript(t, heartbeatScript, {
+    MOCK_HEALTH_STATUS: '503',
+    MOCK_HEALTH_BODY: JSON.stringify({ status: 'fail', checks: {
+      watchdog: { status: 'fail', lastSweepAt: new Date((nowEpoch - 600) * 1000).toISOString() },
+      opsPersist: { status: 'fail' },
+    } }),
+  });
+  assert.equal(failedHealth.status, 1);
+  assert.match(failedHealth.stderr, /::error::.*HTTP 503/i);
 });
 
 test('heartbeat allows only the legacy HTML health fallback during deployment grace', { skip: !bashAvailable }, async (t) => {
