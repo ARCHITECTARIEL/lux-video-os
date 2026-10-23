@@ -923,3 +923,9 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Replaced provider free-text and permissive diagnostic filtering with fixed messages and allow-listed codes, categories, names, and types at both log and `ops_events` boundaries. Added short-brief and nested-error leak regressions; kept the client error category unchanged.
 - Accepted Vercel OIDC from the request header or environment, removed the token line from the example file, and capped copywriter output at 4096 tokens.
 - Offline focused tests with `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset: 37 passed, 1 DB-gated skip, 0 failed. Import and diff checks passed. Gitleaks found no findings in changed files; the full worktree still has 26 findings elsewhere. The requested QA report was absent from its supplied path. No provider, network, migration, deployment, or push action occurred.
+
+## 2026-10-23T21:11:00Z - [closure-writeback] [REL-BUNDLE-1023] [alerts-logging-follow-up]
+
+- Commit `11d310b` restored the overall `/api/health` `degraded` vocabulary for non-fail states and the watchdog check's prior `critical: false` flag. Per-check statuses remain `ok|warn|fail`; HTTP 503 is reserved for overall `fail`.
+- Ops persistence health now counts a bounded 15-minute window of failure timestamps, while the diagnostic log's `failureCount` remains lifetime per process. The watchdog shell check permits a watchdog-only 503 recovery sweep and rejects ops persistence failures; heartbeat continues to reject 503.
+- The requested offline Node suite passed: 111 tests, 102 passed, 9 environment-gated skips, 0 failed. Import, Node syntax, Bash syntax, and diff checks passed. No network, push, deployment, migration, or live provider/database action occurred.
