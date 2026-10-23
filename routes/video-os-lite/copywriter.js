@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { randomUUID, createHash } from 'node:crypto';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
-import { consumeRateLimit } from '../../db/repositories.js';
+import { consumeGlobalCounter, consumeRateLimit } from '../../db/repositories.js';
 import { generateCopy, gatewayAuthMode } from '../../services/copywriter.js';
 import { copywriterDiagnostic } from '../../lib/copywriter-diagnostics.js';
 import { logOpsEvent } from '../../lib/ops-log.js';
@@ -92,9 +92,7 @@ export function createCopywriterHandler({
   availability = copywriterAvailability,
   generate = generateCopy,
   rateLimit = consumeRateLimit,
-  // The existing rate_limits schema requires a cascading user FK. No
-  // account-independent global counter can be stored there safely.
-  globalBudget = rateLimit === consumeRateLimit ? null : rateLimit,
+  globalBudget = consumeGlobalCounter,
   idempotency = replayCache,
   hourlyLimit = () => Number(process.env.VIDEO_OS_COPYWRITER_HOURLY_LIMIT || 30),
   opsLog = logOpsEvent,
@@ -167,4 +165,4 @@ export function createCopywriterHandler({
   };
 }
 
-export default createCopywriterHandler();
+export default createCopywriterHandler({ globalBudget: consumeGlobalCounter });

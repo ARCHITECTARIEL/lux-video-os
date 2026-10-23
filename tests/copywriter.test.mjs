@@ -26,6 +26,7 @@ function res() {
 const validBrief = { topic: 'A new espresso blend', audience: 'Coffee shop regulars', goal: 'sales', tone: 'warm', keyPoints: 'Roasted locally\nLimited batch', callToAction: 'Order online today' };
 const configuredEnv = { AI_GATEWAY_API_KEY: 'FAKE1', VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '2', VIDEO_OS_COPYWRITER_BLOCKED_TERMS: 'Acme Law' };
 const payload = (idempotencyKey = crypto.randomUUID(), brief = validBrief) => ({ operation: 'draft', idempotencyKey, brief });
+const testHandler = options => createCopywriterHandler({ globalBudget: async () => true, ...options });
 
 test('copywriterAvailability reflects the enable flag and Gateway key independently', () => {
   const original = { enabled: process.env.VIDEO_OS_COPYWRITER_ENABLED, key: process.env.AI_GATEWAY_API_KEY };
@@ -56,7 +57,7 @@ test('copywriter availability accepts OIDC as Gateway authentication', () => {
 });
 
 test('GET uses the OIDC request header without exposing its value', async () => {
-  const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: { VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '100', VIDEO_OS_COPYWRITER_CLIENT_GUARD: 'off' }, globalBudget: async () => true });
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: { VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '100', VIDEO_OS_COPYWRITER_CLIENT_GUARD: 'off' }, globalBudget: async () => true });
   const request = req('GET');
   request.headers['x-vercel-oidc-token'] = 'FAKE_HEADER_VALUE_FOR_TESTS';
   const response = res();
@@ -65,11 +66,19 @@ test('GET uses the OIDC request header without exposing its value', async () => 
   assert.equal(JSON.stringify(response.body).includes(request.headers['x-vercel-oidc-token']), false);
 });
 
-test('default global budget remains unavailable with all settings present', async () => {
+test('configured default global budget reports ready; an explicitly missing store fails closed', async () => {
+  const defaultHandler = createCopywriterHandler({
+    authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv,
+  });
+  const readyResponse = res();
+  await defaultHandler(req('GET'), readyResponse);
+  assert.equal(readyResponse.body.copywriter.reason, 'ready');
+
   let generateCalls = 0;
-  const handler = createCopywriterHandler({
+  const handler = testHandler({
     authenticate: () => ({ accountId: 'writer-1' }),
     env: { ...configuredEnv, VIDEO_OS_COPYWRITER_ENABLED: 'true', VIDEO_OS_COPYWRITER_FALLBACK_MODEL: 'fallback' },
+    globalBudget: null,
     generate: async () => { generateCalls++; return { text: 'unexpected' }; },
   });
   const getResponse = res();
@@ -86,7 +95,7 @@ test('default global budget remains unavailable with all settings present', asyn
 test('fallback budget DB failure returns 503 without a fallback model call', async () => {
   const models = [];
   let units = 0;
-  const handler = createCopywriterHandler({
+  const handler = testHandler({
     authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv,
     idempotency: createCopywriterIdempotency(), rateLimit: async () => true,
     globalBudget: async () => { if (++units === 1) return true; throw new Error('DB unavailable'); },
@@ -105,7 +114,7 @@ test('fallback budget DB failure returns 503 without a fallback model call', asy
 });
 
 test('copywriter handler requires sign-in before anything else, on both GET and POST', async () => {
-  const handler = createCopywriterHandler({ authenticate: () => { throw new Error('no session'); } });
+  const handler = testHandler({ authenticate: () => { throw new Error('no session'); } });
   const getRes = res();
   await handler(req('GET'), getRes);
   assert.equal(getRes.statusCode, 401);
@@ -118,7 +127,7 @@ test('copywriter handler requires sign-in before anything else, on both GET and 
 });
 
 test('GET always reports capability as 200, never surfaces availability as an error status', async () => {
-  const handler = createCopywriterHandler({
+  const handler = testHandler({
     authenticate: () => ({ accountId: 'writer-1' }),
     availability: () => ({ available: false, reason: 'setup_required', message: 'AI writing needs its server connection configured.' }),
   });
@@ -129,7 +138,7 @@ test('GET always reports capability as 200, never surfaces availability as an er
 });
 
 test('POST fails closed with the matching status/code when capability is unavailable', async () => {
-  const unavailable = createCopywriterHandler({
+  const unavailable = testHandler({
     authenticate: () => ({ accountId: 'writer-1' }),
     availability: () => ({ available: false, reason: 'disabled', message: 'AI writing is turned off for this deployment.' }),
   });
@@ -138,7 +147,7 @@ test('POST fails closed with the matching status/code when capability is unavail
   assert.equal(disabledRes.statusCode, 503);
   assert.equal(disabledRes.body.code, 'copywriter_unavailable');
 
-  const notAuthorized = createCopywriterHandler({
+  const notAuthorized = testHandler({
     authenticate: () => ({ accountId: 'writer-1' }),
     availability: () => ({ available: false, reason: 'not_authorized', message: 'Not available for this account.' }),
   });
@@ -150,7 +159,7 @@ test('POST fails closed with the matching status/code when capability is unavail
 
 test('POST rejects a malformed brief before touching rate limiting or generation', async () => {
   let rateLimitCalled = false;
-  const handler = createCopywriterHandler({
+  const handler = testHandler({
     authenticate: () => ({ accountId: 'writer-1' }),
     availability: () => ({ available: true, reason: 'ready' }),
     rateLimit: async () => { rateLimitCalled = true; return true; },
@@ -163,12 +172,13 @@ test('POST rejects a malformed brief before touching rate limiting or generation
   assert.equal(rateLimitCalled, false);
 });
 
-test('POST returns 429 rate_limited without calling generate when the limit is exhausted', async () => {
+test('POST returns 429 budget reached without calling generate when the global limit is exhausted', async () => {
   let generateCalled = false;
-  const handler = createCopywriterHandler({
+  const handler = testHandler({
     authenticate: () => ({ accountId: 'writer-1' }),
     availability: () => ({ available: true, reason: 'ready' }),
-    rateLimit: async () => false,
+    globalBudget: async () => false,
+    rateLimit: async () => true,
     generate: async () => { generateCalled = true; return 'unused'; },
   });
   const response = res();
@@ -180,7 +190,7 @@ test('POST returns 429 rate_limited without calling generate when the limit is e
 
 test('POST echoes the idempotency key as requestId and the requested operation on success', async () => {
   const idempotencyKey = crypto.randomUUID();
-  const handler = createCopywriterHandler({
+  const handler = testHandler({
     authenticate: () => ({ accountId: 'writer-1' }),
     availability: () => ({ available: true, reason: 'ready' }),
     rateLimit: async () => true,
@@ -193,7 +203,7 @@ test('POST echoes the idempotency key as requestId and the requested operation o
 });
 
 test('a typed generation failure maps to its own status and code instead of a generic 502', async () => {
-  const handler = createCopywriterHandler({
+  const handler = testHandler({
     authenticate: () => ({ accountId: 'writer-1' }),
     availability: () => ({ available: true, reason: 'ready' }),
     rateLimit: async () => true,
@@ -215,7 +225,7 @@ test('failure record has exactly the allowed fields and ops gets one matching ev
   assert.deepEqual(Object.keys(record), ['event', 'requestId', 'stage', 'code', 'statusClass', 'providerStatus', 'providerErrorType', 'errorName', 'errorCode', 'message', 'model', 'gatewayAuthMode', 'retryWrapped', 'attempts', 'generationId']);
   const projected = prepareOpsEvent({ event: 'copywriter.failure', details: { ...record, headers: { authorization: 'Bearer secret' }, requestBodyValues: fakeKey } }).entry.details;
   assert.deepEqual(Object.keys(projected), Object.keys(record));
-  const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, generate: async () => { throw Object.assign(new Error('failed'), { statusCode: 502, code: 'copywriter_provider_error' }); }, opsLog: event => events.push(event) });
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, generate: async () => { throw Object.assign(new Error('failed'), { statusCode: 502, code: 'copywriter_provider_error' }); }, opsLog: event => events.push(event) });
   const response = res();
   await handler(req('POST', { operation: 'draft', idempotencyKey: requestId, brief: validBrief }), response);
   assert.equal(events.length, 1);
@@ -229,7 +239,7 @@ test('ops failure does not alter 502 response and rate limit throw records its s
   const lines = [];
   console.error = line => lines.push(line);
   try {
-    const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), globalBudget: async () => true, rateLimit: async () => { throw new Error('db unavailable'); }, opsLog: () => { throw new Error('ops unavailable'); } });
+    const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), globalBudget: async () => true, rateLimit: async () => { throw new Error('db unavailable'); }, opsLog: () => { throw new Error('ops unavailable'); } });
     const response = res();
     await handler(req('POST', { operation: 'draft', idempotencyKey: crypto.randomUUID(), brief: validBrief }), response);
     assert.equal(response.statusCode, 502);
@@ -260,7 +270,7 @@ for (const [index, makeError] of secretErrors.entries()) {
     const original = console.error;
     console.error = line => lines.push(line);
     try {
-      const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, opsLog: event => events.push(event), generate: payload => generateCopy(payload, { generateTextFn: async () => { throw makeError(); } }) });
+      const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, opsLog: event => events.push(event), generate: payload => generateCopy(payload, { generateTextFn: async () => { throw makeError(); } }) });
       const response = res();
       await handler(req('POST', promptPayload), response);
       assert.equal(response.statusCode, 502);
@@ -280,7 +290,7 @@ test('short brief words in provider prose never enter stderr or ops events', asy
   const original = console.error;
   console.error = line => lines.push(line);
   try {
-    const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, opsLog: event => events.push(event), generate: payload => generateCopy(payload, { generateTextFn: async () => { throw new Error('Acme Bob Co Zed9'); } }) });
+    const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, opsLog: event => events.push(event), generate: payload => generateCopy(payload, { generateTextFn: async () => { throw new Error('Acme Bob Co Zed9'); } }) });
     const response = res();
     await handler(req('POST', promptPayload), response);
     const observed = JSON.stringify({ lines, events, projected: events.map(event => prepareOpsEvent(event).entry.details) });
@@ -298,7 +308,7 @@ test('secrets in provider metadata and nested retry errors never enter stderr or
   try {
     const nested = Object.assign(new Error(secrets[4]), { name: secrets[1], code: secrets[0], type: secrets[2], cause: new Error(secrets[3]) });
     const retry = Object.assign(new Error('retry'), { name: 'AI_RetryError', lastError: nested, errors: [new Error(secrets[5])], code: secrets[0], type: secrets[2] });
-    const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, opsLog: event => events.push(event), generate: payload => generateCopy(payload, { generateTextFn: async () => { throw retry; } }) });
+    const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), availability: () => ({ available: true }), rateLimit: async () => true, opsLog: event => events.push(event), generate: payload => generateCopy(payload, { generateTextFn: async () => { throw retry; } }) });
     const response = res();
     await handler(req('POST', promptPayload), response);
     assert.equal(events.length, 1);
@@ -319,7 +329,7 @@ test('ops persistence projection rejects injected diagnostic fields', () => {
 });
 
 test('shorten/improve_hook/revise require a working draft; revise also requires instructions', async () => {
-  const handler = createCopywriterHandler({
+  const handler = testHandler({
     authenticate: () => ({ accountId: 'writer-1' }),
     availability: () => ({ available: true, reason: 'ready' }),
     rateLimit: async () => true,
@@ -339,7 +349,7 @@ test('global budget and guard configuration fail closed', async () => {
     const env = { ...configuredEnv, VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: value };
     assert.equal(copywriterAvailability(env).reason, 'setup_required');
     const response = res();
-    await createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), env })(req('POST', payload()), response);
+    await testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env })(req('POST', payload()), response);
     assert.equal(response.body.code, 'copywriter_budget_unconfigured');
   }
   assert.equal(copywriterAvailability({ ...configuredEnv, VIDEO_OS_COPYWRITER_BLOCKED_TERMS: '' }, {}, true).reason, 'setup_required');
@@ -351,7 +361,7 @@ test('replay uses one generation and one pair of limits; conflict and in-flight 
   let release;
   const gate = new Promise(resolve => { release = resolve; });
   let generated = 0;
-  const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), rateLimit: async args => { calls.push(args); return true; }, generate: async () => { generated++; await gate; return { text: 'A draft.', truncated: false }; } });
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), globalBudget: async args => { calls.push(args); return true; }, rateLimit: async args => { calls.push(args); return true; }, generate: async () => { generated++; await gate; return { text: 'A draft.', truncated: false }; } });
   const body = payload();
   const first = res();
   const pending = handler(req('POST', body), first);
@@ -377,7 +387,7 @@ test('budget denial and budget check failure never generate; failed request can 
   for (const mode of ['denied', 'throw']) {
     let calls = 0;
     let generated = 0;
-    const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), rateLimit: async () => true, globalBudget: async () => { calls++; if (calls === 1) { if (mode === 'throw') throw Object.assign(new Error('FAKE1'), { code: 'SENTINEL' }); return false; } return true; }, generate: async () => { generated++; return 'ok'; } });
+    const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), rateLimit: async () => true, globalBudget: async () => { calls++; if (calls === 1) { if (mode === 'throw') throw Object.assign(new Error('FAKE1'), { code: 'SENTINEL' }); return false; } return true; }, generate: async () => { generated++; return 'ok'; } });
     const body = payload();
     const response = res();
     await handler(req('POST', body), response);
@@ -393,7 +403,7 @@ test('budget denial and budget check failure never generate; failed request can 
 test('client names in input and output are rejected without leaking text or caching failures', async () => {
   let limited = 0;
   let generated = 0;
-  const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), rateLimit: async () => { limited++; return true; }, generate: async () => { generated++; return generated === 1 ? 'Visit acmelaw.com today.' : 'Safe draft.'; } });
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), rateLimit: async () => { limited++; return true; }, generate: async () => { generated++; return generated === 1 ? 'Visit acmelaw.com today.' : 'Safe draft.'; } });
   const input = res();
   await handler(req('POST', payload(crypto.randomUUID(), { ...validBrief, keyPoints: "Аcme Law's site" })), input);
   assert.equal(input.body.code, 'copywriter_request_rejected');
@@ -411,7 +421,7 @@ test('client names in input and output are rejected without leaking text or cach
 });
 
 test('output guard rejects a soft-hyphen client name', async () => {
-  const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: { ...configuredEnv, VIDEO_OS_COPYWRITER_BLOCKED_TERMS: 'Acme' }, idempotency: createCopywriterIdempotency(), rateLimit: async () => true, generate: async () => 'Buy from Ac\u00ADme today.' });
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: { ...configuredEnv, VIDEO_OS_COPYWRITER_BLOCKED_TERMS: 'Acme' }, idempotency: createCopywriterIdempotency(), rateLimit: async () => true, generate: async () => 'Buy from Ac\u00ADme today.' });
   const response = res();
   await handler(req('POST', payload()), response);
   assert.equal(response.statusCode, 422);
@@ -420,7 +430,7 @@ test('output guard rejects a soft-hyphen client name', async () => {
 
 test('global budget rejection does not consume hourly quota', async () => {
   let hourly = 0;
-  const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), globalBudget: async () => false, rateLimit: async () => { hourly++; return true; }, generate: async () => { throw new Error('unexpected generation'); } });
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), globalBudget: async () => false, rateLimit: async () => { hourly++; return true; }, generate: async () => { throw new Error('unexpected generation'); } });
   const response = res();
   await handler(req('POST', payload()), response);
   assert.equal(response.body.code, 'copywriter_budget_reached');
@@ -430,7 +440,7 @@ test('global budget rejection does not consume hourly quota', async () => {
 test('fallback is withheld when its second model-run unit is unavailable', async () => {
   let units = 0;
   const models = [];
-  const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), globalBudget: async () => ++units <= 1, rateLimit: async () => true, generate: (body, options) => generateCopy(body, { ...options, model: 'primary', fallbackModel: 'fallback', generateTextFn: async args => { models.push(args.model); throw Object.assign(new Error('FAKE1'), { statusCode: 500 }); } }) });
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), globalBudget: async () => ++units <= 1, rateLimit: async () => true, generate: (body, options) => generateCopy(body, { ...options, model: 'primary', fallbackModel: 'fallback', generateTextFn: async args => { models.push(args.model); throw Object.assign(new Error('FAKE1'), { statusCode: 500 }); } }) });
   const response = res();
   await handler(req('POST', payload()), response);
   assert.equal(response.statusCode, 429);
@@ -439,8 +449,8 @@ test('fallback is withheld when its second model-run unit is unavailable', async
   assert.deepEqual(models, ['primary']);
 });
 
-test('production global budget fails closed without an account-independent store', async () => {
-  const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), generate: async () => { throw new Error('unexpected generation'); } });
+test('an explicitly unavailable global budget fails closed', async () => {
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), globalBudget: null, generate: async () => { throw new Error('unexpected generation'); } });
   const response = res();
   await handler(req('POST', payload()), response);
   assert.equal(response.body.code, 'copywriter_budget_unavailable');
@@ -457,7 +467,7 @@ test('flat provider metadata, rate limit error code, and sensitive request heade
       { globalBudget: async () => true, rateLimit: async () => { throw Object.assign(new Error('FAKE1'), { code: 'SENTINEL_RATE' }); } },
     ];
     for (const options of cases) {
-      const handler = createCopywriterHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), rateLimit: async () => true, opsLog: event => events.push(event), ...options });
+      const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), rateLimit: async () => true, opsLog: event => events.push(event), ...options });
       const request = req('POST', payload());
       request.headers['x-vercel-oidc-token'] = 'FAKEOIDC';
       request.headers.cookie = 'FAKECOOKIE';
