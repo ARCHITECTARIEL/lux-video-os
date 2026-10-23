@@ -110,14 +110,13 @@ const staleOnly = (value.status === 'degraded' || value.status === 'fail')
   && value.checks?.watchdog?.ok === false
   && value.checks?.db?.ok === true
   && value.checks?.blob?.ok === true
-  && value.checks?.provider?.ok === true
-  && value.checks?.opsPersist?.status === 'ok';
+  && value.checks?.provider?.ok === true;
 const sweepAt = Date.parse(value.checks?.watchdog?.lastSweepAt);
 const nowEpoch = Number(process.env.NOW_EPOCH || Math.floor(Date.now() / 1000));
 const sweepAgeSeconds = nowEpoch - Math.floor(sweepAt / 1000);
 // Leave 20 minutes to recover before the 45-minute heartbeat contract expires.
-const fallbackNotNeeded = value.checks?.watchdog?.ok === true
-  && Number.isFinite(sweepAgeSeconds) && sweepAgeSeconds >= 0 && sweepAgeSeconds <= 25 * 60;
+const fallbackNotNeeded = Number.isFinite(sweepAgeSeconds)
+  && sweepAgeSeconds >= -120 && sweepAgeSeconds <= 25 * 60;
 process.stdout.write(`${value.status}\n${value.gitSha}\n${fallbackNotNeeded}\n${staleOnly}\n`);
 NODE
 ); then

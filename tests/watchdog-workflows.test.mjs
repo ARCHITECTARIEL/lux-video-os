@@ -296,15 +296,24 @@ test('scheduled GitHub fallback skips a fresh native sweep and runs for a stale-
   });
   assert.equal(stale.status, 0, stale.stderr);
   assert.match(stale.calls, /POST https:\/\/video\.example\/api\/video-os-lite\/admin\?operation=watchdog-sweep/);
+  const jobAgeOnly = await runScript(t, watchdogScript, {
+    WATCHDOG_FALLBACK_ONLY: 'true',
+    MOCK_HEALTH_BODY: productionHealth({ status: 'degraded', gitSha: mainSha,
+      checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true },
+        opsPersist: { status: 'warn' }, watchdog: { ok: false, code: 'watchdog_job_age',
+          lastSweepAt: new Date((nowEpoch - 600) * 1000).toISOString() } } }),
+  });
+  assert.equal(jobAgeOnly.status, 0, jobAgeOnly.stderr);
+  assert.equal(jobAgeOnly.calls, 'GET https://video.example/api/health\n');
 });
 
-test('watchdog recovers watchdog-only health 503 but rejects ops persistence 503', { skip: !bashAvailable }, async (t) => {
+test('watchdog recovers watchdog-only health 503 independent of ops persistence diagnostic', { skip: !bashAvailable }, async (t) => {
   for (const lastSweepAt of [null, new Date((nowEpoch - 61 * 60) * 1000).toISOString()]) {
     const result = await runScript(t, watchdogScript, {
       MOCK_HEALTH_STATUS: '503',
       MOCK_HEALTH_BODY: productionHealth({ status: 'fail', gitSha: mainSha,
         checks: { db: { ok: true }, blob: { ok: true }, provider: { ok: true },
-          opsPersist: { status: 'ok' }, watchdog: { ok: false, status: 'fail', lastSweepAt } } }),
+          opsPersist: { status: 'warn' }, watchdog: { ok: false, status: 'fail', lastSweepAt } } }),
     });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.calls, /POST https:\/\/video\.example\/api\/video-os-lite\/admin\?operation=watchdog-sweep/);
@@ -342,26 +351,26 @@ test('watchdog rejects HTML workspace responses and non-JSON unknown API fallbac
   assert.match(unknownHtml.stderr, /::error::.*unknown API.*application\/json/i);
 });
 
-test('heartbeat passes at 10 minutes and fails red at 60 minutes', { skip: !bashAvailable }, async (t) => {
+test('heartbeat pages only when health returns 503 or fail', { skip: !bashAvailable }, async (t) => {
   const recent = await runScript(t, heartbeatScript, {
-    MOCK_HEALTH_BODY: JSON.stringify({ checks: { watchdog: { lastSweepAt: new Date((nowEpoch - 600) * 1000).toISOString() } } }),
+    MOCK_HEALTH_BODY: JSON.stringify({ status: 'ok', checks: { watchdog: { lastSweepAt: new Date((nowEpoch - 600) * 1000).toISOString() } } }),
   });
   assert.equal(recent.status, 0, recent.stderr);
-  assert.match(recent.stdout, /10 minutes old/);
+  assert.match(recent.stdout, /health is ok/);
 
   const stale = await runScript(t, heartbeatScript, {
-    MOCK_HEALTH_BODY: JSON.stringify({ checks: { watchdog: { lastSweepAt: new Date((nowEpoch - 3600) * 1000).toISOString() } } }),
+    MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', checks: { watchdog: { lastSweepAt: new Date((nowEpoch - 3600) * 1000).toISOString() } } }),
   });
-  assert.equal(stale.status, 1);
-  assert.match(stale.stderr, /::error::.*60 minutes old.*45 minutes/i);
+  assert.equal(stale.status, 0);
+  assert.match(stale.stdout, /health is degraded/);
 });
 
-test('heartbeat passes at 45 minutes and fails at 45 minutes plus one second', { skip: !bashAvailable }, async (t) => {
-  for (const [ageSeconds, expected] of [[2700, 0], [2701, 1], [2760, 1]]) {
+test('heartbeat does not independently page on sweep age', { skip: !bashAvailable }, async (t) => {
+  for (const ageSeconds of [2700, 2701, 2760]) {
     const result = await runScript(t, heartbeatScript, {
-      MOCK_HEALTH_BODY: JSON.stringify({ checks: { watchdog: { lastSweepAt: new Date((nowEpoch - ageSeconds) * 1000).toISOString() } } }),
+      MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', checks: { watchdog: { lastSweepAt: new Date((nowEpoch - ageSeconds) * 1000).toISOString() } } }),
     });
-    assert.equal(result.status, expected, `age=${ageSeconds}: ${result.stderr}`);
+    assert.equal(result.status, 0, `age=${ageSeconds}: ${result.stderr}`);
   }
 });
 
@@ -372,10 +381,9 @@ test('heartbeat fails closed when the URL or persisted heartbeat is unconfigured
   assert.equal(missingUrl.calls, '');
 
   const missingHeartbeat = await runScript(t, heartbeatScript, {
-    MOCK_HEALTH_BODY: JSON.stringify({ checks: { watchdog: { lastSweepAt: null } } }),
+    MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', checks: { watchdog: { lastSweepAt: null } } }),
   });
-  assert.equal(missingHeartbeat.status, 1);
-  assert.match(missingHeartbeat.stderr, /::error::.*unconfigured or missing/i);
+  assert.equal(missingHeartbeat.status, 0);
 
   const failedHealth = await runScript(t, heartbeatScript, {
     MOCK_HEALTH_STATUS: '503',

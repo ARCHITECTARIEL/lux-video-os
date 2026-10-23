@@ -70,6 +70,7 @@ mock.module('../../lib/video-os-observability.js', { namedExports: {
 } });
 
 mock.module('../../lib/video-os-watchdog-notify.js', { namedExports: {
+  claimWatchdogEscalation: async () => true,
   notifyWatchdogSweep: async (result) => {
     if (result.recovered || result.timedOut || result.alerted || result.released) notifications++;
   },

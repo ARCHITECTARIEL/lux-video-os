@@ -353,7 +353,7 @@ test('ops persistence diagnostic allow-lists fields and counts failures without 
   console.error = line => lines.push(String(line));
   try {
     const error = Object.assign(new Error('postgres://FAKE1@db.invalid/app password=FAKE1 person@example.invalid SENTINEL'), {
-      code: '23505', constraint: 'ops_events_unique', table: 'ops_events', column: 'event',
+      code: '23505', constraint: 'ops_events_pkey', table: 'ops_events', column: 'event',
       detail: 'postgres://FAKE1@db.invalid/app password=FAKE1 person@example.invalid SENTINEL',
     });
     assert.equal(await writeOpsEvent({ event: 'watchdog_heartbeat' }, async () => { throw error; }), false);
@@ -361,11 +361,34 @@ test('ops persistence diagnostic allow-lists fields and counts failures without 
   const logged = JSON.parse(lines[0]);
   assert.deepEqual(Object.fromEntries(['event', 'code', 'table', 'operation', 'opsEvent', 'errorClass', 'pgCode', 'constraint', 'pgTable', 'column', 'severity', 'failureCount'].map(key => [key, logged[key]])), {
     event: 'ops.persist.failed', code: 'OPS_PERSIST_FAILED', table: 'ops_events', operation: 'insert',
-    opsEvent: 'watchdog_heartbeat', errorClass: 'Error', pgCode: '23505', constraint: 'ops_events_unique',
+    opsEvent: 'watchdog_heartbeat', errorClass: 'Error', pgCode: '23505', constraint: 'ops_events_pkey',
     pgTable: 'ops_events', column: 'event', severity: 'error', failureCount: before + 1,
   });
   assert.equal(getOpsPersistFailureCount(), before + 1);
   assert.doesNotMatch(lines[0], /postgres:\/\/|password=|person@example|SENTINEL|FAKE1/);
+});
+
+test('ops persistence diagnostic drops unknown identifiers and codes and survives throwing getters', async () => {
+  const original = console.error;
+  const lines = [];
+  console.error = line => lines.push(JSON.parse(line));
+  try {
+    const unknown = Object.assign(new Error('private'), {
+      name: 'InjectedFailure', code: 'ZZZZZ', constraint: 'private_constraint',
+      table: 'private_table', column: 'private_column',
+    });
+    await writeOpsEvent({ event: 'watchdog_heartbeat' }, async () => { throw unknown; });
+    const throwing = new Error('private');
+    for (const key of ['name', 'code', 'constraint', 'table', 'column']) {
+      Object.defineProperty(throwing, key, { get() { throw new Error('private'); } });
+    }
+    await writeOpsEvent({ event: 'watchdog_heartbeat' }, async () => { throw throwing; });
+  } finally { console.error = original; }
+  assert.equal(lines.length, 2);
+  for (const line of lines) {
+    assert.equal(line.errorClass, 'Error');
+    for (const key of ['pgCode', 'constraint', 'pgTable', 'column']) assert.equal(Object.hasOwn(line, key), false);
+  }
 });
 
 test('ops persistence failures age out of the health window', async () => {

@@ -15,6 +15,7 @@ import { assertDatabaseConfigured, database } from '../db/client.js';
 import { addUploadMediaAsset, claimWorkflowStart, ensureAccount, finalizeReadyJob, getJob, markJobFailedAndRelease, reserveRender, transitionJob } from '../db/repositories.js';
 import { entitlements, users } from '../db/schema.js';
 import adminHandler from '../routes/video-os-lite/admin.js';
+import { createAdminHandler } from '../routes/video-os-lite/admin.js';
 import { makeSession } from '../lib/video-os-account.js';
 import { getPrivateBlob, PRIVATE_BLOB_CLASSIFICATIONS, putPrivateBlob } from '../lib/video-os-private-blob.js';
 import { isTesterAccountId } from '../lib/video-os-testers.js';
@@ -54,6 +55,23 @@ function response() {
     end(body) { this.body = body ? JSON.parse(body) : undefined; },
   };
 }
+
+test('admin 5xx exposes only approved app codes while 4xx adds no code', async () => {
+  for (const [statusCode, sourceCode, expectedCode] of [
+    [503, 'stripe_not_configured', 'stripe_not_configured'],
+    [503, 'private_error_code', 'admin_internal_error'],
+    [400, 'private_error_code', undefined],
+  ]) {
+    const handler = createAdminHandler({
+      resolveAdminActor: () => 'admin_token', opsWriter: async () => {},
+      reconcileStripePayments: async () => { throw Object.assign(new Error('Test rejection'), { statusCode, code: sourceCode }); },
+    });
+    const res = response();
+    await handler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=stripe-reconciliation', body: {} }), res);
+    assert.equal(res.statusCode, statusCode);
+    assert.equal(res.body.code, expectedCode);
+  }
+});
 
 test('admin route rejects requests with neither a valid admin cookie nor bearer token', async () => {
   const res = response();

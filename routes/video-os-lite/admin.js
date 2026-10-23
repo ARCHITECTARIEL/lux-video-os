@@ -46,6 +46,7 @@ const ACTIVITY_MAX_OFFSET = 10_000;
 const OPS_LEVELS = new Set(['info', 'warn', 'error']);
 const CRON_OPERATIONS = new Set(['watchdog-sweep', 'stripe-reconciliation']);
 const WATCHDOG_CRON_PATH = '/api/video-os-lite/watchdog-cron';
+const ADMIN_5XX_CODES = new Set(['stripe_not_configured', 'watchdog_dependencies_unhealthy', 'watchdog_heartbeat_unpersisted']);
 
 function boundedQueryText(value, label, maxLength = 128) {
   const text = String(value || '').trim();
@@ -596,7 +597,7 @@ export function createAdminHandler(deps = {}) {
         captureRouteError(error, { route: 'admin', failureCategory: error?.failureCategory || 'ADMIN' });
         if (res.headersSent) return; // a streaming response (operation=video) may have already started
         const status = Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode <= 599 ? error.statusCode : 500;
-        const code = typeof error?.code === 'string' && /^[a-z][a-z0-9_]{2,63}$/.test(error.code) ? error.code : 'admin_internal_error';
+        const code = ADMIN_5XX_CODES.has(error?.code) ? error.code : 'admin_internal_error';
         send(res, status, { ok: false, error: status < 500 ? error.message : 'Admin request failed.', ...(status >= 500 ? { code } : {}) });
       }
     } finally {

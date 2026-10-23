@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { watchdogEscalateHours, watchdogSeverity } from '../lib/video-os-watchdog.js';
+
+test('watchdog defaults to 24 hours and escalates at the inclusive job-age cutoff', () => {
+  assert.equal(watchdogEscalateHours({}), 24);
+  assert.equal(watchdogSeverity(24 * 60 - 1, {}), 'warn');
+  assert.equal(watchdogSeverity(24 * 60, {}), 'critical');
+  assert.equal(watchdogSeverity(24 * 60 + 1, {}), 'critical');
+  assert.equal(watchdogSeverity(2 * 60 - 1, { VIDEO_OS_WATCHDOG_ESCALATE_HOURS: '2' }), 'warn');
+  assert.equal(watchdogSeverity(2 * 60, { VIDEO_OS_WATCHDOG_ESCALATE_HOURS: '2' }), 'critical');
+});
 
 test('every known video job status has a watchdog disposition', () => {
   // video_jobs.status is free text; this transition map is the code's status list.

@@ -929,3 +929,8 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Commit `11d310b` restored the overall `/api/health` `degraded` vocabulary for non-fail states and the watchdog check's prior `critical: false` flag. Per-check statuses remain `ok|warn|fail`; HTTP 503 is reserved for overall `fail`.
 - Ops persistence health now counts a bounded 15-minute window of failure timestamps, while the diagnostic log's `failureCount` remains lifetime per process. The watchdog shell check permits a watchdog-only 503 recovery sweep and rejects ops persistence failures; heartbeat continues to reject 503.
 - The requested offline Node suite passed: 111 tests, 102 passed, 9 environment-gated skips, 0 failed. Import, Node syntax, Bash syntax, and diff checks passed. No network, push, deployment, migration, or live provider/database action occurred.
+## 2026-10-23 - alerts and logging QA correction (local candidate)
+
+- Restricted watchdog sweep 503 to production, added first-sweep grace, bounded future skew and unreadable-sweep warning, and aligned job-age thresholds at the inclusive escalation boundary. Public health omits stale-job age and ops failure count.
+- Demoted the local ops persistence counter to a non-critical diagnostic and removed it from the recovery sweep gate. Heartbeat paging now follows the health response's 503/fail decision.
+- Added transaction-scoped `ops_events` escalation claims for per-job critical dedupe and warning re-notification, plus explicit allow-lists for database error diagnostics and admin 5xx codes. No schema change or external release was made.

@@ -11,6 +11,7 @@ let recoveryCalls = 0;
 let releaseCalls = 0;
 let alerts = 0;
 let notifications = 0;
+const sentryLevels = [];
 const claimed = new Set();
 const claimArgs = [];
 
@@ -43,7 +44,11 @@ mock.module('../../lib/video-os-render-driver.js', { namedExports: {
 mock.module('../../lib/video-os-observability.js', { namedExports: {
   captureJobError: () => { alerts++; },
 } });
+mock.module('@sentry/node', { namedExports: {
+  withScope: callback => callback({ setLevel: level => sentryLevels.push(level) }),
+} });
 mock.module('../../lib/video-os-watchdog-notify.js', { namedExports: {
+  claimWatchdogEscalation: async () => true,
   notifyWatchdogSweep: async result => {
     if (result.recovered || result.timedOut || result.alerted || result.released) notifications++;
   },
@@ -79,6 +84,7 @@ assert.equal(notifications - beforeMixed.notifications, 1);
 assert.deepEqual(claimArgs.at(-1).map(current => current.id), [secondJob.id, job.id]);
 const completed = mixed.find(result => result.claimConflicts === 0);
 assert.equal(completed.severity, 'critical');
+assert.ok(sentryLevels.includes('fatal'), 'first critical escalation must use Sentry fatal level');
 assert.ok(completed.oldestStaleAgeMinutes >= 31 * 24 * 60 - 1);
 assert.deepEqual(completed.staleJobs.map(item => item.jobId), [secondJob.id, job.id]);
 assert.ok(completed.staleJobs.every(item => item.ageMinutes > item.staleMinutes));

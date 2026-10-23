@@ -3,7 +3,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { postWatchdogAlertSlack, sendWatchdogAlertEmail } from '../lib/video-os-notifications.js';
-import { notifyWatchdogSweep } from '../lib/video-os-watchdog-notify.js';
+import { claimWatchdogEscalation, notifyWatchdogSweep } from '../lib/video-os-watchdog-notify.js';
+
+test('escalation claims critical once and warn again only after six hours using an injectable store', async () => {
+  const claims = new Map();
+  const store = async ({ jobId, level, at, intervalMs }) => {
+    const key = `${jobId}:${level}`;
+    const last = claims.get(key);
+    if (last && (level === 'critical' || at - last < intervalMs)) return false;
+    claims.set(key, at);
+    return true;
+  };
+  const at = '2026-10-15T00:00:00Z';
+  const gate = (jobId, level, hours = 0, env = {}) => claimWatchdogEscalation(jobId, level, {
+    store, env, now: () => new Date(Date.parse(at) + hours * 60 * 60_000),
+  });
+  assert.equal(await gate('job-a', 'critical'), true);
+  assert.equal(await gate('job-a', 'critical', 24), false);
+  assert.equal(await gate('job-b', 'critical'), true);
+  assert.equal(await gate('job-a', 'warn'), true);
+  assert.equal(await gate('job-a', 'warn', 5.99), false);
+  assert.equal(await gate('job-a', 'warn', 6), true);
+  assert.equal(await gate('job-a', 'warn', 7, { VIDEO_OS_WATCHDOG_RENOTIFY_HOURS: '2' }), false);
+  assert.equal(await gate('job-a', 'warn', 8, { VIDEO_OS_WATCHDOG_RENOTIFY_HOURS: '2' }), true);
+  assert.equal(await gate('bad/id', 'critical'), false);
+});
 
 const originalFetch = globalThis.fetch;
 const ENV_KEYS = ['RESEND_API_KEY', 'AUTH_FROM_EMAIL', 'WATCHDOG_ALERT_EMAIL', 'WATCHDOG_SLACK_WEBHOOK_URL', 'VIDEO_OS_PUBLIC_ORIGIN'];

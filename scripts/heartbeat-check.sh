@@ -14,8 +14,6 @@ base_url="${VIDEO_OS_BASE_URL:-}"
 curl_bin="${CURL_BIN:-curl}"
 source "$(dirname "${BASH_SOURCE[0]}")/main-head-grace.sh"
 
-max_age_seconds=2700
-
 if [[ -z "$base_url" ]]; then
   error 'Heartbeat configuration is incomplete. Configure VIDEO_OS_BASE_URL.'
   exit 1
@@ -42,6 +40,10 @@ if ! status=$("$curl_bin" \
   exit 1
 fi
 
+if [[ "$status" == '503' ]]; then
+  error 'Heartbeat health returned HTTP 503.'
+  exit 1
+fi
 if [[ "$status" != '200' ]]; then
   error "Heartbeat health request failed with HTTP $status."
   exit 1
@@ -60,38 +62,15 @@ if [[ "$content_type" != application/json* ]]; then
   exit 1
 fi
 
-last_sweep_epoch=''
-if ! last_sweep_epoch=$(node - "$work_dir/health.body" 2>/dev/null <<'NODE'
+health_status=''
+if ! health_status=$(node - "$work_dir/health.body" 2>/dev/null <<'NODE'
 const fs = require('node:fs');
 const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const lastSweepAt = value?.checks?.watchdog?.lastSweepAt;
-if (typeof lastSweepAt !== 'string' || lastSweepAt.length === 0) process.exit(1);
-const milliseconds = Date.parse(lastSweepAt);
-if (!Number.isFinite(milliseconds)) process.exit(1);
-process.stdout.write(String(Math.floor(milliseconds / 1000)));
+if (!['ok', 'degraded'].includes(value?.status)) process.exit(1);
+process.stdout.write(value.status);
 NODE
 ); then
-  error 'Watchdog heartbeat is unconfigured or missing from checks.watchdog.lastSweepAt.'
+  error 'Heartbeat health response has no valid non-failing status.'
   exit 1
 fi
-
-now_epoch="${NOW_EPOCH:-$(date +%s)}"
-if [[ ! "$now_epoch" =~ ^[0-9]+$ ]]; then
-  error 'NOW_EPOCH must be Unix seconds when supplied.'
-  exit 1
-fi
-
-age_seconds=$((now_epoch - last_sweep_epoch))
-if (( age_seconds < 0 )); then
-  error 'Watchdog heartbeat timestamp is in the future.'
-  exit 1
-fi
-
-if (( age_seconds > max_age_seconds )); then
-  age_minutes=$((age_seconds / 60))
-  error "Watchdog heartbeat is stale (${age_minutes} minutes old; maximum is 45 minutes)."
-  exit 1
-fi
-
-age_minutes=$((age_seconds / 60))
-printf 'Watchdog heartbeat is current (%s minutes old).\n' "$age_minutes"
+printf 'Heartbeat health is %s.\n' "$health_status"
