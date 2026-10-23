@@ -21,12 +21,33 @@ test('escalation claims critical once and warn again only after six hours using 
   assert.equal(await gate('job-a', 'critical'), true);
   assert.equal(await gate('job-a', 'critical', 24), false);
   assert.equal(await gate('job-b', 'critical'), true);
+  // The real store's critical marker covers warn during the same window.
   assert.equal(await gate('job-a', 'warn'), true);
   assert.equal(await gate('job-a', 'warn', 5.99), false);
   assert.equal(await gate('job-a', 'warn', 6), true);
   assert.equal(await gate('job-a', 'warn', 7, { VIDEO_OS_WATCHDOG_RENOTIFY_HOURS: '2' }), false);
   assert.equal(await gate('job-a', 'warn', 8, { VIDEO_OS_WATCHDOG_RENOTIFY_HOURS: '2' }), true);
   assert.equal(await gate('bad/id', 'critical'), false);
+});
+
+test('terminal release and timeout notify even with an empty escalation ID list', async (t) => {
+  t.after(restore);
+  process.env.RESEND_API_KEY = 'test-only';
+  process.env.AUTH_FROM_EMAIL = 'ops@example.invalid';
+  process.env.WATCHDOG_ALERT_EMAIL = 'ops@example.invalid';
+  delete process.env.WATCHDOG_SLACK_WEBHOOK_URL;
+  const sent = [];
+  globalThis.fetch = async (_url, options) => {
+    sent.push(JSON.parse(options.body).text);
+    return new Response(JSON.stringify({ id: 'test' }), { status: 200 });
+  };
+  await notifyWatchdogSweep(cleanResult({ released: 1, notificationJobIds: [],
+    jobs: { recovery: [], alertedIds: [], releasedIds: ['released-job'] } }));
+  await notifyWatchdogSweep(cleanResult({ timedOut: 1, notificationJobIds: [],
+    jobs: { recovery: [{ jobId: 'timeout-job', outcome: 'timed_out' }], alertedIds: [], releasedIds: [] } }));
+  assert.equal(sent.length, 2);
+  assert.match(sent[0], /released-job/);
+  assert.match(sent[1], /timeout-job/);
 });
 
 const originalFetch = globalThis.fetch;

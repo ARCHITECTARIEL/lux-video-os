@@ -403,6 +403,18 @@ test('ops persistence failures age out of the health window', async () => {
   assert.ok(getOpsPersistFailureCount({ windowMs: 20 * 60_000, now: () => Date.now() + 15 * 60_000 }) >= 1);
 });
 
+test('recent ops persistence failures remain capped under a burst', async () => {
+  const { getOpsPersistFailureCount } = await import('../lib/ops-log.js');
+  const original = console.error;
+  console.error = () => {};
+  try {
+    for (let index = 0; index < 260; index++) {
+      await writeOpsEvent({ event: 'watchdog_heartbeat' }, async () => { throw new Error('offline'); });
+    }
+  } finally { console.error = original; }
+  assert.equal(getOpsPersistFailureCount(), 256);
+});
+
 test('ops persistence remains best effort when diagnostic output fails', async () => {
   const original = console.error;
   console.error = () => { throw new Error('FAKE1'); };

@@ -351,7 +351,7 @@ test('watchdog rejects HTML workspace responses and non-JSON unknown API fallbac
   assert.match(unknownHtml.stderr, /::error::.*unknown API.*application\/json/i);
 });
 
-test('heartbeat pages only when health returns 503 or fail', { skip: !bashAvailable }, async (t) => {
+test('heartbeat accepts recent or nonproduction degraded health but rejects a fail status', { skip: !bashAvailable }, async (t) => {
   const recent = await runScript(t, heartbeatScript, {
     MOCK_HEALTH_BODY: JSON.stringify({ status: 'ok', checks: { watchdog: { lastSweepAt: new Date((nowEpoch - 600) * 1000).toISOString() } } }),
   });
@@ -359,19 +359,30 @@ test('heartbeat pages only when health returns 503 or fail', { skip: !bashAvaila
   assert.match(recent.stdout, /health is ok/);
 
   const stale = await runScript(t, heartbeatScript, {
-    MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', checks: { watchdog: { lastSweepAt: new Date((nowEpoch - 3600) * 1000).toISOString() } } }),
+    MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', env: 'preview', checks: { watchdog: { lastSweepAt: new Date((nowEpoch - 3600) * 1000).toISOString() } } }),
   });
   assert.equal(stale.status, 0);
   assert.match(stale.stdout, /health is degraded/);
+  const fail = await runScript(t, heartbeatScript, { MOCK_HEALTH_BODY: JSON.stringify({ status: 'fail', env: 'production' }) });
+  assert.equal(fail.status, 1);
 });
 
-test('heartbeat does not independently page on sweep age', { skip: !bashAvailable }, async (t) => {
+test('heartbeat alarms on production sweep age beyond 45 minutes and an unreadable sweep', { skip: !bashAvailable }, async (t) => {
   for (const ageSeconds of [2700, 2701, 2760]) {
     const result = await runScript(t, heartbeatScript, {
-      MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', checks: { watchdog: { lastSweepAt: new Date((nowEpoch - ageSeconds) * 1000).toISOString() } } }),
+      MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', env: 'production', checks: { watchdog: { code: 'watchdog_stale', lastSweepAt: new Date((nowEpoch - ageSeconds) * 1000).toISOString() } } }),
     });
-    assert.equal(result.status, 0, `age=${ageSeconds}: ${result.stderr}`);
+    assert.equal(result.status, ageSeconds > 2700 ? 1 : 0, `age=${ageSeconds}: ${result.stderr}`);
   }
+  const unreadable = await runScript(t, heartbeatScript, { MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', env: 'production', checks: { watchdog: { code: 'watchdog_unreadable', lastSweepAt: null } } }) });
+  assert.equal(unreadable.status, 1);
+  assert.match(unreadable.stderr, /watchdog_unreadable/);
+  const preview = await runScript(t, heartbeatScript, { MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', env: 'preview', checks: { watchdog: { code: 'watchdog_unreadable' } } }) });
+  assert.equal(preview.status, 0);
+  const grace = await runScript(t, heartbeatScript, { MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', env: 'production', startedAt: new Date((nowEpoch - 600) * 1000).toISOString(), checks: { watchdog: { code: 'watchdog_missing' } } }) });
+  assert.equal(grace.status, 0);
+  const expiredGrace = await runScript(t, heartbeatScript, { MOCK_HEALTH_BODY: JSON.stringify({ status: 'degraded', env: 'production', startedAt: new Date((nowEpoch - 1200) * 1000).toISOString(), checks: { watchdog: { code: 'watchdog_missing' } } }) });
+  assert.equal(expiredGrace.status, 1);
 });
 
 test('heartbeat fails closed when the URL or persisted heartbeat is unconfigured', { skip: !bashAvailable }, async (t) => {

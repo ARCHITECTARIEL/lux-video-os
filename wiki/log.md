@@ -942,3 +942,10 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Demoted the local ops persistence counter to a non-critical diagnostic and removed it from the recovery sweep gate. Heartbeat paging now follows the health response's 503/fail decision.
 - Added transaction-scoped `ops_events` escalation claims for per-job critical dedupe and warning re-notification, plus explicit allow-lists for database error diagnostics and admin 5xx codes. No schema change or external release was made.
 - Committed the correction locally as `3270d60` on `rel/alerts-logging-1023`. The requested offline wrapper passed 117 tests: 108 passed, 9 database-gated skips, 0 failed. Import, syntax, and diff checks passed. Live escalation-marker transaction behavior remains unverified; no network, provider, migration, deployment, or push action occurred.
+
+## 2026-10-23 - [REL-BUNDLE-1023] [watchdog-QA-r2]
+
+- Escalation-store exceptions now use a bounded per-instance claim fallback and emit one sanitized log plus one Sentry warning per affected sweep. Terminal credit-release and provider-timeout notifications bypass stuck-job deduplication.
+- A persisted critical marker covers warnings until the renotify window expires. The production heartbeat alarms when the last sweep is over 45 minutes old or unreadable; first-sweep grace remains per instance.
+- Added offline regression coverage for store failure and recovery, Sentry deduplication, warn fallback, critical coverage, terminal notifications, heartbeat boundaries, and the bounded ops persistence failure window. No provider, database, schema, deployment, or network action was taken.
+- Final safe-wrapper run: 91 tests, 83 passed, 8 database-gated skips, 0 failed. Import, JavaScript/Bash syntax, and diff checks passed. Live database transaction behavior remains unverified.

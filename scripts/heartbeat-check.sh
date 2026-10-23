@@ -62,15 +62,31 @@ if [[ "$content_type" != application/json* ]]; then
   exit 1
 fi
 
-health_status=''
-if ! health_status=$(node - "$work_dir/health.body" 2>/dev/null <<'NODE'
+health_fields=''
+if ! health_fields=$(node - "$work_dir/health.body" 2>/dev/null <<'NODE'
 const fs = require('node:fs');
 const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 if (!['ok', 'degraded'].includes(value?.status)) process.exit(1);
-process.stdout.write(value.status);
+const watchdog = value.checks?.watchdog;
+const nowEpoch = Number(process.env.NOW_EPOCH || Math.floor(Date.now() / 1000));
+const sweepEpoch = Date.parse(watchdog?.lastSweepAt) / 1000;
+const stale = Number.isFinite(sweepEpoch) && nowEpoch - sweepEpoch > 45 * 60;
+const unreadable = watchdog?.code === 'watchdog_unreadable';
+const missing = watchdog?.code === 'watchdog_missing';
+const startedEpoch = Date.parse(value.startedAt) / 1000;
+const firstSweepGrace = missing && Number.isFinite(startedEpoch)
+  && nowEpoch >= startedEpoch && nowEpoch - startedEpoch < 20 * 60;
+const alarm = value.env === 'production' && (stale || unreadable || (missing && !firstSweepGrace));
+process.stdout.write(`${value.status}\n${alarm ? watchdog?.code || 'watchdog_stale' : ''}`);
 NODE
 ); then
   error 'Heartbeat health response has no valid non-failing status.'
+  exit 1
+fi
+health_status="$(printf '%s\n' "$health_fields" | sed -n '1p')"
+watchdog_alarm="$(printf '%s\n' "$health_fields" | sed -n '2p')"
+if [[ -n "$watchdog_alarm" ]]; then
+  error "Heartbeat watchdog alarm: $watchdog_alarm."
   exit 1
 fi
 printf 'Heartbeat health is %s.\n' "$health_status"
