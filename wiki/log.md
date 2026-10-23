@@ -895,3 +895,14 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 
 - Independent review found missing native dependency preflight, a false-green GitHub fallback on heartbeat persistence failure, and duplicate-side-effect risk from overlapping sweeps. Added fail-closed DB/Blob/provider checks, shared persisted-heartbeat failure responses, and an atomic ten-minute whole-batch claim using the existing rate-limit table. A later review also found a reserved-job transition race; timeout and reserved-only releases now require the exact selected status/update timestamp and report only completed transitions. Claim conflicts do no provider/job/alert work and cannot advance the heartbeat.
 - Synthetic concurrent-delivery, batch rollback, transition-race and HTTP regression checks passed. Full local unit gate: 1,257 Node passed, 51 configured live skips, zero failures; Vitest four passed. Import, strict Workflow, client privacy, migration-snapshot, preview preflight and diff checks passed. Independent re-review found no remaining concrete high or medium source issue. These are local results pending a new exact-head remote check. No production sweep, deployment, provider, database migration, credit or environment change occurred.
+
+## 2026-10-23T14:25:42Z - [closure-writeback] [copywriter-retries] [P1-follow-up]
+
+- Set `generateCopy` to `maxRetries: 2` with a comment to use 0 only when a fallback model is added; updated the service assertion to expect 2.
+- `node --test tests/copywriter.test.mjs tests/copywriter-service.test.mjs`: 33 passed, 1 environment-gated skip, 0 failed. No commit or network access.
+
+## 2026-10-23T15:57:55Z - [closure-writeback] [CORE-COPY-FIX-1023] [QA-security]
+
+- Replaced provider free-text and permissive diagnostic filtering with fixed messages and allow-listed codes, categories, names, and types at both log and `ops_events` boundaries. Added short-brief and nested-error leak regressions; kept the client error category unchanged.
+- Accepted Vercel OIDC from the request header or environment, removed the token line from the example file, and capped copywriter output at 4096 tokens.
+- Offline focused tests with `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset: 37 passed, 1 DB-gated skip, 0 failed. Import and diff checks passed. Gitleaks found no findings in changed files; the full worktree still has 26 findings elsewhere. The requested QA report was absent from its supplied path. No provider, network, migration, deployment, or push action occurred.

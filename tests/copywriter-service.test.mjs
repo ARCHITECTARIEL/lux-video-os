@@ -16,7 +16,9 @@
 // Gateway endpoint or trying to fake its wire format via fetch.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEFAULT_COPYWRITER_MODEL, generateCopy } from '../services/copywriter.js';
+import { RetryError } from 'ai';
+import { GatewayAuthenticationError, GatewayModelNotFoundError } from '@ai-sdk/gateway';
+import { DEFAULT_COPYWRITER_MODEL, MAX_COPYWRITER_OUTPUT_TOKENS, describeProviderError, gatewayAuthMode, generateCopy, statusClass } from '../services/copywriter.js';
 
 const validPayload = {
   operation: 'draft',
@@ -71,17 +73,53 @@ test('a TimeoutError from the SDK call also maps to 504 generation_timeout (both
   );
 });
 
-test('an unrelated provider error (not an abort) maps to a generic 502 generation_failed, with the original error preserved as `cause`', async () => {
+test('an unrelated provider error maps to a safe 502 without retaining the raw cause', async () => {
   const providerError = Object.assign(new Error('Gateway returned 500'), { name: 'APIError' });
   await assert.rejects(
     generateCopy(validPayload, { generateTextFn: async () => { throw providerError; } }),
     (error) => {
       assert.equal(error.statusCode, 502);
-      assert.equal(error.code, 'generation_failed');
-      assert.equal(error.cause, providerError, 'the original SDK error must be preserved for server-side log correlation, not swallowed');
+      assert.equal(error.code, 'copywriter_provider_error');
+      assert.equal(error.cause, undefined);
+      assert.equal(error.providerDetail.errorName, 'APIError');
       return true;
     },
   );
+});
+
+test('provider classifications use SDK error shapes and retry lastError', async () => {
+  const cases = [
+    [new GatewayAuthenticationError(), 'auth', 502],
+    [new GatewayModelNotFoundError(), 'model', 502],
+    [Object.assign(new Error('funds'), { statusCode: 402, type: 'insufficient_funds' }), 'billing', 502],
+    [new RetryError({ message: 'retry', reason: 'maxRetriesExceeded', errors: Array.from({ length: 3 }, () => Object.assign(new Error('limited'), { statusCode: 429 })) }), 'rate_limit', 502],
+    [Object.assign(new Error('timeout'), { name: 'GatewayTimeoutError' }), 'timeout', 504],
+  ];
+  for (const [providerError, category, status] of cases) {
+    await assert.rejects(generateCopy(validPayload, { generateTextFn: async () => { throw providerError; } }), error => {
+      assert.equal(error.statusClass, category);
+      assert.equal(error.statusCode, status);
+      if (category === 'rate_limit') assert.deepEqual([error.providerDetail.retryWrapped, error.providerDetail.attempts], [true, 3]);
+      return true;
+    });
+  }
+});
+
+test('provider detail contains only safe keys and prompt echo is discarded', () => {
+  const detail = describeProviderError(Object.assign(new Error('Topic: SENTINEL_TOPIC_7f3a'), { headers: { Authorization: 'Bearer secret' }, requestBodyValues: 'secret' }), { forbidden: ['Topic: SENTINEL_TOPIC_7f3a'] });
+  assert.deepEqual(Object.keys(detail), ['errorName', 'errorCode', 'providerStatus', 'providerErrorType', 'generationId', 'retryWrapped', 'attempts', 'message']);
+  assert.equal(detail.message, 'AI writing could not be completed.');
+  assert.equal(statusClass(detail), 'upstream');
+  assert.equal(describeProviderError(new Error('wrapper', { cause: Object.assign(new Error('limited'), { statusCode: 429 }) })).providerStatus, 429);
+  assert.equal(statusClass(describeProviderError(Object.assign(new Error('timeout', { cause: new Error('inner') }), { name: 'GatewayTimeoutError' }))), 'timeout');
+});
+
+test('gateway auth mode prioritizes key, then OIDC, without returning credentials', () => {
+  assert.equal(gatewayAuthMode({}), 'none');
+  assert.equal(gatewayAuthMode({ VERCEL_OIDC_TOKEN: 'fake-oidc' }), 'oidc');
+  assert.equal(gatewayAuthMode({ VERCEL_OIDC_TOKEN: 'fake-oidc', AI_GATEWAY_API_KEY: 'fake-key' }), 'api-key');
+  assert.equal(gatewayAuthMode({}, { 'x-vercel-oidc-token': 'header-value' }), 'oidc');
+  assert.equal(gatewayAuthMode({}, { 'X-Vercel-Oidc-Token': 'header-value' }), 'oidc');
 });
 
 test('the configured model and prompt are actually passed through to the SDK call, and default to DEFAULT_COPYWRITER_MODEL', async () => {
@@ -93,6 +131,16 @@ test('the configured model and prompt are actually passed through to the SDK cal
   assert.match(receivedArgs.prompt, /espresso blend/, 'the brief must actually reach the prompt sent to the model');
   assert.match(receivedArgs.system, /900 characters/, 'the system prompt must state the length constraint the truncation above enforces server-side too');
   assert.ok(receivedArgs.abortSignal instanceof AbortSignal, 'a real timeout signal must be wired, not omitted');
+  assert.equal(receivedArgs.maxRetries, 2);
+  assert.equal(receivedArgs.maxOutputTokens, 400);
+});
+
+test('configured output token cap is passed to the mocked SDK call', async () => {
+  let received;
+  await generateCopy(validPayload, { maxOutputTokens: 123, generateTextFn: async args => { received = args; return { text: 'ok', finishReason: 'stop' }; } });
+  assert.equal(received.maxOutputTokens, 123);
+  await generateCopy(validPayload, { maxOutputTokens: 100_000, generateTextFn: async args => { received = args; return { text: 'ok', finishReason: 'stop' }; } });
+  assert.equal(received.maxOutputTokens, MAX_COPYWRITER_OUTPUT_TOKENS);
 });
 
 test('an explicit model override is honored instead of the default', async () => {
