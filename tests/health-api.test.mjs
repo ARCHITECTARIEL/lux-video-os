@@ -24,7 +24,7 @@ async function health(method = 'GET', overrides = {}, deps = {}) {
       ...overrides,
     },
     dbProbe: async () => {}, lastSweep: async () => '2026-10-15T00:00:00.000Z',
-    now: () => new Date('2026-10-15T00:10:00.000Z'), ...deps,
+    now: () => new Date('2026-10-15T00:10:00.000Z'), opsFailures: () => 0, ...deps,
   })({ method }, res);
   return res;
 }
@@ -52,29 +52,30 @@ test('health reports an ok JSON response with identity, checks, and short CDN ca
   assert.equal(body.checks.watchdog.ok, true);
 });
 
-test('production health degrades when the sweep is missing, future-dated, or over 45 minutes old', async () => {
-  for (const [lastSweepAt, code] of [
-    [null, 'watchdog_missing'],
-    ['2026-10-15T00:10:01.000Z', 'watchdog_invalid'],
-    ['2026-10-14T23:24:59.000Z', 'watchdog_stale'],
+test('production health fails without a sweep and warns after two intervals', async () => {
+  for (const [lastSweepAt, code, status, http] of [
+    [null, 'watchdog_missing', 'fail', 503],
+    ['2026-10-15T00:10:01.000Z', 'watchdog_invalid', 'fail', 503],
+    ['2026-10-14T23:39:59.000Z', 'watchdog_stale', 'warn', 200],
+    ['2026-10-14T23:09:59.000Z', 'watchdog_stale', 'fail', 503],
   ]) {
     const res = await health('GET', {}, { lastSweep: async () => lastSweepAt });
     const body = JSON.parse(res.body);
-    assert.equal(res.statusCode, 200);
-    assert.equal(body.status, 'degraded');
+    assert.equal(res.statusCode, http);
+    assert.equal(body.status, status);
     assert.equal(body.checks.watchdog.ok, false);
     assert.equal(body.checks.watchdog.code, code);
   }
-  const boundary = await health('GET', {}, { lastSweep: async () => '2026-10-14T23:25:00.000Z' });
+  const boundary = await health('GET', {}, { lastSweep: async () => '2026-10-14T23:40:00.000Z' });
   assert.equal(JSON.parse(boundary.body).checks.watchdog.ok, true);
 });
 
-test('health fails on missing and unavailable DB or Blob; degrades on missing provider', async () => {
+test('health fails on missing and unavailable DB or Blob; warns on missing provider', async () => {
   for (const [env, deps, statusCode, status, check] of [
     [{ DATABASE_URL: '' }, {}, 503, 'fail', 'db'],
     [{}, { dbProbe: async () => { throw new Error('postgres://private.invalid'); } }, 503, 'fail', 'db'],
     [{ BLOB_READ_WRITE_TOKEN: '' }, {}, 503, 'fail', 'blob'],
-    [{ HEYGEN_API_KEY: '' }, {}, 200, 'degraded', 'provider'],
+    [{ HEYGEN_API_KEY: '' }, {}, 200, 'warn', 'provider'],
   ]) {
     const res = await health('GET', env, deps);
     const body = JSON.parse(res.body);
@@ -89,6 +90,21 @@ test('health DB timeout is fail with a sanitized code', async () => {
   const res = await health('GET', {}, { dbProbe: () => new Promise(() => {}) });
   assert.equal(res.statusCode, 503);
   assert.equal(JSON.parse(res.body).checks.db.code, 'db_timeout');
+});
+
+test('health warns for old listed jobs and escalates ops persistence failures', async () => {
+  const stale = await health('GET', {}, { lastSweep: async () => ({
+    lastSweepAt: '2026-10-15T00:00:00.000Z', oldestStaleAgeMinutes: 30 * 24 * 60,
+  }) });
+  assert.equal(stale.statusCode, 200);
+  assert.equal(JSON.parse(stale.body).status, 'warn');
+  assert.equal(JSON.parse(stale.body).checks.watchdog.code, 'watchdog_job_age');
+  for (const [failures, status, http] of [[1, 'warn', 200], [5, 'fail', 503]]) {
+    const res = await health('GET', {}, { opsFailures: () => failures });
+    assert.equal(res.statusCode, http);
+    assert.equal(JSON.parse(res.body).status, status);
+    assert.equal(JSON.parse(res.body).checks.opsPersist.failureCount, failures);
+  }
 });
 
 test('health never echoes configuration secrets and nulls absent deployment identity', async () => {
@@ -112,19 +128,19 @@ test('prebuilt production health reports the source SHA sealed into its function
     VERCEL_GIT_COMMIT_SHA: 'c'.repeat(40), VIDEO_OS_RELEASE_GIT_SHA: sourceSha,
   });
   assert.equal(JSON.parse(conflict.body).gitSha, null);
-  assert.equal(JSON.parse(conflict.body).status, 'degraded');
+  assert.equal(JSON.parse(conflict.body).status, 'warn');
   assert.equal(JSON.parse(conflict.body).checks.releaseIdentity.code, 'release_identity_mismatch');
   const invalid = await health('GET', {
     VERCEL_GIT_COMMIT_SHA: '', VIDEO_OS_RELEASE_GIT_SHA: 'not-a-commit',
   });
   assert.equal(JSON.parse(invalid.body).gitSha, null);
-  assert.equal(JSON.parse(invalid.body).status, 'degraded');
+  assert.equal(JSON.parse(invalid.body).status, 'warn');
   assert.equal(JSON.parse(invalid.body).checks.releaseIdentity.code, 'release_identity_invalid');
   const unsealed = await health('GET', {
     VERCEL_GIT_COMMIT_SHA: sourceSha, VIDEO_OS_RELEASE_GIT_SHA: '',
   });
   assert.equal(JSON.parse(unsealed.body).gitSha, null);
-  assert.equal(JSON.parse(unsealed.body).status, 'degraded');
+  assert.equal(JSON.parse(unsealed.body).status, 'warn');
   assert.equal(JSON.parse(unsealed.body).checks.releaseIdentity.code, 'release_identity_missing');
 });
 

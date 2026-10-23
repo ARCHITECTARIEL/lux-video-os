@@ -287,7 +287,7 @@ test('failed audit persistence emits a distinct alert without leaking the writer
   try {
     assert.equal(await writeOpsEvent({ event: 'admin.credit.granted' }, async () => { throw new Error('private value'); }, { audit: true }), false);
   } finally { console.error = original; }
-  assert.deepEqual(errors.map(({ event, code, auditEvent }) => ({ event, code, auditEvent })), [{ event: 'ops.audit.persist.failed', code: 'OPS_AUDIT_PERSIST_FAILED', auditEvent: 'admin.credit.granted' }]);
+  assert.deepEqual(errors.map(({ event, code, opsEvent }) => ({ event, code, opsEvent })), [{ event: 'ops.audit.persist.failed', code: 'OPS_AUDIT_PERSIST_FAILED', opsEvent: 'admin.credit.granted' }]);
   assert.equal(JSON.stringify(errors).includes('private value'), false);
 });
 
@@ -343,6 +343,37 @@ test('ops writer failure is swallowed and emits only a static diagnostic', async
   assert.equal(lines.length, 1);
   assert.equal(lines[0].includes('secret token'), false);
   assert.equal(JSON.parse(lines[0]).code, 'OPS_PERSIST_FAILED');
+});
+
+test('ops persistence diagnostic allow-lists fields and counts failures without leaking error text', async () => {
+  const { getOpsPersistFailureCount } = await import('../lib/ops-log.js');
+  const before = getOpsPersistFailureCount();
+  const original = console.error;
+  const lines = [];
+  console.error = line => lines.push(String(line));
+  try {
+    const error = Object.assign(new Error('postgres://FAKE1@db.invalid/app password=FAKE1 person@example.invalid SENTINEL'), {
+      code: '23505', constraint: 'ops_events_unique', table: 'ops_events', column: 'event',
+      detail: 'postgres://FAKE1@db.invalid/app password=FAKE1 person@example.invalid SENTINEL',
+    });
+    assert.equal(await writeOpsEvent({ event: 'watchdog_heartbeat' }, async () => { throw error; }), false);
+  } finally { console.error = original; }
+  const logged = JSON.parse(lines[0]);
+  assert.deepEqual(Object.fromEntries(['event', 'code', 'table', 'operation', 'opsEvent', 'errorClass', 'pgCode', 'constraint', 'pgTable', 'column', 'severity', 'failureCount'].map(key => [key, logged[key]])), {
+    event: 'ops.persist.failed', code: 'OPS_PERSIST_FAILED', table: 'ops_events', operation: 'insert',
+    opsEvent: 'watchdog_heartbeat', errorClass: 'Error', pgCode: '23505', constraint: 'ops_events_unique',
+    pgTable: 'ops_events', column: 'event', severity: 'error', failureCount: before + 1,
+  });
+  assert.equal(getOpsPersistFailureCount(), before + 1);
+  assert.doesNotMatch(lines[0], /postgres:\/\/|password=|person@example|SENTINEL|FAKE1/);
+});
+
+test('ops persistence remains best effort when diagnostic output fails', async () => {
+  const original = console.error;
+  console.error = () => { throw new Error('FAKE1'); };
+  try {
+    assert.equal(await writeOpsEvent({ event: 'watchdog_heartbeat' }, async () => { throw new Error('FAKE1'); }), false);
+  } finally { console.error = original; }
 });
 
 test('info event emits exactly one parseable JSON line', () => {

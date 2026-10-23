@@ -147,6 +147,7 @@ test(
       await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=stripe-reconciliation', body: {}, headers: { authorization: 'Bearer proof-admin-token' } }), res);
       assert.equal(res.statusCode, 503, 'this must fail loud, not silently report a clean sweep, when Stripe is not configured -- see .github/workflows/stripe-reconciliation.yml\'s header comment for why');
       assert.equal(res.body.error, 'Admin request failed.');
+      assert.equal(res.body.code, 'stripe_not_configured');
     } finally {
       if (originalToken === undefined) delete process.env.VIDEO_OS_ADMIN_TOKEN;
       else process.env.VIDEO_OS_ADMIN_TOKEN = originalToken;

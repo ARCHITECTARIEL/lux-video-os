@@ -31,6 +31,7 @@ HeyGen inventory defaults use `GET /v3/avatars/looks?ownership=public&limit=50` 
 - `VIDEO_OS_WORKER_INTERVAL`: worker poll interval in seconds.
 - `VIDEO_OS_SCHEDULER=0`: disables scheduler loop.
 - `VIDEO_OS_SCHEDULER_INTERVAL`: scheduler interval in seconds.
+- `VIDEO_OS_WATCHDOG_ESCALATE_HOURS`: job age in hours at which watchdog alerts become critical (default `24`). Age starts at job creation; the health check warns when the oldest listed stale job exceeds this threshold. The native cron runs every 15 minutes; health warns after 30 minutes without a persisted sweep and fails after 60 minutes or if no sweep exists.
 
 ## Required Local Tools
 

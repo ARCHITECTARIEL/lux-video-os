@@ -184,3 +184,25 @@ test('notifyWatchdogSweep never throws when a configured channel itself fails', 
   globalThis.fetch = async () => new Response('server error', { status: 500 });
   await assert.doesNotReject(notifyWatchdogSweep(cleanResult({ alerted: 1, jobs: { recovery: [], alertedIds: ['job-b'] } })));
 });
+
+test('critical stale job notification leads with the oldest age and includes both job ages', async (t) => {
+  t.after(restore);
+  process.env.RESEND_API_KEY = 'FAKE1';
+  process.env.AUTH_FROM_EMAIL = 'ops@example.invalid';
+  process.env.WATCHDOG_ALERT_EMAIL = 'ops@example.invalid';
+  delete process.env.WATCHDOG_SLACK_WEBHOOK_URL;
+  let email;
+  globalThis.fetch = async (_url, options) => {
+    email = JSON.parse(options.body);
+    return new Response(JSON.stringify({ id: 'FAKE1' }), { status: 200 });
+  };
+  await notifyWatchdogSweep(cleanResult({ alerted: 2, severity: 'critical', oldestStaleAgeMinutes: 30 * 24 * 60,
+    staleJobs: [
+      { jobId: 'job-2305', status: 'workflow_started', ageMinutes: 30 * 24 * 60, staleMinutes: 20 },
+      { jobId: 'job-new', status: 'provider_submitting', ageMinutes: 60, staleMinutes: 35 },
+    ],
+    jobs: { recovery: [], alertedIds: ['job-new', 'job-2305'] } }));
+  assert.match(email.subject, /^\[CRITICAL\] job stuck 30d/);
+  assert.match(email.text, /job-2305 \(workflow_started\): age 43200m, stale 20m/);
+  assert.match(email.text, /Job IDs: job-2305, job-new/);
+});
