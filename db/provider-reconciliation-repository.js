@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { identityAllowedAccountIds, isIdentityAccountAllowed } from '../lib/identity-account-allowlist.js';
+import { allowlistSource, identityAllowedAccountIds, isIdentityAccountAllowed } from '../lib/identity-account-allowlist.js';
 import { and, desc, eq, inArray, or } from 'drizzle-orm';
 
 import { database } from './client.js';
@@ -1135,7 +1135,12 @@ export function providerCreationActivationStatus(env = process.env, accountId) {
   const canaryAccountAllowed = isIdentityAccountAllowed(accountId, env);
   const enabled = canaryAccountAllowed && String(env.VIDEO_OS_PROVIDER_CREATION_ENABLED || '').trim().toLowerCase() === 'true';
   let reason = 'verified_provider_account_binding_not_wired';
-  if (!allowedIds.length) reason = 'identity_allowlist_empty';
+  if (!allowedIds.length) {
+    const source = allowlistSource(env);
+    reason = source === 'legacy_pin_mismatch' ? 'legacy_pin_mismatch'
+      : source === 'allowlist_invalid' || source === 'legacy_pin_invalid' ? 'identity_allowlist_invalid'
+        : 'identity_allowlist_empty';
+  }
   else if (!canaryAccountAllowed) reason = 'private_enrollment_canary_active';
   else if (enabled) reason = 'owner_authorized_contained_activation';
   return Object.freeze({

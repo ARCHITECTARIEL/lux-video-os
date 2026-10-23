@@ -98,6 +98,12 @@ test('production enrollment canary permits only its pinned account', () => {
   // Preview enrollment is provider backed too; an empty allowlist now denies it.
   assert.equal(enrollmentAccountAllowed('other-account', { VERCEL_ENV: 'preview' }), false);
   assert.equal(enrollmentAccountAllowed('other-account', { ...env, VERCEL_ENV: 'preview' }), false);
+  const previewListOnly = { VERCEL_ENV: 'preview', VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS: 'owner-account',
+    VIDEO_OS_ENROLLMENT_CANARY_STARTED_AT: '2026-10-04T14:00:00.000Z' };
+  assert.equal(enrollmentAccountAllowed('owner-account', previewListOnly), true);
+  assert.equal(enrollmentAccountAllowed('other-account', previewListOnly), false);
+  assert.throws(() => assertEnrollmentAccountAllowed('other-account', previewListOnly), { statusCode: 403, failureCategory: 'ENTITLEMENT' });
+  assert.equal(enrollmentCanaryStartedAt(previewListOnly), null);
   assert.throws(() => assertEnrollmentAccountAllowed('other-account', env), { statusCode: 403, failureCategory: 'ENTITLEMENT' });
 });
 

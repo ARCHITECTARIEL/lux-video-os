@@ -133,11 +133,34 @@ test('diagnostic reports allowlist metadata without disclosing account IDs', asy
   const result = await evaluateCanaryScope(input);
   assert.equal(result.body.allowlistSource, 'allowlist');
   assert.equal(result.body.allowlistCount, 2);
+  assert.equal(result.body.allowlistInvalidEntryCount, 0);
   assert.equal(result.body.identityProviderPinMatchesCanaryPin, true);
   assert.equal(JSON.stringify(result.body).includes('second-secret-account'), false);
   const mismatch = await evaluateCanaryScope(fixture({ env: { VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID: 'other' } }));
   assert.equal(mismatch.body.allowlistSource, 'legacy_pin_mismatch');
   assert.equal(mismatch.body.allowlistCount, 0);
+  assert.equal(mismatch.body.identityProviderPinMatchesCanaryPin, false);
+  const listedMismatch = await evaluateCanaryScope(fixture({ env: {
+    VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS: ids, VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID: 'other',
+  } }));
+  assert.equal(listedMismatch.body.identityProviderPinMatchesCanaryPin, false);
+  assert.equal(listedMismatch.body.ok, false);
+  const invalid = await evaluateCanaryScope(fixture({ env: {
+    VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS: '"opaque-fixture-pin,second-secret-account"',
+  } }));
+  assert.equal(invalid.body.allowlistSource, 'allowlist_invalid');
+  assert.equal(invalid.body.allowlistCount, 0);
+  assert.equal(invalid.body.allowlistInvalidEntryCount, 1);
+  assert.equal(invalid.body.providerCreationEnabledForExpectedPin, false);
+  assert.equal(invalid.body.ok, false);
+  assert.equal(JSON.stringify(invalid.body).includes('second-secret-account'), false);
+});
+
+test('canary scope checks actual allowlist even when provider status is misreported', async () => {
+  const input = fixture({ env: { VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS: 'different-id' } });
+  const result = await evaluateCanaryScope({ ...input, providerStatus: () => ({ enabled: true }) });
+  assert.equal(result.body.providerCreationEnabledForExpectedPin, false);
+  assert.equal(result.body.canaryScopeAsExpected, false);
 });
 
 test('every required scope condition independently fails the all-expected baseline', async () => {

@@ -67,7 +67,7 @@ test('configured private enrollment canary permits only the exact requesting acc
       enabled: false, reason: 'private_enrollment_canary_active',
     });
   }
-  assert.equal(providerCreationActivationStatus(env, ' owner-account ').enabled, true);
+  assert.equal(providerCreationActivationStatus(env, ' owner-account ').enabled, false);
   assert.deepEqual(providerCreationActivationStatus({ ...env, VIDEO_OS_PROVIDER_CREATION_ENABLED: 'false' }, 'owner-account'), {
     enabled: false, reason: 'verified_provider_account_binding_not_wired',
   });
@@ -77,13 +77,15 @@ test('configured private enrollment canary permits only the exact requesting acc
   assert.equal(providerCreationActivationStatus({ ...env, VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: ' ' }).enabled, false);
 });
 
-test('pinned account comparison rejects case-variant account IDs', () => {
+test('legacy pin IDs must meet exact lowercase ASCII validation', () => {
   const env = {
     VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: 'Owner-Account',
     VIDEO_OS_PROVIDER_CREATION_ENABLED: 'true',
   };
-  assert.equal(providerCreationActivationStatus(env, 'Owner-Account').enabled, true);
+  assert.deepEqual(providerCreationActivationStatus(env, 'Owner-Account'), {
+    enabled: false, reason: 'identity_allowlist_invalid',
+  });
   assert.deepEqual(providerCreationActivationStatus(env, 'owner-account'), {
-    enabled: false, reason: 'private_enrollment_canary_active',
+    enabled: false, reason: 'identity_allowlist_invalid',
   });
 });

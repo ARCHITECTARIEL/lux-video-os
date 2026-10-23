@@ -19,7 +19,7 @@ http://127.0.0.1:8789/dashboard
 - `VIDEO_OS_SESSION_SECRET`: required before any public or client-facing deployment. Use a long random value, keep it server-side, and rotate it if exposed. Without this variable the app runs in local-dev session mode and the Account panel will show `Local only`.
 ## Optional Environment Variables
 
-- `VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS`: comma or whitespace separated account IDs authorized for provider-backed identity creation. Empty or unset without a legacy pin denies every account, even when `VIDEO_OS_PROVIDER_CREATION_ENABLED=true`. The nonempty list overrides legacy pins.
+- `VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS`: comma or whitespace separated account IDs authorized for provider-backed identity creation. Each ID must match `^[a-z0-9_-]{1,80}$` and is compared exactly. Invalid entries are ignored and counted in operator diagnostics; a whole-list quoted value is invalid and denies everyone. Empty or unset without a legacy pin denies every account, even when `VIDEO_OS_PROVIDER_CREATION_ENABLED=true`. A configured list overrides legacy pins.
 - `VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID` and `VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID`: deprecated but honored when the new allowlist is empty or unset. If both are set, they must match; differing pins deny every account.
 - `HEYGEN_API_KEY` or `HEYGEN_TOKEN`: enables HeyGen talent sync and live submission.
 - `HEYGEN_SYNC_TALENT=1`: refreshes HeyGen avatar and voice inventory on startup.

@@ -906,3 +906,9 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 
 - Pinned the test account with the existing enrollment canary setting in the LUXIFY route runtime fixture and workflow child fixture. This preserves the intended fail-closed provider creation behavior and all existing assertions; production code was unchanged.
 - `node --test tests/luxify-route.test.mjs tests/luxify-workflow.test.mjs tests/identity-account-allowlist.test.mjs` passed 18/18. `git diff --check` passed. No network call or commit was made.
+
+## 2026-10-23T15:57:31Z - [closure-writeback] [premium-allowlist-1023] [QA-M1-M2-L1-L3]
+
+- Replaced NFKC and quote folding with exact lowercase ASCII account ID validation. Invalid entries never match; quoted whole lists fail closed even with a legacy pin. Diagnostics count invalid entries without exposing IDs.
+- Preserved the owner-approved legacy pins across enrollment and provider creation. Corrected pin agreement, mismatched-pin reasons, and canary allowlist scope checks. Added regressions for Unicode/case rejection, literal `*`, quoted lists, and Preview list-only enrollment.
+- With `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset, 86 focused Node tests passed. Import, syntax, and diff checks passed. The requested QA report was absent from its supplied path; the user-provided QA items were used as acceptance criteria. No environment-file edit, migration, network/provider call, or push occurred.

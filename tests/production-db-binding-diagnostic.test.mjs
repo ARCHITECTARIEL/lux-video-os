@@ -161,8 +161,18 @@ test('DB binding reports allowlist metadata without disclosing IDs', async () =>
   const result = await evaluateProductionDbBinding(input);
   assert.equal(result.body.allowlistSource, 'allowlist');
   assert.equal(result.body.allowlistCount, 2);
-  assert.equal(result.body.identityProviderPinMatchesCanaryPin, true);
+  assert.equal(result.body.allowlistInvalidEntryCount, 0);
+  assert.equal(result.body.identityProviderPinMatchesCanaryPin, false);
   assert.equal(JSON.stringify(result.body).includes('secret-one'), false);
+  const mismatch = options({ env: { VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS: 'secret-one',
+    VIDEO_OS_ENROLLMENT_CANARY_ACCOUNT_ID: 'first', VIDEO_OS_IDENTITY_PROVIDER_ACCOUNT_ID: 'second' } });
+  assert.equal((await evaluateProductionDbBinding(mismatch)).body.identityProviderPinMatchesCanaryPin, false);
+  const invalid = options({ env: { VIDEO_OS_IDENTITY_ALLOWED_ACCOUNT_IDS: "'first,second'" } });
+  const invalidBody = (await evaluateProductionDbBinding(invalid)).body;
+  assert.equal(invalidBody.allowlistSource, 'allowlist_invalid');
+  assert.equal(invalidBody.allowlistCount, 0);
+  assert.equal(invalidBody.allowlistInvalidEntryCount, 1);
+  assert.equal(JSON.stringify(invalidBody).includes('first,second'), false);
 });
 
 test('pinned provider creation with its switch off remains disabled for containment', async () => {
