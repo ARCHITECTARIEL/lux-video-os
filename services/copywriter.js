@@ -149,7 +149,8 @@ export async function generateCopy({ operation, brief, draft, instructions }, {
       if (!allowed) {
         throw Object.assign(new Error('AI writing budget reached.'), { statusCode: 429, code: 'copywriter_budget_reached', statusClass: 'rate_limit' });
       }
-      if (!deadline.aborted && remainingMs() > (category === 'timeout' ? FALLBACK_TIMEOUT_RESERVE_MS : 0)) {
+      if (deadline.aborted || remainingMs() <= 0) category = 'timeout';
+      else if (remainingMs() > (category === 'timeout' ? FALLBACK_TIMEOUT_RESERVE_MS : 0)) {
         try { result = await run(fallbackModel, 0); }
         catch (fallbackError) { providerDetail = describeProviderError(fallbackError); category = statusClass(providerDetail); }
       }

@@ -948,3 +948,8 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Bounded compact client-name matches to normalized token edges, retained the round-one Acmelabs prefix case, and escaped Unicode angle brackets in prompt fences. Documented the risk of short and common client terms.
 - Skipped fallback and its budget check when the shared deadline is spent or a timeout leaves under three seconds. A failed fallback budget check now returns 503 `copywriter_budget_unavailable`; a refusal remains 429.
 - Code committed locally as `1419210`. Offline copywriter suite: 63 passed, one live-DB test skipped. Import, syntax, and diff checks passed. No network, provider call, migration, schema change, deployment, or push. The phrase "luminous lumen output" remains blocked because it contains the exact "lumen" token; user clarification was requested for the contradictory allow example.
+
+## 2026-10-23T22:51:50Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [QA-r3-M2]
+
+- Added token-edge plurals/possessives, a pre-fold camel/letter-digit matching view, and separator treatment for leading `@`/`$`. Preserved compact and long-prefix guard cases; documented the `lumens` plural match.
+- Rechecked the shared deadline after fallback budget consumption; an elapsed deadline skips the fallback and returns 504. The regression verifies one consumed budget unit and no fallback call. Offline copywriter suite: 65 passed, one live-DB skip, zero failures via the required wrapper. No network, provider, schema, or push action.

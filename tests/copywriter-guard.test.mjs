@@ -32,9 +32,25 @@ test('compact client matches begin and end at normalized token boundaries', () =
   assert.equal(namesBlockedClient('Bob-Co', ['bob co']), true);
   for (const input of ['Bob Cole', 'bob corn']) assert.equal(namesBlockedClient(input, ['bob co']), false, input);
   for (const input of ['the macmeal deal', 'a c meetup']) assert.equal(namesBlockedClient(input, ['acme']), false, input);
-  assert.equal(namesBlockedClient('500 lumens', ['lumen']), false);
+  assert.equal(namesBlockedClient('500 lumens', ['lumen']), true, 'a true plural is blocked');
   assert.equal(namesBlockedClient('luminous output', ['lumen']), false);
   assert.equal(namesBlockedClient('luminous lumen output', ['lumen']), true, 'the complete lumen token is present');
+});
+
+test('client guard matches plural, possessive, camel, acronym, digit, and sigil forms at token edges', () => {
+  const cases = [
+    ['acme', ['Acmes', 'the Acmes', 'Acmes’', "Acme's", 'AcmeCo', 'AcmeInc', 'AcmeHQ', 'AcmeAI', 'AcmeTV', 'Acme2', 'Acme26', 'GoAcme', 'MyAcme', 'SuperAcme', 'HQAcme', '@acme', '$acme']],
+    ['bob co', ['Bob Cos', 'BobCoInc']],
+    ['lumen', ['Lumens Inc']],
+  ];
+  for (const [term, inputs] of cases) {
+    for (const input of inputs) assert.equal(namesBlockedClient(input, [term]), true, `${term}: ${input}`);
+  }
+  for (const [term, input] of [
+    ['acme', 'the macmeal deal'], ['bob co', 'Bob Cole'], ['bob co', 'bob corn'],
+    ['acme', 'a c meetup'], ['lumen', 'luminous'], ['acme', 'Placement team'],
+    ['acme', 'Back me up'],
+  ]) assert.equal(namesBlockedClient(input, [term]), false, `${term}: ${input}`);
 });
 
 test('prompt input sanitization removes control characters and neutralizes fence tags', () => {
