@@ -71,10 +71,15 @@ Contained durable rendering requires all of the following in the same non-produc
 - `VERCEL_OIDC_TOKEN`: alternate Gateway authentication supplied by Vercel when a Gateway API key is absent; do not set it in the env example.
 - `VIDEO_OS_COPYWRITER_ENABLED`: optional owner kill-switch, independent of whether the Gateway key is set -- defaults to `true`. Set to `false` to turn generation off for cost control without unsetting the key.
 - `VIDEO_OS_COPYWRITER_MODEL`: optional override for the Gateway model id. Defaults to `anthropic/claude-sonnet-4.6` (`services/copywriter.js`'s `DEFAULT_COPYWRITER_MODEL`).
+- `VIDEO_OS_COPYWRITER_FALLBACK_MODEL`: optional secondary Gateway model id; unset means no fallback. Consider `anthropic/claude-haiku-4.5` after checking its availability and cost. One fallback attempt follows only a primary rate limit, upstream, or timeout failure. Refusals, billing, auth, model, forbidden, and invalid request failures do not fall back.
 - `VIDEO_OS_COPYWRITER_MAX_OUTPUT_TOKENS`: optional output token cap, limited to 4096.
 - `VIDEO_OS_COPYWRITER_HOURLY_LIMIT`: optional per-account request cap per rolling hour. Defaults to `30`. Backed by the existing `rate_limits` table (`db/repositories.js`'s `consumeRateLimit`) -- no new migration needed.
+- `VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT`: required positive integer cap across accounts per 24-hour window. Missing or invalid values make the endpoint unavailable. The global counter uses the existing rate limit store after the per-account counter.
+- `VIDEO_OS_COPYWRITER_BLOCKED_TERMS`: required client names, separated by commas or newlines, or supplied as a JSON string array. The server rejects names in both requests and generated results. An empty or invalid list makes the endpoint unavailable unless `VIDEO_OS_COPYWRITER_CLIENT_GUARD=off` is explicitly set.
 
-Every request is a real, billed AI Gateway call once configured -- there is no simulation mode for this feature (unlike Standard-tier rendering).
+Successful idempotent replays use the same `(accountId, idempotencyKey)` and parsed request body. They return `replayed: true` without generation or additional limit consumption. Version 1 replay storage is per-instance, in memory, with a 15-minute TTL and approximately 2,000-entry bound; it does not coordinate across instances or survive restarts.
+
+Every new request that passes validation and both limits can make a billed AI Gateway call. Successful replays return the cached result; there is no simulation mode for this feature (unlike Standard-tier rendering).
 
 Do not copy Production session, Blob, or provider credentials into Preview. Provision deployment-specific resources instead.
 
