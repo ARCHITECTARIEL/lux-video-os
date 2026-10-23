@@ -153,9 +153,12 @@ test('zero-job watchdog sweep sends no email, Slack, or Sentry notification', as
   t.mock.method(Sentry.Scope.prototype, 'captureException', () => { calls.sentry++; });
 
   await notifyWatchdogSweep(cleanResult({
-    safeToReleaseFound: 0,
+    recovered: 0,
+    timedOut: 0,
     released: 0,
-    jobs: { recovery: [], alertedIds: [], releasedIds: [] },
+    alerted: 1,
+    notificationJobIds: [],
+    jobs: { recovery: [], alertedIds: ['j1'], releasedIds: [] },
   }));
 
   assert.deepEqual(calls, { email: 0, slack: 0, sentry: 0 });
