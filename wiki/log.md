@@ -923,3 +923,9 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Replaced provider free-text and permissive diagnostic filtering with fixed messages and allow-listed codes, categories, names, and types at both log and `ops_events` boundaries. Added short-brief and nested-error leak regressions; kept the client error category unchanged.
 - Accepted Vercel OIDC from the request header or environment, removed the token line from the example file, and capped copywriter output at 4096 tokens.
 - Offline focused tests with `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset: 37 passed, 1 DB-gated skip, 0 failed. Import and diff checks passed. Gitleaks found no findings in changed files; the full worktree still has 26 findings elsewhere. The requested QA report was absent from its supplied path. No provider, network, migration, deployment, or push action occurred.
+
+## 2026-10-23T21:01:36Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [copywriter-guard]
+
+- Added optional one-time fallback for rate-limit, upstream, and timeout failures; bounded 15-minute per-instance idempotent replay; and a required positive global daily cap checked after the per-account limit. Missing or failed budget configuration fails closed.
+- Added normalized client-name checks before limits and after generation, fenced and sanitized user prompt content, sentence/word-safe 900-character trimming, and user-facing copy for new response codes. Extended tests for replay, fallback, guard matching, budget failures, and provider/header diagnostic redaction.
+- Committed locally as `8fd03db` on `core/copywriter-followups-1023`. Offline copywriter tests: 50 passed, 1 live-DB skip, 0 failed. Vitest: 4 passed. Import, syntax, and diff checks passed. No network, provider call, deployment, runtime environment change, or push occurred. Replay remains per-instance and the live database path was not exercised.
