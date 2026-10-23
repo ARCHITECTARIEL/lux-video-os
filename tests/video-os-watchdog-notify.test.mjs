@@ -2,6 +2,7 @@
 // fetch logic, mocked globalThis.fetch, no DB needed.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as Sentry from '@sentry/node';
 import { postWatchdogAlertSlack, sendWatchdogAlertEmail } from '../lib/video-os-notifications.js';
 import { claimWatchdogEscalation, notifyWatchdogSweep } from '../lib/video-os-watchdog-notify.js';
 
@@ -135,6 +136,29 @@ test('notifyWatchdogSweep is a no-op on a clean sweep, even with both channels c
   globalThis.fetch = async () => { called = true; return new Response('{}', { status: 200 }); };
   await notifyWatchdogSweep(cleanResult());
   assert.equal(called, false, 'a sweep that found nothing must not trigger any notification');
+});
+
+test('zero-job watchdog sweep sends no email, Slack, or Sentry notification', async (t) => {
+  t.after(restore);
+  process.env.RESEND_API_KEY = 'test-only';
+  process.env.AUTH_FROM_EMAIL = 'ops@example.invalid';
+  process.env.WATCHDOG_ALERT_EMAIL = 'ops@example.invalid';
+  process.env.WATCHDOG_SLACK_WEBHOOK_URL = 'https://hooks.slack.example/services/T/B/X';
+  const calls = { email: 0, slack: 0, sentry: 0 };
+  globalThis.fetch = async (url) => {
+    if (url === 'https://api.resend.com/emails') calls.email++;
+    if (url === process.env.WATCHDOG_SLACK_WEBHOOK_URL) calls.slack++;
+    return new Response(JSON.stringify({ id: 'test' }), { status: 200 });
+  };
+  t.mock.method(Sentry.Scope.prototype, 'captureException', () => { calls.sentry++; });
+
+  await notifyWatchdogSweep(cleanResult({
+    safeToReleaseFound: 0,
+    released: 0,
+    jobs: { recovery: [], alertedIds: [], releasedIds: [] },
+  }));
+
+  assert.deepEqual(calls, { email: 0, slack: 0, sentry: 0 });
 });
 
 test('notifyWatchdogSweep sends to both configured channels when the sweep is notable', async (t) => {
