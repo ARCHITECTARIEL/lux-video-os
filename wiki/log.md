@@ -960,3 +960,8 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Updated only the canonical schema lock's migration-set digest (`992a0e8e...` to `4682b796...`) and `db/schema.js` source digest (`3b0461c4...` to `367712cf...`) using `migrationPlan()` and `schemaSourceHashes()`. The checker has no offline lock-update command.
 - Committed the lock change locally as `1156031`. The requested eight test files passed through `nodetest.sh`: 80 passed, 2 live-database tests skipped, 0 failed. `git diff --check` passed. No database connection, network access, deployment, or push occurred.
 - The lock's `schemaSha256` and `capturedAt` still describe the prior isolated database capture. A reviewed 0017 catalogue recapture remains necessary before live schema verification can be claimed.
+
+## 2026-10-23T22:51:50Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [QA-r3-M2]
+
+- Added token-edge plurals/possessives, a pre-fold camel/letter-digit matching view, and separator treatment for leading `@`/`$`. Preserved compact and long-prefix guard cases; documented the `lumens` plural match.
+- Rechecked the shared deadline after fallback budget consumption; an elapsed deadline skips the fallback and returns 504. The regression verifies one consumed budget unit and no fallback call. Offline copywriter suite: 65 passed, one live-DB skip, zero failures via the required wrapper. No network, provider, schema, or push action.
