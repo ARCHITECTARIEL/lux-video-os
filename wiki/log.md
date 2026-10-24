@@ -953,3 +953,14 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 
 - Added token-edge plurals/possessives, a pre-fold camel/letter-digit matching view, and separator treatment for leading `@`/`$`. Preserved compact and long-prefix guard cases; documented the `lumens` plural match.
 - Rechecked the shared deadline after fallback budget consumption; an elapsed deadline skips the fallback and returns 504. The regression verifies one consumed budget unit and no fallback call. Offline copywriter suite: 65 passed, one live-DB skip, zero failures via the required wrapper. No network, provider, schema, or push action.
+
+## 2026-10-24T07:06:56Z - [closure-writeback] [body-parser-1024] [dependency-security] [local-only]
+
+- Pinned transitive body-parser from 2.3.0 to the first patched 2.x release, 2.4.0, for GHSA-27r3-jxmh-p828. Updated the lockfile's required qs resolution from 6.16.0 to 6.16.1. No application code or audit exception changed; dependency files were committed as `37641a3`.
+- `npm ls --package-lock-only` resolves body-parser 2.4.0, and `npm audit --json` no longer reports body-parser. The focused wrapper run had 33 passes, 5 credential-dependent skips, and 1 failure: the audit gate now flags separate undici GHSA-xjj6-f33q-929c. Undici was outside this task's permitted dependency scope.
+- Full `npm install --package-lock-only --ignore-scripts` could not regenerate the lockfile because registry requests for unrelated package metadata were refused. The changed lock records use `npm view` metadata. No push or deployment occurred.
+- Follow-up: patched only the four existing undici override pins for GHSA-xjj6-f33q-929c (6.29.1/7.30.1), updated six matching lock resolutions from cached npm metadata after registry denial, and confirmed `npm ci --ignore-scripts`, the live npm-audit gate, and focused Blob/Sandbox/storage tests pass locally.
+
+## 2026-10-24T07:20:04Z - [closure-writeback] [undici-1024] [dependency-security] [local-only]
+
+- Commit `b092f93` patches the four existing undici overrides for GHSA-xjj6-f33q-929c and six lock resolutions; `npm ci --ignore-scripts`, the live audit gate, 51 focused tests, and import checks passed (three credential-gated skips). The package-lock-only refresh could not fetch unrelated registry metadata through the configured proxy; cached npm metadata supplied the lock entries. No push or deployment occurred.
