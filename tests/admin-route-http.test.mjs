@@ -412,11 +412,11 @@ test(
     let testerAccountId;
     await t.test('POST operation=register-tester creates a real tester account with full entitlements', async () => {
       const res = response();
-      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=register-tester', body: { email: testerEmail, name: 'Admin Route Tester', credits: 2500, note: 'proof test' }, cookie: adminCookie }), res);
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=register-tester', body: { email: testerEmail, name: 'Admin Route Tester', credits: 180, note: 'proof test' }, cookie: adminCookie }), res);
       assert.equal(res.statusCode, 200);
       assert.equal(res.body.tester.user.email, testerEmail);
       assert.equal(res.body.tester.user.role, 'tester');
-      assert.equal(res.body.tester.credits.balance, 2500);
+      assert.equal(res.body.tester.credits.balance, 180);
       assert.equal(res.body.tester.entitlements.liveRendering, true);
       assert.equal(res.body.tester.entitlements.standardRendering, true);
       testerAccountId = res.body.tester.user.id;
@@ -432,11 +432,11 @@ test(
 
     await t.test('POST operation=register-tester rejects a missing or invalid email before touching the database', async () => {
       const missing = response();
-      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=register-tester', body: { name: 'No Email' }, cookie: adminCookie }), missing);
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=register-tester', body: { name: 'No Email', credits: 180 }, cookie: adminCookie }), missing);
       assert.equal(missing.statusCode, 400);
 
       const invalid = response();
-      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=register-tester', body: { email: 'not-an-email' }, cookie: adminCookie }), invalid);
+      await adminHandler(request({ method: 'POST', url: '/api/video-os-lite/admin?operation=register-tester', body: { email: 'not-an-email', credits: 180 }, cookie: adminCookie }), invalid);
       assert.equal(invalid.statusCode, 400);
     });
 

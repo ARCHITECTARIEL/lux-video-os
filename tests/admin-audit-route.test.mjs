@@ -41,7 +41,7 @@ test('admin mutations persist exact audit rows before sending the response', asy
     ['quarantine-asset', { mediaAssetId: 'asset-1', reason: 'private@example.com' },
       { quarantineMediaAsset: async () => ({ id: 'asset-1', accountId: 'account-2' }) },
       { event: 'admin.asset.quarantined', accountId: 'account-2', code: null, details: { adminActor: 'admin' } }],
-    ['register-tester', { email: 'private.person@example.com', name: 'Private Person' },
+    ['register-tester', { email: 'private.person@example.com', name: 'Private Person', credits: 180 },
       { registerAdminTester: async () => ({ account: { id: 'account-3' } }) },
       { event: 'admin.tester.registered', accountId: 'account-3', code: null, details: { adminActor: 'admin', testerDomain: 'example.com' } }],
   ];
@@ -84,6 +84,36 @@ test('admin mutations persist exact audit rows before sending the response', asy
     }
   } finally { console.log = originalLog; }
   assert.equal(JSON.stringify(lines).includes('private.person@example.com'), false);
+});
+
+test('register-tester rejects missing or unsafe credit amounts before calling its mutation', async () => {
+  const invalidCases = [
+    ['missing', {}],
+    ['null', { credits: null }],
+    ['boolean', { credits: false }],
+    ['numeric string', { credits: '180' }],
+    ['object', { credits: {} }],
+    ['zero', { credits: 0 }],
+    ['below range', { credits: 99 }],
+    ['fractional', { credits: 100.5 }],
+    ['above range', { credits: 181 }],
+    ['unsafe integer', { credits: Number.MAX_SAFE_INTEGER + 1 }],
+  ];
+  let mutationCalls = 0;
+  const handler = createAdminHandler({
+    isAdminRequest: () => true,
+    env: TEST_ENV,
+    registerAdminTester: async () => { mutationCalls += 1; return { account: { id: 'must-not-run' } }; },
+    opsWriter: async () => {},
+  });
+
+  for (const [label, creditInput] of invalidCases) {
+    const res = response();
+    await handler(request('register-tester', { email: 'bounded.tester@example.com', ...creditInput }), res);
+    assert.equal(res.statusCode, 400, label);
+    assert.match(res.body.error, /credits must be a whole number from 100 to 180/i, label);
+    assert.equal(mutationCalls, 0, `${label} must fail before registerAdminTester`);
+  }
 });
 
 test('admin mutation succeeds when audit persistence fails and emits alertable audit failure', async () => {
