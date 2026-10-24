@@ -965,3 +965,9 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 
 - Added token-edge plurals/possessives, a pre-fold camel/letter-digit matching view, and separator treatment for leading `@`/`$`. Preserved compact and long-prefix guard cases; documented the `lumens` plural match.
 - Rechecked the shared deadline after fallback budget consumption; an elapsed deadline skips the fallback and returns 504. The regression verifies one consumed budget unit and no fallback call. Offline copywriter suite: 65 passed, one live-DB skip, zero failures via the required wrapper. No network, provider, schema, or push action.
+
+## 2026-10-24T07:59:07Z - [closure-writeback] [GLOBAL-COUNTERS-1023] [QA-r3] [local-only]
+
+Copywriter now requires an explicit enable flag, checks each account's hourly quota before consuming the global unit, and probes global counter readiness for GET. The counter validates inputs and propagates write errors; budget failures log only sanitized diagnostics. Fake-only regressions cover the handler, counter SQL reset, configured limit, and default wiring. The requested Node suite passed 88 tests with two expected database-test skips and zero failures; all four requested mutants failed their targeted tests and the restored source passed. No database, schema, environment, deployment, provider, commit, or push action was performed.
+
+Schema lock recaptured separately through `tools/check-migrations.mjs --capture-schema` on an isolated loopback PG 18.6 verification database with 0000-0017 applied (schemaSha256 `dd924544...`, 30 tables); `db:verify` against that database passes with the new lock and reports `SCHEMA_DRIFT` with the old one. #123 (147d220) is merged into this branch with a normal merge commit.

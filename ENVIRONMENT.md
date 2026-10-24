@@ -69,7 +69,7 @@ Contained durable rendering requires all of the following in the same non-produc
 
 - `AI_GATEWAY_API_KEY`: Gateway authentication option. Without this, the Vercel OIDC environment token, or the `x-vercel-oidc-token` request header, the endpoint reports `setup_required`.
 - `VERCEL_OIDC_TOKEN`: alternate Gateway authentication supplied by Vercel when a Gateway API key is absent; do not set it in the env example.
-- `VIDEO_OS_COPYWRITER_ENABLED`: optional owner kill-switch, independent of whether the Gateway key is set -- defaults to `true`. Set to `false` to turn generation off for cost control without unsetting the key.
+- `VIDEO_OS_COPYWRITER_ENABLED`: owner enable flag, independent of whether the Gateway key is set. Defaults to `false`; set to `true` to enable AI writing. Unset, empty, or any other value leaves it unavailable.
 - `VIDEO_OS_COPYWRITER_MODEL`: optional override for the Gateway model id. Defaults to `anthropic/claude-sonnet-4.6` (`services/copywriter.js`'s `DEFAULT_COPYWRITER_MODEL`).
 - `VIDEO_OS_COPYWRITER_FALLBACK_MODEL`: optional secondary Gateway model id; unset means no fallback. Consider `anthropic/claude-haiku-4.5` after checking its availability and cost. One fallback attempt follows only a primary rate limit, upstream, or timeout failure. Refusals, billing, auth, model, forbidden, and invalid request failures do not fall back.
 - `VIDEO_OS_COPYWRITER_MAX_OUTPUT_TOKENS`: optional output token cap, limited to 4096.

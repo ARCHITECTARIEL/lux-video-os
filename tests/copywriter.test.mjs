@@ -3,9 +3,9 @@ import crypto from 'node:crypto';
 import test from 'node:test';
 import { eq } from 'drizzle-orm';
 import { assertDatabaseConfigured, database } from '../db/client.js';
-import { consumeRateLimit, ensureAccount } from '../db/repositories.js';
+import { consumeGlobalCounter, consumeRateLimit, ensureAccount } from '../db/repositories.js';
 import { rateLimits, users } from '../db/schema.js';
-import { copywriterAvailability, createCopywriterHandler } from '../routes/video-os-lite/copywriter.js';
+import defaultCopywriterHandler, { copywriterAvailability, copywriterDefaults, createCopywriterHandler } from '../routes/video-os-lite/copywriter.js';
 import { copywriterFailureRecord } from '../routes/video-os-lite/copywriter.js';
 import { generateCopy } from '../services/copywriter.js';
 import { RetryError } from 'ai';
@@ -24,16 +24,16 @@ function res() {
 }
 
 const validBrief = { topic: 'A new espresso blend', audience: 'Coffee shop regulars', goal: 'sales', tone: 'warm', keyPoints: 'Roasted locally\nLimited batch', callToAction: 'Order online today' };
-const configuredEnv = { AI_GATEWAY_API_KEY: 'FAKE1', VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '2', VIDEO_OS_COPYWRITER_BLOCKED_TERMS: 'Acme Law' };
+const configuredEnv = { AI_GATEWAY_API_KEY: 'FAKE1', VIDEO_OS_COPYWRITER_ENABLED: 'true', VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '2', VIDEO_OS_COPYWRITER_BLOCKED_TERMS: 'Acme Law' };
 const payload = (idempotencyKey = crypto.randomUUID(), brief = validBrief) => ({ operation: 'draft', idempotencyKey, brief });
-const testHandler = options => createCopywriterHandler({ globalBudget: async () => true, ...options });
+const testHandler = options => createCopywriterHandler({ globalBudget: async () => true, globalBudgetReady: async () => true, opsLog: () => {}, ...options });
 
 test('copywriterAvailability reflects the enable flag and Gateway key independently', () => {
   const original = { enabled: process.env.VIDEO_OS_COPYWRITER_ENABLED, key: process.env.AI_GATEWAY_API_KEY };
   try {
     delete process.env.VIDEO_OS_COPYWRITER_ENABLED;
     delete process.env.AI_GATEWAY_API_KEY;
-    assert.equal(copywriterAvailability().reason, 'setup_required');
+    assert.equal(copywriterAvailability().reason, 'disabled');
 
     process.env.VIDEO_OS_COPYWRITER_ENABLED = 'false';
     process.env.AI_GATEWAY_API_KEY = 'gw_test_key';
@@ -51,13 +51,43 @@ test('copywriterAvailability reflects the enable flag and Gateway key independen
 });
 
 test('copywriter availability accepts OIDC as Gateway authentication', () => {
-  assert.equal(copywriterAvailability({ VERCEL_OIDC_TOKEN: 'FAKE1', VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '100', VIDEO_OS_COPYWRITER_CLIENT_GUARD: 'off' }, {}, true).reason, 'ready');
-  assert.equal(copywriterAvailability({ VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '100', VIDEO_OS_COPYWRITER_CLIENT_GUARD: 'off' }, { 'x-vercel-oidc-token': 'FAKE1' }, true).reason, 'ready');
-  assert.equal(copywriterAvailability({}).reason, 'setup_required');
+  assert.equal(copywriterAvailability({ VERCEL_OIDC_TOKEN: 'FAKE1', VIDEO_OS_COPYWRITER_ENABLED: 'true', VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '100', VIDEO_OS_COPYWRITER_CLIENT_GUARD: 'off' }, {}, true).reason, 'ready');
+  assert.equal(copywriterAvailability({ VIDEO_OS_COPYWRITER_ENABLED: 'true', VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '100', VIDEO_OS_COPYWRITER_CLIENT_GUARD: 'off' }, { 'x-vercel-oidc-token': 'FAKE1' }, true).reason, 'ready');
+  assert.equal(copywriterAvailability({ VIDEO_OS_COPYWRITER_ENABLED: 'true' }).reason, 'setup_required');
+});
+
+test('unset or empty enable flag keeps GET unavailable and POST off; trimmed TRUE enables it', async () => {
+  for (const enabled of [undefined, '', 'false', '1']) {
+    let generated = 0;
+    const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: { ...configuredEnv, VIDEO_OS_COPYWRITER_ENABLED: enabled }, generate: async () => { generated++; return 'unexpected'; } });
+    const getResponse = res();
+    await handler(req('GET'), getResponse);
+    assert.equal(getResponse.body.copywriter.available, false);
+    const postResponse = res();
+    await handler(req('POST', payload()), postResponse);
+    assert.equal(postResponse.statusCode, 503);
+    assert.equal(postResponse.body.code, 'copywriter_unavailable');
+    assert.equal(generated, 0);
+  }
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: { ...configuredEnv, VIDEO_OS_COPYWRITER_ENABLED: ' TRUE ' } });
+  const response = res();
+  await handler(req('GET'), response);
+  assert.equal(response.body.copywriter.reason, 'ready');
+});
+
+test('GET reports budget store readiness and fails closed on a missing table or probe error', async () => {
+  for (const [probe, expected] of [[async () => false, 'copywriter_budget_unavailable'], [async () => { throw new Error('fake DB detail'); }, 'copywriter_budget_unavailable'], [async () => true, undefined]]) {
+    const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, globalBudgetReady: probe });
+    const response = res();
+    await handler(req('GET'), response);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.copywriter.code, expected);
+    assert.equal(response.body.copywriter.available, expected === undefined);
+  }
 });
 
 test('GET uses the OIDC request header without exposing its value', async () => {
-  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: { VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '100', VIDEO_OS_COPYWRITER_CLIENT_GUARD: 'off' }, globalBudget: async () => true });
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: { VIDEO_OS_COPYWRITER_ENABLED: 'true', VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '100', VIDEO_OS_COPYWRITER_CLIENT_GUARD: 'off' }, globalBudget: async () => true });
   const request = req('GET');
   request.headers['x-vercel-oidc-token'] = 'FAKE_HEADER_VALUE_FOR_TESTS';
   const response = res();
@@ -66,14 +96,11 @@ test('GET uses the OIDC request header without exposing its value', async () => 
   assert.equal(JSON.stringify(response.body).includes(request.headers['x-vercel-oidc-token']), false);
 });
 
-test('configured default global budget reports ready; an explicitly missing store fails closed', async () => {
-  const defaultHandler = createCopywriterHandler({
-    authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv,
-  });
-  const readyResponse = res();
-  await defaultHandler(req('GET'), readyResponse);
-  assert.equal(readyResponse.body.copywriter.reason, 'ready');
-
+test('default and no-option handlers use the atomic global counter; an explicitly missing store fails closed', async () => {
+  assert.equal(Object.isFrozen(copywriterDefaults), true);
+  assert.equal(copywriterDefaults.globalBudget, consumeGlobalCounter);
+  assert.equal(defaultCopywriterHandler.globalBudget, consumeGlobalCounter);
+  assert.equal(createCopywriterHandler().globalBudget, consumeGlobalCounter);
   let generateCalls = 0;
   const handler = testHandler({
     authenticate: () => ({ accountId: 'writer-1' }),
@@ -186,6 +213,15 @@ test('POST returns 429 budget reached without calling generate when the global l
   assert.equal(response.statusCode, 429);
   assert.equal(response.body.code, 'copywriter_budget_reached');
   assert.equal(generateCalled, false);
+});
+
+test('configured daily limit is passed exactly to the global counter', async () => {
+  const calls = [];
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: { ...configuredEnv, VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '7' }, idempotency: createCopywriterIdempotency(), rateLimit: async () => true, globalBudget: async args => { calls.push(args); return true; }, generate: async () => 'draft' });
+  const response = res();
+  await handler(req('POST', payload()), response);
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(calls, [{ key: 'copywriter:global:daily:v1', limit: 7, windowMs: 86_400_000 }]);
 });
 
 test('POST echoes the idempotency key as requestId and the requested operation on success', async () => {
@@ -376,8 +412,9 @@ test('replay uses one generation and one pair of limits; conflict and in-flight 
   assert.equal(replay.body.result.replayed, true);
   assert.equal(generated, 1);
   assert.equal(calls.length, 2);
-  assert.equal(calls[0].key, 'copywriter:global:daily:v1');
-  assert.equal(calls[0].windowMs, 86_400_000);
+  assert.equal(calls[0].key, 'copywriter:hourly:writer-1');
+  assert.equal(calls[1].key, 'copywriter:global:daily:v1');
+  assert.equal(calls[1].windowMs, 86_400_000);
   const conflict = res();
   await handler(req('POST', payload(body.idempotencyKey, { ...validBrief, topic: 'Other topic' })), conflict);
   assert.equal(conflict.body.code, 'idempotency_conflict');
@@ -398,6 +435,42 @@ test('budget denial and budget check failure never generate; failed request can 
     assert.equal(retry.statusCode, 200);
     assert.equal(generated, 1);
   }
+});
+
+test('global budget failure logs only sanitized budget diagnostics and returns 503', async () => {
+  const lines = [];
+  const events = [];
+  const original = console.error;
+  console.error = line => lines.push(line);
+  try {
+    const secret = 'FAKE_SQL_SECRET_SENTINEL';
+    const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), rateLimit: async () => true, globalBudget: async () => { throw new Error(secret); }, opsLog: event => events.push(event), generate: async () => { throw new Error('unexpected generation'); } });
+    const response = res();
+    await handler(req('POST', payload()), response);
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.body.code, 'copywriter_budget_unavailable');
+    assert.equal(events.length, 1);
+    assert.equal(lines.length, 1);
+    assert.deepEqual(JSON.parse(lines[0]), events[0].details);
+    assert.equal(events[0].details.event, 'copywriter.failure');
+    assert.equal(events[0].details.stage, 'budget');
+    assert.equal(events[0].details.code, 'copywriter_budget_unavailable');
+    assert.deepEqual(Object.keys(events[0].details), Object.keys(copywriterFailureRecord({}, { requestId: crypto.randomUUID(), stage: 'budget', env: configuredEnv })));
+    assert.equal(JSON.stringify({ lines, events, body: response.body }).includes(secret), false);
+  } finally { console.error = original; }
+});
+
+test('invalid counter limit fails closed through the handler without touching storage', async () => {
+  let touched = 0;
+  let generated = 0;
+  const executor = { insert() { touched++; throw new Error('unexpected storage call'); } };
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), rateLimit: async () => true, globalBudget: args => consumeGlobalCounter({ ...args, limit: 0, executor }), generate: async () => { generated++; return 'unexpected'; } });
+  const response = res();
+  await handler(req('POST', payload()), response);
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.body.code, 'copywriter_budget_unavailable');
+  assert.equal(touched, 0);
+  assert.equal(generated, 0);
 });
 
 test('client names in input and output are rejected without leaking text or caching failures', async () => {
@@ -428,13 +501,43 @@ test('output guard rejects a soft-hyphen client name', async () => {
   assert.equal(response.body.code, 'client_reference_blocked');
 });
 
-test('global budget rejection does not consume hourly quota', async () => {
-  let hourly = 0;
-  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), globalBudget: async () => false, rateLimit: async () => { hourly++; return true; }, generate: async () => { throw new Error('unexpected generation'); } });
+test('hourly rejection does not consume global budget; global rejection never generates', async () => {
+  let globalCalls = 0;
+  let generated = 0;
+  let allowHourly = false;
+  const handler = testHandler({ authenticate: () => ({ accountId: 'writer-1' }), env: configuredEnv, idempotency: createCopywriterIdempotency(), globalBudget: async () => { globalCalls++; return false; }, rateLimit: async () => allowHourly, generate: async () => { generated++; return 'unexpected'; } });
+  const hourlyResponse = res();
+  await handler(req('POST', payload()), hourlyResponse);
+  assert.equal(hourlyResponse.body.code, 'rate_limited');
+  assert.equal(globalCalls, 0);
+  allowHourly = true;
+  const globalResponse = res();
+  await handler(req('POST', payload()), globalResponse);
+  assert.equal(globalResponse.statusCode, 429);
+  assert.equal(globalResponse.body.code, 'copywriter_budget_reached');
+  assert.equal(globalCalls, 1);
+  assert.equal(generated, 0);
+});
+
+test('per-account hourly denial preserves global units for another account', async () => {
+  const hourlyCounts = new Map();
+  let globalCalls = 0;
+  let accountId = 'A';
+  const handler = testHandler({ authenticate: () => ({ accountId }), env: { ...configuredEnv, VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT: '10' }, idempotency: createCopywriterIdempotency(), hourlyLimit: () => 2, rateLimit: async ({ accountId, limit }) => { const next = (hourlyCounts.get(accountId) || 0) + 1; hourlyCounts.set(accountId, next); return next <= limit; }, globalBudget: async ({ limit }) => ++globalCalls <= limit, generate: async () => 'draft' });
+  const outcomes = [];
+  for (let i = 0; i < 12; i++) {
+    const response = res();
+    await handler(req('POST', payload()), response);
+    outcomes.push([response.statusCode, response.body.code]);
+  }
+  assert.equal(outcomes.filter(([status]) => status === 200).length, 2);
+  assert.equal(outcomes.filter(([status, code]) => status === 429 && code === 'rate_limited').length, 10);
+  assert.equal(globalCalls, 2);
+  accountId = 'B';
   const response = res();
   await handler(req('POST', payload()), response);
-  assert.equal(response.body.code, 'copywriter_budget_reached');
-  assert.equal(hourly, 0);
+  assert.equal(response.statusCode, 200);
+  assert.equal(globalCalls, 3);
 });
 
 test('fallback is withheld when its second model-run unit is unavailable', async () => {
