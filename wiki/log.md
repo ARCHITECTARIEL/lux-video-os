@@ -954,3 +954,9 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Added an account-independent `global_counters` table, offline-generated migration `0017` with journal and snapshot, and an atomic fixed-window `consumeGlobalCounter` upsert. The copywriter default handler now uses it for the configured daily model-run cap; an explicitly null budget still fails closed.
 - Added fake-database unit coverage, migration SQL/snapshot checks, and a loopback-only PostgreSQL race test for 100 concurrent consumes at limit 25 plus window reset. Updated the historical 0015/0016 rehearsal range and documented that 0017 must be applied before enabling the cap.
 - Committed locally as `1ff3bc3` on `core/global-counters-1023`. The required wrapper ran 94 related Node tests: 90 passed, 4 environment-gated skips, 0 failed. Offline `drizzle-kit check`, syntax checks, and diff checks passed. The race test skipped because `VIDEO_OS_PG_RACE_TEST_URL` was unset. No network, live DB, migration application, deployment, or push occurred.
+
+## 2026-10-24T07:03:51Z - [closure-writeback] [GLOBAL-COUNTERS-1023] [migration-lock] [local-only]
+
+- Updated only the canonical schema lock's migration-set digest (`992a0e8e...` to `4682b796...`) and `db/schema.js` source digest (`3b0461c4...` to `367712cf...`) using `migrationPlan()` and `schemaSourceHashes()`. The checker has no offline lock-update command.
+- Committed the lock change locally as `1156031`. The requested eight test files passed through `nodetest.sh`: 80 passed, 2 live-database tests skipped, 0 failed. `git diff --check` passed. No database connection, network access, deployment, or push occurred.
+- The lock's `schemaSha256` and `capturedAt` still describe the prior isolated database capture. A reviewed 0017 catalogue recapture remains necessary before live schema verification can be claimed.
