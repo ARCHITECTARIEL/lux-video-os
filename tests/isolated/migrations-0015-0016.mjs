@@ -90,7 +90,7 @@ async function main() {
     const version = await required(['exec', name, 'postgres', '--version']);
     assert.match(version, /PostgreSQL\) 18\.6/);
     await required(['cp', join(root, 'drizzle'), `${name}:/tmp/drizzle`]);
-    const files = (await readdir(join(root, 'drizzle'))).filter(x => /^\d{4}_.+\.sql$/.test(x)).sort();
+    const files = (await readdir(join(root, 'drizzle'))).filter(x => /^00(?:0\d|1[0-6])_.+\.sql$/.test(x)).sort();
     assert.equal(files.length, 17);
     for (const file of files.slice(0, 15)) {
       const result = await apply(file);

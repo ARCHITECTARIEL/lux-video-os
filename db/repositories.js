@@ -30,7 +30,7 @@ import { assertEnrollmentConsentRecord } from './enrollment-repository.js';
 import { acquireProviderLifecycleLock } from './provider-lifecycle-lock.js';
 import { assertHeygenProviderReceiptTx, withFreshHeygenSpaceBindingTransaction, withHeygenSpaceBindingReceiptTransaction } from './heygen-space-binding-repository.js';
 import { assertProviderIdentityReferencesActiveTx, assertProviderJobLookReferencesActiveTx, assertProviderJobReferencesActiveTx, attachProviderConsumerReferenceTx, attachProviderJobLookReferencesTx, getExactProviderResourceTx, markProviderResourceReadyTx, markProviderVideoReadyTx, providerOperationRequestDigest, recordProviderJobSubmissionUnknownTx, recordProviderJobDefinitiveRetryTx, recordProviderVideoResourceTx, releaseProviderVideoConsumerTx, reserveProviderOperationTx } from './provider-reconciliation-repository.js';
-import { authSessions, creditAccounts, creditTransactions, entitlements, identityConsents, identityEnrollmentEvents, identityVideoEnrollments, jobEvents, mediaAssets, projects, providerLifecycleEvents, rateLimits, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
+import { authSessions, creditAccounts, creditTransactions, entitlements, globalCounters, identityConsents, identityEnrollmentEvents, identityVideoEnrollments, jobEvents, mediaAssets, projects, providerLifecycleEvents, rateLimits, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
 
 export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING', 'PROCESSING', 'READY', 'FAILED']);
 export const IDENTITY_OVERALL_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING', 'READY', 'PARTIAL_FAILURE', 'FAILED', 'ARCHIVED']);
@@ -2304,6 +2304,36 @@ export async function consumeRateLimit({ accountId, key, limit, windowMs, execut
         count: sql`case when ${rateLimits.expiresAt} > now() then ${rateLimits.count} + 1 else 1 end`,
         windowStart: sql`case when ${rateLimits.expiresAt} > now() then ${rateLimits.windowStart} else now() end`,
         expiresAt: sql`case when ${rateLimits.expiresAt} > now() then ${rateLimits.expiresAt} else ${expiresAt}::timestamptz end`,
+      },
+    })
+    .returning();
+  return row.count <= limit;
+}
+
+// One upsert serializes all consumers of a global key, including different accounts.
+export async function globalCountersReady(executor) {
+  try {
+    const result = await (executor ?? database()).execute(sql`select to_regclass('public.global_counters') is not null as ready`);
+    return (result.rows ?? result)[0]?.ready === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function consumeGlobalCounter({ key, limit, windowMs, executor }) {
+  if (!Number.isInteger(limit) || limit <= 0 || !Number.isFinite(windowMs) || windowMs <= 0) {
+    throw new RangeError('Global counter limit and window must be positive finite numbers.');
+  }
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + windowMs);
+  const [row] = await (executor ?? database()).insert(globalCounters)
+    .values({ key, windowStart: now, count: 1, expiresAt })
+    .onConflictDoUpdate({
+      target: globalCounters.key,
+      set: {
+        count: sql`case when ${globalCounters.expiresAt} > now() then ${globalCounters.count} + 1 else 1 end`,
+        windowStart: sql`case when ${globalCounters.expiresAt} > now() then ${globalCounters.windowStart} else now() end`,
+        expiresAt: sql`case when ${globalCounters.expiresAt} > now() then ${globalCounters.expiresAt} else ${expiresAt}::timestamptz end`,
       },
     })
     .returning();

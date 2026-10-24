@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { randomUUID, createHash } from 'node:crypto';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
-import { consumeRateLimit } from '../../db/repositories.js';
+import { consumeGlobalCounter, consumeRateLimit, globalCountersReady } from '../../db/repositories.js';
 import { generateCopy, gatewayAuthMode } from '../../services/copywriter.js';
 import { copywriterDiagnostic } from '../../lib/copywriter-diagnostics.js';
 import { logOpsEvent } from '../../lib/ops-log.js';
@@ -10,6 +10,7 @@ import { createCopywriterIdempotency } from '../../lib/copywriter-idempotency.js
 
 const replayCache = createCopywriterIdempotency();
 const dailyWindowMs = 24 * 60 * 60 * 1000;
+export const copywriterDefaults = Object.freeze({ globalBudget: consumeGlobalCounter, globalBudgetReady: globalCountersReady });
 
 function globalDailyLimit(env) {
   const raw = String(env.VIDEO_OS_COPYWRITER_GLOBAL_DAILY_LIMIT || '').trim();
@@ -39,11 +40,9 @@ const requestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('revise'), idempotencyKey: z.string().uuid(), brief: briefSchema, draft: z.string().trim().min(1).max(900), instructions: z.string().trim().min(1).max(600) }).strict(),
 ]);
 
-// An explicit owner kill-switch separate from "not configured yet" (below):
-// lets AI generation be turned off for cost control without unsetting the
-// Gateway key. Defaults on so a configured deployment works out of the box.
+// An explicit owner enable flag keeps generation off until intentionally activated.
 export function copywriterAvailability(env = process.env, headers = {}, budgetReady = false) {
-  if (String(env.VIDEO_OS_COPYWRITER_ENABLED ?? 'true').trim().toLowerCase() === 'false') {
+  if (String(env.VIDEO_OS_COPYWRITER_ENABLED ?? '').trim().toLowerCase() !== 'true') {
     return { available: false, reason: 'disabled', message: 'AI writing is turned off for this deployment.' };
   }
   if (!globalDailyLimit(env)) return { available: false, reason: 'setup_required', code: 'copywriter_budget_unconfigured', message: 'AI writing needs its daily budget configured.' };
@@ -92,23 +91,26 @@ export function createCopywriterHandler({
   availability = copywriterAvailability,
   generate = generateCopy,
   rateLimit = consumeRateLimit,
-  // The existing rate_limits schema requires a cascading user FK. No
-  // account-independent global counter can be stored there safely.
-  globalBudget = rateLimit === consumeRateLimit ? null : rateLimit,
+  globalBudget = copywriterDefaults.globalBudget,
+  globalBudgetReady = copywriterDefaults.globalBudgetReady,
   idempotency = replayCache,
   hourlyLimit = () => Number(process.env.VIDEO_OS_COPYWRITER_HOURLY_LIMIT || 30),
   opsLog = logOpsEvent,
   newRequestId = randomUUID,
   env = process.env,
 } = {}) {
-  return async function copywriterHandler(req, res) {
+  const copywriterHandler = async function copywriterHandler(req, res) {
     if (handleOptions(req, res)) return;
     let accountId;
     try { accountId = authenticate(req)?.accountId; } catch {}
     if (!accountId) return send(res, 401, { ok: false, code: 'sign_in_required', error: 'Sign in to use AI writing.' });
-    if (req.method === 'GET') return send(res, 200, { ok: true, copywriter: availability(env, req.headers, Boolean(globalBudget)) });
+    let budgetReady = false;
+    if (String(env.VIDEO_OS_COPYWRITER_ENABLED ?? '').trim().toLowerCase() === 'true' && globalBudget && globalBudgetReady) {
+      try { budgetReady = await globalBudgetReady(); } catch { /* Readiness fails closed. */ }
+    }
+    if (req.method === 'GET') return send(res, 200, { ok: true, copywriter: availability(env, req.headers, Boolean(budgetReady)) });
     if (req.method !== 'POST') return send(res, 405, { ok: false, code: 'method_not_allowed', error: 'Use GET or POST for the AI copywriter.' });
-    const capability = availability(env, req.headers, Boolean(globalBudget));
+    const capability = availability(env, req.headers, Boolean(budgetReady));
     if (!capability.available) {
       const notAuthorized = capability.reason === 'not_authorized';
       return send(res, notAuthorized ? 403 : 503, {
@@ -137,15 +139,18 @@ export function createCopywriterHandler({
       if (claim.state === 'capacity') return send(res, 503, { ok: false, code: 'copywriter_unavailable', error: 'AI writing is temporarily busy.' });
       if (claim.state === 'replay') return send(res, 200, { ok: true, result: { ...claim.result, replayed: true } });
       claimedKey = cacheKey;
+      stage = 'rate_limit';
+      const allowed = await rateLimit({ accountId, key: `copywriter:hourly:${accountId}`, limit: hourlyLimit(), windowMs: 60 * 60 * 1000 });
+      if (!allowed) return send(res, 429, { ok: false, code: 'rate_limited', error: 'AI writing request limit reached. Try again in a while.' });
       stage = 'budget';
       let withinBudget;
       const consumeBudget = () => globalBudget({ key: 'copywriter:global:daily:v1', limit: globalDailyLimit(env), windowMs: dailyWindowMs });
       try { withinBudget = await consumeBudget(); }
-      catch { return send(res, 503, { ok: false, code: 'copywriter_budget_unavailable', error: 'AI writing daily budget could not be checked.' }); }
+      catch {
+        logCopywriterFailure({ code: 'copywriter_budget_unavailable' }, { requestId, stage, env, headers: req.headers, accountId, opsLog });
+        return send(res, 503, { ok: false, code: 'copywriter_budget_unavailable', error: 'AI writing daily budget could not be checked.' });
+      }
       if (!withinBudget) return send(res, 429, { ok: false, code: 'copywriter_budget_reached', error: 'AI writing daily budget reached.' });
-      stage = 'rate_limit';
-      const allowed = await rateLimit({ accountId, key: `copywriter:hourly:${accountId}`, limit: hourlyLimit(), windowMs: 60 * 60 * 1000 });
-      if (!allowed) return send(res, 429, { ok: false, code: 'rate_limited', error: 'AI writing request limit reached. Try again in a while.' });
       stage = 'generate';
       const generated = await generate(parsed.data, { consumeFallbackBudget: consumeBudget });
       const text = typeof generated === 'string' ? generated : generated.text;
@@ -165,6 +170,8 @@ export function createCopywriterHandler({
       if (claimedKey) idempotency.release(claimedKey);
     }
   };
+  Object.defineProperty(copywriterHandler, 'globalBudget', { value: globalBudget });
+  return copywriterHandler;
 }
 
-export default createCopywriterHandler();
+export default createCopywriterHandler(copywriterDefaults);

@@ -931,6 +931,7 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Accepted Vercel OIDC from the request header or environment, removed the token line from the example file, and capped copywriter output at 4096 tokens.
 - Offline focused tests with `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset: 37 passed, 1 DB-gated skip, 0 failed. Import and diff checks passed. Gitleaks found no findings in changed files; the full worktree still has 26 findings elsewhere. The requested QA report was absent from its supplied path. No provider, network, migration, deployment, or push action occurred.
 
+
 ## 2026-10-23T21:11:00Z - [closure-writeback] [REL-BUNDLE-1023] [alerts-logging-follow-up]
 
 - Commit `11d310b` restored the overall `/api/health` `degraded` vocabulary for non-fail states and the watchdog check's prior `critical: false` flag. Per-check statuses remain `ok|warn|fail`; HTTP 503 is reserved for overall `fail`.
@@ -968,10 +969,29 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Skipped fallback and its budget check when the shared deadline is spent or a timeout leaves under three seconds. A failed fallback budget check now returns 503 `copywriter_budget_unavailable`; a refusal remains 429.
 - Code committed locally as `1419210`. Offline copywriter suite: 63 passed, one live-DB test skipped. Import, syntax, and diff checks passed. No network, provider call, migration, schema change, deployment, or push. The phrase "luminous lumen output" remains blocked because it contains the exact "lumen" token; user clarification was requested for the contradictory allow example.
 
+## 2026-10-23T22:35:28Z - [closure-writeback] [GLOBAL-COUNTERS-1023] [copywriter-budget] [local-only]
+
+- Added an account-independent `global_counters` table, offline-generated migration `0017` with journal and snapshot, and an atomic fixed-window `consumeGlobalCounter` upsert. The copywriter default handler now uses it for the configured daily model-run cap; an explicitly null budget still fails closed.
+- Added fake-database unit coverage, migration SQL/snapshot checks, and a loopback-only PostgreSQL race test for 100 concurrent consumes at limit 25 plus window reset. Updated the historical 0015/0016 rehearsal range and documented that 0017 must be applied before enabling the cap.
+- Committed locally as `1ff3bc3` on `core/global-counters-1023`. The required wrapper ran 94 related Node tests: 90 passed, 4 environment-gated skips, 0 failed. Offline `drizzle-kit check`, syntax checks, and diff checks passed. The race test skipped because `VIDEO_OS_PG_RACE_TEST_URL` was unset. No network, live DB, migration application, deployment, or push occurred.
+
+## 2026-10-24T07:03:51Z - [closure-writeback] [GLOBAL-COUNTERS-1023] [migration-lock] [local-only]
+
+- Updated only the canonical schema lock's migration-set digest (`992a0e8e...` to `4682b796...`) and `db/schema.js` source digest (`3b0461c4...` to `367712cf...`) using `migrationPlan()` and `schemaSourceHashes()`. The checker has no offline lock-update command.
+- Committed the lock change locally as `1156031`. The requested eight test files passed through `nodetest.sh`: 80 passed, 2 live-database tests skipped, 0 failed. `git diff --check` passed. No database connection, network access, deployment, or push occurred.
+- The lock's `schemaSha256` and `capturedAt` still describe the prior isolated database capture. A reviewed 0017 catalogue recapture remains necessary before live schema verification can be claimed.
+
+
 ## 2026-10-23T22:51:50Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [QA-r3-M2]
 
 - Added token-edge plurals/possessives, a pre-fold camel/letter-digit matching view, and separator treatment for leading `@`/`$`. Preserved compact and long-prefix guard cases; documented the `lumens` plural match.
 - Rechecked the shared deadline after fallback budget consumption; an elapsed deadline skips the fallback and returns 504. The regression verifies one consumed budget unit and no fallback call. Offline copywriter suite: 65 passed, one live-DB skip, zero failures via the required wrapper. No network, provider, schema, or push action.
+
+## 2026-10-24T07:59:07Z - [closure-writeback] [GLOBAL-COUNTERS-1023] [QA-r3] [local-only]
+
+Copywriter now requires an explicit enable flag, checks each account's hourly quota before consuming the global unit, and probes global counter readiness for GET. The counter validates inputs and propagates write errors; budget failures log only sanitized diagnostics. Fake-only regressions cover the handler, counter SQL reset, configured limit, and default wiring. The requested Node suite passed 88 tests with two expected database-test skips and zero failures; all four requested mutants failed their targeted tests and the restored source passed. No database, schema, environment, deployment, provider, commit, or push action was performed.
+
+Schema lock recaptured separately through `tools/check-migrations.mjs --capture-schema` on an isolated loopback PG 18.6 verification database with 0000-0017 applied (schemaSha256 `dd924544...`, 30 tables); `db:verify` against that database passes with the new lock and reports `SCHEMA_DRIFT` with the old one. #123 (147d220) is merged into this branch with a normal merge commit.
 
 ## 2026-10-24T07:06:56Z - [closure-writeback] [body-parser-1024] [dependency-security] [local-only]
 

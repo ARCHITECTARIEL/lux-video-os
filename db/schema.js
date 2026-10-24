@@ -712,3 +712,10 @@ export const rateLimits = pgTable('rate_limits', {
   count: integer('count').notNull().default(0),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 });
+
+export const globalCounters = pgTable('global_counters', {
+  key: text('key').primaryKey(),
+  windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+  count: integer('count').notNull().default(0),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
