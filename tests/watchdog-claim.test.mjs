@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
-test('concurrent watchdog deliveries claim each job once and fail closed on claim errors', () => {
+test('concurrent watchdog deliveries claim once and escalation store failures fall back safely', () => {
   const result = spawnSync(process.execPath, [
     '--experimental-test-module-mocks', 'tests/helpers/watchdog-claim-scenario.mjs',
   ], { cwd: process.cwd(), encoding: 'utf8', timeout: 30_000, windowsHide: true,

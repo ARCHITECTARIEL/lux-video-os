@@ -931,6 +931,26 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Accepted Vercel OIDC from the request header or environment, removed the token line from the example file, and capped copywriter output at 4096 tokens.
 - Offline focused tests with `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset: 37 passed, 1 DB-gated skip, 0 failed. Import and diff checks passed. Gitleaks found no findings in changed files; the full worktree still has 26 findings elsewhere. The requested QA report was absent from its supplied path. No provider, network, migration, deployment, or push action occurred.
 
+
+## 2026-10-23T21:11:00Z - [closure-writeback] [REL-BUNDLE-1023] [alerts-logging-follow-up]
+
+- Commit `11d310b` restored the overall `/api/health` `degraded` vocabulary for non-fail states and the watchdog check's prior `critical: false` flag. Per-check statuses remain `ok|warn|fail`; HTTP 503 is reserved for overall `fail`.
+- Ops persistence health now counts a bounded 15-minute window of failure timestamps, while the diagnostic log's `failureCount` remains lifetime per process. The watchdog shell check permits a watchdog-only 503 recovery sweep and rejects ops persistence failures; heartbeat continues to reject 503.
+- The requested offline Node suite passed: 111 tests, 102 passed, 9 environment-gated skips, 0 failed. Import, Node syntax, Bash syntax, and diff checks passed. No network, push, deployment, migration, or live provider/database action occurred.
+## 2026-10-23T21:53:00Z - [closure-writeback] [REL-BUNDLE-1023] [alerts-logging-QA]
+
+- Restricted watchdog sweep 503 to production, added first-sweep grace, bounded future skew and unreadable-sweep warning, and aligned job-age thresholds at the inclusive escalation boundary. Public health omits stale-job age and ops failure count.
+- Demoted the local ops persistence counter to a non-critical diagnostic and removed it from the recovery sweep gate. Heartbeat paging now follows the health response's 503/fail decision.
+- Added transaction-scoped `ops_events` escalation claims for per-job critical dedupe and warning re-notification, plus explicit allow-lists for database error diagnostics and admin 5xx codes. No schema change or external release was made.
+- Committed the correction locally as `3270d60` on `rel/alerts-logging-1023`. The requested offline wrapper passed 117 tests: 108 passed, 9 database-gated skips, 0 failed. Import, syntax, and diff checks passed. Live escalation-marker transaction behavior remains unverified; no network, provider, migration, deployment, or push action occurred.
+
+## 2026-10-23 - [REL-BUNDLE-1023] [watchdog-QA-r2]
+
+- Escalation-store exceptions now use a bounded per-instance claim fallback and emit one sanitized log plus one Sentry warning per affected sweep. Terminal credit-release and provider-timeout notifications bypass stuck-job deduplication.
+- A persisted critical marker covers warnings until the renotify window expires. The production heartbeat alarms when the last sweep is over 45 minutes old or unreadable; first-sweep grace remains per instance.
+- Added offline regression coverage for store failure and recovery, Sentry deduplication, warn fallback, critical coverage, terminal notifications, heartbeat boundaries, and the bounded ops persistence failure window. No provider, database, schema, deployment, or network action was taken.
+- Final safe-wrapper run: 91 tests, 83 passed, 8 database-gated skips, 0 failed. Import, JavaScript/Bash syntax, and diff checks passed. Live database transaction behavior remains unverified.
+
 ## 2026-10-23T21:01:36Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [copywriter-guard]
 
 - Added optional one-time fallback for rate-limit, upstream, and timeout failures; bounded 15-minute per-instance idempotent replay; and a required positive global daily cap checked after the per-account limit. Missing or failed budget configuration fails closed.
@@ -961,6 +981,7 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Committed the lock change locally as `1156031`. The requested eight test files passed through `nodetest.sh`: 80 passed, 2 live-database tests skipped, 0 failed. `git diff --check` passed. No database connection, network access, deployment, or push occurred.
 - The lock's `schemaSha256` and `capturedAt` still describe the prior isolated database capture. A reviewed 0017 catalogue recapture remains necessary before live schema verification can be claimed.
 
+
 ## 2026-10-23T22:51:50Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [QA-r3-M2]
 
 - Added token-edge plurals/possessives, a pre-fold camel/letter-digit matching view, and separator treatment for leading `@`/`$`. Preserved compact and long-prefix guard cases; documented the `lumens` plural match.
@@ -971,3 +992,14 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 Copywriter now requires an explicit enable flag, checks each account's hourly quota before consuming the global unit, and probes global counter readiness for GET. The counter validates inputs and propagates write errors; budget failures log only sanitized diagnostics. Fake-only regressions cover the handler, counter SQL reset, configured limit, and default wiring. The requested Node suite passed 88 tests with two expected database-test skips and zero failures; all four requested mutants failed their targeted tests and the restored source passed. No database, schema, environment, deployment, provider, commit, or push action was performed.
 
 Schema lock recaptured separately through `tools/check-migrations.mjs --capture-schema` on an isolated loopback PG 18.6 verification database with 0000-0017 applied (schemaSha256 `dd924544...`, 30 tables); `db:verify` against that database passes with the new lock and reports `SCHEMA_DRIFT` with the old one. #123 (147d220) is merged into this branch with a normal merge commit.
+
+## 2026-10-24T07:06:56Z - [closure-writeback] [body-parser-1024] [dependency-security] [local-only]
+
+- Pinned transitive body-parser from 2.3.0 to the first patched 2.x release, 2.4.0, for GHSA-27r3-jxmh-p828. Updated the lockfile's required qs resolution from 6.16.0 to 6.16.1. No application code or audit exception changed; dependency files were committed as `37641a3`.
+- `npm ls --package-lock-only` resolves body-parser 2.4.0, and `npm audit --json` no longer reports body-parser. The focused wrapper run had 33 passes, 5 credential-dependent skips, and 1 failure: the audit gate now flags separate undici GHSA-xjj6-f33q-929c. Undici was outside this task's permitted dependency scope.
+- Full `npm install --package-lock-only --ignore-scripts` could not regenerate the lockfile because registry requests for unrelated package metadata were refused. The changed lock records use `npm view` metadata. No push or deployment occurred.
+- Follow-up: patched only the four existing undici override pins for GHSA-xjj6-f33q-929c (6.29.1/7.30.1), updated six matching lock resolutions from cached npm metadata after registry denial, and confirmed `npm ci --ignore-scripts`, the live npm-audit gate, and focused Blob/Sandbox/storage tests pass locally.
+
+## 2026-10-24T07:20:04Z - [closure-writeback] [undici-1024] [dependency-security] [local-only]
+
+- Commit `b092f93` patches the four existing undici overrides for GHSA-xjj6-f33q-929c and six lock resolutions; `npm ci --ignore-scripts`, the live audit gate, 51 focused tests, and import checks passed (three credential-gated skips). The package-lock-only refresh could not fetch unrelated registry metadata through the configured proxy; cached npm metadata supplied the lock entries. No push or deployment occurred.
