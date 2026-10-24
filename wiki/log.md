@@ -949,3 +949,37 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - A persisted critical marker covers warnings until the renotify window expires. The production heartbeat alarms when the last sweep is over 45 minutes old or unreadable; first-sweep grace remains per instance.
 - Added offline regression coverage for store failure and recovery, Sentry deduplication, warn fallback, critical coverage, terminal notifications, heartbeat boundaries, and the bounded ops persistence failure window. No provider, database, schema, deployment, or network action was taken.
 - Final safe-wrapper run: 91 tests, 83 passed, 8 database-gated skips, 0 failed. Import, JavaScript/Bash syntax, and diff checks passed. Live database transaction behavior remains unverified.
+
+## 2026-10-23T21:01:36Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [copywriter-guard]
+
+- Added optional one-time fallback for rate-limit, upstream, and timeout failures; bounded 15-minute per-instance idempotent replay; and a required positive global daily cap checked after the per-account limit. Missing or failed budget configuration fails closed.
+- Added normalized client-name checks before limits and after generation, fenced and sanitized user prompt content, sentence/word-safe 900-character trimming, and user-facing copy for new response codes. Extended tests for replay, fallback, guard matching, budget failures, and provider/header diagnostic redaction.
+- Committed locally as `8fd03db` on `core/copywriter-followups-1023`. Offline copywriter tests: 50 passed, 1 live-DB skip, 0 failed. Vitest: 4 passed. Import, syntax, and diff checks passed. No network, provider call, deployment, runtime environment change, or push occurred. Replay remains per-instance and the live database path was not exercised.
+
+## 2026-10-23T21:51:36Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [QA-M1-L1-L5]
+
+- Closed client-guard normalization and compact-match bypasses; made input rejection generic and prompt escaping entity-safe. Added grapheme-safe 900-character trimming with Chinese/Japanese punctuation and a 60% minimum for sentence and whitespace cuts.
+- Checked the global cap before hourly quota and counted fallback model runs separately, with zero fallback SDK retries and one 28-second deadline. The existing `rate_limits` row cannot be account-independent because its required user FK cascades on deletion. Generation now fails closed pending an Architecture & Data schema change; no reserved user or migration was added. Documented per-instance replay, output-guard retry charges, best-effort human review, and the unconfirmed effective function `maxDuration`.
+- Code committed locally as `893ce38` on `core/copywriter-followups-1023`. The required offline copywriter suite passed 57 tests with one live-DB integration test skipped. `git diff --check` passed. No network, provider call, deployment, schema change, or push occurred.
+
+## 2026-10-23T22:20:43Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [QA-r2-low]
+
+- Bounded compact client-name matches to normalized token edges, retained the round-one Acmelabs prefix case, and escaped Unicode angle brackets in prompt fences. Documented the risk of short and common client terms.
+- Skipped fallback and its budget check when the shared deadline is spent or a timeout leaves under three seconds. A failed fallback budget check now returns 503 `copywriter_budget_unavailable`; a refusal remains 429.
+- Code committed locally as `1419210`. Offline copywriter suite: 63 passed, one live-DB test skipped. Import, syntax, and diff checks passed. No network, provider call, migration, schema change, deployment, or push. The phrase "luminous lumen output" remains blocked because it contains the exact "lumen" token; user clarification was requested for the contradictory allow example.
+
+## 2026-10-23T22:51:50Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [QA-r3-M2]
+
+- Added token-edge plurals/possessives, a pre-fold camel/letter-digit matching view, and separator treatment for leading `@`/`$`. Preserved compact and long-prefix guard cases; documented the `lumens` plural match.
+- Rechecked the shared deadline after fallback budget consumption; an elapsed deadline skips the fallback and returns 504. The regression verifies one consumed budget unit and no fallback call. Offline copywriter suite: 65 passed, one live-DB skip, zero failures via the required wrapper. No network, provider, schema, or push action.
+
+## 2026-10-24T07:06:56Z - [closure-writeback] [body-parser-1024] [dependency-security] [local-only]
+
+- Pinned transitive body-parser from 2.3.0 to the first patched 2.x release, 2.4.0, for GHSA-27r3-jxmh-p828. Updated the lockfile's required qs resolution from 6.16.0 to 6.16.1. No application code or audit exception changed; dependency files were committed as `37641a3`.
+- `npm ls --package-lock-only` resolves body-parser 2.4.0, and `npm audit --json` no longer reports body-parser. The focused wrapper run had 33 passes, 5 credential-dependent skips, and 1 failure: the audit gate now flags separate undici GHSA-xjj6-f33q-929c. Undici was outside this task's permitted dependency scope.
+- Full `npm install --package-lock-only --ignore-scripts` could not regenerate the lockfile because registry requests for unrelated package metadata were refused. The changed lock records use `npm view` metadata. No push or deployment occurred.
+- Follow-up: patched only the four existing undici override pins for GHSA-xjj6-f33q-929c (6.29.1/7.30.1), updated six matching lock resolutions from cached npm metadata after registry denial, and confirmed `npm ci --ignore-scripts`, the live npm-audit gate, and focused Blob/Sandbox/storage tests pass locally.
+
+## 2026-10-24T07:20:04Z - [closure-writeback] [undici-1024] [dependency-security] [local-only]
+
+- Commit `b092f93` patches the four existing undici overrides for GHSA-xjj6-f33q-929c and six lock resolutions; `npm ci --ignore-scripts`, the live audit gate, 51 focused tests, and import checks passed (three credential-gated skips). The package-lock-only refresh could not fetch unrelated registry metadata through the configured proxy; cached npm metadata supplied the lock entries. No push or deployment occurred.

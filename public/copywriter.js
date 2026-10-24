@@ -241,6 +241,21 @@ export function createCopywriterController(options) {
     } else if (code === 'copywriter_not_authorized' || error?.status === 403) {
       setAvailability(false, 'not-authorized', 'Not available for this account');
       setStatus(message, 'error');
+    } else if (code === 'copywriter_budget_unconfigured') {
+      setAvailability(false, 'unavailable', 'Copywriter budget needs setup');
+      setStatus('AI writing needs a daily budget configured.', 'error');
+    } else if (code === 'copywriter_budget_unavailable') {
+      setStatus('AI writing budget could not be checked. Please try again later.', 'error');
+    } else if (code === 'copywriter_budget_reached') {
+      setStatus('The daily AI writing budget has been reached. Try again tomorrow.', 'rate-limited');
+    } else if (code === 'copywriter_request_rejected') {
+      setStatus('AI writing cannot process this request. Please revise it and try again.', 'error');
+    } else if (code === 'client_reference_blocked') {
+      setStatus('The suggestion included a client name and was blocked. Please try again.', 'error');
+    } else if (code === 'idempotency_conflict') {
+      setStatus('This request key was already used for different content. Please try again.', 'error');
+    } else if (code === 'request_in_progress') {
+      setStatus('This request is still in progress. Please wait.', 'error');
     } else if (code === 'copywriter_unavailable' || error?.status === 503) {
       setAvailability(false, 'unavailable', 'Copywriter unavailable');
       setStatus(message, 'error');
