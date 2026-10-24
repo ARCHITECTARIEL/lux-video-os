@@ -24,7 +24,7 @@ async function health(method = 'GET', overrides = {}, deps = {}) {
       ...overrides,
     },
     dbProbe: async () => {}, lastSweep: async () => '2026-10-15T00:00:00.000Z',
-    now: () => new Date('2026-10-15T00:10:00.000Z'), ...deps,
+    now: () => new Date('2026-10-15T00:10:00.000Z'), opsFailures: () => 0, ...deps,
   })({ method }, res);
   return res;
 }
@@ -50,26 +50,58 @@ test('health reports an ok JSON response with identity, checks, and short CDN ca
   assert.equal(body.checks.db.ok, true);
   assert.equal(body.checks.watchdog.lastSweepAt, '2026-10-15T00:00:00.000Z');
   assert.equal(body.checks.watchdog.ok, true);
+  assert.equal(body.checks.watchdog.critical, false);
 });
 
-test('production health degrades when the sweep is missing, future-dated, or over 45 minutes old', async () => {
-  for (const [lastSweepAt, code] of [
-    [null, 'watchdog_missing'],
-    ['2026-10-15T00:10:01.000Z', 'watchdog_invalid'],
-    ['2026-10-14T23:24:59.000Z', 'watchdog_stale'],
+test('production health fails without a sweep after grace and warns after two intervals', async () => {
+  for (const [lastSweepAt, code, status, http] of [
+    [null, 'watchdog_missing', 'fail', 503],
+    ['2026-10-15T00:12:01.000Z', 'watchdog_invalid', 'degraded', 200],
+    ['2026-10-14T23:39:59.000Z', 'watchdog_stale', 'degraded', 200],
+    ['2026-10-14T23:09:59.000Z', 'watchdog_stale', 'fail', 503],
   ]) {
-    const res = await health('GET', {}, { lastSweep: async () => lastSweepAt });
+    const res = await health('GET', {}, { lastSweep: async () => lastSweepAt, processStartedAt: new Date('2026-10-14T23:00:00Z') });
     const body = JSON.parse(res.body);
-    assert.equal(res.statusCode, 200);
-    assert.equal(body.status, 'degraded');
+    assert.equal(res.statusCode, http);
+    assert.equal(body.status, status);
     assert.equal(body.checks.watchdog.ok, false);
     assert.equal(body.checks.watchdog.code, code);
   }
-  const boundary = await health('GET', {}, { lastSweep: async () => '2026-10-14T23:25:00.000Z' });
+  const boundary = await health('GET', {}, { lastSweep: async () => '2026-10-14T23:40:00.000Z' });
   assert.equal(JSON.parse(boundary.body).checks.watchdog.ok, true);
+  const failBoundary = await health('GET', {}, { lastSweep: async () => '2026-10-14T23:10:00.000Z' });
+  assert.equal(JSON.parse(failBoundary.body).checks.watchdog.status, 'warn');
+  assert.equal((await health('GET', {}, { lastSweep: async () => '2026-10-14T23:09:59.999Z' })).statusCode, 503);
 });
 
-test('health fails on missing and unavailable DB or Blob; degrades on missing provider', async () => {
+test('missing sweep uses production grace; nonproduction never fails for watchdog alone', async () => {
+  for (const age of [0, 19 * 60_000 + 59_999]) {
+    const res = await health('GET', {}, { lastSweep: async () => null, processStartedAt: new Date(Date.parse('2026-10-15T00:10:00Z') - age) });
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).checks.watchdog.status, 'warn');
+  }
+  const expired = await health('GET', {}, { lastSweep: async () => null, processStartedAt: new Date('2026-10-14T23:50:00Z') });
+  assert.equal(expired.statusCode, 503);
+  for (const value of [null, 'invalid', '2026-10-14T22:00:00Z']) {
+    const res = await health('GET', { VERCEL_ENV: 'preview' }, { lastSweep: async () => value });
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).checks.watchdog.status, 'warn');
+  }
+});
+
+test('future skew up to 120 seconds is healthy; unreadable sweep is warning after a healthy DB probe', async () => {
+  for (const seconds of [1, 120]) {
+    const res = await health('GET', {}, { lastSweep: async () => new Date(Date.parse('2026-10-15T00:10:00Z') + seconds * 1000).toISOString() });
+    assert.equal(JSON.parse(res.body).checks.watchdog.status, 'ok');
+  }
+  for (const lastSweep of [async () => { throw new Error('unreadable'); }, () => new Promise(() => {})]) {
+    const res = await health('GET', {}, { lastSweep });
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).checks.watchdog.code, 'watchdog_unreadable');
+  }
+});
+
+test('health fails on missing and unavailable DB or Blob; warns on missing provider', async () => {
   for (const [env, deps, statusCode, status, check] of [
     [{ DATABASE_URL: '' }, {}, 503, 'fail', 'db'],
     [{}, { dbProbe: async () => { throw new Error('postgres://private.invalid'); } }, 503, 'fail', 'db'],
@@ -89,6 +121,24 @@ test('health DB timeout is fail with a sanitized code', async () => {
   const res = await health('GET', {}, { dbProbe: () => new Promise(() => {}) });
   assert.equal(res.statusCode, 503);
   assert.equal(JSON.parse(res.body).checks.db.code, 'db_timeout');
+});
+
+test('health warns at the exact job-age boundary and never fails for local ops persistence failures', async () => {
+  const stale = await health('GET', {}, { lastSweep: async () => ({
+    lastSweepAt: '2026-10-15T00:00:00.000Z', oldestStaleAgeMinutes: 24 * 60,
+  }) });
+  assert.equal(stale.statusCode, 200);
+  assert.equal(JSON.parse(stale.body).status, 'degraded');
+  assert.equal(JSON.parse(stale.body).checks.watchdog.code, 'watchdog_job_age');
+  assert.equal((await health('GET', {}, { lastSweep: async () => ({ lastSweepAt: '2026-10-15T00:00:00Z', oldestStaleAgeMinutes: 24 * 60 - 1 }) })).statusCode, 200);
+  for (const [failures, status, http] of [[1, 'degraded', 200], [5, 'degraded', 200]]) {
+    const res = await health('GET', {}, { opsFailures: () => failures });
+    assert.equal(res.statusCode, http);
+    assert.equal(JSON.parse(res.body).status, status);
+    assert.equal(JSON.parse(res.body).checks.opsPersist.critical, false);
+    assert.equal(Object.hasOwn(JSON.parse(res.body).checks.opsPersist, 'failureCount'), false);
+  }
+  assert.equal(Object.hasOwn(JSON.parse(stale.body).checks.watchdog, 'oldestStaleAgeMinutes'), false);
 });
 
 test('health never echoes configuration secrets and nulls absent deployment identity', async () => {

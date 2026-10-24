@@ -100,7 +100,7 @@ test('admin mutation succeeds when audit persistence fails and emits alertable a
       opsWriter: async () => { throw new Error('private@example.com'); },
     })(request('grant-credit', { accountId: 'account-1', amount: 1, idempotencyKey: 'once' }), res);
     assert.equal(res.statusCode, 200);
-    assert.ok(errors.some(({ event, code, auditEvent }) => event === 'ops.audit.persist.failed' && code === 'OPS_AUDIT_PERSIST_FAILED' && auditEvent === 'admin.credit.granted'));
+    assert.ok(errors.some(({ event, code, opsEvent }) => event === 'ops.audit.persist.failed' && code === 'OPS_AUDIT_PERSIST_FAILED' && opsEvent === 'admin.credit.granted'));
     assert.equal(JSON.stringify(errors).includes('private@example.com'), false);
   } finally { console.log = originalLog; console.error = originalError; }
 });
@@ -330,7 +330,7 @@ test('native cron GET is scoped to the cron secret and persists a heartbeat only
     method: 'GET', headers: { authorization: `Bearer ${TEST_ENV.CRON_SECRET}` }, url,
   }), res);
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.body, { ok: true });
+  assert.deepEqual(res.body, { ok: true, status: 'ok', oldestStaleAgeMinutes: 0 });
   assert.deepEqual(calls, ['sweep']);
   assert.equal(rows.filter(row => row.event === 'watchdog_heartbeat').length, 1);
   assert.equal(JSON.stringify(res.body).includes('private-job'), false);
@@ -351,6 +351,18 @@ test('native cron failure cannot advance the persisted heartbeat', async () => {
   assert.equal(res.statusCode, 500);
   assert.equal(rows.some(row => row.event === 'watchdog_heartbeat'), false);
   assert.equal(JSON.stringify(res.body).includes('private provider detail'), false);
+  assert.equal(res.body.code, 'admin_internal_error');
+});
+
+test('native cron exposes critical sweep age as a warning without leaking job IDs', async () => {
+  const handler = createAdminHandler({ env: TEST_ENV, opsWriter: async () => {}, watchdogDbProbe: async () => {},
+    runWatchdogSweep: async () => ({ severity: 'critical', oldestStaleAgeMinutes: 43_200,
+      jobs: { alertedIds: ['private-job'] } }) });
+  const res = response();
+  await handler(request('watchdog-sweep', undefined, { method: 'GET', url: '/api/video-os-lite/watchdog-cron',
+    headers: { authorization: `Bearer ${TEST_ENV.CRON_SECRET}` } }), res);
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { ok: true, status: 'warn', oldestStaleAgeMinutes: 43_200 });
 });
 
 test('native cron reports failure when its completed sweep cannot persist the heartbeat', async () => {

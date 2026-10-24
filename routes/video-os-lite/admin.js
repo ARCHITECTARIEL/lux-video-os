@@ -46,6 +46,7 @@ const ACTIVITY_MAX_OFFSET = 10_000;
 const OPS_LEVELS = new Set(['info', 'warn', 'error']);
 const CRON_OPERATIONS = new Set(['watchdog-sweep', 'stripe-reconciliation']);
 const WATCHDOG_CRON_PATH = '/api/video-os-lite/watchdog-cron';
+const ADMIN_5XX_CODES = new Set(['stripe_not_configured', 'watchdog_dependencies_unhealthy', 'watchdog_heartbeat_unpersisted']);
 
 function boundedQueryText(value, label, maxLength = 128) {
   const text = String(value || '').trim();
@@ -422,10 +423,17 @@ async function completeWatchdogSweep(deps, options) {
   const { entry, row } = prepareOpsEvent({
     level: 'info', persist: true, event: 'watchdog_heartbeat', status: 200,
     code: 'WATCHDOG_SWEEP_COMPLETED', message: 'Watchdog sweep completed.',
+    details: { oldestStaleAgeMinutes: sweep.oldestStaleAgeMinutes || 0 },
   });
   console.log(JSON.stringify(entry));
   const heartbeatPersisted = await writeOpsEvent(row, deps.opsWriter, { audit: true });
   return { sweep, heartbeatPersisted, overlap: false };
+}
+
+function watchdogSweepStatus(sweep) {
+  return sweep.severity === 'critical' || sweep.alerted > 0 || sweep.timedOut > 0 || sweep.released > 0
+    || sweep.jobs?.recovery?.some(job => job.outcome === 'recovery_failed') || sweep.hostedConsentUrlCleanup?.failed
+    ? 'warn' : 'ok';
 }
 
 async function nativeWatchdogReady(env, probe) {
@@ -576,10 +584,11 @@ export function createAdminHandler(deps = {}) {
           if (!await nativeWatchdogReady(env, probe)) {
             return send(res, 503, { ok: false, code: 'watchdog_dependencies_unhealthy' });
           }
-          const { heartbeatPersisted, overlap } = await completeWatchdogSweep(deps);
+          const { sweep, heartbeatPersisted, overlap } = await completeWatchdogSweep(deps);
           if (overlap) return send(res, 409, { ok: false, code: 'watchdog_overlap_detected' });
           if (!heartbeatPersisted) return send(res, 503, { ok: false, code: 'watchdog_heartbeat_unpersisted' });
-          return send(res, 200, { ok: true });
+          return send(res, 200, { ok: true, status: watchdogSweepStatus(sweep),
+            oldestStaleAgeMinutes: sweep.oldestStaleAgeMinutes || 0 });
         }
         if (actorType === 'none') return send(res, 401, { ok: false, error: 'Admin login required.' });
         if (req.method === 'POST') return await handlePost(req, res, operation, deps);
@@ -588,7 +597,8 @@ export function createAdminHandler(deps = {}) {
         captureRouteError(error, { route: 'admin', failureCategory: error?.failureCategory || 'ADMIN' });
         if (res.headersSent) return; // a streaming response (operation=video) may have already started
         const status = Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode <= 599 ? error.statusCode : 500;
-        send(res, status, { ok: false, error: status < 500 ? error.message : 'Admin request failed.' });
+        const code = ADMIN_5XX_CODES.has(error?.code) ? error.code : 'admin_internal_error';
+        send(res, status, { ok: false, error: status < 500 ? error.message : 'Admin request failed.', ...(status >= 500 ? { code } : {}) });
       }
     } finally {
       await deferred.wait();

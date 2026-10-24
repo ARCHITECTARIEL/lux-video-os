@@ -931,6 +931,25 @@ Prefix-only admin IP audit, consolidated health/404 routing (12 functions), boun
 - Accepted Vercel OIDC from the request header or environment, removed the token line from the example file, and capped copywriter output at 4096 tokens.
 - Offline focused tests with `DATABASE_URL`, `HEYGEN_API_KEY`, and `AI_GATEWAY_API_KEY` unset: 37 passed, 1 DB-gated skip, 0 failed. Import and diff checks passed. Gitleaks found no findings in changed files; the full worktree still has 26 findings elsewhere. The requested QA report was absent from its supplied path. No provider, network, migration, deployment, or push action occurred.
 
+## 2026-10-23T21:11:00Z - [closure-writeback] [REL-BUNDLE-1023] [alerts-logging-follow-up]
+
+- Commit `11d310b` restored the overall `/api/health` `degraded` vocabulary for non-fail states and the watchdog check's prior `critical: false` flag. Per-check statuses remain `ok|warn|fail`; HTTP 503 is reserved for overall `fail`.
+- Ops persistence health now counts a bounded 15-minute window of failure timestamps, while the diagnostic log's `failureCount` remains lifetime per process. The watchdog shell check permits a watchdog-only 503 recovery sweep and rejects ops persistence failures; heartbeat continues to reject 503.
+- The requested offline Node suite passed: 111 tests, 102 passed, 9 environment-gated skips, 0 failed. Import, Node syntax, Bash syntax, and diff checks passed. No network, push, deployment, migration, or live provider/database action occurred.
+## 2026-10-23T21:53:00Z - [closure-writeback] [REL-BUNDLE-1023] [alerts-logging-QA]
+
+- Restricted watchdog sweep 503 to production, added first-sweep grace, bounded future skew and unreadable-sweep warning, and aligned job-age thresholds at the inclusive escalation boundary. Public health omits stale-job age and ops failure count.
+- Demoted the local ops persistence counter to a non-critical diagnostic and removed it from the recovery sweep gate. Heartbeat paging now follows the health response's 503/fail decision.
+- Added transaction-scoped `ops_events` escalation claims for per-job critical dedupe and warning re-notification, plus explicit allow-lists for database error diagnostics and admin 5xx codes. No schema change or external release was made.
+- Committed the correction locally as `3270d60` on `rel/alerts-logging-1023`. The requested offline wrapper passed 117 tests: 108 passed, 9 database-gated skips, 0 failed. Import, syntax, and diff checks passed. Live escalation-marker transaction behavior remains unverified; no network, provider, migration, deployment, or push action occurred.
+
+## 2026-10-23 - [REL-BUNDLE-1023] [watchdog-QA-r2]
+
+- Escalation-store exceptions now use a bounded per-instance claim fallback and emit one sanitized log plus one Sentry warning per affected sweep. Terminal credit-release and provider-timeout notifications bypass stuck-job deduplication.
+- A persisted critical marker covers warnings until the renotify window expires. The production heartbeat alarms when the last sweep is over 45 minutes old or unreadable; first-sweep grace remains per instance.
+- Added offline regression coverage for store failure and recovery, Sentry deduplication, warn fallback, critical coverage, terminal notifications, heartbeat boundaries, and the bounded ops persistence failure window. No provider, database, schema, deployment, or network action was taken.
+- Final safe-wrapper run: 91 tests, 83 passed, 8 database-gated skips, 0 failed. Import, JavaScript/Bash syntax, and diff checks passed. Live database transaction behavior remains unverified.
+
 ## 2026-10-23T21:01:36Z - [closure-writeback] [COPY-FOLLOWUPS-1023] [copywriter-guard]
 
 - Added optional one-time fallback for rate-limit, upstream, and timeout failures; bounded 15-minute per-instance idempotent replay; and a required positive global daily cap checked after the per-account limit. Missing or failed budget configuration fails closed.

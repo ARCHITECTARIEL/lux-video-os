@@ -31,6 +31,9 @@ HeyGen inventory defaults use `GET /v3/avatars/looks?ownership=public&limit=50` 
 - `VIDEO_OS_WORKER_INTERVAL`: worker poll interval in seconds.
 - `VIDEO_OS_SCHEDULER=0`: disables scheduler loop.
 - `VIDEO_OS_SCHEDULER_INTERVAL`: scheduler interval in seconds.
+- `VIDEO_OS_WATCHDOG_ESCALATE_HOURS`: job age in hours at which watchdog alerts become critical (default `24`). Age starts at job creation; health warns at the same inclusive threshold. The native cron runs every 15 minutes; health warns after 30 minutes without a persisted sweep and fails after 60 minutes only in production. The heartbeat check alarms after 45 minutes in production. A missing first sweep is a warning during the process's first 20 minutes. This grace is per instance and restarts on cold start, so health can differ between instances; anchoring it to deployment time is a follow-up. An unreadable sweep or timestamp over 120 seconds in the future is a warning.
+- `VIDEO_OS_WATCHDOG_RENOTIFY_HOURS`: minimum interval for repeated warning notifications for a job (default `6`). A critical escalation is claimed once per job using a transaction-scoped marker in `ops_events` and covers warnings for the renotify window. If the marker store is unavailable, an in-process bounded fallback limits repeated stuck-job alerts; terminal release and timeout notifications still go out.
+- `/api/health` reports `opsPersist` from the current process's bounded failure window. This diagnostic is non-critical and cannot prove persistence health across the fleet; it never causes HTTP 503 or blocks a recovery sweep.
 
 ## Required Local Tools
 

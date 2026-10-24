@@ -2146,7 +2146,7 @@ async function listStaleJobsByStatus(statuses, staleAfterMinutes, limit) {
     .select()
     .from(videoJobs)
     .where(and(inArray(videoJobs.status, statuses), sql`${videoJobs.updatedAt} < now() - (${staleAfterMinutes} * interval '1 minute')`))
-    .orderBy(videoJobs.updatedAt)
+    .orderBy(videoJobs.createdAt)
     .limit(Math.min(200, limit));
 }
 
