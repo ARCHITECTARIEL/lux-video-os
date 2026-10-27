@@ -20,6 +20,13 @@ import { canonicalJsonBytes } from '../lib/heygen-reconciliation-contract.js';
 // `routineDeployAuthorized` flag means only: this exact artifact may be
 // deployed to production code-wise, not that the product may launch/bill.
 const CI_REQUIRED_CHECKS = ['verify', 'analyze'];
+// GitHub's check-runs endpoint defaults to 30 results per page and caps
+// per_page at 100. A long-lived main head accumulates scheduled workflow runs,
+// which can push a required check past the first page, so every page must be
+// read. The page cap is a runaway guard: hitting it before total_count is
+// reached is treated as a failure (fail closed), never as a partial pass.
+export const CHECK_RUNS_PER_PAGE = 100;
+export const CHECK_RUNS_MAX_PAGES = 20;
 
 export async function hashFile(path) {
   const hash = createHash('sha256');
@@ -46,11 +53,86 @@ export function fingerprint(records) {
   return createHash('sha256').update(JSON.stringify(records)).digest('hex');
 }
 
+function isCompletedRun(run) {
+  // Runs without a status field (older fixtures) count as completed only if
+  // they carry a conclusion; GitHub always sends status.
+  return run?.status === undefined ? run?.conclusion != null : run.status === 'completed';
+}
+
+function runTime(run) {
+  const t = Date.parse(run?.completed_at ?? '');
+  return Number.isFinite(t) ? t : -Infinity;
+}
+
+// Newer wins: later completed_at, then higher id. On a full tie the run seen
+// first is kept (GitHub lists the newest run first).
+function isNewerRun(candidate, current) {
+  const dt = runTime(candidate) - runTime(current);
+  if (dt !== 0 && !Number.isNaN(dt)) return dt > 0;
+  const ci = Number(candidate?.id), cu = Number(current?.id);
+  if (Number.isFinite(ci) && Number.isFinite(cu) && ci !== cu) return ci > cu;
+  return false;
+}
+
+export function latestCompletedRunsByName(checkRuns) {
+  const latest = new Map();
+  for (const run of checkRuns || []) {
+    if (!run || typeof run.name !== 'string' || !isCompletedRun(run)) continue;
+    const current = latest.get(run.name);
+    if (!current || isNewerRun(run, current)) latest.set(run.name, run);
+  }
+  return latest;
+}
+
 export function checkCurrentCandidateCi(checkRuns, requiredChecks = CI_REQUIRED_CHECKS) {
-  const byName = Object.fromEntries((checkRuns || []).map(run => [run.name, run.conclusion]));
-  const detail = Object.fromEntries(requiredChecks.map(name => [name, byName[name] ?? null]));
-  const passed = requiredChecks.every(name => byName[name] === 'success');
+  const latest = latestCompletedRunsByName(checkRuns);
+  const detail = Object.fromEntries(requiredChecks.map(name => [name, latest.get(name)?.conclusion ?? null]));
+  const passed = requiredChecks.every(name => detail[name] === 'success');
   return { passed, detail };
+}
+
+export function ghApiJson(path, { spawn = spawnSync } = {}) {
+  const run = spawn('gh', ['api', path], { encoding: 'utf8' });
+  if (run.error || run.status !== 0) {
+    // Do not echo gh's stderr: keep the failure message free of request detail.
+    throw new Error(`GitHub API request failed (exit ${run.status ?? 'none'}).`);
+  }
+  try {
+    return JSON.parse(run.stdout);
+  } catch {
+    throw new Error('GitHub API returned a non-JSON response.');
+  }
+}
+
+// Reads every page of a commit's check-runs. Throws on any API error,
+// malformed page, or if total_count cannot be reached within maxPages, so the
+// caller fails closed.
+export async function fetchAllCheckRuns({ repo, sha, ghApi = ghApiJson, perPage = CHECK_RUNS_PER_PAGE, maxPages = CHECK_RUNS_MAX_PAGES }) {
+  if (!repo || !sha) throw new Error('fetchAllCheckRuns requires repo and sha.');
+  const runs = [];
+  let totalCount = null;
+  for (let page = 1; page <= maxPages; page += 1) {
+    const body = await ghApi(`repos/${repo}/commits/${sha}/check-runs?per_page=${perPage}&page=${page}`);
+    if (!body || !Array.isArray(body.check_runs) || !Number.isInteger(body.total_count) || body.total_count < 0) {
+      throw new Error(`Malformed check-runs response on page ${page}.`);
+    }
+    if (totalCount === null) totalCount = body.total_count;
+    runs.push(...body.check_runs);
+    if (runs.length >= totalCount) return { checkRuns: runs, totalCount, pages: page };
+    if (body.check_runs.length === 0) {
+      throw new Error(`check-runs ended early: ${runs.length} of ${totalCount} after page ${page}.`);
+    }
+  }
+  throw new Error(`check-runs exceeded page cap (${maxPages} pages): ${runs.length} of ${totalCount} read.`);
+}
+
+export async function resolveCurrentCandidateCi({ repo, sha, ghApi = ghApiJson, requiredChecks = CI_REQUIRED_CHECKS, ...options }) {
+  try {
+    const { checkRuns } = await fetchAllCheckRuns({ repo, sha, ghApi, ...options });
+    return checkCurrentCandidateCi(checkRuns, requiredChecks);
+  } catch (error) {
+    return { passed: false, detail: null, error: error?.message || 'check-runs lookup failed' };
+  }
 }
 
 export function computeAuthorizationResult({ manifest, currentSource, liveOutputSha256, freshDatabaseCheck, workflowBoundary, ciResult, refreshCheck, ownerAuthorized }) {
@@ -168,11 +250,8 @@ export async function main() {
   }
 
   const ghRepo = argument('--repo') || 'ARCHITECTARIEL/lux-video-os';
-  const ciRun = spawnSync('gh', ['api', `repos/${ghRepo}/commits/${currentSource.head}/check-runs`], { encoding: 'utf8' });
-  let ciResult = { passed: false, detail: null };
-  if (ciRun.status === 0) {
-    try { ciResult = checkCurrentCandidateCi(JSON.parse(ciRun.stdout).check_runs); } catch { /* leave as failed */ }
-  }
+  const ciResult = await resolveCurrentCandidateCi({ repo: ghRepo, sha: currentSource.head });
+  if (ciResult.error) console.error(`CI check-runs lookup failed closed: ${ciResult.error}`);
 
   const refreshCheck = await checkQuarantinedSpaceAuthority(root, manifest.output.location);
   const result = computeAuthorizationResult({ manifest, currentSource, liveOutputSha256, freshDatabaseCheck, workflowBoundary, ciResult, refreshCheck, ownerAuthorized });

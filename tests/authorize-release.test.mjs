@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkCurrentCandidateCi, checkQuarantinedMarkerFiles, checkQuarantinedRefreshFiles, checkQuarantinedSpaceAuthority, computeAuthorizationResult, outputInventory, fingerprint } from '../tools/authorize-release.mjs';
+import { checkCurrentCandidateCi, fetchAllCheckRuns, ghApiJson, resolveCurrentCandidateCi, checkQuarantinedMarkerFiles, checkQuarantinedRefreshFiles, checkQuarantinedSpaceAuthority, computeAuthorizationResult, outputInventory, fingerprint } from '../tools/authorize-release.mjs';
 import { heygenSpaceMarkerAssetIdDigest, reviewHeygenSpaceMarkerForTests } from '../lib/heygen-space-marker.js';
 
 const baseManifest = {
@@ -26,6 +26,133 @@ test('checkCurrentCandidateCi fails if any required check is missing or not succ
   assert.equal(checkCurrentCandidateCi([{ name: 'verify', conclusion: 'success' }]).passed, false);
   assert.equal(checkCurrentCandidateCi([{ name: 'verify', conclusion: 'failure' }, { name: 'analyze', conclusion: 'success' }]).passed, false);
   assert.equal(checkCurrentCandidateCi([]).passed, false);
+});
+
+// --- check-runs pagination (REL-PAGING-1027) ---
+function fillerRuns(count, prefix = 'scheduled') {
+  return Array.from({ length: count }, (_, i) => ({ id: 10_000 + i, name: `${prefix}-${i}`, status: 'completed', conclusion: 'success', completed_at: '2026-10-20T00:00:00Z' }));
+}
+
+function pagedApi(allRuns, { perPageCap = 100, failOnPage = null, totalCount = allRuns.length } = {}) {
+  const calls = [];
+  const api = async path => {
+    calls.push(path);
+    const url = new URL(path, 'https://api.invalid/');
+    const perPage = Math.min(Number(url.searchParams.get('per_page') || 30), perPageCap);
+    const page = Number(url.searchParams.get('page') || 1);
+    if (failOnPage === page) throw new Error('GitHub API request failed (exit 1).');
+    return { total_count: totalCount, check_runs: allRuns.slice((page - 1) * perPage, page * perPage) };
+  };
+  return { api, calls };
+}
+
+test('fetchAllCheckRuns requests per_page=100 and finds verify on page 2', async () => {
+  const runs = [...fillerRuns(100), { id: 2, name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2026-10-26T00:00:00Z' }, { id: 3, name: 'analyze', status: 'completed', conclusion: 'success', completed_at: '2026-10-26T00:00:00Z' }];
+  const { api, calls } = pagedApi(runs);
+  const fetched = await fetchAllCheckRuns({ repo: 'o/r', sha: 'abc', ghApi: api });
+  assert.equal(fetched.checkRuns.length, 102);
+  assert.equal(fetched.pages, 2);
+  assert.deepEqual(calls, ['repos/o/r/commits/abc/check-runs?per_page=100&page=1', 'repos/o/r/commits/abc/check-runs?per_page=100&page=2']);
+  // First page alone (the old behavior) would have missed verify.
+  assert.equal(checkCurrentCandidateCi(runs.slice(0, 100)).passed, false);
+  const result = await resolveCurrentCandidateCi({ repo: 'o/r', sha: 'abc', ghApi: api });
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.detail, { verify: 'success', analyze: 'success' });
+});
+
+test('fetchAllCheckRuns follows more than 100 runs across several pages until total_count', async () => {
+  const runs = [...fillerRuns(250), { id: 2, name: 'verify', status: 'completed', conclusion: 'success' }, { id: 3, name: 'analyze', status: 'completed', conclusion: 'success' }];
+  const { api, calls } = pagedApi(runs);
+  const fetched = await fetchAllCheckRuns({ repo: 'o/r', sha: 'abc', ghApi: api });
+  assert.equal(fetched.checkRuns.length, 252);
+  assert.equal(fetched.totalCount, 252);
+  assert.equal(calls.length, 3);
+  assert.equal((await resolveCurrentCandidateCi({ repo: 'o/r', sha: 'abc', ghApi: api })).passed, true);
+});
+
+test('fetchAllCheckRuns fails closed when the page cap is hit before total_count', async () => {
+  const runs = [...fillerRuns(300), { id: 2, name: 'verify', status: 'completed', conclusion: 'success' }, { id: 3, name: 'analyze', status: 'completed', conclusion: 'success' }];
+  const { api, calls } = pagedApi(runs);
+  await assert.rejects(fetchAllCheckRuns({ repo: 'o/r', sha: 'abc', ghApi: api, maxPages: 2 }), /page cap/);
+  assert.equal(calls.length, 2);
+  const result = await resolveCurrentCandidateCi({ repo: 'o/r', sha: 'abc', ghApi: api, maxPages: 2 });
+  assert.equal(result.passed, false);
+  assert.equal(result.detail, null);
+});
+
+test('fetchAllCheckRuns fails closed when pages end before total_count', async () => {
+  const runs = [{ id: 2, name: 'verify', status: 'completed', conclusion: 'success' }, { id: 3, name: 'analyze', status: 'completed', conclusion: 'success' }];
+  const { api } = pagedApi(runs, { totalCount: 5 });
+  await assert.rejects(fetchAllCheckRuns({ repo: 'o/r', sha: 'abc', ghApi: api }), /ended early/);
+  assert.equal((await resolveCurrentCandidateCi({ repo: 'o/r', sha: 'abc', ghApi: api })).passed, false);
+});
+
+test('checkCurrentCandidateCi uses the latest completed run when a check name repeats', () => {
+  const failedThenRerunPassed = [
+    { id: 1, name: 'verify', status: 'completed', conclusion: 'failure', completed_at: '2026-10-25T10:00:00Z' },
+    { id: 5, name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2026-10-26T10:00:00Z' },
+    { id: 6, name: 'verify', status: 'in_progress', conclusion: null, completed_at: null },
+    { id: 2, name: 'analyze', status: 'completed', conclusion: 'success', completed_at: '2026-10-25T10:00:00Z' },
+  ];
+  assert.deepEqual(checkCurrentCandidateCi(failedThenRerunPassed), { passed: true, detail: { verify: 'success', analyze: 'success' } });
+
+  const passedThenRerunFailed = [
+    { id: 9, name: 'verify', status: 'completed', conclusion: 'failure', completed_at: '2026-10-27T10:00:00Z' },
+    { id: 5, name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2026-10-26T10:00:00Z' },
+    { id: 2, name: 'analyze', status: 'completed', conclusion: 'success', completed_at: '2026-10-25T10:00:00Z' },
+  ];
+  assert.deepEqual(checkCurrentCandidateCi(passedThenRerunFailed), { passed: false, detail: { verify: 'failure', analyze: 'success' } });
+
+  // Same completed_at: higher id wins.
+  const tie = [
+    { id: 7, name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2026-10-26T10:00:00Z' },
+    { id: 8, name: 'verify', status: 'completed', conclusion: 'cancelled', completed_at: '2026-10-26T10:00:00Z' },
+    { id: 2, name: 'analyze', status: 'completed', conclusion: 'success', completed_at: '2026-10-25T10:00:00Z' },
+  ];
+  assert.equal(checkCurrentCandidateCi(tie).detail.verify, 'cancelled');
+
+  // Only an in-progress run: no completed result, so the gate fails.
+  assert.equal(checkCurrentCandidateCi([{ id: 6, name: 'verify', status: 'in_progress', conclusion: null }, { id: 2, name: 'analyze', status: 'completed', conclusion: 'success' }]).passed, false);
+});
+
+test('duplicate check names split across pages resolve to the latest completed run', async () => {
+  const runs = [
+    { id: 50, name: 'verify', status: 'completed', conclusion: 'success', completed_at: '2026-10-26T10:00:00Z' },
+    ...fillerRuns(99),
+    { id: 3, name: 'verify', status: 'completed', conclusion: 'failure', completed_at: '2026-10-20T10:00:00Z' },
+    { id: 4, name: 'analyze', status: 'completed', conclusion: 'success', completed_at: '2026-10-20T10:00:00Z' },
+  ];
+  const { api } = pagedApi(runs);
+  const result = await resolveCurrentCandidateCi({ repo: 'o/r', sha: 'abc', ghApi: api });
+  assert.deepEqual(result, { passed: true, detail: { verify: 'success', analyze: 'success' } });
+});
+
+test('resolveCurrentCandidateCi fails closed on an API error on any page', async () => {
+  const runs = [...fillerRuns(100), { id: 2, name: 'verify', status: 'completed', conclusion: 'success' }, { id: 3, name: 'analyze', status: 'completed', conclusion: 'success' }];
+  for (const failOnPage of [1, 2]) {
+    const { api } = pagedApi(runs, { failOnPage });
+    const result = await resolveCurrentCandidateCi({ repo: 'o/r', sha: 'abc', ghApi: api });
+    assert.equal(result.passed, false);
+    assert.equal(result.detail, null);
+    assert.match(result.error, /GitHub API request failed/);
+  }
+});
+
+test('resolveCurrentCandidateCi fails closed on a malformed page', async () => {
+  for (const body of [null, {}, { total_count: 2 }, { check_runs: [] }, { total_count: '2', check_runs: [] }]) {
+    const result = await resolveCurrentCandidateCi({ repo: 'o/r', sha: 'abc', ghApi: async () => body });
+    assert.equal(result.passed, false);
+    assert.match(result.error, /Malformed/);
+  }
+});
+
+test('ghApiJson throws on a non-zero gh exit, spawn error, or non-JSON output without echoing stderr', () => {
+  assert.throws(() => ghApiJson('x', { spawn: () => ({ status: 1, stdout: '', stderr: 'secret-ish detail' }) }), err => /exit 1/.test(err.message) && !/secret-ish/.test(err.message));
+  assert.throws(() => ghApiJson('x', { spawn: () => ({ status: null, error: new Error('ENOENT') }) }), /exit none/);
+  assert.throws(() => ghApiJson('x', { spawn: () => ({ status: 0, stdout: 'not json' }) }), /non-JSON/);
+  const calls = [];
+  assert.deepEqual(ghApiJson('repos/o/r/commits/abc/check-runs?per_page=100&page=1', { spawn: (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: '{"total_count":0,"check_runs":[]}' }; } }), { total_count: 0, check_runs: [] });
+  assert.deepEqual(calls, [['gh', 'api', 'repos/o/r/commits/abc/check-runs?per_page=100&page=1']]);
 });
 
 test('computeAuthorizationResult authorizes a routine deploy only when every automatable check passes and the owner flag is set', () => {
