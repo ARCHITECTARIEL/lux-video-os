@@ -29,7 +29,7 @@ Independently verified read-only against production afterward: `provider_verifie
 
 Re-ran `status --environment production --account-id <owner-account-id> --owner-authorized` afterward: resolves the same binding (matching `providerSpaceFingerprint`, `credentialScopeFingerprint`, `databaseBindingSha256`, `identityDigest`), confirming the fresh resolver path works against the real persisted graph, not just the bootstrap path.
 
-The account bound is `user…f0a4` -- the owner's own account (`ariel@luxmarketingcompany.com`), the only match for that email among production's 3 total user rows at the time of this check.
+The account bound is `<owner-account-id>` -- the owner's own account (`ariel@luxmarketingcompany.com`), the only match for that email among production's 3 total user rows at the time of this check.
 
 ## What this does and does not establish
 

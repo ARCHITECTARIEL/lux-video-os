@@ -14,7 +14,7 @@ The owner asked to proceed to the P0 production proof next; billing (Stripe or A
 
 ## Earlier October 1 (late evening) — production HeyGen provider-space binding bootstrapped
 
-A real, verified HeyGen provider-space binding now exists in production for the owner's account (`user…f0a4`), using the newly rotated `HEYGEN_API_KEY`. This required a genuine refactor of `db/heygen-space-binding-repository.js` and `tools/bind-heygen-space.mjs`, which previously hard-rejected any environment other than `verification` with no override, by design. The new production path requires its own separate, explicit `--owner-authorized` confirmation distinct from merely requesting the environment. See [the binding note](execution-notes/20261001-production-heygen-binding.md).
+A real, verified HeyGen provider-space binding now exists in production for the owner's account (`<owner-account-id>`), using the newly rotated `HEYGEN_API_KEY`. This required a genuine refactor of `db/heygen-space-binding-repository.js` and `tools/bind-heygen-space.mjs`, which previously hard-rejected any environment other than `verification` with no override, by design. The new production path requires its own separate, explicit `--owner-authorized` confirmation distinct from merely requesting the environment. See [the binding note](execution-notes/20261001-production-heygen-binding.md).
 
 **October 1 observation (historical):** Provider creation was hardcoded off at this checkpoint; no HeyGen creation or render submission followed from the binding alone. The October 13 local candidate uses the environment and canary account gate described above. No production activation is established by this note.
 
