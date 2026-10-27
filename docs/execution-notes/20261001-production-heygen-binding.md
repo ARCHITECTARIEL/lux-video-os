@@ -18,7 +18,7 @@ With the owner's explicit go-ahead, immediately after confirming CI was green on
 
 ```
 node --env-file=<production DB credential> --env-file=.env.heygen.local tools/bind-heygen-space.mjs bootstrap \
-  --environment production --account-id user-af738329999cec793560f0a4 \
+  --environment production --account-id <owner-account-id> \
   --private-evidence-dir <the existing, already owner-approved disposable probe evidence from earlier today> \
   --owner-authorized
 ```
@@ -27,9 +27,9 @@ Result: `{"verified":true,"environment":"production","runtimeActivation":false,.
 
 Independently verified read-only against production afterward: `provider_verified_account_scopes` (1 row), `provider_account_bindings` (1 row, `lifecycle_state: active`, `environment: production`), `provider_account_binding_promotions` (1 row). `provider_resources` remains 0, as expected -- that table tracks real usage artifacts, not the binding itself.
 
-Re-ran `status --environment production --account-id user-af738329999cec793560f0a4 --owner-authorized` afterward: resolves the same binding (matching `providerSpaceFingerprint`, `credentialScopeFingerprint`, `databaseBindingSha256`, `identityDigest`), confirming the fresh resolver path works against the real persisted graph, not just the bootstrap path.
+Re-ran `status --environment production --account-id <owner-account-id> --owner-authorized` afterward: resolves the same binding (matching `providerSpaceFingerprint`, `credentialScopeFingerprint`, `databaseBindingSha256`, `identityDigest`), confirming the fresh resolver path works against the real persisted graph, not just the bootstrap path.
 
-The account bound is `user-af738329999cec793560f0a4` -- the owner's own account (`ariel@luxmarketingcompany.com`), the only match for that email among production's 3 total user rows at the time of this check.
+The account bound is `<owner-account-id>` -- the owner's own account (`ariel@luxmarketingcompany.com`), the only match for that email among production's 3 total user rows at the time of this check.
 
 ## What this does and does not establish
 
