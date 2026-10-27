@@ -20,6 +20,12 @@ import { canonicalJsonBytes } from '../lib/heygen-reconciliation-contract.js';
 // `routineDeployAuthorized` flag means only: this exact artifact may be
 // deployed to production code-wise, not that the product may launch/bill.
 const CI_REQUIRED_CHECKS = ['verify', 'analyze'];
+// Only check-runs posted by GitHub Actions count. Any GitHub App can post a
+// check-run named 'verify'; such a run must never satisfy, or override, the
+// Actions result. The query is filtered by app_id and every returned run is
+// re-checked (fail closed when the app is missing or does not match).
+export const GITHUB_ACTIONS_APP_ID = 15368;
+export const GITHUB_ACTIONS_APP_SLUG = 'github-actions';
 // GitHub's check-runs endpoint defaults to 30 results per page and caps
 // per_page at 100. A long-lived main head accumulates scheduled workflow runs,
 // which can push a required check past the first page, so every page must be
@@ -53,18 +59,30 @@ export function fingerprint(records) {
   return createHash('sha256').update(JSON.stringify(records)).digest('hex');
 }
 
-function isCompletedRun(run) {
-  // Runs without a status field (older fixtures) count as completed only if
-  // they carry a conclusion; GitHub always sends status.
-  return run?.status === undefined ? run?.conclusion != null : run.status === 'completed';
+// The app must be present and must not contradict GitHub Actions on either
+// field it carries.
+export function isGithubActionsRun(run) {
+  const app = run?.app;
+  if (!app || typeof app !== 'object') return false;
+  const hasId = app.id !== undefined && app.id !== null;
+  const hasSlug = app.slug !== undefined && app.slug !== null;
+  if (!hasId && !hasSlug) return false;
+  if (hasId && app.id !== GITHUB_ACTIONS_APP_ID) return false;
+  if (hasSlug && app.slug !== GITHUB_ACTIONS_APP_SLUG) return false;
+  return true;
+}
+
+export function isCandidateRun(run, sha) {
+  return typeof sha === 'string' && sha.length > 0 && run?.head_sha === sha;
 }
 
 function runTime(run) {
-  const t = Date.parse(run?.completed_at ?? '');
+  const t = Date.parse(run?.completed_at ?? run?.started_at ?? '');
   return Number.isFinite(t) ? t : -Infinity;
 }
 
-// Newer wins: later completed_at, then higher id. On a full tie the run seen
+// Newer wins regardless of status: later completed_at (or started_at for a
+// run that has not completed), then higher id. On a full tie the run seen
 // first is kept (GitHub lists the newest run first).
 function isNewerRun(candidate, current) {
   const dt = runTime(candidate) - runTime(current);
@@ -74,20 +92,39 @@ function isNewerRun(candidate, current) {
   return false;
 }
 
-export function latestCompletedRunsByName(checkRuns) {
-  const latest = new Map();
+export function newestRunsByName(checkRuns) {
+  const newest = new Map();
   for (const run of checkRuns || []) {
-    if (!run || typeof run.name !== 'string' || !isCompletedRun(run)) continue;
-    const current = latest.get(run.name);
-    if (!current || isNewerRun(run, current)) latest.set(run.name, run);
+    if (!run || typeof run.name !== 'string' || run.name === '') continue;
+    const current = newest.get(run.name);
+    if (!current || isNewerRun(run, current)) newest.set(run.name, run);
   }
-  return latest;
+  return newest;
 }
 
-export function checkCurrentCandidateCi(checkRuns, requiredChecks = CI_REQUIRED_CHECKS) {
-  const latest = latestCompletedRunsByName(checkRuns);
-  const detail = Object.fromEntries(requiredChecks.map(name => [name, latest.get(name)?.conclusion ?? null]));
-  const passed = requiredChecks.every(name => detail[name] === 'success');
+const pendingState = run => `pending:${typeof run?.status === 'string' && run.status ? run.status : 'unknown'}`;
+
+// The newest run decides. If it is not completed (queued, in_progress,
+// waiting, requested, pending, or no status at all) the check is pending and
+// blocks. A non-completed run with no usable timestamp cannot be ordered, so
+// it is treated as newest and also blocks. Only conclusion 'success' passes.
+function requiredCheckState(name, runs, newest) {
+  const run = newest.get(name);
+  if (!run) return null;
+  const untimedPending = runs.find(r => r?.name === name && r.status !== 'completed' && runTime(r) === -Infinity);
+  if (untimedPending) return pendingState(untimedPending);
+  if (run.status !== 'completed') return pendingState(run);
+  return run.conclusion ?? null;
+}
+
+// Pure evaluation. Runs not posted by GitHub Actions, or not for the
+// candidate sha, are ignored here (fetchAllCheckRuns rejects them outright).
+// Without a sha nothing is eligible, so the gate fails.
+export function checkCurrentCandidateCi(checkRuns, { sha, requiredChecks = CI_REQUIRED_CHECKS } = {}) {
+  const eligible = (Array.isArray(checkRuns) ? checkRuns : []).filter(run => isGithubActionsRun(run) && isCandidateRun(run, sha));
+  const newest = newestRunsByName(eligible);
+  const detail = Object.fromEntries(requiredChecks.map(name => [name, requiredCheckState(name, eligible, newest)]));
+  const passed = requiredChecks.length > 0 && requiredChecks.every(name => detail[name] === 'success');
   return { passed, detail };
 }
 
@@ -104,23 +141,43 @@ export function ghApiJson(path, { spawn = spawnSync } = {}) {
   }
 }
 
-// Reads every page of a commit's check-runs. Throws on any API error,
-// malformed page, or if total_count cannot be reached within maxPages, so the
-// caller fails closed.
+export function checkRunsPath({ repo, sha, perPage = CHECK_RUNS_PER_PAGE, page }) {
+  return `repos/${repo}/commits/${sha}/check-runs?app_id=${GITHUB_ACTIONS_APP_ID}&per_page=${perPage}&page=${page}`;
+}
+
+// Reads every page of a commit's GitHub Actions check-runs. Runs are
+// de-duplicated by id. Throws on any API error, malformed page or run, a run
+// from another app or another commit, total_count changing between pages,
+// more unique runs than total_count, a page that adds no new run before
+// total_count is reached, or the page cap -- so the caller fails closed.
 export async function fetchAllCheckRuns({ repo, sha, ghApi = ghApiJson, perPage = CHECK_RUNS_PER_PAGE, maxPages = CHECK_RUNS_MAX_PAGES }) {
-  if (!repo || !sha) throw new Error('fetchAllCheckRuns requires repo and sha.');
+  if (typeof repo !== 'string' || !repo || typeof sha !== 'string' || !sha) throw new Error('fetchAllCheckRuns requires repo and sha.');
   const runs = [];
+  const seenIds = new Set();
   let totalCount = null;
   for (let page = 1; page <= maxPages; page += 1) {
-    const body = await ghApi(`repos/${repo}/commits/${sha}/check-runs?per_page=${perPage}&page=${page}`);
+    const body = await ghApi(checkRunsPath({ repo, sha, perPage, page }));
     if (!body || !Array.isArray(body.check_runs) || !Number.isInteger(body.total_count) || body.total_count < 0) {
       throw new Error(`Malformed check-runs response on page ${page}.`);
     }
     if (totalCount === null) totalCount = body.total_count;
-    runs.push(...body.check_runs);
-    if (runs.length >= totalCount) return { checkRuns: runs, totalCount, pages: page };
-    if (body.check_runs.length === 0) {
-      throw new Error(`check-runs ended early: ${runs.length} of ${totalCount} after page ${page}.`);
+    else if (body.total_count !== totalCount) {
+      throw new Error(`check-runs total_count changed between pages (${totalCount} -> ${body.total_count}); re-run authorization.`);
+    }
+    let added = 0;
+    for (const run of body.check_runs) {
+      if (!run || typeof run !== 'object' || !Number.isSafeInteger(run.id)) throw new Error(`Malformed check-run on page ${page}.`);
+      if (!isGithubActionsRun(run)) throw new Error(`check-run ${run.id} on page ${page} is not from GitHub Actions.`);
+      if (run.head_sha !== sha) throw new Error(`check-run ${run.id} on page ${page} is not for the candidate commit.`);
+      if (seenIds.has(run.id)) continue;
+      seenIds.add(run.id);
+      runs.push(run);
+      added += 1;
+    }
+    if (runs.length > totalCount) throw new Error(`check-runs returned more unique runs (${runs.length}) than total_count (${totalCount}).`);
+    if (runs.length === totalCount) return { checkRuns: runs, totalCount, pages: page };
+    if (added === 0) {
+      throw new Error(`check-runs ended early: ${runs.length} of ${totalCount} unique runs after page ${page}.`);
     }
   }
   throw new Error(`check-runs exceeded page cap (${maxPages} pages): ${runs.length} of ${totalCount} read.`);
@@ -129,9 +186,9 @@ export async function fetchAllCheckRuns({ repo, sha, ghApi = ghApiJson, perPage 
 export async function resolveCurrentCandidateCi({ repo, sha, ghApi = ghApiJson, requiredChecks = CI_REQUIRED_CHECKS, ...options }) {
   try {
     const { checkRuns } = await fetchAllCheckRuns({ repo, sha, ghApi, ...options });
-    return checkCurrentCandidateCi(checkRuns, requiredChecks);
+    return checkCurrentCandidateCi(checkRuns, { sha, requiredChecks });
   } catch (error) {
-    return { passed: false, detail: null, error: error?.message || 'check-runs lookup failed' };
+    return { passed: false, detail: null, error: (error instanceof Error && error.message) || 'check-runs lookup failed' };
   }
 }
 
@@ -220,27 +277,40 @@ export async function checkQuarantinedSpaceAuthority(root, output, { now = new D
     : checkQuarantinedRefreshFiles(root, output, { now });
 }
 
-function argument(name) {
-  const i = process.argv.indexOf(name);
-  return i < 0 ? undefined : process.argv[i + 1];
+function argument(argv, name) {
+  const i = argv.indexOf(name);
+  return i < 0 ? undefined : argv[i + 1];
 }
 
-export async function main() {
-  const root = fileURLToPath(new URL('../', import.meta.url));
-  const manifestPath = argument('--manifest') || join(root, '.vercel/release-build-manifest.json');
-  const ownerAuthorized = process.argv.includes('--owner-authorized');
+// deps exist so tests can drive main() end to end without git, a database,
+// the network, or moving real files. Production callers pass nothing.
+export async function main({ argv = process.argv, root = fileURLToPath(new URL('../', import.meta.url)), deps = {} } = {}) {
+  const {
+    captureSource = captureSourceIdentity,
+    inventory = outputInventory,
+    workflowBoundaryCheck = inspectWorkflowBoundary,
+    runMigrationCheck = () => spawnSync(process.execPath, [join(root, 'tools/check-migrations.mjs'), '--strict', '--environment', 'production'], { cwd: root, env: process.env, encoding: 'utf8' }),
+    ghApi = ghApiJson,
+    spaceAuthorityCheck = checkQuarantinedSpaceAuthority,
+    restoreOutput = rename,
+    log = message => console.log(message),
+    logError = message => console.error(message),
+    setExitCode = code => { process.exitCode = code; },
+  } = deps;
+  const manifestPath = argument(argv, '--manifest') || join(root, '.vercel/release-build-manifest.json');
+  const ownerAuthorized = argv.includes('--owner-authorized');
 
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
   if (manifest.target !== 'production') throw new Error('Release build manifest is not a production candidate.');
   if (!manifest.output?.location) throw new Error('Release build manifest has no quarantined output location; run npm run build:production first.');
   await stat(manifest.output.location).catch(() => { throw new Error(`Quarantined output is missing at ${manifest.output.location}.`); });
 
-  const currentSource = await captureSourceIdentity(root);
-  const liveInventory = await outputInventory(manifest.output.location);
+  const currentSource = await captureSource(root);
+  const liveInventory = await inventory(manifest.output.location);
   const liveOutputSha256 = fingerprint(liveInventory);
-  const workflowBoundary = await inspectWorkflowBoundary(manifest.output.location);
+  const workflowBoundary = await workflowBoundaryCheck(manifest.output.location);
 
-  const dbCheckRun = spawnSync(process.execPath, [join(root, 'tools/check-migrations.mjs'), '--strict', '--environment', 'production'], { cwd: root, env: process.env, encoding: 'utf8' });
+  const dbCheckRun = runMigrationCheck();
   let freshDatabaseCheck;
   try {
     const jsonLine = dbCheckRun.stdout.trim().split('\n').filter(Boolean).pop();
@@ -249,22 +319,23 @@ export async function main() {
     freshDatabaseCheck = { ok: false, result: null };
   }
 
-  const ghRepo = argument('--repo') || 'ARCHITECTARIEL/lux-video-os';
-  const ciResult = await resolveCurrentCandidateCi({ repo: ghRepo, sha: currentSource.head });
-  if (ciResult.error) console.error(`CI check-runs lookup failed closed: ${ciResult.error}`);
+  const ghRepo = argument(argv, '--repo') || 'ARCHITECTARIEL/lux-video-os';
+  const ciResult = await resolveCurrentCandidateCi({ repo: ghRepo, sha: currentSource.head, ghApi });
+  if (ciResult.error) logError(`CI check-runs lookup failed closed: ${ciResult.error}`);
 
-  const refreshCheck = await checkQuarantinedSpaceAuthority(root, manifest.output.location);
+  const refreshCheck = await spaceAuthorityCheck(root, manifest.output.location);
   const result = computeAuthorizationResult({ manifest, currentSource, liveOutputSha256, freshDatabaseCheck, workflowBoundary, ciResult, refreshCheck, ownerAuthorized });
-  console.log(JSON.stringify(result, null, 2));
+  log(JSON.stringify(result, null, 2));
 
   if (result.routineDeployAuthorized) {
     const target = join(root, '.vercel/output');
-    await rename(manifest.output.location, target);
-    console.error(`\nQuarantined output restored to ${target} for deploy. Run: vercel deploy --prebuilt --prod`);
+    await restoreOutput(manifest.output.location, target);
+    logError(`\nQuarantined output restored to ${target} for deploy. Run: vercel deploy --prebuilt --prod`);
   } else {
-    console.error('\nNot authorized for routine deploy -- see automatableChecks/ciDetail above for what is unresolved.');
-    process.exitCode = 1;
+    logError('\nNot authorized for routine deploy -- see automatableChecks/ciDetail above for what is unresolved.');
+    setExitCode(1);
   }
+  return result;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
