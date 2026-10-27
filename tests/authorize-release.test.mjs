@@ -33,7 +33,7 @@ function fillerRuns(count, base = 100_000) {
 const passingPair = () => [ciRun(1, 'verify'), ciRun(2, 'analyze')];
 const check = runs => checkCurrentCandidateCi(runs, { sha: CI_SHA });
 const R = { repo: 'o/r', sha: CI_SHA };
-const pagePath = (page, sha = CI_SHA) => `repos/o/r/commits/${sha}/check-runs?app_id=15368&per_page=100&page=${page}`;
+const pagePath = (page, sha = CI_SHA) => `repos/o/r/commits/${sha}/check-runs?app_id=15368&filter=all&per_page=100&page=${page}`;
 
 function pagedApi(allRuns, { failOnPage = null, totalCount = () => allRuns.length, pageOverride = null } = {}) {
   const calls = [];
@@ -98,15 +98,88 @@ test('checkCurrentCandidateCi uses the newest run when a check name repeats', ()
   assert.equal(check([pendingRun(4, 'verify', 'queued', '2026-10-25T00:00:00Z'), ciRun(5, 'verify', 'success', '2026-10-26T10:00:00Z'), ciRun(2, 'analyze')]).passed, true);
 });
 
-test('checkCurrentCandidateCi orders by completed_at/started_at before id (M2e) and by id on a time tie (M2f)', () => {
-  // Higher id but older time loses.
-  assert.equal(check([ciRun(9, 'verify', 'failure', '2026-10-25T00:00:00Z'), ciRun(5, 'verify', 'success', '2026-10-26T00:00:00Z'), ciRun(2, 'analyze')]).passed, true);
+test('checkCurrentCandidateCi orders by run id first (R2-L1); a higher id wins even with an older timestamp', () => {
+  // Higher id but older completed_at still wins (time-first ordering would pass here).
+  for (const order of [x => x, x => [...x].reverse()]) {
+    assert.equal(check(order([ciRun(9, 'verify', 'failure', '2026-10-25T00:00:00Z'), ciRun(5, 'verify', 'success', '2026-10-26T00:00:00Z'), ciRun(2, 'analyze')])).detail.verify, 'failure');
+    assert.equal(check(order([ciRun(9, 'verify', 'success', '2026-10-25T00:00:00Z'), ciRun(5, 'verify', 'failure', '2026-10-26T00:00:00Z'), ciRun(2, 'analyze')])).passed, true);
+  }
   // Same time: higher id wins, in either input order.
   const tie = [ciRun(7, 'verify', 'success'), ciRun(8, 'verify', 'cancelled'), ciRun(2, 'analyze')];
   assert.equal(check(tie).detail.verify, 'cancelled');
   assert.equal(check([...tie].reverse()).detail.verify, 'cancelled');
-  // Pending runs are ordered by started_at.
-  assert.equal(check([ciRun(5, 'verify', 'success', '2026-10-26T00:00:00Z'), pendingRun(3, 'verify', 'queued', '2026-10-26T00:00:01Z'), ciRun(2, 'analyze')]).passed, false);
+  // An older-id pending run that started later does not outrank a newer-id completed run.
+  assert.equal(check([ciRun(5, 'verify', 'success', '2026-10-26T00:00:00Z'), pendingRun(3, 'verify', 'queued', '2026-10-26T00:00:01Z'), ciRun(2, 'analyze')]).passed, true);
+});
+
+test('N-ORD4: a newer (higher id) in-progress run that started before the older success finished still blocks', () => {
+  const runs = [
+    ciRun(5, 'verify', 'success', '2026-10-26T10:00:00Z', { completed_at: '2026-10-26T10:30:00Z' }),
+    pendingRun(9, 'verify', 'in_progress', '2026-10-26T10:10:00Z'),
+    ciRun(2, 'analyze'),
+  ];
+  assert.deepEqual(check(runs), { passed: false, detail: { verify: 'pending:in_progress', analyze: 'success' } });
+  assert.equal(check([...runs].reverse()).passed, false);
+});
+
+test('N-ORD5: a newer run that started later and failed before the older success finished still wins and blocks', () => {
+  const runs = [
+    ciRun(5, 'verify', 'success', '2026-10-26T10:00:00Z', { completed_at: '2026-10-26T10:40:00Z' }),
+    ciRun(9, 'verify', 'failure', '2026-10-26T10:20:00Z', { completed_at: '2026-10-26T10:25:00Z' }),
+    ciRun(2, 'analyze'),
+  ];
+  assert.deepEqual(check(runs), { passed: false, detail: { verify: 'failure', analyze: 'success' } });
+  assert.equal(check([...runs].reverse()).passed, false);
+});
+
+test('timestamps break the tie only when ids are equal or unusable', () => {
+  const noId = (run) => { const { id, ...rest } = run; return rest; };
+  // No ids: later completed_at wins, then started_at for a pending run.
+  assert.equal(check([noId(ciRun(1, 'verify', 'success', '2026-10-25T00:00:00Z')), noId(ciRun(2, 'verify', 'failure', '2026-10-26T00:00:00Z')), ciRun(3, 'analyze')]).detail.verify, 'failure');
+  assert.equal(check([noId(ciRun(1, 'verify', 'failure', '2026-10-25T00:00:00Z')), noId(ciRun(2, 'verify', 'success', '2026-10-26T00:00:00Z')), ciRun(3, 'analyze')]).passed, true);
+  assert.equal(check([noId(ciRun(1, 'verify', 'success', '2026-10-25T00:00:00Z')), noId(pendingRun(2, 'verify', 'queued', '2026-10-26T00:00:00Z')), ciRun(3, 'analyze')]).detail.verify, 'pending:queued');
+  // Equal ids: later time wins.
+  assert.equal(check([ciRun(4, 'verify', 'success', '2026-10-25T00:00:00Z'), ciRun(4, 'verify', 'failure', '2026-10-26T00:00:00Z'), ciRun(3, 'analyze')]).detail.verify, 'failure');
+});
+
+test('the check-runs query asks for filter=all so in-progress re-runs are returned (R2-L2)', async () => {
+  const { api, calls } = pagedApi(passingPair());
+  await fetchAllCheckRuns({ ...R, ghApi: api });
+  assert.equal(calls.length, 1);
+  const url = new URL(calls[0], 'https://api.invalid/');
+  assert.equal(url.pathname, '/repos/o/r/commits/abc/check-runs');
+  assert.equal(url.searchParams.get('filter'), 'all');
+  assert.equal(url.searchParams.get('app_id'), '15368');
+  assert.equal(url.searchParams.get('per_page'), '100');
+  assert.equal(url.searchParams.get('page'), '1');
+});
+
+test('head_sha must match the candidate sha exactly: no case-insensitive or prefix match (X4/X5)', async () => {
+  const full = '0123456789abcdef0123456789abcdef01234567';
+  const forSha = (head) => passingPair().map(run => ({ ...run, head_sha: head }));
+  assert.equal(checkCurrentCandidateCi(forSha(full), { sha: full }).passed, true);
+  const variants = [full.toUpperCase(), full.slice(0, 7), full.slice(0, 12), `${full}0`];
+  for (const candidate of variants) {
+    // Runs carry the real sha; the candidate is a case/prefix variant.
+    assert.equal(checkCurrentCandidateCi(forSha(full), { sha: candidate }).passed, false, `candidate ${candidate}`);
+    const viaFetch = await resolveCurrentCandidateCi({ repo: 'o/r', sha: candidate, ghApi: async () => ({ total_count: 2, check_runs: forSha(full) }) });
+    assert.equal(viaFetch.passed, false, `candidate ${candidate}`);
+    assert.match(viaFetch.error, /not for the candidate commit/);
+    // The candidate is the real sha; runs carry a case/prefix variant.
+    assert.equal(checkCurrentCandidateCi(forSha(candidate), { sha: full }).passed, false, `head_sha ${candidate}`);
+    const viaFetch2 = await resolveCurrentCandidateCi({ repo: 'o/r', sha: full, ghApi: async () => ({ total_count: 2, check_runs: forSha(candidate) }) });
+    assert.equal(viaFetch2.passed, false, `head_sha ${candidate}`);
+    assert.match(viaFetch2.error, /not for the candidate commit/);
+  }
+});
+
+test('de-duplication keeps the first copy of an id, not a later one with different content (X6)', async () => {
+  const p1 = [ciRun(1, 'verify', 'failure'), ...fillerRuns(98), ciRun(2, 'analyze')];
+  const p2 = [ciRun(1, 'verify', 'success'), ciRun(3000, 'late')];
+  const ghApi = async path => (new URL(path, 'https://x/').searchParams.get('page') === '1' ? { total_count: 101, check_runs: p1 } : { total_count: 101, check_runs: p2 });
+  const fetched = await fetchAllCheckRuns({ ...R, ghApi });
+  assert.equal(fetched.checkRuns.find(run => run.id === 1).conclusion, 'failure');
+  assert.deepEqual(await resolveCurrentCandidateCi({ ...R, ghApi }), { passed: false, detail: { verify: 'failure', analyze: 'success' } });
 });
 
 test('checkCurrentCandidateCi blocks on a non-completed run that cannot be ordered (no timestamps, or no status)', () => {
@@ -383,7 +456,7 @@ async function runMain({ checkRuns, ghApiError = null, head = 'f'.repeat(40) } =
 
 test('main() queries the pinned candidate head and authorizes only on a passing Actions CI (M18)', async () => {
   const run = await runMain();
-  assert.deepEqual(run.ghCalls, [`repos/o/r/commits/${run.head}/check-runs?app_id=15368&per_page=100&page=1`]);
+  assert.deepEqual(run.ghCalls, [`repos/o/r/commits/${run.head}/check-runs?app_id=15368&filter=all&per_page=100&page=1`]);
   assert.equal(run.result.automatableChecks.currentCandidateCiPassed, true);
   assert.deepEqual(run.result.ciDetail, { verify: 'success', analyze: 'success' });
   assert.equal(run.result.routineDeployAuthorized, true);

@@ -81,14 +81,17 @@ function runTime(run) {
   return Number.isFinite(t) ? t : -Infinity;
 }
 
-// Newer wins regardless of status: later completed_at (or started_at for a
-// run that has not completed), then higher id. On a full tie the run seen
-// first is kept (GitHub lists the newest run first).
+// Newer wins regardless of status. Check-run ids are assigned in creation
+// order, so a higher id is the newer run; timestamps are not, because runs
+// overlap (a re-run can start before, or fail before, an older run finishes).
+// Time -- completed_at, else started_at -- only breaks a tie when the ids are
+// equal or unusable. On a full tie the run seen first is kept (GitHub lists
+// the newest run first).
 function isNewerRun(candidate, current) {
-  const dt = runTime(candidate) - runTime(current);
-  if (dt !== 0 && !Number.isNaN(dt)) return dt > 0;
   const ci = Number(candidate?.id), cu = Number(current?.id);
   if (Number.isFinite(ci) && Number.isFinite(cu) && ci !== cu) return ci > cu;
+  const dt = runTime(candidate) - runTime(current);
+  if (dt !== 0 && !Number.isNaN(dt)) return dt > 0;
   return false;
 }
 
@@ -106,8 +109,8 @@ const pendingState = run => `pending:${typeof run?.status === 'string' && run.st
 
 // The newest run decides. If it is not completed (queued, in_progress,
 // waiting, requested, pending, or no status at all) the check is pending and
-// blocks. A non-completed run with no usable timestamp cannot be ordered, so
-// it is treated as newest and also blocks. Only conclusion 'success' passes.
+// blocks. A non-completed run with no usable timestamp is anomalous (GitHub
+// always sets started_at), so it also blocks whatever its id. Only conclusion 'success' passes.
 function requiredCheckState(name, runs, newest) {
   const run = newest.get(name);
   if (!run) return null;
@@ -141,8 +144,10 @@ export function ghApiJson(path, { spawn = spawnSync } = {}) {
   }
 }
 
+// filter=all returns every run for the commit, not only the latest per name,
+// so a newer in-progress re-run is always visible to the gate.
 export function checkRunsPath({ repo, sha, perPage = CHECK_RUNS_PER_PAGE, page }) {
-  return `repos/${repo}/commits/${sha}/check-runs?app_id=${GITHUB_ACTIONS_APP_ID}&per_page=${perPage}&page=${page}`;
+  return `repos/${repo}/commits/${sha}/check-runs?app_id=${GITHUB_ACTIONS_APP_ID}&filter=all&per_page=${perPage}&page=${page}`;
 }
 
 // Reads every page of a commit's GitHub Actions check-runs. Runs are
