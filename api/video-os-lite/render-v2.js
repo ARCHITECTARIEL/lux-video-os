@@ -32,8 +32,8 @@ import { configuredLuxifyCredits, verifyLuxifyQuote } from '../../lib/luxify-quo
 import {
   defaultLuxifyRuntimePreflight,
   requireLuxifyActivation,
-  unavailableLuxifyEligibilityResolver,
 } from '../../routes/video-os-lite/luxify.js';
+import { resolveDatabaseLuxifyEligibility } from '../../db/luxify-consent-repository.js';
 import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 import { logOpsEvent } from '../../lib/ops-log.js';
 
@@ -241,7 +241,7 @@ export async function handleLuxifyRender(req, res, session, body, diagnosticRequ
   projectRepository = luxifyRepository,
   runtimePreflight = defaultLuxifyRuntimePreflight,
   authorizePremium = requirePersistedRenderAuthorization,
-  resolveEligibility = unavailableLuxifyEligibilityResolver,
+  resolveEligibility = resolveDatabaseLuxifyEligibility,
   verifyQuote = verifyLuxifyQuote,
   quoteOptions = {},
   reserve = reserveRender,

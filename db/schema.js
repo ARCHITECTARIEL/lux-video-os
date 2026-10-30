@@ -264,8 +264,9 @@ export const identityConsents = pgTable('identity_consents', {
   check('identity_consents_bridge_v2_ck', sql`${table.policyVersion} <> 'identity-provider-bridge-v2' or (${table.audioExtractionAuthorization} and ${table.temporaryPublicProviderExposureAuthorization} and ${table.sourceVideoSha256} is not null and ${table.consentPurpose} is not null and ${table.consentPurpose} = 'identity-voice-enrollment')`),
 ]);
 
-// Separate cinematic-use approval for one exact private look. No route writes
-// this table while LUXIFY creation remains held.
+// Separate cinematic-use approval for one exact private look. Only the
+// subject-only consent route writes it (db/luxify-consent-repository.js).
+// Rows are closed (revoked_at + terminal_reason), never deleted.
 export const luxifyCinematicConsents = pgTable('luxify_cinematic_consents', {
   id: uuid('id').defaultRandom().primaryKey(),
   accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
@@ -282,6 +283,7 @@ export const luxifyCinematicConsents = pgTable('luxify_cinematic_consents', {
   acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  terminalReason: text('terminal_reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   foreignKey({
@@ -303,6 +305,102 @@ export const luxifyCinematicConsents = pgTable('luxify_cinematic_consents', {
   check('luxify_cinematic_consents_look_ck', sql`${table.providerLookId} ~ '^[A-Za-z0-9_.:-]{1,255}$'`),
   check('luxify_cinematic_consents_hash_ck', sql`${table.providerSpaceFingerprint} ~ '^[a-f0-9]{64}$' and ${table.approvalEvidenceSha256} ~ '^[a-f0-9]{64}$'`),
   check('luxify_cinematic_consents_window_ck', sql`${table.expiresAt} > ${table.acceptedAt} and ${table.expiresAt} <= ${table.acceptedAt} + interval '8760 hours' and (${table.revokedAt} is null or ${table.revokedAt} >= ${table.acceptedAt})`),
+  check('luxify_cinematic_consents_terminal_ck', sql`(${table.revokedAt} is null and ${table.terminalReason} is null) or (${table.revokedAt} is not null and ${table.terminalReason} is not null and ${table.terminalReason} in ('withdrawn', 'revoked', 'source_revoked'))`),
+]);
+
+// Explicit Lux staff grant (Oct 14 rule): a verified luxmarketingcompany.com
+// email plus an explicit grant by the CEO account. Never deleted.
+export const luxStaffGrants = pgTable('lux_staff_grants', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  staffAccountId: text('staff_account_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  staffEmail: text('staff_email').notNull(),
+  scope: text('scope').notNull(),
+  explicitGrant: boolean('explicit_grant').notNull(),
+  emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }).notNull(),
+  grantedByAccountId: text('granted_by_account_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  grantEvidenceSha256: text('grant_evidence_sha256').notNull(),
+  grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+}, (table) => [
+  uniqueIndex('lux_staff_grants_active_uq').on(table.staffAccountId, table.scope).where(sql`${table.revokedAt} is null`),
+  check('lux_staff_grants_scope_ck', sql`${table.scope} = 'creative_approval'`),
+  check('lux_staff_grants_explicit_ck', sql`${table.explicitGrant}`),
+  check('lux_staff_grants_email_ck', sql`${table.staffEmail} ~ '^[a-z0-9._%+-]{1,64}@luxmarketingcompany[.]com$'`),
+  check('lux_staff_grants_hash_ck', sql`${table.grantEvidenceSha256} ~ '^[a-f0-9]{64}$'`),
+  check('lux_staff_grants_window_ck', sql`${table.revokedAt} is null or ${table.revokedAt} >= ${table.grantedAt}`),
+]);
+
+// Staff approval of one exact creative asset (bound to its content hash).
+// Creative assets are blocked from LUXIFY until an active approval exists.
+export const luxifyCreativeAssetApprovals = pgTable('luxify_creative_asset_approvals', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  mediaAssetId: uuid('media_asset_id').notNull(),
+  assetSha256: text('asset_sha256').notNull(),
+  staffGrantId: uuid('staff_grant_id').notNull(),
+  approverAccountId: text('approver_account_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  decision: text('decision').notNull(),
+  approvedAt: timestamp('approved_at', { withTimezone: true }).notNull().defaultNow(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+}, (table) => [
+  // Explicit short FK names: the generated ones exceed PostgreSQL's 63-byte limit.
+  foreignKey({ name: 'luxify_creative_asset_approvals_media_asset_fk', columns: [table.mediaAssetId], foreignColumns: [mediaAssets.id] }).onDelete('restrict'),
+  foreignKey({ name: 'luxify_creative_asset_approvals_staff_grant_fk', columns: [table.staffGrantId], foreignColumns: [luxStaffGrants.id] }).onDelete('restrict'),
+  uniqueIndex('luxify_creative_asset_approvals_active_uq').on(table.mediaAssetId).where(sql`${table.revokedAt} is null`),
+  check('luxify_creative_asset_approvals_decision_ck', sql`${table.decision} = 'approved'`),
+  check('luxify_creative_asset_approvals_hash_ck', sql`${table.assetSha256} ~ '^[a-f0-9]{64}$'`),
+]);
+
+// Staff-recorded cinematic look-support evidence (HeyGen cinematic_avatar
+// readback for one look in one provider space). Short-lived by constraint.
+export const luxifyLookCapabilityEvidence = pgTable('luxify_look_capability_evidence', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  providerLookId: text('provider_look_id').notNull(),
+  providerSpaceFingerprint: text('provider_space_fingerprint').notNull(),
+  capability: text('capability').notNull(),
+  eligible: boolean('eligible').notNull(),
+  avatarType: text('avatar_type').notNull(),
+  supportedApiEngines: jsonb('supported_api_engines').notNull().default([]),
+  evidenceSha256: text('evidence_sha256').notNull(),
+  staffGrantId: uuid('staff_grant_id').notNull(),
+  observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({ name: 'luxify_look_capability_evidence_staff_grant_fk', columns: [table.staffGrantId], foreignColumns: [luxStaffGrants.id] }).onDelete('restrict'),
+  index('luxify_look_capability_evidence_look_idx').on(table.accountId, table.providerLookId, table.providerSpaceFingerprint).where(sql`${table.revokedAt} is null`),
+  check('luxify_look_capability_evidence_capability_ck', sql`${table.capability} = 'cinematic_avatar'`),
+  check('luxify_look_capability_evidence_look_ck', sql`${table.providerLookId} ~ '^[A-Za-z0-9_.:-]{1,255}$' and ${table.avatarType} ~ '^[A-Za-z0-9_.:-]{1,80}$'`),
+  check('luxify_look_capability_evidence_hash_ck', sql`${table.providerSpaceFingerprint} ~ '^[a-f0-9]{64}$' and ${table.evidenceSha256} ~ '^[a-f0-9]{64}$'`),
+  check('luxify_look_capability_evidence_window_ck', sql`${table.expiresAt} > ${table.observedAt} and ${table.expiresAt} <= ${table.observedAt} + interval '30 days'`),
+]);
+
+// Mandatory Lux staff creative approval for one exact look in one provider
+// space (owner decision Oct 30): every LUXIFY render needs an active,
+// unexpired approval for each selected look. Close-only, never deleted.
+export const luxifyLookCreativeApprovals = pgTable('luxify_look_creative_approvals', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  accountId: text('account_id').notNull(),
+  identityId: uuid('identity_id').notNull(),
+  providerLookId: text('provider_look_id').notNull(),
+  providerSpaceFingerprint: text('provider_space_fingerprint').notNull(),
+  staffGrantId: uuid('staff_grant_id').notNull(),
+  approverAccountId: text('approver_account_id').notNull(),
+  decision: text('decision').notNull(),
+  approvedAt: timestamp('approved_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+}, (table) => [
+  foreignKey({ name: 'luxify_look_creative_approvals_account_fk', columns: [table.accountId], foreignColumns: [users.id] }).onDelete('restrict'),
+  foreignKey({ name: 'luxify_look_creative_approvals_identity_owner_fk', columns: [table.identityId, table.accountId], foreignColumns: [userIdentities.id, userIdentities.accountId] }).onDelete('restrict'),
+  foreignKey({ name: 'luxify_look_creative_approvals_staff_grant_fk', columns: [table.staffGrantId], foreignColumns: [luxStaffGrants.id] }).onDelete('restrict'),
+  foreignKey({ name: 'luxify_look_creative_approvals_approver_fk', columns: [table.approverAccountId], foreignColumns: [users.id] }).onDelete('restrict'),
+  uniqueIndex('luxify_look_creative_approvals_active_uq').on(table.accountId, table.identityId, table.providerLookId, table.providerSpaceFingerprint).where(sql`${table.revokedAt} is null`),
+  check('luxify_look_creative_approvals_decision_ck', sql`${table.decision} = 'approved'`),
+  check('luxify_look_creative_approvals_look_ck', sql`${table.providerLookId} ~ '^[A-Za-z0-9_.:-]{1,255}$' and ${table.providerSpaceFingerprint} ~ '^[a-f0-9]{64}$'`),
+  check('luxify_look_creative_approvals_window_ck', sql`${table.expiresAt} > ${table.approvedAt} and ${table.expiresAt} <= ${table.approvedAt} + interval '30 days' and (${table.revokedAt} is null or ${table.revokedAt} >= ${table.approvedAt})`),
 ]);
 
 export const identityVideoEnrollments = pgTable('identity_video_enrollments', {

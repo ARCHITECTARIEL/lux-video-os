@@ -59,6 +59,7 @@ test('Preview deployment stays within the 12-function budget', () => {
     '/api/video-os-lite/enrollments',
     '/api/video-os-lite/identities',
     '/api/video-os-lite/luxify',
+    '/api/video-os-lite/luxify-consent',
     '/api/video-os-lite/projects',
     '/api/video-os-lite/provider-consent',
     '/api/video-os-lite/providers',

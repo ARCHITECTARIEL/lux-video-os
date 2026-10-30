@@ -127,6 +127,13 @@
       "when": 1792794724735,
       "tag": "0017_global_counters",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793386022074,
+      "tag": "0018_luxify_consent_lifecycle",
+      "breakpoints": true
     }
   ]
 }

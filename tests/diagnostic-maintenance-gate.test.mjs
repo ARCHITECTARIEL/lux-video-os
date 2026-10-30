@@ -82,7 +82,7 @@ test('all nine API entrypoints retain their unsupported-method response with mai
 });
 
 test('active mode denies mapped APIs while unknown workspace paths stay 404 without side effects', async () => {
-  assert.equal(mappedApiRoutes.length, 33);
+  assert.equal(mappedApiRoutes.length, 34);
   assert.ok(mappedApiRoutes.some(({ src }) => src === '/api/video-os-lite/render-v2'));
   assert.equal(new Set(mappedApiRoutes.map(({ dest }) => dest)).size, 9);
   assert.deepEqual(new Set(mappedApiRoutes.map(({ dest }) => dest)), new Set(byDestination.keys()));
