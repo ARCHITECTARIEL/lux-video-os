@@ -51,19 +51,42 @@ CREATE TABLE "luxify_look_capability_evidence" (
 	CONSTRAINT "luxify_look_capability_evidence_window_ck" CHECK ("luxify_look_capability_evidence"."expires_at" > "luxify_look_capability_evidence"."observed_at" and "luxify_look_capability_evidence"."expires_at" <= "luxify_look_capability_evidence"."observed_at" + interval '30 days')
 );
 --> statement-breakpoint
+CREATE TABLE "luxify_look_creative_approvals" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"account_id" text NOT NULL,
+	"identity_id" uuid NOT NULL,
+	"provider_look_id" text NOT NULL,
+	"provider_space_fingerprint" text NOT NULL,
+	"staff_grant_id" uuid NOT NULL,
+	"approver_account_id" text NOT NULL,
+	"decision" text NOT NULL,
+	"approved_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL,
+	"revoked_at" timestamp with time zone,
+	CONSTRAINT "luxify_look_creative_approvals_decision_ck" CHECK ("luxify_look_creative_approvals"."decision" = 'approved'),
+	CONSTRAINT "luxify_look_creative_approvals_look_ck" CHECK ("luxify_look_creative_approvals"."provider_look_id" ~ '^[A-Za-z0-9_.:-]{1,255}$' and "luxify_look_creative_approvals"."provider_space_fingerprint" ~ '^[a-f0-9]{64}$'),
+	CONSTRAINT "luxify_look_creative_approvals_window_ck" CHECK ("luxify_look_creative_approvals"."expires_at" > "luxify_look_creative_approvals"."approved_at" and "luxify_look_creative_approvals"."expires_at" <= "luxify_look_creative_approvals"."approved_at" + interval '30 days' and ("luxify_look_creative_approvals"."revoked_at" is null or "luxify_look_creative_approvals"."revoked_at" >= "luxify_look_creative_approvals"."approved_at"))
+);
+--> statement-breakpoint
 ALTER TABLE "luxify_cinematic_consents" ADD COLUMN "terminal_reason" text;--> statement-breakpoint
 ALTER TABLE "lux_staff_grants" ADD CONSTRAINT "lux_staff_grants_staff_account_id_users_id_fk" FOREIGN KEY ("staff_account_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "lux_staff_grants" ADD CONSTRAINT "lux_staff_grants_granted_by_account_id_users_id_fk" FOREIGN KEY ("granted_by_account_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "luxify_creative_asset_approvals" ADD CONSTRAINT "luxify_creative_asset_approvals_account_id_users_id_fk" FOREIGN KEY ("account_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "luxify_creative_asset_approvals" ADD CONSTRAINT "luxify_creative_asset_approvals_media_asset_id_media_assets_id_fk" FOREIGN KEY ("media_asset_id") REFERENCES "public"."media_assets"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "luxify_creative_asset_approvals" ADD CONSTRAINT "luxify_creative_asset_approvals_staff_grant_id_lux_staff_grants_id_fk" FOREIGN KEY ("staff_grant_id") REFERENCES "public"."lux_staff_grants"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "luxify_creative_asset_approvals" ADD CONSTRAINT "luxify_creative_asset_approvals_media_asset_fk" FOREIGN KEY ("media_asset_id") REFERENCES "public"."media_assets"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "luxify_creative_asset_approvals" ADD CONSTRAINT "luxify_creative_asset_approvals_staff_grant_fk" FOREIGN KEY ("staff_grant_id") REFERENCES "public"."lux_staff_grants"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "luxify_creative_asset_approvals" ADD CONSTRAINT "luxify_creative_asset_approvals_approver_account_id_users_id_fk" FOREIGN KEY ("approver_account_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "luxify_look_capability_evidence" ADD CONSTRAINT "luxify_look_capability_evidence_account_id_users_id_fk" FOREIGN KEY ("account_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "luxify_look_capability_evidence" ADD CONSTRAINT "luxify_look_capability_evidence_staff_grant_id_lux_staff_grants_id_fk" FOREIGN KEY ("staff_grant_id") REFERENCES "public"."lux_staff_grants"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "luxify_look_capability_evidence" ADD CONSTRAINT "luxify_look_capability_evidence_staff_grant_fk" FOREIGN KEY ("staff_grant_id") REFERENCES "public"."lux_staff_grants"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "lux_staff_grants_active_uq" ON "lux_staff_grants" USING btree ("staff_account_id","scope") WHERE "lux_staff_grants"."revoked_at" is null;--> statement-breakpoint
 CREATE UNIQUE INDEX "luxify_creative_asset_approvals_active_uq" ON "luxify_creative_asset_approvals" USING btree ("media_asset_id") WHERE "luxify_creative_asset_approvals"."revoked_at" is null;--> statement-breakpoint
 CREATE INDEX "luxify_look_capability_evidence_look_idx" ON "luxify_look_capability_evidence" USING btree ("account_id","provider_look_id","provider_space_fingerprint") WHERE "luxify_look_capability_evidence"."revoked_at" is null;--> statement-breakpoint
+ALTER TABLE "luxify_look_creative_approvals" ADD CONSTRAINT "luxify_look_creative_approvals_account_fk" FOREIGN KEY ("account_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "luxify_look_creative_approvals" ADD CONSTRAINT "luxify_look_creative_approvals_identity_owner_fk" FOREIGN KEY ("identity_id","account_id") REFERENCES "public"."user_identities"("id","account_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "luxify_look_creative_approvals" ADD CONSTRAINT "luxify_look_creative_approvals_staff_grant_fk" FOREIGN KEY ("staff_grant_id") REFERENCES "public"."lux_staff_grants"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "luxify_look_creative_approvals" ADD CONSTRAINT "luxify_look_creative_approvals_approver_fk" FOREIGN KEY ("approver_account_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "luxify_look_creative_approvals_active_uq" ON "luxify_look_creative_approvals" USING btree ("account_id","identity_id","provider_look_id","provider_space_fingerprint") WHERE "luxify_look_creative_approvals"."revoked_at" is null;--> statement-breakpoint
 UPDATE "luxify_cinematic_consents" SET "terminal_reason" = 'revoked' WHERE "revoked_at" IS NOT NULL AND "terminal_reason" IS NULL;--> statement-breakpoint
+UPDATE "luxify_cinematic_consents" AS "consent" SET "revoked_at" = greatest("source"."revoked_at", "consent"."accepted_at"), "terminal_reason" = 'source_revoked' FROM "identity_consents" AS "source" WHERE "source"."id" = "consent"."source_identity_consent_id" AND "source"."revoked_at" IS NOT NULL AND "consent"."revoked_at" IS NULL;--> statement-breakpoint
 ALTER TABLE "luxify_cinematic_consents" ADD CONSTRAINT "luxify_cinematic_consents_terminal_ck" CHECK (("luxify_cinematic_consents"."revoked_at" is null and "luxify_cinematic_consents"."terminal_reason" is null) or ("luxify_cinematic_consents"."revoked_at" is not null and "luxify_cinematic_consents"."terminal_reason" is not null and "luxify_cinematic_consents"."terminal_reason" in ('withdrawn', 'revoked', 'source_revoked')));
 --> statement-breakpoint
 CREATE FUNCTION luxify_cinematic_consents_guard() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -75,13 +98,15 @@ BEGIN
     IF NEW.revoked_at IS NOT NULL OR NEW.terminal_reason IS NOT NULL THEN
       RAISE EXCEPTION 'luxify cinematic consent must be inserted open';
     END IF;
-    IF NOT EXISTS (
-      SELECT 1 FROM identity_consents source
+    -- FOR SHARE conflicts with a concurrent source revoke (NO KEY UPDATE), so
+    -- an uncommitted revoke is waited for and re-checked, not missed.
+    PERFORM 1 FROM identity_consents source
       WHERE source.id = NEW.source_identity_consent_id
         AND source.account_id = NEW.account_id
         AND source.identity_id = NEW.identity_id
         AND source.revoked_at IS NULL
-    ) THEN
+      FOR SHARE;
+    IF NOT FOUND THEN
       RAISE EXCEPTION 'luxify cinematic consent requires an active source identity consent';
     END IF;
     RETURN NEW;
@@ -92,6 +117,9 @@ BEGIN
   IF NEW.revoked_at IS NULL
     OR (to_jsonb(NEW) - 'revoked_at' - 'terminal_reason') IS DISTINCT FROM (to_jsonb(OLD) - 'revoked_at' - 'terminal_reason') THEN
     RAISE EXCEPTION 'luxify cinematic consent may only be closed';
+  END IF;
+  IF NEW.revoked_at > now() + interval '5 minutes' THEN
+    RAISE EXCEPTION 'luxify cinematic consent close time is in the future';
   END IF;
   RETURN NEW;
 END $$;
@@ -117,6 +145,33 @@ BEGIN
   RAISE EXCEPTION '% rows are closed, never deleted', TG_TABLE_NAME;
 END $$;
 --> statement-breakpoint
+CREATE FUNCTION luxify_consent_records_close_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.revoked_at IS NOT NULL THEN
+    RAISE EXCEPTION '% closed rows are immutable', TG_TABLE_NAME;
+  END IF;
+  IF NEW.revoked_at IS NULL
+    OR (to_jsonb(NEW) - 'revoked_at') IS DISTINCT FROM (to_jsonb(OLD) - 'revoked_at') THEN
+    RAISE EXCEPTION '% rows may only be closed', TG_TABLE_NAME;
+  END IF;
+  IF NEW.revoked_at > now() + interval '5 minutes' THEN
+    RAISE EXCEPTION '% close time is in the future', TG_TABLE_NAME;
+  END IF;
+  RETURN NEW;
+END $$;
+--> statement-breakpoint
+CREATE TRIGGER lux_staff_grants_close_only_trg BEFORE UPDATE ON lux_staff_grants
+FOR EACH ROW EXECUTE FUNCTION luxify_consent_records_close_only();
+--> statement-breakpoint
+CREATE TRIGGER luxify_creative_asset_approvals_close_only_trg BEFORE UPDATE ON luxify_creative_asset_approvals
+FOR EACH ROW EXECUTE FUNCTION luxify_consent_records_close_only();
+--> statement-breakpoint
+CREATE TRIGGER luxify_look_capability_evidence_close_only_trg BEFORE UPDATE ON luxify_look_capability_evidence
+FOR EACH ROW EXECUTE FUNCTION luxify_consent_records_close_only();
+--> statement-breakpoint
+CREATE TRIGGER luxify_look_creative_approvals_close_only_trg BEFORE UPDATE ON luxify_look_creative_approvals
+FOR EACH ROW EXECUTE FUNCTION luxify_consent_records_close_only();
+--> statement-breakpoint
 CREATE TRIGGER lux_staff_grants_no_delete_trg BEFORE DELETE ON lux_staff_grants
 FOR EACH ROW EXECUTE FUNCTION luxify_consent_records_no_delete();
 --> statement-breakpoint
@@ -124,4 +179,7 @@ CREATE TRIGGER luxify_creative_asset_approvals_no_delete_trg BEFORE DELETE ON lu
 FOR EACH ROW EXECUTE FUNCTION luxify_consent_records_no_delete();
 --> statement-breakpoint
 CREATE TRIGGER luxify_look_capability_evidence_no_delete_trg BEFORE DELETE ON luxify_look_capability_evidence
+FOR EACH ROW EXECUTE FUNCTION luxify_consent_records_no_delete();
+--> statement-breakpoint
+CREATE TRIGGER luxify_look_creative_approvals_no_delete_trg BEFORE DELETE ON luxify_look_creative_approvals
 FOR EACH ROW EXECUTE FUNCTION luxify_consent_records_no_delete();

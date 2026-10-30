@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   assertLuxifyCreativeAssetsApprovedTx,
+  assertLuxifyLookCreativeApprovalTx,
   createLuxifyConsentRepository,
   resolvePersistedLuxifyAuthority,
 } from '../db/luxify-consent-repository.js';
@@ -189,10 +190,11 @@ const evidenceRow = (overrides = {}) => ({
   avatarType: 'photo_avatar', supportedApiEngines: ['avatar_iv'], evidenceSha256: 'd'.repeat(64),
   observedAt: new Date('2026-11-01T00:00:00.000Z'), expiresAt: new Date('2026-11-20T00:00:00.000Z'), ...overrides,
 });
+const approvalRow = (overrides = {}) => ({ expiresAt: new Date('2026-11-15T00:00:00.000Z'), revokedAt: null, grantRevokedAt: null, ...overrides });
 const authority = (queue, now = NOW) => resolvePersistedLuxifyAuthority({ tx: fakeDb(queue, now).tx, accountId: ACCOUNT, lookIdentityIds: [IDENTITY], intent: {} });
 
 test('reserve/claim authority resolves from persisted consent, source consent, resource and capability evidence', async () => {
-  const result = await authority([[spaceRow], [identityRow], [consentRow()], [{ revokedAt: null }], [resourceRow], [evidenceRow()]]);
+  const result = await authority([[spaceRow], [identityRow], [consentRow()], [{ revokedAt: null }], [resourceRow], [evidenceRow()], [approvalRow()]]);
   assert.deepEqual(Object.keys(result).sort(), ['eligibilityRevision', 'lookBindings']);
   assert.deepEqual(result.lookBindings, [{ identityId: IDENTITY, providerLookId: LOOK }]);
   assert.match(result.eligibilityRevision, /:db-[a-f0-9]{32}$/);
@@ -203,9 +205,9 @@ test('reserve/claim authority fails closed on missing, expired or source-revoked
   await assert.rejects(authority([[spaceRow], [identityRow], []]), { code: 'LUXIFY_CONSENT_MISSING' });
   await assert.rejects(authority([[spaceRow], [identityRow], [consentRow()], [{ revokedAt: NOW }]]), { code: 'LUXIFY_SOURCE_CONSENT_REQUIRED' });
   await assert.rejects(authority([[spaceRow], [identityRow], [consentRow()], [{ revokedAt: null }], [resourceRow], []]), { code: 'LUXIFY_LOOK_NOT_ELIGIBLE' });
-  await assert.rejects(authority([[spaceRow], [identityRow], [consentRow({ expiresAt: new Date('2026-11-01T00:00:00.000Z') })], [{ revokedAt: null }], [resourceRow], [evidenceRow()]]), { code: 'LUXIFY_LOOK_NOT_ELIGIBLE', reason: 'CONSENT_INVALID' });
-  await assert.rejects(authority([[spaceRow], [identityRow], [consentRow()], [{ revokedAt: null }], [resourceRow], [evidenceRow({ expiresAt: new Date('2026-11-02T09:00:00.000Z') })]]), { code: 'LUXIFY_LOOK_NOT_ELIGIBLE' });
-  await assert.rejects(authority([[spaceRow], [identityRow], [consentRow()], [{ revokedAt: null }], [resourceRow], [evidenceRow({ eligible: false })]]), { code: 'LUXIFY_LOOK_NOT_ELIGIBLE' });
+  await assert.rejects(authority([[spaceRow], [identityRow], [consentRow({ expiresAt: new Date('2026-11-01T00:00:00.000Z') })], [{ revokedAt: null }], [resourceRow], [evidenceRow()], [approvalRow()]]), { code: 'LUXIFY_LOOK_NOT_ELIGIBLE', reason: 'CONSENT_INVALID' });
+  await assert.rejects(authority([[spaceRow], [identityRow], [consentRow()], [{ revokedAt: null }], [resourceRow], [evidenceRow({ expiresAt: new Date('2026-11-02T09:00:00.000Z') })], [approvalRow()]]), { code: 'LUXIFY_LOOK_NOT_ELIGIBLE' });
+  await assert.rejects(authority([[spaceRow], [identityRow], [consentRow()], [{ revokedAt: null }], [resourceRow], [evidenceRow({ eligible: false })], [approvalRow()]]), { code: 'LUXIFY_LOOK_NOT_ELIGIBLE' });
 });
 
 test('reserve/claim authority turns unexpected storage failures into a closed 503', async () => {
@@ -221,4 +223,34 @@ test('creative assets are blocked from LUXIFY until a Lux staff approval matches
   await assert.rejects(check([{ mediaAssetId: ASSET, assetSha256: 'a'.repeat(64), currentSha256: 'a'.repeat(64), quarantinedAt: null, grantRevokedAt: NOW }]), blocked);
   assert.equal(await check([{ mediaAssetId: ASSET, assetSha256: 'a'.repeat(64), currentSha256: 'a'.repeat(64), quarantinedAt: null, grantRevokedAt: null }]), true);
   await assert.rejects(resolvePersistedLuxifyAuthority({ tx: fakeDb([[]]).tx, accountId: ACCOUNT, lookIdentityIds: [IDENTITY], intent: { creativeAssetIds: [ASSET] } }), blocked);
+});
+
+test('every LUXIFY render needs an active, unexpired staff creative approval for each look (owner decision Oct 30)', async () => {
+  const base = () => [[spaceRow], [identityRow], [consentRow()], [{ revokedAt: null }], [resourceRow], [evidenceRow()]];
+  const blocked = { code: 'LUXIFY_CREATIVE_APPROVAL_REQUIRED', statusCode: 409 };
+  // No approval: refused, even for a prompt-only intent with no creative assets.
+  await assert.rejects(authority([...base(), []]), blocked);
+  // Approval issued under a revoked staff grant, a revoked approval, or an expired approval: refused.
+  await assert.rejects(authority([...base(), [approvalRow({ grantRevokedAt: new Date('2026-11-01T00:00:00.000Z') })]]), blocked);
+  await assert.rejects(authority([...base(), [approvalRow({ revokedAt: new Date('2026-11-01T00:00:00.000Z') })]]), blocked);
+  await assert.rejects(authority([...base(), [approvalRow({ expiresAt: NOW })]]), blocked);
+  await assert.rejects(authority([...base(), [approvalRow({ expiresAt: new Date('2026-11-01T00:00:00.000Z') })]]), blocked);
+  // Valid approval passes the gate.
+  const result = await authority([...base(), [approvalRow()]]);
+  assert.deepEqual(result.lookBindings, [{ identityId: IDENTITY, providerLookId: LOOK }]);
+  // The gate itself queries by account, identity, look and space, and returns the approval expiry.
+  const db = fakeDb([[approvalRow()]]);
+  const expiry = await assertLuxifyLookCreativeApprovalTx(db.tx, { accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP, now: NOW });
+  assert.equal(expiry, new Date('2026-11-15T00:00:00.000Z').getTime());
+  assert.ok(db.log[0].calls.some(([name]) => name === 'for'), 'approval row is locked FOR SHARE');
+  await assert.rejects(assertLuxifyLookCreativeApprovalTx(fakeDb([[approvalRow()]]).tx, { accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP, now: Number.NaN }), blocked);
+});
+
+test('staff look approval needs an active staff grant and binds the current look and space with a 30-day cap', async () => {
+  const repo = createLuxifyConsentRepository({ executor: fakeDb([]).executor });
+  await assert.rejects(repo.approveLookCreative({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY, expiresInDays: 31 }), { code: 'LUXIFY_LOOK_APPROVAL_INVALID' });
+  await assert.rejects(repo.approveLookCreative({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: 'nope' }), { code: 'LUXIFY_CONSENT_INVALID_REQUEST' });
+  const denied = fakeDb([[{ id: STAFF, email: 'staff@luxmarketingcompany.com' }], []]);
+  await assert.rejects(createLuxifyConsentRepository({ executor: denied.executor }).approveLookCreative({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY }), { code: 'LUX_STAFF_GRANT_REQUIRED' });
+  assert.equal(writes(denied.log).length, 0);
 });

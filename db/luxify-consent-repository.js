@@ -10,6 +10,7 @@ import {
   luxifyCinematicConsents,
   luxifyCreativeAssetApprovals,
   luxifyLookCapabilityEvidence,
+  luxifyLookCreativeApprovals,
   mediaAssets,
   providerAccountBindingPromotions,
   providerAccountBindings,
@@ -39,6 +40,7 @@ const PROVIDER_ID = /^[A-Za-z0-9_.:-]{1,255}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_ENGINE = /^[A-Za-z0-9_.:-]{1,80}$/;
 const CAPABILITY_EVIDENCE_MAX_MS = 30 * 86_400_000;
+const LOOK_APPROVAL_MAX_MS = 30 * 86_400_000;
 
 function failure(code, message, statusCode = 409, failureCategory = 'CONSENT') {
   return Object.assign(new Error(message), { code, statusCode, failureCategory });
@@ -421,6 +423,51 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     });
   }
 
+  /**
+   * Lux staff creative approval for one exact look (owner decision Oct 30):
+   * mandatory for every LUXIFY render. Bound to the look's current provider
+   * look id and the account's active HeyGen space; expires within 30 days.
+   */
+  async function approveLookCreative({ staffAccountId, accountId, identityId, expiresInDays = 30 }) {
+    const owner = exactAccount(accountId);
+    const id = exactUuid(identityId, 'look identity');
+    if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays * 86_400_000 > LOOK_APPROVAL_MAX_MS) {
+      throw failure('LUXIFY_LOOK_APPROVAL_INVALID', 'Look approval window is invalid.', 400, 'VALIDATION');
+    }
+    return db().transaction(async (tx) => {
+      const grant = await requireActiveStaffGrantTx(tx, staffAccountId);
+      const [identity] = await tx.select().from(userIdentities).where(and(eq(userIdentities.id, id), eq(userIdentities.accountId, owner))).limit(1);
+      const lookId = String(identity?.providerRenderableAvatarId || '');
+      if (!identity || identity.archivedAt || !PROVIDER_ID.test(lookId)) throw failure('LUXIFY_LOOK_NOT_FOUND', 'Look not found.', 404, 'OWNERSHIP');
+      const space = await loadActiveProviderSpaceTx(tx, owner);
+      await lockAccount(tx, owner, 'look-approval');
+      const now = await dbNow(tx);
+      await tx.update(luxifyLookCreativeApprovals).set({ revokedAt: now }).where(and(
+        eq(luxifyLookCreativeApprovals.accountId, owner), eq(luxifyLookCreativeApprovals.identityId, id),
+        eq(luxifyLookCreativeApprovals.providerLookId, lookId),
+        eq(luxifyLookCreativeApprovals.providerSpaceFingerprint, space.providerSpaceFingerprint), isNull(luxifyLookCreativeApprovals.revokedAt),
+      ));
+      const [row] = await tx.insert(luxifyLookCreativeApprovals).values({
+        id: randomUUID(), accountId: owner, identityId: id, providerLookId: lookId, providerSpaceFingerprint: space.providerSpaceFingerprint,
+        staffGrantId: grant.id, approverAccountId: grant.staffAccountId, decision: 'approved', approvedAt: now,
+        expiresAt: new Date(now.getTime() + expiresInDays * 86_400_000),
+      }).returning({ id: luxifyLookCreativeApprovals.id, expiresAt: luxifyLookCreativeApprovals.expiresAt });
+      return { approvalId: row.id, expiresAt: iso(row.expiresAt) };
+    });
+  }
+
+  async function revokeLookCreativeApproval({ staffAccountId, approvalId }) {
+    const id = exactUuid(approvalId, 'approval');
+    return db().transaction(async (tx) => {
+      await requireActiveStaffGrantTx(tx, staffAccountId);
+      const now = await dbNow(tx);
+      const closed = await tx.update(luxifyLookCreativeApprovals).set({ revokedAt: now })
+        .where(and(eq(luxifyLookCreativeApprovals.id, id), isNull(luxifyLookCreativeApprovals.revokedAt)))
+        .returning({ id: luxifyLookCreativeApprovals.id });
+      return { changed: closed.length === 1 };
+    });
+  }
+
   return Object.freeze({
     listConsents,
     grantConsent,
@@ -430,6 +477,8 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     grantStaff,
     revokeStaffGrant,
     approveCreativeAsset,
+    approveLookCreative,
+    revokeLookCreativeApproval,
     recordLookCapabilityEvidence,
   });
 }
@@ -458,6 +507,33 @@ export async function assertLuxifyCreativeAssetsApprovedTx(tx, { accountId, medi
   const approved = new Set(rows.filter(row => row.assetSha256 === row.currentSha256 && !row.quarantinedAt && !row.grantRevokedAt).map(row => row.mediaAssetId));
   if (ids.some(id => !approved.has(id))) throw failure('LUXIFY_CREATIVE_APPROVAL_REQUIRED', 'Creative assets need Lux staff approval.', 409);
   return true;
+}
+
+/**
+ * Mandatory staff creative approval for one look (owner decision Oct 30).
+ * Every LUXIFY render, prompt-only or not, needs an active, unexpired
+ * approval for each selected look, recorded under a staff grant that is
+ * still active. Returns the approval expiry; anything else denies.
+ */
+export async function assertLuxifyLookCreativeApprovalTx(tx, { accountId, identityId, providerLookId, providerSpaceFingerprint, now }) {
+  const [approval] = await tx.select({
+    expiresAt: luxifyLookCreativeApprovals.expiresAt,
+    revokedAt: luxifyLookCreativeApprovals.revokedAt,
+    grantRevokedAt: luxStaffGrants.revokedAt,
+  }).from(luxifyLookCreativeApprovals)
+    .innerJoin(luxStaffGrants, eq(luxStaffGrants.id, luxifyLookCreativeApprovals.staffGrantId))
+    .where(and(
+      eq(luxifyLookCreativeApprovals.accountId, accountId), eq(luxifyLookCreativeApprovals.identityId, identityId),
+      eq(luxifyLookCreativeApprovals.providerLookId, String(providerLookId || '')),
+      eq(luxifyLookCreativeApprovals.providerSpaceFingerprint, String(providerSpaceFingerprint || '')),
+      isNull(luxifyLookCreativeApprovals.revokedAt),
+    )).orderBy(desc(luxifyLookCreativeApprovals.approvedAt)).limit(1).for('share');
+  const expiresAt = approval ? new Date(approval.expiresAt).getTime() : NaN;
+  const current = now instanceof Date ? now.getTime() : Number(now);
+  if (!approval || approval.revokedAt || approval.grantRevokedAt || !Number.isFinite(expiresAt) || !Number.isFinite(current) || expiresAt <= current) {
+    throw failure('LUXIFY_CREATIVE_APPROVAL_REQUIRED', 'This look needs an active Lux staff creative approval.', 409);
+  }
+  return expiresAt;
 }
 
 function providerSpaceFrom({ accountId, space, window }) {
@@ -522,7 +598,10 @@ export async function resolveLuxifyEligibilityTx(tx, { accountId, lookIdentityId
       isNull(luxifyLookCapabilityEvidence.revokedAt),
     )).orderBy(desc(luxifyLookCapabilityEvidence.observedAt)).limit(1);
     if (!resource || !evidence) throw failure('LUXIFY_LOOK_NOT_ELIGIBLE', 'LUXIFY look eligibility could not be established.', 409);
-    evidenceExpiry = Math.min(evidenceExpiry, new Date(evidence.expiresAt).getTime());
+    const approvalExpiry = await assertLuxifyLookCreativeApprovalTx(tx, {
+      accountId: owner, identityId, providerLookId: lookId, providerSpaceFingerprint: space.providerSpaceFingerprint, now: current,
+    });
+    evidenceExpiry = Math.min(evidenceExpiry, new Date(evidence.expiresAt).getTime(), approvalExpiry);
     capabilities.push({ providerLookId: lookId, capability: evidence.capability, eligible: evidence.eligible, evidenceDigest: evidence.evidenceSha256, id: evidence.id });
     looks.push({
       identity: {

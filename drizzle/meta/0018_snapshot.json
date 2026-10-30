@@ -2135,8 +2135,21 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "luxify_creative_asset_approvals_media_asset_id_media_assets_id_fk": {
-          "name": "luxify_creative_asset_approvals_media_asset_id_media_assets_id_fk",
+        "luxify_creative_asset_approvals_approver_account_id_users_id_fk": {
+          "name": "luxify_creative_asset_approvals_approver_account_id_users_id_fk",
+          "tableFrom": "luxify_creative_asset_approvals",
+          "tableTo": "users",
+          "columnsFrom": [
+            "approver_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "luxify_creative_asset_approvals_media_asset_fk": {
+          "name": "luxify_creative_asset_approvals_media_asset_fk",
           "tableFrom": "luxify_creative_asset_approvals",
           "tableTo": "media_assets",
           "columnsFrom": [
@@ -2148,25 +2161,12 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "luxify_creative_asset_approvals_staff_grant_id_lux_staff_grants_id_fk": {
-          "name": "luxify_creative_asset_approvals_staff_grant_id_lux_staff_grants_id_fk",
+        "luxify_creative_asset_approvals_staff_grant_fk": {
+          "name": "luxify_creative_asset_approvals_staff_grant_fk",
           "tableFrom": "luxify_creative_asset_approvals",
           "tableTo": "lux_staff_grants",
           "columnsFrom": [
             "staff_grant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "luxify_creative_asset_approvals_approver_account_id_users_id_fk": {
-          "name": "luxify_creative_asset_approvals_approver_account_id_users_id_fk",
-          "tableFrom": "luxify_creative_asset_approvals",
-          "tableTo": "users",
-          "columnsFrom": [
-            "approver_account_id"
           ],
           "columnsTo": [
             "id"
@@ -2326,8 +2326,8 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "luxify_look_capability_evidence_staff_grant_id_lux_staff_grants_id_fk": {
-          "name": "luxify_look_capability_evidence_staff_grant_id_lux_staff_grants_id_fk",
+        "luxify_look_capability_evidence_staff_grant_fk": {
+          "name": "luxify_look_capability_evidence_staff_grant_fk",
           "tableFrom": "luxify_look_capability_evidence",
           "tableTo": "lux_staff_grants",
           "columnsFrom": [
@@ -2359,6 +2359,190 @@
         "luxify_look_capability_evidence_window_ck": {
           "name": "luxify_look_capability_evidence_window_ck",
           "value": "\"luxify_look_capability_evidence\".\"expires_at\" > \"luxify_look_capability_evidence\".\"observed_at\" and \"luxify_look_capability_evidence\".\"expires_at\" <= \"luxify_look_capability_evidence\".\"observed_at\" + interval '30 days'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.luxify_look_creative_approvals": {
+      "name": "luxify_look_creative_approvals",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "identity_id": {
+          "name": "identity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_look_id": {
+          "name": "provider_look_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_space_fingerprint": {
+          "name": "provider_space_fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "staff_grant_id": {
+          "name": "staff_grant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "approver_account_id": {
+          "name": "approver_account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "decision": {
+          "name": "decision",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "approved_at": {
+          "name": "approved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "luxify_look_creative_approvals_active_uq": {
+          "name": "luxify_look_creative_approvals_active_uq",
+          "columns": [
+            {
+              "expression": "account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "identity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_look_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_space_fingerprint",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"luxify_look_creative_approvals\".\"revoked_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "luxify_look_creative_approvals_account_fk": {
+          "name": "luxify_look_creative_approvals_account_fk",
+          "tableFrom": "luxify_look_creative_approvals",
+          "tableTo": "users",
+          "columnsFrom": [
+            "account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "luxify_look_creative_approvals_identity_owner_fk": {
+          "name": "luxify_look_creative_approvals_identity_owner_fk",
+          "tableFrom": "luxify_look_creative_approvals",
+          "tableTo": "user_identities",
+          "columnsFrom": [
+            "identity_id",
+            "account_id"
+          ],
+          "columnsTo": [
+            "id",
+            "account_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "luxify_look_creative_approvals_staff_grant_fk": {
+          "name": "luxify_look_creative_approvals_staff_grant_fk",
+          "tableFrom": "luxify_look_creative_approvals",
+          "tableTo": "lux_staff_grants",
+          "columnsFrom": [
+            "staff_grant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "luxify_look_creative_approvals_approver_fk": {
+          "name": "luxify_look_creative_approvals_approver_fk",
+          "tableFrom": "luxify_look_creative_approvals",
+          "tableTo": "users",
+          "columnsFrom": [
+            "approver_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "luxify_look_creative_approvals_decision_ck": {
+          "name": "luxify_look_creative_approvals_decision_ck",
+          "value": "\"luxify_look_creative_approvals\".\"decision\" = 'approved'"
+        },
+        "luxify_look_creative_approvals_look_ck": {
+          "name": "luxify_look_creative_approvals_look_ck",
+          "value": "\"luxify_look_creative_approvals\".\"provider_look_id\" ~ '^[A-Za-z0-9_.:-]{1,255}$' and \"luxify_look_creative_approvals\".\"provider_space_fingerprint\" ~ '^[a-f0-9]{64}$'"
+        },
+        "luxify_look_creative_approvals_window_ck": {
+          "name": "luxify_look_creative_approvals_window_ck",
+          "value": "\"luxify_look_creative_approvals\".\"expires_at\" > \"luxify_look_creative_approvals\".\"approved_at\" and \"luxify_look_creative_approvals\".\"expires_at\" <= \"luxify_look_creative_approvals\".\"approved_at\" + interval '30 days' and (\"luxify_look_creative_approvals\".\"revoked_at\" is null or \"luxify_look_creative_approvals\".\"revoked_at\" >= \"luxify_look_creative_approvals\".\"approved_at\")"
         }
       },
       "isRLSEnabled": false

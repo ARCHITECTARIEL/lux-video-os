@@ -30,6 +30,8 @@ const schemas = {
   'grant-staff': z.object({ action: z.literal('grant-staff'), staffAccountId: accountRef, explicitGrant: z.literal(true) }).strict(),
   'revoke-staff': z.object({ action: z.literal('revoke-staff'), staffAccountId: accountRef }).strict(),
   'approve-creative': z.object({ action: z.literal('approve-creative'), mediaAssetId: uuid }).strict(),
+  'approve-look': z.object({ action: z.literal('approve-look'), accountId: accountRef, identityId: uuid, expiresInDays: z.number().int().min(1).max(30).optional() }).strict(),
+  'revoke-look-approval': z.object({ action: z.literal('revoke-look-approval'), approvalId: uuid }).strict(),
   'record-capability': z.object({
     action: z.literal('record-capability'),
     accountId: accountRef,
@@ -144,6 +146,12 @@ export function createLuxifyConsentHandler({
         case 'approve-creative':
           result = await repository.approveCreativeAsset({ staffAccountId: accountId, mediaAssetId: input.mediaAssetId });
           return send(res, result.replayed ? 200 : 201, { ok: true, replayed: result.replayed });
+        case 'approve-look':
+          result = await repository.approveLookCreative({ staffAccountId: accountId, accountId: input.accountId, identityId: input.identityId, expiresInDays: input.expiresInDays });
+          return send(res, 201, { ok: true, expiresAt: result.expiresAt });
+        case 'revoke-look-approval':
+          result = await repository.revokeLookCreativeApproval({ staffAccountId: accountId, approvalId: input.approvalId });
+          return send(res, 200, { ok: true, changed: result.changed });
         case 'record-capability': {
           const { action, ...evidence } = input;
           await repository.recordLookCapabilityEvidence({ staffAccountId: accountId, ...evidence });
