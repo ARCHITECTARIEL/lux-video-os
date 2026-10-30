@@ -195,7 +195,7 @@ const evidenceRow = (overrides = {}) => ({
   avatarType: 'photo_avatar', supportedApiEngines: ['avatar_iv'], evidenceSha256: 'd'.repeat(64),
   observedAt: new Date('2026-11-01T00:00:00.000Z'), expiresAt: new Date('2026-11-20T00:00:00.000Z'), ...overrides,
 });
-const approvalRow = (overrides = {}) => ({ expiresAt: new Date('2026-11-15T00:00:00.000Z'), revokedAt: null, grantRevokedAt: null, ...overrides });
+const approvalRow = (overrides = {}) => ({ approvedAt: new Date('2026-11-01T00:00:00.000Z'), expiresAt: new Date('2026-11-15T00:00:00.000Z'), revokedAt: null, grantRevokedAt: null, ...overrides });
 const authority = (queue, now = NOW) => resolvePersistedLuxifyAuthority({ tx: fakeDb(queue, now).tx, accountId: ACCOUNT, lookIdentityIds: [IDENTITY], intent: {} });
 
 test('reserve/claim authority resolves from persisted consent, source consent, resource and capability evidence', async () => {
@@ -221,12 +221,18 @@ test('reserve/claim authority turns unexpected storage failures into a closed 50
 
 test('creative assets are blocked from LUXIFY until a Lux staff approval matches the current asset hash', async () => {
   const ASSET = '0b0b0b0b-0000-4000-8000-0000000000aa';
-  const check = rows => assertLuxifyCreativeAssetsApprovedTx(fakeDb([rows]).tx, { accountId: ACCOUNT, mediaAssetIds: [ASSET] });
+  const APPROVED_AT = new Date('2026-11-01T00:00:00.000Z');
+  const check = rows => assertLuxifyCreativeAssetsApprovedTx(fakeDb([rows.map(row => ({ approvedAt: APPROVED_AT, ...row }))]).tx, { accountId: ACCOUNT, mediaAssetIds: [ASSET] });
   const blocked = { code: 'LUXIFY_CREATIVE_APPROVAL_REQUIRED', statusCode: 409 };
   await assert.rejects(check([]), blocked);
   await assert.rejects(check([{ mediaAssetId: ASSET, assetSha256: 'a'.repeat(64), currentSha256: 'b'.repeat(64), quarantinedAt: null, grantRevokedAt: null }]), blocked);
   await assert.rejects(check([{ mediaAssetId: ASSET, assetSha256: 'a'.repeat(64), currentSha256: 'a'.repeat(64), quarantinedAt: null, grantRevokedAt: NOW }]), blocked);
   assert.equal(await check([{ mediaAssetId: ASSET, assetSha256: 'a'.repeat(64), currentSha256: 'a'.repeat(64), quarantinedAt: null, grantRevokedAt: null }]), true);
+  // R2-L1: an approval dated after DB now() (or with no date) confers nothing.
+  for (const approvedAt of [new Date(NOW.getTime() + 1), new Date('2027-01-01T00:00:00.000Z'), null]) {
+    await assert.rejects(check([{ mediaAssetId: ASSET, assetSha256: 'a'.repeat(64), currentSha256: 'a'.repeat(64), quarantinedAt: null, grantRevokedAt: null, approvedAt }]), blocked);
+  }
+  assert.equal(await check([{ mediaAssetId: ASSET, assetSha256: 'a'.repeat(64), currentSha256: 'a'.repeat(64), quarantinedAt: null, grantRevokedAt: null, approvedAt: NOW }]), true, 'approved_at == now is in effect');
   await assert.rejects(resolvePersistedLuxifyAuthority({ tx: fakeDb([[]]).tx, accountId: ACCOUNT, lookIdentityIds: [IDENTITY], intent: { creativeAssetIds: [ASSET] } }), blocked);
 });
 
@@ -240,6 +246,11 @@ test('every LUXIFY render needs an active, unexpired staff creative approval for
   await assert.rejects(authority([...base(), [approvalRow({ revokedAt: new Date('2026-11-01T00:00:00.000Z') })]]), blocked);
   await assert.rejects(authority([...base(), [approvalRow({ expiresAt: NOW })]]), blocked);
   await assert.rejects(authority([...base(), [approvalRow({ expiresAt: new Date('2026-11-01T00:00:00.000Z') })]]), blocked);
+  // R2-L1: route, reservation and claim all need approved_at <= now (DB time).
+  await assert.rejects(authority([...base(), [approvalRow({ approvedAt: new Date(NOW.getTime() + 1) })]]), blocked);
+  await assert.rejects(authority([...base(), [approvalRow({ approvedAt: new Date('2026-11-10T00:00:00.000Z') })]]), blocked);
+  await assert.rejects(authority([...base(), [approvalRow({ approvedAt: null })]]), blocked);
+  assert.deepEqual((await authority([...base(), [approvalRow({ approvedAt: NOW })]])).lookBindings, [{ identityId: IDENTITY, providerLookId: LOOK }]);
   // Valid approval passes the gate.
   const result = await authority([...base(), [approvalRow()]]);
   assert.deepEqual(result.lookBindings, [{ identityId: IDENTITY, providerLookId: LOOK }]);

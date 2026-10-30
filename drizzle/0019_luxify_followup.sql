@@ -1,3 +1,20 @@
+-- QA R2-L1: refuse to migrate while any approval or capability-evidence row is
+-- dated more than 5 minutes in the future (approved_at / observed_at). Such a
+-- row can only come from a direct DB write; the app always uses DB now(). The
+-- migration fails loudly and rolls back so an operator resolves it explicitly.
+DO $$
+DECLARE future_rows bigint;
+BEGIN
+  SELECT (SELECT count(*) FROM luxify_look_creative_approvals WHERE approved_at > now() + interval '5 minutes')
+       + (SELECT count(*) FROM luxify_creative_asset_approvals WHERE approved_at > now() + interval '5 minutes')
+       + (SELECT count(*) FROM luxify_look_capability_evidence WHERE observed_at > now() + interval '5 minutes')
+    INTO future_rows;
+  IF future_rows > 0 THEN
+    RAISE EXCEPTION 'migration 0019 refused: % luxify approval/evidence row(s) dated more than 5 minutes in the future; resolve them before migrating', future_rows
+      USING ERRCODE = 'check_violation';
+  END IF;
+END $$;
+--> statement-breakpoint
 CREATE TABLE "luxify_consent_challenge_uses" (
 	"challenge_sha256" text PRIMARY KEY NOT NULL,
 	"account_id" text NOT NULL,
@@ -36,9 +53,9 @@ FOR EACH ROW EXECUTE FUNCTION luxify_creative_approval_insert_guard();
 -- creative-asset approval and capability-evidence row recorded under it.
 -- Approvals close at greatest(revoke time, approved_at) (the 0018 window check
 -- needs revoked_at >= approved_at), capped at now()+5 minutes so the 0018
--- future-close guard never fires. A legacy row with approved_at beyond that cap
--- is left open rather than failing the revoke; every gate already requires an
--- active grant, so it confers nothing.
+-- future-close guard never fires. Rows beyond that cap cannot exist after the
+-- R2-L1 guard above plus the insert guard; the filter keeps the revoke safe
+-- regardless, and every gate also requires approved_at <= now().
 CREATE FUNCTION lux_staff_grant_revoked_cascade() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL THEN

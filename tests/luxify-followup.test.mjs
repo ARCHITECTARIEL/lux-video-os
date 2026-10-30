@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+import { PgDialect } from 'drizzle-orm/pg-core';
+
 import { createLuxifyConsentRepository, lookApprovalDto } from '../db/luxify-consent-repository.js';
 import { createLuxifyConsentHandler } from '../routes/video-os-lite/luxify-consent.js';
 import { requireLuxifyActivation } from '../routes/video-os-lite/luxify.js';
@@ -60,7 +62,7 @@ const space = { bindingId: 'b', originScopeKey: 'e'.repeat(64), verifiedAccountS
 
 // ---- N-2 / N-4 / N-6: look approval lifecycle ---------------------------
 test('approve-look returns the approval id and binds the READY look (N-2)', async () => {
-  const { repo, db } = repoFor([...staffOk(), [identity()], [space], [], [{ id: APPROVAL, expiresAt: new Date('2026-11-09T10:00:00.000Z') }]]);
+  const { repo, db } = repoFor([...staffOk(), [identity()], [space], [], [], [{ id: APPROVAL, expiresAt: new Date('2026-11-09T10:00:00.000Z') }]]);
   const result = await repo.approveLookCreative({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY, expiresInDays: 7 });
   assert.deepEqual(result, { approvalId: APPROVAL, expiresAt: '2026-11-09T10:00:00.000Z' });
   const insert = writes(db.log).find(entry => entry.kind === 'insert');
@@ -87,7 +89,7 @@ test('revoke-look-approval needs an active staff grant, 404s an unknown id and i
   const closed = repoFor([...staffOk(), [{ id: APPROVAL, revokedAt: NOW }]]);
   assert.deepEqual(await closed.repo.revokeLookCreativeApproval({ staffAccountId: STAFF, approvalId: APPROVAL }), { changed: false });
   assert.equal(writes(closed.db.log).length, 0);
-  const open = repoFor([...staffOk(), [{ id: APPROVAL, revokedAt: null }], [{ id: APPROVAL }]]);
+  const open = repoFor([...staffOk(), [{ id: APPROVAL, revokedAt: null, approvedAt: NOW }], [{ id: APPROVAL }]]);
   assert.deepEqual(await open.repo.revokeLookCreativeApproval({ staffAccountId: STAFF, approvalId: APPROVAL }), { changed: true });
   assert.deepEqual(arg(writes(open.db.log)[0], 'set'), { revokedAt: NOW });
 });
@@ -104,8 +106,10 @@ test('list-look-approvals is staff-only, scoped to one account, and returns mask
   const ok = repoFor([...staffOk(), [row(), row({ revokedAt: NOW }), row({ expiresAt: new Date('2026-11-02T09:00:00.000Z') }), row({ grantRevokedAt: NOW, staffGrantId: 'other' })]]);
   const { approvals } = await ok.repo.listLookCreativeApprovals({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY });
   assert.deepEqual(approvals.map(item => item.status), ['active', 'revoked', 'expired', 'revoked']);
+  assert.deepEqual(approvals.map(item => item.open), [true, false, true, true], 'open reflects the row, not the grant (R2-L1)');
+  assert.deepEqual(approvals.map(item => item.grantRevoked), [false, false, false, true]);
   assert.deepEqual(approvals.map(item => item.approvedUnderYourGrant), [true, true, true, false]);
-  assert.deepEqual(Object.keys(approvals[1]).sort(), ['approvalId', 'approvedAt', 'approvedUnderYourGrant', 'closedAt', 'expiresAt', 'identityId', 'lookRef', 'status']);
+  assert.deepEqual(Object.keys(approvals[1]).sort(), ['approvalId', 'approvedAt', 'approvedUnderYourGrant', 'closedAt', 'expiresAt', 'grantRevoked', 'identityId', 'lookRef', 'open', 'status']);
   assert.equal(approvals[0].lookRef, '…1234');
   const text = JSON.stringify(approvals);
   for (const secret of [ACCOUNT, STAFF, FP, LOOK, 'luxmarketingcompany']) assert.equal(text.includes(secret), false, `leaked ${secret}`);
@@ -283,6 +287,14 @@ test('0019 adds single-use challenge storage and the grant-revoke cascade withou
   assert.match(text, /BEFORE INSERT ON luxify_look_creative_approvals/);
   assert.match(text, /BEFORE INSERT ON luxify_creative_asset_approvals/);
   assert.match(text, /CREATE INDEX "luxify_consent_challenge_uses_used_at_idx"/);
+  // R2-L1: the migration opens with a guard that fails loudly on future-dated rows.
+  const guard = text.indexOf('RAISE EXCEPTION \'migration 0019 refused');
+  assert.ok(guard > 0 && guard < text.indexOf('CREATE TABLE "luxify_consent_challenge_uses"'), 'future-row guard runs first');
+  for (const clause of [
+    /FROM luxify_look_creative_approvals WHERE approved_at > now\(\) \+ interval '5 minutes'/,
+    /FROM luxify_creative_asset_approvals WHERE approved_at > now\(\) \+ interval '5 minutes'/,
+    /FROM luxify_look_capability_evidence WHERE observed_at > now\(\) \+ interval '5 minutes'/,
+  ]) assert.match(text, clause);
   assert.doesNotMatch(text, /DROP |ALTER TABLE "luxify_cinematic_consents"|CREATE OR REPLACE/);
   const journal = JSON.parse(journalText);
   assert.equal(journal.entries.at(-1).tag, '0019_luxify_followup');
@@ -290,4 +302,74 @@ test('0019 adds single-use challenge storage and the grant-revoke cascade withou
   const table = JSON.parse(snapshotText).tables['public.luxify_consent_challenge_uses'];
   assert.ok(table);
   assert.ok(table.indexes.luxify_consent_challenge_uses_used_at_idx, 'used_at index in snapshot (I-1)');
+});
+
+// ---- QA r3 / R2-L1: future-dated legacy approvals are inert ----------------
+const sqlText = where => new PgDialect().sqlToQuery(where).sql;
+const FUTURE = new Date('2026-12-01T00:00:00.000Z');
+
+test('list shows a future-dated open approval as not_yet_valid and open; a far-future row under a revoked grant as revoked but open', () => {
+  const base = { id: APPROVAL, identityId: IDENTITY, providerLookId: LOOK, staffGrantId: GRANT, expiresAt: new Date('2026-12-20T00:00:00.000Z'), revokedAt: null, grantRevokedAt: null };
+  const future = lookApprovalDto({ ...base, approvedAt: FUTURE }, { now: NOW });
+  assert.equal(future.status, 'not_yet_valid');
+  assert.equal(future.open, true);
+  assert.equal(lookApprovalDto({ ...base, approvedAt: null }, { now: NOW }).status, 'not_yet_valid', 'fails closed on a missing date');
+  const underRevoked = lookApprovalDto({ ...base, approvedAt: FUTURE, grantRevokedAt: NOW }, { now: NOW });
+  assert.deepEqual([underRevoked.status, underRevoked.open, underRevoked.grantRevoked], ['revoked', true, true]);
+  assert.equal(lookApprovalDto({ ...base, approvedAt: NOW }, { now: NOW }).status, 'active', 'approved_at == now is in effect');
+});
+
+test('approve-look with a blocking future-dated open approval returns a coded 409 and writes nothing', async () => {
+  const { repo, db } = repoFor([...staffOk(), [identity()], [space], [{ id: APPROVAL }]]);
+  await assert.rejects(repo.approveLookCreative({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY }), { code: 'LUXIFY_LOOK_APPROVAL_FUTURE_DATED', statusCode: 409 });
+  assert.equal(writes(db.log).length, 0);
+  const probe = db.log.at(-1);
+  assert.match(sqlText(arg(probe, 'where')), /"approved_at" > \$\d+/, 'blocking probe looks for approved_at > now');
+  assert.ok(probe.calls.some(([name, args]) => name === 'for' && args[0] === 'update'));
+});
+
+test('revoke-look-approval on a future-dated open approval returns a coded 409 and writes nothing', async () => {
+  for (const approvedAt of [FUTURE, new Date(NOW.getTime() + 1), null]) {
+    const { repo, db } = repoFor([...staffOk(), [{ id: APPROVAL, revokedAt: null, approvedAt }]]);
+    await assert.rejects(repo.revokeLookCreativeApproval({ staffAccountId: STAFF, approvalId: APPROVAL }), { code: 'LUXIFY_LOOK_APPROVAL_FUTURE_DATED', statusCode: 409 });
+    assert.equal(writes(db.log).length, 0);
+  }
+});
+
+test('approve-asset never replays a future-dated approval; it supersedes it at now', async () => {
+  const ASSET = '0d0d0d0d-0000-4000-8000-0000000000aa';
+  const asset = { id: ASSET, accountId: ACCOUNT, sha256: 'a'.repeat(64), quarantinedAt: null };
+  const replay = repoFor([...staffOk(), [asset], [{ id: APPROVAL, assetSha256: asset.sha256, approvedAt: NOW }]]);
+  assert.deepEqual(await replay.repo.approveCreativeAsset({ staffAccountId: STAFF, mediaAssetId: ASSET }), { approvalId: APPROVAL, replayed: true });
+  const { repo, db } = repoFor([...staffOk(), [asset], [{ id: APPROVAL, assetSha256: asset.sha256, approvedAt: FUTURE }], [], [{ id: 'new' }]]);
+  assert.deepEqual(await repo.approveCreativeAsset({ staffAccountId: STAFF, mediaAssetId: ASSET }), { approvalId: 'new', replayed: false });
+  const [close, insert] = writes(db.log);
+  assert.deepEqual(arg(close, 'set'), { revokedAt: NOW });
+  assert.equal(arg(insert, 'values').approvedAt, NOW);
+});
+
+test('revoking a staff grant skips approvals dated after now, so a far-future legacy row cannot fail the revoke (kills J17/J18)', async () => {
+  const { repo, db } = repoFor([ceo, verified, [{ id: GRANT }], [], [], [], [], [], [], []]);
+  await repo.revokeStaffGrant({ grantorAccountId: CEO, staffAccountId: STAFF });
+  const [, looks, assets, evidence] = writes(db.log);
+  for (const entry of [looks, assets]) {
+    const where = new PgDialect().sqlToQuery(arg(entry, 'where'));
+    assert.match(where.sql, /"approved_at" <= \$\d+/, 'approval close is bounded by approved_at <= now');
+    assert.ok(where.params.some(value => new Date(value).getTime() === NOW.getTime()), 'bound to DB now');
+  }
+  assert.doesNotMatch(sqlText(arg(evidence, 'where')), /approved_at|observed_at/, 'evidence always closes');
+});
+
+test('the staff grant behind every staff action is locked FOR SHARE so a concurrent revoke serializes with it (kills J12)', async () => {
+  const calls = [
+    repo => repo.approveLookCreative({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY }),
+    repo => repo.revokeLookCreativeApproval({ staffAccountId: STAFF, approvalId: APPROVAL }),
+    repo => repo.listLookCreativeApprovals({ staffAccountId: STAFF, accountId: ACCOUNT }),
+  ];
+  for (const call of calls) {
+    const { repo, db } = repoFor([staffUser, staffGrant, verified, new Error('stop after the grant check')]);
+    await assert.rejects(call(repo), /stop after the grant check/);
+    const grantSelect = db.log[1];
+    assert.ok(grantSelect.calls.some(([name, args]) => name === 'for' && args[0] === 'share'), 'staff grant row locked FOR SHARE');
+  }
 });

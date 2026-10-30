@@ -1,8 +1,8 @@
 {
   "version": 1,
   "provenance": "isolated database initialized from exact repository migrations; review before production use",
-  "capturedAt": "2026-10-30T22:55:18.094Z",
-  "migrationSetSha256": "653d5436ca25778d3598ac6d35911457ffe7f5038841e907f905f14862328ebe",
+  "capturedAt": "2026-10-30T23:38:41.853Z",
+  "migrationSetSha256": "8e406a00e1ff487b27401b6b8dd2489eb2e4e4720d84c68ee5309f23bca5f499",
   "sourceHashes": {
     "db/schema.js": "09d0aca7295ecc87ba187e255d0ebadc0d59b9622f4947adebf4b44544d8b008",
     "db/standard-narration-schema.js": "be1b5caa8040685ddae706b0e3c7d7357deb8753d917528d3defb88af11b0efd",
