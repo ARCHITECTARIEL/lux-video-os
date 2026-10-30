@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>LUXIFY consent | LUX Video OS</title>
+  <link rel="stylesheet" href="/provider-consent.css">
+</head>
+<body>
+  <main>
+    <p class="eyebrow">LUX VIDEO OS</p>
+    <h1 id="notice-title">LUXIFY cinematic consent</h1>
+    <p class="fine">Only you can give this consent, for your own enrolled look, while signed in to your own account.</p>
+    <section id="notice-panel" aria-labelledby="notice-heading">
+      <h2 id="notice-heading">What you are authorizing</h2>
+      <div id="notice-body"></div>
+      <label for="identity">Look</label>
+      <select id="identity"></select>
+      <label class="affirm"><input id="ack-generation" type="checkbox"><span id="ack-generation-text"></span></label>
+      <label class="affirm"><input id="ack-processing" type="checkbox"><span id="ack-processing-text"></span></label>
+      <button id="grant" type="button" disabled>Give consent</button>
+    </section>
+    <section aria-labelledby="consents-heading">
+      <h2 id="consents-heading">Your LUXIFY consents</h2>
+      <ul id="consents"></ul>
+    </section>
+    <p id="status" role="status" aria-live="polite"></p>
+  </main>
+  <script type="module" src="/luxify-consent.js"></script>
+</body>
+</html>

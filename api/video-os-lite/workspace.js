@@ -11,13 +11,14 @@ import enrollmentUpload from '../../routes/video-os-lite/enrollment-upload.js';
 import scriptedPhoto from '../../routes/video-os-lite/scripted-photo.js';
 import providerConsent from '../../routes/video-os-lite/provider-consent.js';
 import luxify from '../../routes/video-os-lite/luxify.js';
+import luxifyConsent from '../../routes/video-os-lite/luxify-consent.js';
 import { send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 import { deferAdminResponse } from '../../lib/admin-request-audit.js';
 import health from '../../lib/health.js';
 import notFound from '../../lib/api-not-found.js';
 
-const handlers = { admin, asset, copywriter, identities, projects, providers, results, standard, enrollments, luxify, 'enrollment-upload': enrollmentUpload, 'scripted-photo': scriptedPhoto, 'provider-consent': providerConsent, 'watchdog-cron': admin };
+const handlers = { admin, asset, copywriter, identities, projects, providers, results, standard, enrollments, luxify, 'enrollment-upload': enrollmentUpload, 'scripted-photo': scriptedPhoto, 'provider-consent': providerConsent, 'luxify-consent': luxifyConsent, 'watchdog-cron': admin };
 
 export default async function handler(req, res) {
   const pathname = String(req.url || '').split('?', 1)[0];

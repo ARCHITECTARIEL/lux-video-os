@@ -29,9 +29,10 @@ test('0017 creates only the account-independent global counter and extends the s
   assert.equal(table.columns.key.primaryKey, true);
   assert.equal(table.columns.count.default, 0);
   assert.deepEqual(table.foreignKeys, {});
-  assert.deepEqual(journal.entries.at(-1), {
-    idx: 17, version: '7', when: journal.entries.at(-1).when,
+  const entry = journal.entries.find(item => item.idx === 17);
+  assert.deepEqual(entry, {
+    idx: 17, version: '7', when: entry.when,
     tag: '0017_global_counters', breakpoints: true,
   });
-  assert.ok(journal.entries.at(-1).when > journal.entries.at(-2).when);
+  assert.ok(entry.when > journal.entries.find(item => item.idx === 16).when);
 });

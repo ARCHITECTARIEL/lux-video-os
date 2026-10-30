@@ -31,6 +31,7 @@ import { acquireProviderLifecycleLock } from './provider-lifecycle-lock.js';
 import { assertHeygenProviderReceiptTx, withFreshHeygenSpaceBindingTransaction, withHeygenSpaceBindingReceiptTransaction } from './heygen-space-binding-repository.js';
 import { assertProviderIdentityReferencesActiveTx, assertProviderJobLookReferencesActiveTx, assertProviderJobReferencesActiveTx, attachProviderConsumerReferenceTx, attachProviderJobLookReferencesTx, getExactProviderResourceTx, markProviderResourceReadyTx, markProviderVideoReadyTx, providerOperationRequestDigest, recordProviderJobSubmissionUnknownTx, recordProviderJobDefinitiveRetryTx, recordProviderVideoResourceTx, releaseProviderVideoConsumerTx, reserveProviderOperationTx } from './provider-reconciliation-repository.js';
 import { authSessions, creditAccounts, creditTransactions, entitlements, globalCounters, identityConsents, identityEnrollmentEvents, identityVideoEnrollments, jobEvents, mediaAssets, projects, providerLifecycleEvents, rateLimits, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
+import { resolvePersistedLuxifyAuthority } from './luxify-consent-repository.js';
 
 export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING', 'PROCESSING', 'READY', 'FAILED']);
 export const IDENTITY_OVERALL_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING', 'READY', 'PARTIAL_FAILURE', 'FAILED', 'ARCHIVED']);
@@ -342,13 +343,11 @@ function exactLuxifyAuthority(value, orderedIdentityIds) {
   });
 }
 
-async function unavailableLuxifyAuthority() {
-  throw luxifyFailure(
-    'LUXIFY_CINEMATIC_CONSENT_PERSISTENCE_UNAVAILABLE',
-    'Cinematic-specific LUXIFY consent and capability evidence are not persisted.',
-    503,
-    'CONSENT',
-  );
+// Production authority: re-reads persisted cinematic consent, source consent,
+// provider look resource and staff-recorded capability evidence inside the
+// reservation/claim transaction. Missing or expired evidence fails closed.
+async function persistedLuxifyAuthority(input) {
+  return resolvePersistedLuxifyAuthority(input);
 }
 
 function luxifyAuthorityResolver(trusted = {}) {
@@ -362,7 +361,7 @@ function luxifyAuthorityResolver(trusted = {}) {
     }
     return trusted.resolveLuxifyAuthority;
   }
-  return unavailableLuxifyAuthority;
+  return persistedLuxifyAuthority;
 }
 
 function assertLuxifyActivation({ accountId, provider, tier, title, format, costCredits, input }, env = process.env) {

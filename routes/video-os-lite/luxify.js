@@ -6,6 +6,7 @@ import { z } from 'zod';
 
 import { consumeRateLimit, requirePersistedRenderAuthorization } from '../../db/repositories.js';
 import { luxifyRepository } from '../../db/luxify-repository.js';
+import { resolveDatabaseLuxifyEligibility } from '../../db/luxify-consent-repository.js';
 import { providerCreationActivationStatus } from '../../db/provider-reconciliation-repository.js';
 import {
   LUXIFY_ASPECT_RATIOS,
@@ -267,6 +268,8 @@ function exactSelectedEligibility(value, lookIds) {
   return Object.freeze({ lookBindings: Object.freeze(bindings), eligibilityRevision: value.eligibilityRevision });
 }
 
+// Kept for tests and explicit opt-out; production defaults to the DB-backed
+// resolver, which is only reached after every static gate passes.
 export async function unavailableLuxifyEligibilityResolver() {
   throw routeError('luxify_eligibility_unavailable', 'LUXIFY look eligibility is unavailable.', 503, 'CONFIG_MISSING');
 }
@@ -343,7 +346,7 @@ export function createLuxifyHandler({
   rateLimit = consumeRateLimit,
   repository = luxifyRepository,
   authorizePremium = requirePersistedRenderAuthorization,
-  resolveEligibility = unavailableLuxifyEligibilityResolver,
+  resolveEligibility = resolveDatabaseLuxifyEligibility,
   runtimePreflight = defaultLuxifyRuntimePreflight,
   quoteIssuer = issueLuxifyQuote,
   quoteOptions = {},

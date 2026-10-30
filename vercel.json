@@ -29,6 +29,10 @@
             "dest": "/api/video-os-lite/workspace.js"
         },
         {
+            "src": "/api/video-os-lite/luxify-consent",
+            "dest": "/api/video-os-lite/workspace.js"
+        },
+        {
             "src": "/api/video-os-lite/luxify",
             "dest": "/api/video-os-lite/workspace.js"
         },
@@ -157,6 +161,14 @@
         {
             "src": "/provider-consent",
             "dest": "/provider-consent.html",
+            "headers": {
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer"
+            }
+        },
+        {
+            "src": "/luxify-consent",
+            "dest": "/luxify-consent.html",
             "headers": {
                 "Cache-Control": "no-store",
                 "Referrer-Policy": "no-referrer"
