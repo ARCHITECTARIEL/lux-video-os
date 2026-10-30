@@ -388,3 +388,56 @@ test('0019 trigger: a raw grant revoke closes its open approvals in the same sta
     ids => `do $$ begin if exists(select 1 from luxify_look_creative_approvals where staff_grant_id='${ids.all[0]}' and revoked_at is null) then raise exception 'approval left open'; end if; end $$`,
   ]);
 });
+
+const lookApproval = (approvedAt, gid = 'ids.all[0]') => ids => `insert into luxify_look_creative_approvals(account_id,identity_id,provider_look_id,provider_space_fingerprint,staff_grant_id,approver_account_id,decision,approved_at,expires_at) values('${C}','${idC}','look_c_${tag}',repeat('a',64),'${ids.all[0]}','${PROBE}','approved',${approvedAt},${approvedAt}+interval '1 day') returning id`;
+
+test('0019 L-1: a near-future approval closes at its approved_at, not before (kills S11); revoke still succeeds', opts, async () => {
+  await allows([
+    insertGrant(),
+    lookApproval("now()+interval '2 minutes'"),
+    ids => `update lux_staff_grants set revoked_at=now() where id='${ids.all[0]}'`,
+    ids => `do $$ begin if not exists(select 1 from luxify_look_creative_approvals where id='${ids.all[1]}' and revoked_at = approved_at and approved_at > now()) then raise exception 'not closed at approved_at'; end if; end $$`,
+  ]);
+});
+
+test('0019 L-1: approved_at more than 5 minutes ahead is refused on insert', opts, async () => {
+  await rejects([insertGrant(), lookApproval("now()+interval '1 day'")], /approved_at is in the future/);
+  await allows([insertGrant(), lookApproval("now()+interval '4 minutes'")]);
+});
+
+test('0019 L-1: a legacy far-future approval never blocks a grant revoke (left open; gates need an active grant)', opts, async () => {
+  await allows([
+    insertGrant(),
+    'alter table luxify_look_creative_approvals disable trigger luxify_look_creative_approvals_insert_guard_trg',
+    lookApproval("now()+interval '1 day'"),
+    'alter table luxify_look_creative_approvals enable trigger luxify_look_creative_approvals_insert_guard_trg',
+    ids => `update lux_staff_grants set revoked_at=now() where id='${ids.all[0]}'`,
+    ids => `do $$ begin if not exists(select 1 from lux_staff_grants where id='${ids.all[0]}' and revoked_at is not null) then raise exception 'grant not revoked'; end if; end $$`,
+  ]);
+});
+
+test('0019 L-2: a grant revoke closes its capability evidence (trigger and repository)', opts, async () => {
+  const evidence = ids => `insert into luxify_look_capability_evidence(account_id,provider_look_id,provider_space_fingerprint,capability,eligible,avatar_type,evidence_sha256,staff_grant_id,observed_at,expires_at) values('${C}','look_c_${tag}',repeat('a',64),'cinematic_avatar',true,'studio',repeat('d',64),'${ids.all[0]}',now(),now()+interval '1 day') returning id`;
+  await allows([
+    insertGrant(),
+    evidence,
+    ids => `update lux_staff_grants set revoked_at=now() where id='${ids.all[0]}'`,
+    ids => `do $$ begin if exists(select 1 from luxify_look_capability_evidence where staff_grant_id='${ids.all[0]}' and revoked_at is null) then raise exception 'evidence left open'; end if; end $$`,
+  ]);
+  const EVSTAFF = acct('evstaff');
+  const c = await pool.connect();
+  try {
+    await c.query('begin');
+    await c.query('set local session_replication_role=replica');
+    await c.query('insert into users(id,email,role) values($1,$2,$3)', [EVSTAFF, `evstaff${tag}@luxmarketingcompany.com`, 'customer']);
+    await c.query("insert into auth_challenges(account_id,email,token_hash,expires_at,used_at) values($1,$2,$3,now()+interval '1h',now())", [EVSTAFF, `evstaff${tag}@luxmarketingcompany.com`, hex(EVSTAFF + 'tok')]);
+    await c.query('commit');
+  } catch (error) { await c.query('rollback').catch(() => {}); throw error; } finally { c.release(); }
+  await repo.grantStaff({ grantorAccountId: CEO, staffAccountId: EVSTAFF, explicitGrant: true });
+  const gid = (await q('select id from lux_staff_grants where staff_account_id=$1 and revoked_at is null', [EVSTAFF])).rows[0].id;
+  await q(`insert into luxify_look_capability_evidence(account_id,provider_look_id,provider_space_fingerprint,capability,eligible,avatar_type,evidence_sha256,staff_grant_id,observed_at,expires_at) values($1,$2,repeat('a',64),'cinematic_avatar',true,'studio',repeat('d',64),$3,now(),now()+interval '1 day')`, [C, `look_c_${tag}`, gid]);
+  const result = await repo.revokeStaffGrant({ grantorAccountId: CEO, staffAccountId: EVSTAFF });
+  assert.equal(result.revoked, 1);
+  assert.equal(result.closedCapabilityEvidence, 1);
+  assert.equal(Number((await q('select count(*) from luxify_look_capability_evidence where staff_grant_id=$1 and revoked_at is null', [gid])).rows[0].count), 0);
+});

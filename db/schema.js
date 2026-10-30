@@ -412,6 +412,8 @@ export const luxifyConsentChallengeUses = pgTable('luxify_consent_challenge_uses
   identityId: uuid('identity_id').notNull(),
   usedAt: timestamp('used_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
+  // I-1: supports a future TTL cleanup of rows older than the 10-minute expiry.
+  index('luxify_consent_challenge_uses_used_at_idx').on(table.usedAt),
   check('luxify_consent_challenge_uses_hash_ck', sql`${table.challengeSha256} ~ '^[a-f0-9]{64}$'`),
 ]);
 

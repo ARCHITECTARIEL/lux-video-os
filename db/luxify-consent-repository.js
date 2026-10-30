@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 
 import { database } from './client.js';
 import {
@@ -394,8 +394,8 @@ export function createLuxifyConsentRepository({ executor } = {}) {
   /**
    * CEO-only staff grant revocation. Requires the same verified
    * luxmarketingcompany.com email as granting (I-5). Closing a grant closes
-   * every open look and creative-asset approval recorded under it in the same
-   * transaction (N-1); migration 0019 enforces the same cascade for any other
+   * every open look approval, creative-asset approval and capability-evidence
+   * row recorded under it in the same transaction (N-1, L-2); migration 0019 enforces the same cascade for any other
    * writer of lux_staff_grants.revoked_at. Never deletes.
    */
   async function revokeStaffGrant({ grantorAccountId, staffAccountId }) {
@@ -412,25 +412,36 @@ export function createLuxifyConsentRepository({ executor } = {}) {
         eq(luxStaffGrants.staffAccountId, staffId), isNull(luxStaffGrants.revokedAt),
       )).for('update');
       const grantIds = active.map(row => row.id);
-      if (!grantIds.length) return { revoked: 0, closedLookApprovals: 0, closedCreativeApprovals: 0 };
+      if (!grantIds.length) return { revoked: 0, closedLookApprovals: 0, closedCreativeApprovals: 0, closedCapabilityEvidence: 0 };
       const openLooks = await tx.select({ id: luxifyLookCreativeApprovals.id }).from(luxifyLookCreativeApprovals).where(and(
         inArray(luxifyLookCreativeApprovals.staffGrantId, grantIds), isNull(luxifyLookCreativeApprovals.revokedAt),
       )).for('update');
       const openAssets = await tx.select({ id: luxifyCreativeAssetApprovals.id }).from(luxifyCreativeAssetApprovals).where(and(
         inArray(luxifyCreativeAssetApprovals.staffGrantId, grantIds), isNull(luxifyCreativeAssetApprovals.revokedAt),
       )).for('update');
+      const openEvidence = await tx.select({ id: luxifyLookCapabilityEvidence.id }).from(luxifyLookCapabilityEvidence).where(and(
+        inArray(luxifyLookCapabilityEvidence.staffGrantId, grantIds), isNull(luxifyLookCapabilityEvidence.revokedAt),
+      )).for('update');
       await tx.update(luxStaffGrants).set({ revokedAt: now }).where(and(
         inArray(luxStaffGrants.id, grantIds), isNull(luxStaffGrants.revokedAt),
       ));
       // Belt and braces: the 0019 trigger already closed these in the grant
-      // UPDATE above; these are no-ops unless the trigger is missing.
+      // UPDATE above; these are no-ops unless the trigger is missing. Rows
+      // approved after `now` are skipped so the 0018 window check can never
+      // make the revoke fail (QA L-1); the trigger closes them at approved_at.
       await tx.update(luxifyLookCreativeApprovals).set({ revokedAt: now }).where(and(
         inArray(luxifyLookCreativeApprovals.staffGrantId, grantIds), isNull(luxifyLookCreativeApprovals.revokedAt),
+        lte(luxifyLookCreativeApprovals.approvedAt, now),
       ));
       await tx.update(luxifyCreativeAssetApprovals).set({ revokedAt: now }).where(and(
         inArray(luxifyCreativeAssetApprovals.staffGrantId, grantIds), isNull(luxifyCreativeAssetApprovals.revokedAt),
+        lte(luxifyCreativeAssetApprovals.approvedAt, now),
       ));
-      return { revoked: grantIds.length, closedLookApprovals: openLooks.length, closedCreativeApprovals: openAssets.length };
+      // QA L-2: capability evidence recorded under the grant closes with it.
+      await tx.update(luxifyLookCapabilityEvidence).set({ revokedAt: now }).where(and(
+        inArray(luxifyLookCapabilityEvidence.staffGrantId, grantIds), isNull(luxifyLookCapabilityEvidence.revokedAt),
+      ));
+      return { revoked: grantIds.length, closedLookApprovals: openLooks.length, closedCreativeApprovals: openAssets.length, closedCapabilityEvidence: openEvidence.length };
     });
   }
 

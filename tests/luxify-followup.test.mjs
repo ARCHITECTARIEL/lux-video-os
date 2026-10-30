@@ -132,14 +132,14 @@ test('revoke-staff requires the CEO with a verified Lux email, like grant-staff 
 });
 
 test('revoking a staff grant closes its open look and creative approvals in the same transaction (N-1)', async () => {
-  const { repo, db } = repoFor([ceo, verified, [{ id: GRANT }], [{ id: 'l1' }, { id: 'l2' }], [{ id: 'a1' }], [], [], []]);
+  const { repo, db } = repoFor([ceo, verified, [{ id: GRANT }], [{ id: 'l1' }, { id: 'l2' }], [{ id: 'a1' }], [{ id: 'e1' }], [], [], [], []]);
   const result = await repo.revokeStaffGrant({ grantorAccountId: CEO, staffAccountId: STAFF });
-  assert.deepEqual(result, { revoked: 1, closedLookApprovals: 2, closedCreativeApprovals: 1 });
+  assert.deepEqual(result, { revoked: 1, closedLookApprovals: 2, closedCreativeApprovals: 1, closedCapabilityEvidence: 1 });
   const updates = writes(db.log);
-  assert.equal(updates.length, 3, 'grant + look approvals + asset approvals');
+  assert.equal(updates.length, 4, 'grant + look approvals + asset approvals + capability evidence (L-2)');
   for (const entry of updates) assert.deepEqual(arg(entry, 'set'), { revokedAt: NOW });
   const none = repoFor([ceo, verified, []]);
-  assert.deepEqual(await none.repo.revokeStaffGrant({ grantorAccountId: CEO, staffAccountId: STAFF }), { revoked: 0, closedLookApprovals: 0, closedCreativeApprovals: 0 });
+  assert.deepEqual(await none.repo.revokeStaffGrant({ grantorAccountId: CEO, staffAccountId: STAFF }), { revoked: 0, closedLookApprovals: 0, closedCreativeApprovals: 0, closedCapabilityEvidence: 0 });
   assert.equal(writes(none.db.log).length, 0);
 });
 
@@ -174,6 +174,13 @@ test('grant without a challenge digest is refused; a consumed challenge is refus
   const inserts = writes(replay.db.log).filter(entry => entry.kind === 'insert');
   assert.equal(inserts.length, 1, 'only the (conflicting) challenge insert ran');
   assert.ok(inserts[0].calls.some(([name]) => name === 'onConflictDoNothing'));
+});
+
+test('grant refuses an archived identity before touching sources or the challenge ledger (J14)', async () => {
+  const { repo, db } = repoFor([[], [identity({ archivedAt: NOW })], [sourceRow], [space], [], []]);
+  await assert.rejects(repo.grantConsent(grantInput()), { code: 'LUXIFY_IDENTITY_NOT_ELIGIBLE', statusCode: 409 });
+  assert.equal(writes(db.log).length, 0, 'no challenge consumed and no consent written');
+  assert.equal(db.log.filter(entry => entry.kind === 'select').length, 2, 'stopped at the identity check');
 });
 
 function response() {
@@ -269,11 +276,18 @@ test('0019 adds single-use challenge storage and the grant-revoke cascade withou
   assert.match(text, /"challenge_sha256" text PRIMARY KEY NOT NULL/);
   assert.match(text, /BEFORE UPDATE OR DELETE ON luxify_consent_challenge_uses/);
   assert.match(text, /AFTER UPDATE OF revoked_at ON lux_staff_grants/);
-  assert.match(text, /UPDATE luxify_look_creative_approvals\s+SET revoked_at = greatest\(NEW\.revoked_at, approved_at\)/);
-  assert.match(text, /UPDATE luxify_creative_asset_approvals\s+SET revoked_at = greatest\(NEW\.revoked_at, approved_at\)/);
+  assert.match(text, /UPDATE luxify_look_creative_approvals\s+SET revoked_at = least\(greatest\(NEW\.revoked_at, approved_at\), now\(\) \+ interval '5 minutes'\)/);
+  assert.match(text, /UPDATE luxify_creative_asset_approvals\s+SET revoked_at = least\(greatest\(NEW\.revoked_at, approved_at\), now\(\) \+ interval '5 minutes'\)/);
+  assert.match(text, /UPDATE luxify_look_capability_evidence\s+SET revoked_at = least\(NEW\.revoked_at, now\(\) \+ interval '5 minutes'\)/);
+  assert.match(text, /UPDATE "luxify_look_capability_evidence" AS "evidence" SET "revoked_at"/);
+  assert.match(text, /BEFORE INSERT ON luxify_look_creative_approvals/);
+  assert.match(text, /BEFORE INSERT ON luxify_creative_asset_approvals/);
+  assert.match(text, /CREATE INDEX "luxify_consent_challenge_uses_used_at_idx"/);
   assert.doesNotMatch(text, /DROP |ALTER TABLE "luxify_cinematic_consents"|CREATE OR REPLACE/);
   const journal = JSON.parse(journalText);
   assert.equal(journal.entries.at(-1).tag, '0019_luxify_followup');
   assert.equal(journal.entries.at(-2).tag, '0018_luxify_consent_lifecycle');
-  assert.ok(JSON.parse(snapshotText).tables['public.luxify_consent_challenge_uses']);
+  const table = JSON.parse(snapshotText).tables['public.luxify_consent_challenge_uses'];
+  assert.ok(table);
+  assert.ok(table.indexes.luxify_consent_challenge_uses_used_at_idx, 'used_at index in snapshot (I-1)');
 });

@@ -2072,7 +2072,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "luxify_consent_challenge_uses_used_at_idx": {
+          "name": "luxify_consent_challenge_uses_used_at_idx",
+          "columns": [
+            {
+              "expression": "used_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "luxify_consent_challenge_uses_account_id_users_id_fk": {
           "name": "luxify_consent_challenge_uses_account_id_users_id_fk",
