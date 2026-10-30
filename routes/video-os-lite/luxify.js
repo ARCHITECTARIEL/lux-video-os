@@ -321,6 +321,10 @@ export async function requireLuxifyActivation(accountId, lookIds, { env, runtime
     return exactSelectedEligibility(await resolveEligibility({ accountId, lookIdentityIds: [...lookIds] }), lookIds);
   } catch (error) {
     if (error?.code === 'luxify_look_unavailable') throw error;
+    // N-3: a missing staff creative approval is reported with its own code.
+    if (error?.code === 'LUXIFY_CREATIVE_APPROVAL_REQUIRED') {
+      throw routeError('LUXIFY_CREATIVE_APPROVAL_REQUIRED', 'This look needs an active Lux staff creative approval.', 409, 'ENTITLEMENT');
+    }
     throw routeError('luxify_look_unavailable', 'One or more LUXIFY looks are unavailable.', 409, 'ENTITLEMENT');
   }
 }

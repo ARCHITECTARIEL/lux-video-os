@@ -403,6 +403,18 @@ export const luxifyLookCreativeApprovals = pgTable('luxify_look_creative_approva
   check('luxify_look_creative_approvals_window_ck', sql`${table.expiresAt} > ${table.approvedAt} and ${table.expiresAt} <= ${table.approvedAt} + interval '30 days' and (${table.revokedAt} is null or ${table.revokedAt} >= ${table.approvedAt})`),
 ]);
 
+// Single-use LUXIFY consent challenges (QA L-3): the digest of each consent
+// challenge is recorded in the grant transaction; a replay is refused.
+// Insert-only (migration 0019 guards UPDATE and DELETE).
+export const luxifyConsentChallengeUses = pgTable('luxify_consent_challenge_uses', {
+  challengeSha256: text('challenge_sha256').primaryKey(),
+  accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  identityId: uuid('identity_id').notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  check('luxify_consent_challenge_uses_hash_ck', sql`${table.challengeSha256} ~ '^[a-f0-9]{64}$'`),
+]);
+
 export const identityVideoEnrollments = pgTable('identity_video_enrollments', {
   id: uuid('id').defaultRandom().primaryKey(),
   accountId: text('account_id').notNull().references(() => users.id, { onDelete: 'cascade' }),

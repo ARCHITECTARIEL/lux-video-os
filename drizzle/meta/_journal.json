@@ -134,6 +134,13 @@
       "when": 1793386022074,
       "tag": "0018_luxify_consent_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793398897358,
+      "tag": "0019_luxify_followup",
+      "breakpoints": true
     }
   ]
 }

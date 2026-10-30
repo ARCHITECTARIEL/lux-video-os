@@ -1,7 +1,7 @@
-// Opt-in loopback PostgreSQL tests for the 0018 LUXIFY consent lifecycle
+// Opt-in loopback PostgreSQL tests for the 0018/0019 LUXIFY consent lifecycle
 // (repository behaviour, trigger guards, source-revoke race). Adapted from the
 // PR #131 QA pass. Skipped unless VIDEO_OS_PG_RACE_TEST_URL points at a
-// disposable loopback database migrated through 0018 and
+// disposable loopback database migrated through 0019 and
 // VIDEO_OS_PG_RACE_TEST_WSPROXY names a local WebSocket proxy. Seeding uses
 // session_replication_role, so the role must be a superuser of that throwaway
 // database. Rows are closed, never deleted, so the database is not reusable
@@ -28,7 +28,7 @@ let pool, db, repo, mod, NOTICE;
 const q = (text, values) => pool.query(text, values);
 const code = async p => { try { await p; return 'OK'; } catch (error) { return error.code || 'ERROR'; } };
 const openCount = async id => Number((await q('select count(*) from luxify_cinematic_consents where identity_id=$1 and revoked_at is null', [id])).rows[0].count);
-const grant = (accountId, identityId, key = randomUUID(), extra = {}) => repo.grantConsent({ accountId, identityId, idempotencyKey: key, cinematicGenerationAuthorization: true, providerProcessingAuthorization: true, noticeSha256: NOTICE, ...extra });
+const grant = (accountId, identityId, key = randomUUID(), extra = {}) => repo.grantConsent({ accountId, identityId, idempotencyKey: key, cinematicGenerationAuthorization: true, providerProcessingAuthorization: true, noticeSha256: NOTICE, challengeSha256: hex(randomUUID()), ...extra });
 
 async function connect() {
   const parsed = new URL(raceUrl);
@@ -318,4 +318,73 @@ test('mandatory look creative approval: none, revoked, expired and revoked-grant
   assert.equal(await gate(), 'OK');
   await repo.revokeStaffGrant({ grantorAccountId: CEO, staffAccountId: LOOKSTAFF });
   assert.equal(await gate(), 'LUXIFY_CREATIVE_APPROVAL_REQUIRED', 'grant revoked');
+});
+
+test('0019: a consent challenge is single-use, even across concurrent grants, and its ledger is insert-only (L-3)', opts, async () => {
+  const challengeSha256 = hex('challenge' + tag);
+  // A has no open consent here (earlier tests withdraw it), so one grant may succeed.
+  await q("update luxify_cinematic_consents set revoked_at=now(), terminal_reason='withdrawn' where identity_id=$1 and revoked_at is null", [idA]);
+  const results = await Promise.all(Array.from({ length: 6 }, () => code(grant(A, idA, randomUUID(), { challengeSha256 }))));
+  assert.equal(results.filter(r => r === 'OK').length <= 1, true, results.join(','));
+  assert.ok(results.every(r => r === 'OK' || r === 'LUXIFY_CONSENT_CHALLENGE_USED' || r === 'LUXIFY_CONSENT_ALREADY_ACTIVE'), results.join(','));
+  // With no open consent left, replaying the used challenge is refused by the ledger itself.
+  await q("update luxify_cinematic_consents set revoked_at=now(), terminal_reason='withdrawn' where identity_id=$1 and revoked_at is null", [idA]);
+  assert.equal(await code(grant(A, idA, randomUUID(), { challengeSha256 })), 'LUXIFY_CONSENT_CHALLENGE_USED');
+  assert.equal(await openCount(idA), 0, 'replayed challenge created no consent');
+  assert.equal(await code(grant(A, idA)), 'OK', 'a fresh challenge still works');
+  assert.equal(Number((await q('select count(*) from luxify_consent_challenge_uses where challenge_sha256=$1', [challengeSha256])).rows[0].count), 1);
+  // A failed grant (wrong account) rolls back and leaves its challenge unused.
+  const unused = hex('unused' + tag);
+  assert.notEqual(await code(grant(B, idA, randomUUID(), { challengeSha256: unused })), 'OK');
+  assert.equal(Number((await q('select count(*) from luxify_consent_challenge_uses where challenge_sha256=$1', [unused])).rows[0].count), 0);
+  await assert.rejects(q('update luxify_consent_challenge_uses set used_at=now() where challenge_sha256=$1', [challengeSha256]), /insert-only|never/i);
+  await assert.rejects(q('delete from luxify_consent_challenge_uses where challenge_sha256=$1', [challengeSha256]), /insert-only|never/i);
+  await assert.rejects(q("insert into luxify_consent_challenge_uses(challenge_sha256,account_id,identity_id) values('nothex',$1,$2)", [A, idA]));
+});
+
+test('0019: list/revoke look approvals end to end; non-READY and archived looks refused; grant revoke closes approvals (N-1/N-2/N-4/N-6/I-5)', opts, async () => {
+  const FUSTAFF = acct('fustaff');
+  const idD = randomUUID(), idE = randomUUID();
+  const c = await pool.connect();
+  try {
+    await c.query('begin');
+    await c.query('set local session_replication_role=replica');
+    await c.query('insert into users(id,email,role) values($1,$2,$3)', [FUSTAFF, `fustaff${tag}@luxmarketingcompany.com`, 'customer']);
+    await c.query("insert into auth_challenges(account_id,email,token_hash,expires_at,used_at) values($1,$2,$3,now()+interval '1h',now())", [FUSTAFF, `fustaff${tag}@luxmarketingcompany.com`, hex(FUSTAFF + 'tok')]);
+    await c.query("insert into user_identities(id,account_id,display_name,avatar_status,source_photo_asset_id,source_voice_asset_id,provider_renderable_avatar_id) values($1,$2,'L','PROCESSING',gen_random_uuid(),gen_random_uuid(),$3)", [idD, C, `look_d_${tag}`]);
+    await c.query("insert into user_identities(id,account_id,display_name,avatar_status,source_photo_asset_id,source_voice_asset_id,provider_renderable_avatar_id,archived_at) values($1,$2,'L','READY',gen_random_uuid(),gen_random_uuid(),$3,now())", [idE, C, `look_e_${tag}`]);
+    await c.query('commit');
+  } catch (error) { await c.query('rollback').catch(() => {}); throw error; } finally { c.release(); }
+  assert.equal(await code(repo.listLookCreativeApprovals({ staffAccountId: FUSTAFF, accountId: C })), 'LUX_STAFF_GRANT_REQUIRED');
+  await repo.grantStaff({ grantorAccountId: CEO, staffAccountId: FUSTAFF, explicitGrant: true });
+  assert.equal(await code(repo.approveLookCreative({ staffAccountId: FUSTAFF, accountId: C, identityId: idD })), 'LUXIFY_LOOK_NOT_READY');
+  assert.equal(await code(repo.approveLookCreative({ staffAccountId: FUSTAFF, accountId: C, identityId: idE })), 'LUXIFY_LOOK_NOT_FOUND');
+  const first = await repo.approveLookCreative({ staffAccountId: FUSTAFF, accountId: C, identityId: idC });
+  assert.match(first.approvalId, /^[0-9a-f-]{36}$/);
+  const listed = (await repo.listLookCreativeApprovals({ staffAccountId: FUSTAFF, accountId: C, identityId: idC })).approvals;
+  const mine = listed.find(a => a.approvalId === first.approvalId);
+  assert.equal(mine.status, 'active');
+  assert.equal(mine.approvedUnderYourGrant, true);
+  assert.equal(JSON.stringify(listed).includes(`look_c_${tag}`), false, 'look id is masked');
+  assert.equal((await repo.revokeLookCreativeApproval({ staffAccountId: FUSTAFF, approvalId: listed[0].approvalId })).changed, true);
+  assert.equal((await repo.listLookCreativeApprovals({ staffAccountId: FUSTAFF, accountId: C, identityId: idC })).approvals.find(a => a.approvalId === listed[0].approvalId).status, 'revoked');
+  assert.equal(await code(repo.revokeLookCreativeApproval({ staffAccountId: FUSTAFF, approvalId: randomUUID() })), 'LUXIFY_LOOK_APPROVAL_NOT_FOUND');
+  const second = await repo.approveLookCreative({ staffAccountId: FUSTAFF, accountId: C, identityId: idC });
+  // I-5: revoke-staff needs the CEO; staff cannot revoke.
+  assert.equal(await code(repo.revokeStaffGrant({ grantorAccountId: FUSTAFF, staffAccountId: FUSTAFF })), 'LUX_STAFF_GRANTOR_REQUIRED');
+  const result = await repo.revokeStaffGrant({ grantorAccountId: CEO, staffAccountId: FUSTAFF });
+  assert.equal(result.revoked, 1);
+  assert.ok(result.closedLookApprovals >= 1);
+  const row = (await q('select revoked_at from luxify_look_creative_approvals where id=$1', [second.approvalId])).rows[0];
+  assert.notEqual(row.revoked_at, null, 'approval row closed with the grant (N-1)');
+  assert.equal(await code(repo.listLookCreativeApprovals({ staffAccountId: FUSTAFF, accountId: C })), 'LUX_STAFF_GRANT_REQUIRED');
+});
+
+test('0019 trigger: a raw grant revoke closes its open approvals in the same statement (N-1)', opts, async () => {
+  await allows([
+    insertGrant(),
+    ids => `insert into luxify_look_creative_approvals(account_id,identity_id,provider_look_id,provider_space_fingerprint,staff_grant_id,approver_account_id,decision,expires_at) values('${C}','${idC}','look_c_${tag}',repeat('a',64),'${ids.last}','${PROBE}','approved',now()+interval '1 day') returning staff_grant_id as gid`,
+    ids => `update lux_staff_grants set revoked_at=now() where id='${ids.all[0]}'`,
+    ids => `do $$ begin if exists(select 1 from luxify_look_creative_approvals where staff_grant_id='${ids.all[0]}' and revoked_at is null) then raise exception 'approval left open'; end if; end $$`,
+  ]);
 });

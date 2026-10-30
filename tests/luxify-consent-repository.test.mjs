@@ -24,6 +24,8 @@ const EVIDENCE = '0b0b0b0b-0000-4000-8000-000000000007';
 const KEY = '0b0b0b0b-0000-4000-8000-000000000008';
 const FP = 'f'.repeat(64);
 const LOOK = 'look_test_1';
+const CHALLENGE = 'c'.repeat(64);
+const consumed = [{ challengeSha256: CHALLENGE }];
 
 function fakeDb(queue, now = NOW) {
   const log = [];
@@ -64,15 +66,18 @@ const consentRow = (overrides = {}) => ({
   ...overrides,
 });
 const grantInput = (overrides = {}) => ({
-  accountId: ACCOUNT, identityId: IDENTITY, idempotencyKey: KEY, noticeSha256: LUXIFY_CONSENT_NOTICE_SHA256,
+  accountId: ACCOUNT, identityId: IDENTITY, idempotencyKey: KEY, noticeSha256: LUXIFY_CONSENT_NOTICE_SHA256, challengeSha256: CHALLENGE,
   cinematicGenerationAuthorization: true, providerProcessingAuthorization: true, ...overrides,
 });
 const echoInsert = entry => [{ ...arg(entry, 'values') }];
 
 test('grant records a subject consent linked to the active source consent with a 12-month expiry and evidence hash', async () => {
-  const { executor, log } = fakeDb([[], [identityRow], [sourceRow], [spaceRow], [], echoInsert]);
+  const { executor, log } = fakeDb([[], [identityRow], [sourceRow], [spaceRow], [], consumed, echoInsert]);
   const result = await createLuxifyConsentRepository({ executor }).grantConsent(grantInput());
-  const insert = writes(log).find(entry => entry.kind === 'insert');
+  const inserts = writes(log).filter(entry => entry.kind === 'insert');
+  assert.equal(inserts.length, 2, 'challenge use + consent');
+  assert.deepEqual(arg(inserts[0], 'values'), { challengeSha256: CHALLENGE, accountId: ACCOUNT, identityId: IDENTITY, usedAt: NOW });
+  const insert = inserts[1];
   const values = arg(insert, 'values');
   assert.equal(values.accountId, ACCOUNT);
   assert.equal(values.sourceIdentityConsentId, SOURCE);
@@ -113,9 +118,9 @@ test('grant refuses a duplicate while active, and closes (never deletes) an expi
   await assert.rejects(createLuxifyConsentRepository({ executor: active.executor }).grantConsent(grantInput()), { code: 'LUXIFY_CONSENT_ALREADY_ACTIVE' });
   assert.equal(writes(active.log).length, 0);
 
-  const expired = fakeDb([[], [identityRow], [sourceRow], [spaceRow], [{ id: CONSENT, expiresAt: new Date('2026-11-01T00:00:00.000Z') }], [], echoInsert]);
+  const expired = fakeDb([[], [identityRow], [sourceRow], [spaceRow], [{ id: CONSENT, expiresAt: new Date('2026-11-01T00:00:00.000Z') }], [], consumed, echoInsert]);
   await createLuxifyConsentRepository({ executor: expired.executor }).grantConsent(grantInput());
-  const [close, insert] = writes(expired.log);
+  const [close, , insert] = writes(expired.log);
   assert.equal(close.kind, 'update');
   assert.deepEqual(arg(close, 'set'), { revokedAt: NOW, terminalReason: 'revoked' });
   assert.equal(insert.kind, 'insert');

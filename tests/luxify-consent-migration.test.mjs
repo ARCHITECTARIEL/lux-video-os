@@ -48,8 +48,8 @@ test('0018 adds LUXIFY consent lifecycle tables, terminal reasons and close-only
   ]);
   assert.ok(current.tables['public.luxify_cinematic_consents'].columns.terminal_reason);
   const journal = JSON.parse(journalText);
-  const entry = journal.entries.at(-1);
+  const entry = journal.entries[18];
   assert.deepEqual(entry, { idx: 18, version: '7', when: entry.when, tag: '0018_luxify_consent_lifecycle', breakpoints: true });
-  assert.ok(entry.when > journal.entries.at(-2).when);
-  assert.equal(JSON.parse(lockText).tableCount, 34);
+  assert.ok(entry.when > journal.entries[17].when);
+  assert.equal(JSON.parse(lockText).tableCount, 35, '0019 adds luxify_consent_challenge_uses');
 });

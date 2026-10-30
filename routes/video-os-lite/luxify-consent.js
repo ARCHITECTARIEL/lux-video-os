@@ -5,6 +5,7 @@ import {
   LUXIFY_CONSENT_NOTICE,
   LUXIFY_CONSENT_NOTICE_SHA256,
   issueLuxifyConsentChallenge,
+  luxifyConsentChallengeDigest,
   verifyLuxifyConsentChallenge,
 } from '../../lib/luxify-consent-policy.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
@@ -32,6 +33,7 @@ const schemas = {
   'approve-creative': z.object({ action: z.literal('approve-creative'), mediaAssetId: uuid }).strict(),
   'approve-look': z.object({ action: z.literal('approve-look'), accountId: accountRef, identityId: uuid, expiresInDays: z.number().int().min(1).max(30).optional() }).strict(),
   'revoke-look-approval': z.object({ action: z.literal('revoke-look-approval'), approvalId: uuid }).strict(),
+  'list-look-approvals': z.object({ action: z.literal('list-look-approvals'), accountId: accountRef, identityId: uuid.optional() }).strict(),
   'record-capability': z.object({
     action: z.literal('record-capability'),
     accountId: accountRef,
@@ -121,6 +123,7 @@ export function createLuxifyConsentHandler({
             identityId: input.identityId,
             idempotencyKey: input.idempotencyKey,
             noticeSha256: input.noticeSha256,
+            challengeSha256: luxifyConsentChallengeDigest(input.challenge),
             cinematicGenerationAuthorization: input.cinematicGenerationAuthorization,
             providerProcessingAuthorization: input.providerProcessingAuthorization,
             ...(input.expiryDays ? { expiryDays: input.expiryDays } : {}),
@@ -142,16 +145,19 @@ export function createLuxifyConsentHandler({
           return send(res, result.replayed ? 200 : 201, { ok: true, replayed: result.replayed });
         case 'revoke-staff':
           result = await repository.revokeStaffGrant({ grantorAccountId: accountId, staffAccountId: input.staffAccountId });
-          return send(res, 200, { ok: true, ...result });
+          return send(res, 200, { ok: true, revoked: result.revoked, closedLookApprovals: result.closedLookApprovals, closedCreativeApprovals: result.closedCreativeApprovals });
         case 'approve-creative':
           result = await repository.approveCreativeAsset({ staffAccountId: accountId, mediaAssetId: input.mediaAssetId });
           return send(res, result.replayed ? 200 : 201, { ok: true, replayed: result.replayed });
         case 'approve-look':
           result = await repository.approveLookCreative({ staffAccountId: accountId, accountId: input.accountId, identityId: input.identityId, expiresInDays: input.expiresInDays });
-          return send(res, 201, { ok: true, expiresAt: result.expiresAt });
+          return send(res, 201, { ok: true, approvalId: result.approvalId, expiresAt: result.expiresAt });
         case 'revoke-look-approval':
           result = await repository.revokeLookCreativeApproval({ staffAccountId: accountId, approvalId: input.approvalId });
           return send(res, 200, { ok: true, changed: result.changed });
+        case 'list-look-approvals':
+          result = await repository.listLookCreativeApprovals({ staffAccountId: accountId, accountId: input.accountId, ...(input.identityId ? { identityId: input.identityId } : {}) });
+          return send(res, 200, { ok: true, approvals: result.approvals });
         case 'record-capability': {
           const { action, ...evidence } = input;
           await repository.recordLookCapabilityEvidence({ staffAccountId: accountId, ...evidence });
