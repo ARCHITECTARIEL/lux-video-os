@@ -123,7 +123,7 @@ test('repository privilege settings are transaction-local and confined to transa
 
 test('0014 journal, SQL, and snapshot represent the role guard without changing prior schema', async () => {
   const plan = await migrationPlan();
-  assert.equal(plan.migrations.length, 19);
+  assert.equal(plan.migrations.length, 20);
   assert.equal(plan.migrations[14].tag, '0014_pre_role_guard');
   const sql = await readFile('drizzle/0014_pre_role_guard.sql', 'utf8');
   for (const required of ['users_role_ck', 'users_role_guard()', 'users_role_guard_tg', "current_setting('lux.role_write', true)", 'users.role has unexpected values']) assert.ok(sql.includes(required));

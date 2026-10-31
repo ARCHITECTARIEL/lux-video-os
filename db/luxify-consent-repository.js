@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 
 import { database } from './client.js';
 import {
@@ -8,6 +8,7 @@ import {
   identityConsents,
   luxStaffGrants,
   luxifyCinematicConsents,
+  luxifyConsentChallengeUses,
   luxifyCreativeAssetApprovals,
   luxifyLookCapabilityEvidence,
   luxifyLookCreativeApprovals,
@@ -59,6 +60,16 @@ function exactAccount(value) {
 }
 
 const iso = value => (value instanceof Date ? value : new Date(value)).toISOString();
+
+const timeOf = value => (value instanceof Date ? value.getTime() : Number(value));
+/** True only when approvedAt is a real instant at or before `current` (ms). Fails closed. */
+function approvedBy(approvedAt, current) {
+  const at = approvedAt instanceof Date ? approvedAt.getTime() : new Date(approvedAt ?? NaN).getTime();
+  return Number.isFinite(at) && Number.isFinite(current) && at <= current;
+}
+function futureApprovalConflict() {
+  return failure('LUXIFY_LOOK_APPROVAL_FUTURE_DATED', 'An existing look approval is dated in the future and cannot be replaced yet.', 409);
+}
 
 async function dbNow(tx) {
   const result = await tx.execute(sql`select now() as now`);
@@ -139,6 +150,34 @@ export function luxifyConsentDto(row, now = new Date()) {
   });
 }
 
+const maskLook = value => {
+  const text = String(value || '');
+  return text.length > 4 ? `…${text.slice(-4)}` : '…';
+};
+
+export function lookApprovalDto(row, { now = new Date(), staffGrantId = null } = {}) {
+  const current = now instanceof Date ? now.getTime() : Number(now);
+  // R2-L1: report the true state. `open` is the row's state in the table.
+  // `status` is its authority: 'revoked' when the row is closed or its staff
+  // grant is revoked; 'not_yet_valid' for an open row approved in the future
+  // (it confers nothing until approved_at); then 'expired' or 'active'.
+  const status = row.revokedAt || row.grantRevokedAt ? 'revoked'
+    : !approvedBy(row.approvedAt, current) ? 'not_yet_valid'
+      : new Date(row.expiresAt).getTime() <= current ? 'expired' : 'active';
+  return Object.freeze({
+    approvalId: row.id,
+    identityId: row.identityId,
+    lookRef: maskLook(row.providerLookId),
+    status,
+    open: !row.revokedAt,
+    grantRevoked: Boolean(row.grantRevokedAt),
+    approvedAt: iso(row.approvedAt),
+    expiresAt: iso(row.expiresAt),
+    ...(row.revokedAt ? { closedAt: iso(row.revokedAt) } : {}),
+    approvedUnderYourGrant: Boolean(staffGrantId) && row.staffGrantId === staffGrantId,
+  });
+}
+
 export function createLuxifyConsentRepository({ executor } = {}) {
   const db = () => executor || database();
 
@@ -163,10 +202,13 @@ export function createLuxifyConsentRepository({ executor } = {}) {
    * consent links to that identity's active source consent, uses DB time,
    * and defaults to 12 months (hard cap 365 days, also enforced by the DB).
    */
-  async function grantConsent({ accountId, identityId, idempotencyKey, cinematicGenerationAuthorization, providerProcessingAuthorization, expiryDays, noticeSha256 }) {
+  async function grantConsent({ accountId, identityId, idempotencyKey, cinematicGenerationAuthorization, providerProcessingAuthorization, expiryDays, noticeSha256, challengeSha256 }) {
     const owner = exactAccount(accountId);
     const identityKey = exactUuid(identityId, 'identity');
     const key = exactUuid(idempotencyKey, 'request key');
+    // L-3: the route passes the digest of the verified consent challenge; a
+    // grant without one is refused so the single-use check cannot be skipped.
+    if (!SHA256.test(String(challengeSha256 || ''))) throw failure('LUXIFY_CONSENT_CHALLENGE_INVALID', 'The consent notice expired or changed. Reload and try again.', 409);
     if (cinematicGenerationAuthorization !== true || providerProcessingAuthorization !== true) {
       throw failure('LUXIFY_CONSENT_AUTHORIZATION_REQUIRED', 'Both authorizations are required.', 400);
     }
@@ -202,6 +244,15 @@ export function createLuxifyConsentRepository({ executor } = {}) {
           .where(and(eq(luxifyCinematicConsents.id, active.id), isNull(luxifyCinematicConsents.revokedAt)));
       }
       const expiresAt = luxifyConsentExpiry(now, { expiryDays });
+      // L-3: consume the challenge in the same transaction as the consent
+      // insert. A replayed challenge is refused; a failed grant rolls back and
+      // leaves the challenge unused. The 10-minute expiry is checked by the route.
+      const consumed = await tx.insert(luxifyConsentChallengeUses).values({
+        challengeSha256, accountId: owner, identityId: identityKey, usedAt: now,
+      }).onConflictDoNothing().returning({ challengeSha256: luxifyConsentChallengeUses.challengeSha256 });
+      if (!Array.isArray(consumed) || consumed.length !== 1) {
+        throw failure('LUXIFY_CONSENT_CHALLENGE_USED', 'This consent notice was already used. Reload and try again.', 409);
+      }
       const approvalEvidenceSha256 = sha256Hex({
         kind: 'luxify-cinematic-consent-evidence/v1',
         noticeVersion: LUXIFY_CONSENT_NOTICE_VERSION,
@@ -357,17 +408,57 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     });
   }
 
+  /**
+   * CEO-only staff grant revocation. Requires the same verified
+   * luxmarketingcompany.com email as granting (I-5). Closing a grant closes
+   * every open look approval, creative-asset approval and capability-evidence
+   * row recorded under it in the same transaction (N-1, L-2); migration 0019 enforces the same cascade for any other
+   * writer of lux_staff_grants.revoked_at. Never deletes.
+   */
   async function revokeStaffGrant({ grantorAccountId, staffAccountId }) {
     const grantorId = exactAccount(grantorAccountId);
     const staffId = exactAccount(staffAccountId);
     return db().transaction(async (tx) => {
-      const [grantor] = await tx.select({ role: users.role }).from(users).where(eq(users.id, grantorId)).limit(1);
+      const [grantor] = await tx.select({ id: users.id, email: users.email, role: users.role }).from(users).where(eq(users.id, grantorId)).limit(1);
+      const grantorEmail = await verifiedStaffEmailTx(tx, grantor);
       if (grantor?.role !== 'ceo') throw failure('LUX_STAFF_GRANTOR_REQUIRED', 'Only the Lux owner account can revoke staff access.', 403, 'ENTITLEMENT');
+      assertLuxStaffGrantRules({ email: grantorEmail.email, emailVerified: Boolean(grantorEmail.verifiedAt), explicitGrant: true });
+      await lockAccount(tx, staffId, 'staff-grant');
       const now = await dbNow(tx);
-      const closed = await tx.update(luxStaffGrants).set({ revokedAt: now }).where(and(
+      const active = await tx.select({ id: luxStaffGrants.id }).from(luxStaffGrants).where(and(
         eq(luxStaffGrants.staffAccountId, staffId), isNull(luxStaffGrants.revokedAt),
-      )).returning({ id: luxStaffGrants.id });
-      return { revoked: closed.length };
+      )).for('update');
+      const grantIds = active.map(row => row.id);
+      if (!grantIds.length) return { revoked: 0, closedLookApprovals: 0, closedCreativeApprovals: 0, closedCapabilityEvidence: 0 };
+      const openLooks = await tx.select({ id: luxifyLookCreativeApprovals.id }).from(luxifyLookCreativeApprovals).where(and(
+        inArray(luxifyLookCreativeApprovals.staffGrantId, grantIds), isNull(luxifyLookCreativeApprovals.revokedAt),
+      )).for('update');
+      const openAssets = await tx.select({ id: luxifyCreativeAssetApprovals.id }).from(luxifyCreativeAssetApprovals).where(and(
+        inArray(luxifyCreativeAssetApprovals.staffGrantId, grantIds), isNull(luxifyCreativeAssetApprovals.revokedAt),
+      )).for('update');
+      const openEvidence = await tx.select({ id: luxifyLookCapabilityEvidence.id }).from(luxifyLookCapabilityEvidence).where(and(
+        inArray(luxifyLookCapabilityEvidence.staffGrantId, grantIds), isNull(luxifyLookCapabilityEvidence.revokedAt),
+      )).for('update');
+      await tx.update(luxStaffGrants).set({ revokedAt: now }).where(and(
+        inArray(luxStaffGrants.id, grantIds), isNull(luxStaffGrants.revokedAt),
+      ));
+      // Belt and braces: the 0019 trigger already closed these in the grant
+      // UPDATE above; these are no-ops unless the trigger is missing. Rows
+      // approved after `now` are skipped so the 0018 window check can never
+      // make the revoke fail (QA L-1); the trigger closes them at approved_at.
+      await tx.update(luxifyLookCreativeApprovals).set({ revokedAt: now }).where(and(
+        inArray(luxifyLookCreativeApprovals.staffGrantId, grantIds), isNull(luxifyLookCreativeApprovals.revokedAt),
+        lte(luxifyLookCreativeApprovals.approvedAt, now),
+      ));
+      await tx.update(luxifyCreativeAssetApprovals).set({ revokedAt: now }).where(and(
+        inArray(luxifyCreativeAssetApprovals.staffGrantId, grantIds), isNull(luxifyCreativeAssetApprovals.revokedAt),
+        lte(luxifyCreativeAssetApprovals.approvedAt, now),
+      ));
+      // QA L-2: capability evidence recorded under the grant closes with it.
+      await tx.update(luxifyLookCapabilityEvidence).set({ revokedAt: now }).where(and(
+        inArray(luxifyLookCapabilityEvidence.staffGrantId, grantIds), isNull(luxifyLookCapabilityEvidence.revokedAt),
+      ));
+      return { revoked: grantIds.length, closedLookApprovals: openLooks.length, closedCreativeApprovals: openAssets.length, closedCapabilityEvidence: openEvidence.length };
     });
   }
 
@@ -380,8 +471,12 @@ export function createLuxifyConsentRepository({ executor } = {}) {
       const [existing] = await tx.select().from(luxifyCreativeAssetApprovals).where(and(
         eq(luxifyCreativeAssetApprovals.mediaAssetId, assetId), isNull(luxifyCreativeAssetApprovals.revokedAt),
       )).limit(1);
-      if (existing && existing.assetSha256 === asset.sha256) return { approvalId: existing.id, replayed: true };
       const now = await dbNow(tx);
+      // R2-L1: a future-dated legacy row is not a valid approval to replay; it
+      // is superseded (asset approvals have no revoked >= approved check).
+      if (existing && existing.assetSha256 === asset.sha256 && approvedBy(existing.approvedAt, now.getTime())) {
+        return { approvalId: existing.id, replayed: true };
+      }
       if (existing) await tx.update(luxifyCreativeAssetApprovals).set({ revokedAt: now }).where(eq(luxifyCreativeAssetApprovals.id, existing.id));
       const [row] = await tx.insert(luxifyCreativeAssetApprovals).values({
         id: randomUUID(), accountId: asset.accountId, mediaAssetId: assetId, assetSha256: asset.sha256,
@@ -439,14 +534,22 @@ export function createLuxifyConsentRepository({ executor } = {}) {
       const [identity] = await tx.select().from(userIdentities).where(and(eq(userIdentities.id, id), eq(userIdentities.accountId, owner))).limit(1);
       const lookId = String(identity?.providerRenderableAvatarId || '');
       if (!identity || identity.archivedAt || !PROVIDER_ID.test(lookId)) throw failure('LUXIFY_LOOK_NOT_FOUND', 'Look not found.', 404, 'OWNERSHIP');
+      // N-4: only a READY HeyGen look can be approved.
+      if (identity.provider !== 'heygen' || identity.avatarStatus !== 'READY') throw failure('LUXIFY_LOOK_NOT_READY', 'This look is not ready for LUXIFY approval.', 409);
       const space = await loadActiveProviderSpaceTx(tx, owner);
       await lockAccount(tx, owner, 'look-approval');
       const now = await dbNow(tx);
-      await tx.update(luxifyLookCreativeApprovals).set({ revokedAt: now }).where(and(
+      const lookScope = and(
         eq(luxifyLookCreativeApprovals.accountId, owner), eq(luxifyLookCreativeApprovals.identityId, id),
         eq(luxifyLookCreativeApprovals.providerLookId, lookId),
         eq(luxifyLookCreativeApprovals.providerSpaceFingerprint, space.providerSpaceFingerprint), isNull(luxifyLookCreativeApprovals.revokedAt),
-      ));
+      );
+      // R2-L1: an open row approved after `now` cannot be closed at `now`
+      // (0018 window check). Refuse with a coded 409 instead of a DB error.
+      const [blocking] = await tx.select({ id: luxifyLookCreativeApprovals.id }).from(luxifyLookCreativeApprovals)
+        .where(and(lookScope, gt(luxifyLookCreativeApprovals.approvedAt, now))).limit(1).for('update');
+      if (blocking) throw futureApprovalConflict();
+      await tx.update(luxifyLookCreativeApprovals).set({ revokedAt: now }).where(lookScope);
       const [row] = await tx.insert(luxifyLookCreativeApprovals).values({
         id: randomUUID(), accountId: owner, identityId: id, providerLookId: lookId, providerSpaceFingerprint: space.providerSpaceFingerprint,
         staffGrantId: grant.id, approverAccountId: grant.staffAccountId, decision: 'approved', approvedAt: now,
@@ -456,15 +559,57 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     });
   }
 
+  /**
+   * Revokes one look creative approval. Scope (N-4): any Lux staff member
+   * with an active, verified staff grant may revoke any look approval, not
+   * only their own; revocation only ever removes authority. Not-found is 404;
+   * an already-closed approval is reported as unchanged.
+   */
   async function revokeLookCreativeApproval({ staffAccountId, approvalId }) {
     const id = exactUuid(approvalId, 'approval');
     return db().transaction(async (tx) => {
       await requireActiveStaffGrantTx(tx, staffAccountId);
+      const [row] = await tx.select({ id: luxifyLookCreativeApprovals.id, revokedAt: luxifyLookCreativeApprovals.revokedAt, approvedAt: luxifyLookCreativeApprovals.approvedAt })
+        .from(luxifyLookCreativeApprovals).where(eq(luxifyLookCreativeApprovals.id, id)).limit(1).for('update');
+      if (!row) throw failure('LUXIFY_LOOK_APPROVAL_NOT_FOUND', 'Look approval not found.', 404, 'OWNERSHIP');
+      if (row.revokedAt) return { changed: false };
       const now = await dbNow(tx);
+      if (!approvedBy(row.approvedAt, now.getTime())) throw futureApprovalConflict();
       const closed = await tx.update(luxifyLookCreativeApprovals).set({ revokedAt: now })
         .where(and(eq(luxifyLookCreativeApprovals.id, id), isNull(luxifyLookCreativeApprovals.revokedAt)))
         .returning({ id: luxifyLookCreativeApprovals.id });
       return { changed: closed.length === 1 };
+    });
+  }
+
+  /**
+   * Staff-only list of look creative approvals for ONE subject account
+   * (optionally one identity), newest first, max 50 (N-2). Returns only the
+   * approval id, identity id, status and times plus a masked look reference;
+   * never the account id, approver id, staff email or provider space.
+   */
+  async function listLookCreativeApprovals({ staffAccountId, accountId, identityId }) {
+    const owner = exactAccount(accountId);
+    const identityKey = identityId === undefined || identityId === null ? null : exactUuid(identityId, 'look identity');
+    return db().transaction(async (tx) => {
+      const grant = await requireActiveStaffGrantTx(tx, staffAccountId);
+      const now = await dbNow(tx);
+      const rows = await tx.select({
+        id: luxifyLookCreativeApprovals.id,
+        identityId: luxifyLookCreativeApprovals.identityId,
+        providerLookId: luxifyLookCreativeApprovals.providerLookId,
+        staffGrantId: luxifyLookCreativeApprovals.staffGrantId,
+        approvedAt: luxifyLookCreativeApprovals.approvedAt,
+        expiresAt: luxifyLookCreativeApprovals.expiresAt,
+        revokedAt: luxifyLookCreativeApprovals.revokedAt,
+        grantRevokedAt: luxStaffGrants.revokedAt,
+      }).from(luxifyLookCreativeApprovals)
+        .innerJoin(luxStaffGrants, eq(luxStaffGrants.id, luxifyLookCreativeApprovals.staffGrantId))
+        .where(and(
+          eq(luxifyLookCreativeApprovals.accountId, owner),
+          ...(identityKey ? [eq(luxifyLookCreativeApprovals.identityId, identityKey)] : []),
+        )).orderBy(desc(luxifyLookCreativeApprovals.approvedAt)).limit(50);
+      return { approvals: rows.map(row => lookApprovalDto(row, { now, staffGrantId: grant.id })) };
     });
   }
 
@@ -479,6 +624,7 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     approveCreativeAsset,
     approveLookCreative,
     revokeLookCreativeApproval,
+    listLookCreativeApprovals,
     recordLookCapabilityEvidence,
   });
 }
@@ -486,11 +632,13 @@ export function createLuxifyConsentRepository({ executor } = {}) {
 // ---- Eligibility and authority (fail closed) ------------------------------
 
 /** Creative assets are blocked from LUXIFY until a Lux staff approval exists. */
-export async function assertLuxifyCreativeAssetsApprovedTx(tx, { accountId, mediaAssetIds = [] }) {
+export async function assertLuxifyCreativeAssetsApprovedTx(tx, { accountId, mediaAssetIds = [], now }) {
   if (!Array.isArray(mediaAssetIds)) throw failure('LUXIFY_CREATIVE_APPROVAL_REQUIRED', 'Creative assets need Lux staff approval.', 409);
   if (!mediaAssetIds.length) return true;
   const ids = mediaAssetIds.map(id => exactUuid(id, 'asset'));
+  const current = timeOf(now ?? await dbNow(tx));
   const rows = await tx.select({
+    approvedAt: luxifyCreativeAssetApprovals.approvedAt,
     mediaAssetId: luxifyCreativeAssetApprovals.mediaAssetId,
     assetSha256: luxifyCreativeAssetApprovals.assetSha256,
     currentSha256: mediaAssets.sha256,
@@ -504,7 +652,9 @@ export async function assertLuxifyCreativeAssetsApprovedTx(tx, { accountId, medi
       eq(luxifyCreativeAssetApprovals.accountId, accountId),
       isNull(luxifyCreativeAssetApprovals.revokedAt),
     ));
-  const approved = new Set(rows.filter(row => row.assetSha256 === row.currentSha256 && !row.quarantinedAt && !row.grantRevokedAt).map(row => row.mediaAssetId));
+  // R2-L1: a future-dated approval (approved_at > now) confers nothing.
+  const approved = new Set(rows.filter(row => row.assetSha256 === row.currentSha256 && !row.quarantinedAt && !row.grantRevokedAt
+    && approvedBy(row.approvedAt, current)).map(row => row.mediaAssetId));
   if (ids.some(id => !approved.has(id))) throw failure('LUXIFY_CREATIVE_APPROVAL_REQUIRED', 'Creative assets need Lux staff approval.', 409);
   return true;
 }
@@ -517,6 +667,7 @@ export async function assertLuxifyCreativeAssetsApprovedTx(tx, { accountId, medi
  */
 export async function assertLuxifyLookCreativeApprovalTx(tx, { accountId, identityId, providerLookId, providerSpaceFingerprint, now }) {
   const [approval] = await tx.select({
+    approvedAt: luxifyLookCreativeApprovals.approvedAt,
     expiresAt: luxifyLookCreativeApprovals.expiresAt,
     revokedAt: luxifyLookCreativeApprovals.revokedAt,
     grantRevokedAt: luxStaffGrants.revokedAt,
@@ -529,8 +680,10 @@ export async function assertLuxifyLookCreativeApprovalTx(tx, { accountId, identi
       isNull(luxifyLookCreativeApprovals.revokedAt),
     )).orderBy(desc(luxifyLookCreativeApprovals.approvedAt)).limit(1).for('share');
   const expiresAt = approval ? new Date(approval.expiresAt).getTime() : NaN;
-  const current = now instanceof Date ? now.getTime() : Number(now);
-  if (!approval || approval.revokedAt || approval.grantRevokedAt || !Number.isFinite(expiresAt) || !Number.isFinite(current) || expiresAt <= current) {
+  const current = timeOf(now);
+  // R2-L1: the approval must already be in effect (approved_at <= now).
+  if (!approval || approval.revokedAt || approval.grantRevokedAt || !approvedBy(approval.approvedAt, current)
+    || !Number.isFinite(expiresAt) || !Number.isFinite(current) || expiresAt <= current) {
     throw failure('LUXIFY_CREATIVE_APPROVAL_REQUIRED', 'This look needs an active Lux staff creative approval.', 409);
   }
   return expiresAt;
@@ -658,8 +811,9 @@ function unavailable(error) {
 /** Production reserve/claim authority for db/repositories.js. Fails closed. */
 export async function resolvePersistedLuxifyAuthority({ tx, accountId, lookIdentityIds, providerBinding = null, intent }) {
   try {
-    await assertLuxifyCreativeAssetsApprovedTx(tx, { accountId, mediaAssetIds: intent?.creativeAssetIds ?? [] });
-    const result = await resolveLuxifyEligibilityTx(tx, { accountId, lookIdentityIds, binding: null });
+    const now = await dbNow(tx);
+    await assertLuxifyCreativeAssetsApprovedTx(tx, { accountId, mediaAssetIds: intent?.creativeAssetIds ?? [], now });
+    const result = await resolveLuxifyEligibilityTx(tx, { accountId, lookIdentityIds, binding: null, now });
     return { lookBindings: result.lookBindings.map(item => ({ ...item })), eligibilityRevision: result.eligibilityRevision };
   } catch (error) {
     throw unavailable(error);

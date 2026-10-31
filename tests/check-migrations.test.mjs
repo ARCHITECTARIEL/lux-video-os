@@ -159,9 +159,9 @@ test('live identity, missing schema-qualified journal, stale baseline and schema
 });
 test('repository plan accounts for every migration and only LF/CRLF source encodings', async () => {
   const actual = await migrationPlan();
-  assert.equal(actual.migrations.length, 19);
+  assert.equal(actual.migrations.length, 20);
   assert.deepEqual(actual.migrations.slice(-3).map(item => item.tag), [
-    '0016_render_mode', '0017_global_counters', '0018_luxify_consent_lifecycle',
+    '0017_global_counters', '0018_luxify_consent_lifecycle', '0019_luxify_followup',
   ]);
   assert.ok(actual.migrations.every(entry => entry.hashes.length >= 1 && entry.hashes.length <= 2));
 });
