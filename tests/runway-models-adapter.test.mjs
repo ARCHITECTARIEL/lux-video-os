@@ -9,6 +9,7 @@ import {
   buildRunwayRequest,
   createRunwayTask,
   resumeRunwayTask,
+  defaultClientFactory,
   estimateRunwayCredits,
   generateRunwayVideo,
   imageFileToDataUri,
@@ -334,4 +335,69 @@ test('installed SDK exposes the surface the adapter relies on (offline, no reque
   assert.equal(client.baseURL, RUNWAY_API_BASE_URL);
   assert.equal(client.maxRetries, 0);
   for (const fn of [client.textToVideo.create, client.imageToVideo.create, client.tasks.retrieve, client.tasks.delete]) assert.equal(typeof fn, 'function');
+});
+
+// ---- QA r3 test gaps (F22a, G2, G12, RS5, reservedCredits 0 on resume) -------
+
+test('F22a: the default SDK client is built with maxRetries 0, pinned baseURL and logging off (offline)', async () => {
+  const client = await defaultClientFactory({ apiKey: SECRET, timeout: 1234 });
+  assert.equal(client.maxRetries, 0);
+  assert.equal(client.baseURL, RUNWAY_API_BASE_URL);
+  assert.equal(client.timeout, 1234);
+  assert.equal(client.logLevel, 'off');
+});
+
+test('G2: create 408 and 409 are ambiguous (unresolved, no release); other 4xx are definite', async () => {
+  for (const [status, definite] of [[408, false], [409, false], [429, true], [400, true], [401, true], [422, true], [500, false], [undefined, false]]) {
+    const { calls, deps } = harness({ createImpl: async () => { throw Object.assign(new Error('x'), { status }); } });
+    const error = await generateRunwayVideo(JOB, T2V, deps).catch(e => e);
+    assert.equal(error.code, definite ? 'RUNWAY_CREATE_REJECTED' : 'RUNWAY_CREATE_UNKNOWN', String(status));
+    assert.equal(error.releaseCredits, definite, String(status));
+    assert.equal(error.unresolved, !definite, String(status));
+    assert.equal(calls.create.length, 1);
+    assert.equal(calls.retrieve.length, 0);
+  }
+});
+
+test('G12: an invalid task id returned by create is unresolved, never saved and never polled', async () => {
+  for (const id of ['', 'x', '../tasks', `${TASK_ID}/delete`, TASK_ID.toUpperCase() + ' ', null, 42]) {
+    const { calls, deps } = harness({ createImpl: async () => ({ id }) });
+    const error = await generateRunwayVideo(JOB, T2V, deps).catch(e => e);
+    assert.equal(error.code, 'RUNWAY_CREATE_UNKNOWN', String(id));
+    assert.equal(error.unresolved, true);
+    assert.equal(error.releaseCredits, false);
+    assert.equal(calls.saved, undefined);
+    assert.equal(calls.retrieve.length, 0);
+  }
+});
+
+test('RS5: resume validates and costs the input before polling (fake requests rejected)', async () => {
+  const fakes = [
+    [{ ...T2V, model: 'gen5-fake' }, 'RUNWAY_MODEL_NOT_ALLOWED'],
+    [{ ...T2V, mode: '__proto__' }, null],
+    [{ ...T2V, duration: 999 }, null],
+    [{ ...T2V, ratio: '9999:1' }, 'RUNWAY_RATIO_NOT_ALLOWED'],
+    [{ ...T2V, promptText: '' }, null],
+    [{}, null],
+  ];
+  for (const [input, code] of fakes) {
+    const { calls, deps } = harness();
+    const error = await resumeRunwayTask(JOB, { taskId: TASK_ID, input }, deps).catch(e => e);
+    assert.ok(error instanceof Error, JSON.stringify(input));
+    assert.equal(error.statusCode, 400, JSON.stringify(input));
+    if (code) assert.equal(error.code, code);
+    assert.equal(calls.factory.length, 0);
+    assert.equal(calls.retrieve.length, 0);
+  }
+});
+
+test('resume rejects reservedCredits 0 or below the estimate, and non-string task ids', async () => {
+  for (const reservedCredits of [0, 59, -1, 1.5, undefined]) {
+    const { calls, deps } = harness();
+    await assert.rejects(resumeRunwayTask({ ...JOB, reservedCredits }, { taskId: TASK_ID, input: T2V }, deps), { code: 'RUNWAY_CREDITS_UNRESERVED' });
+    assert.equal(calls.retrieve.length, 0);
+  }
+  const { calls, deps } = harness();
+  await assert.rejects(resumeRunwayTask(JOB, { taskId: { toString: () => TASK_ID }, input: T2V }, deps), { code: 'RUNWAY_TASK_ID_INVALID' });
+  assert.equal(calls.retrieve.length, 0);
 });
