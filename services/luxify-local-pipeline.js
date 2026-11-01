@@ -6,8 +6,8 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants, createReadStream } from 'node:fs';
-import { access, copyFile, mkdir, open, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { access, copyFile, mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { homedir, hostname } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { ASPECTS, CLIP_CAP_USD, FONT_PRESETS, SHOT_MODELS, VIDEO_CAP_USD } from '../lib/luxify-local-brief.js';
@@ -180,7 +180,7 @@ export async function sha256File(path) {
   return hash.digest('hex');
 }
 
-function titleFilters(shot, font, width, height, textFiles) {
+export function titleFilters(shot, font, width, height, textFiles) {
   return shot.titles.flatMap((t, i) => {
     const enable = `enable='between(t,${t.start},${t.end})'`;
     const main = textFiles[`${i}-main`];
@@ -319,7 +319,7 @@ export function createLedger(path, initial) {
   };
 }
 
-function inputHash(briefShot, planShot) {
+export function inputHash(briefShot, planShot) {
   const material = { model: planShot.model, mode: planShot.mode, prompt: briefShot.prompt, duration: briefShot.duration, ratio: planShot.ratio, seed: briefShot.seed ?? null, promptImage: briefShot.promptImage ?? null };
   return createHash('sha256').update(JSON.stringify(material)).digest('hex').slice(0, 32);
 }
@@ -407,11 +407,109 @@ export async function generateClips(plan, { brief, briefDir, assetsRoot, runwayE
 
 async function exists(path) { try { await access(path); return true; } catch { return false; } }
 
-export async function runPipeline({ brief, briefDir, plan, outDir, assets, ffmpeg, runwayEnv, runwayDeps, resume = false }) {
+// ---------------------------------------------------------------------------
+// QA r2 M-A: one run per output folder. The lock is created with O_EXCL and
+// holds the pid, host and start time. A second run is refused; a stale lock
+// (owner pid gone, same host) can only be removed with --break-lock.
+export const LOCK_FILE = '.luxify.lock';
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; }
+}
+
+export async function acquireLock(outDir, { breakLock = false } = {}) {
+  const path = join(outDir, LOCK_FILE);
+  const body = JSON.stringify({ pid: process.pid, host: hostname(), startedAt: new Date().toISOString() });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const handle = await open(path, 'wx');
+      try { await handle.writeFile(body); await handle.sync(); } finally { await handle.close(); }
+      return { path, release: async () => { try { await unlink(path); } catch { /* already gone */ } } };
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    let holder = null;
+    try { holder = JSON.parse(await readFile(path, 'utf8')); } catch { /* unreadable lock */ }
+    const sameHost = holder?.host === hostname();
+    const stale = !holder || (sameHost && Number.isSafeInteger(holder.pid) && !pidAlive(holder.pid));
+    if (!breakLock || attempt > 0) {
+      throw fail(`Another run holds ${LOCK_FILE} in this output folder${holder ? ` (pid ${holder.pid}, started ${holder.startedAt})` : ''}.${stale ? ' It looks stale; rerun with --break-lock to remove it.' : ''}`, 'OUTPUT_LOCKED');
+    }
+    if (!stale) throw fail(`${LOCK_FILE} is held by a live process${sameHost ? '' : ' on another host'}; refusing to break it.`, 'OUTPUT_LOCKED');
+    await unlink(path);
+  }
+  throw fail('Could not acquire the output lock.', 'OUTPUT_LOCKED');
+}
+
+// QA r2 Low: temp files from a crashed atomic write are never read; remove them.
+async function cleanTempFiles(outDir) {
+  let removed = 0;
+  for (const name of await readdir(outDir)) {
+    if (/^receipt\.json\.\d+\.[0-9a-f-]{36}\.tmp$/.test(name)) { await unlink(join(outDir, name)); removed++; }
+  }
+  return removed;
+}
+
+async function listFiles(dir, pattern) {
+  try { return (await readdir(dir)).filter(name => pattern.test(name)); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+}
+
+// QA r2 M-B: receipt.json must account for everything receipt-history/ and
+// clips/ show. Missing receipts, dropped task ids, downgraded statuses, lower
+// committed credits or untracked clips all refuse the run.
+export async function crossCheckReceipt(outDir, receipt) {
+  const historyDir = join(outDir, 'receipt-history');
+  const history = await listFiles(historyDir, /^receipt-run\d+-\d+\.json$/);
+  const clips = await listFiles(join(outDir, 'clips'), /\.mp4$/i);
+  if (!receipt) {
+    if (history.length || clips.length) throw fail('receipt.json is missing but receipt-history/ or clips/ show earlier spend; refusing to start.', 'RECEIPT_MISSING');
+    return;
+  }
+  const byTask = new Map(receipt.attempts.filter(a => a.taskId).map(a => [a.taskId, a]));
+  const FINAL = new Set(['stored', 'spent', 'lost']);
+  for (const name of history) {
+    let old;
+    try { old = JSON.parse(await readFile(join(historyDir, name), 'utf8')); } catch { throw fail(`receipt-history/${name} is unreadable; refusing to start.`, 'RECEIPT_TAMPERED'); }
+    for (const a of old.attempts || []) {
+      if (!a.taskId) continue;
+      const now = byTask.get(a.taskId);
+      if (!now) throw fail(`receipt.json is missing Runway task …${a.taskId.slice(-4)} recorded in receipt-history; refusing to start.`, 'RECEIPT_TAMPERED');
+      if (FINAL.has(a.status) && now.status !== a.status) throw fail(`receipt.json changed a final task status (…${a.taskId.slice(-4)}); refusing to start.`, 'RECEIPT_TAMPERED');
+      if ((now.credits || 0) < (a.credits || 0)) throw fail(`receipt.json lowered the credits of task …${a.taskId.slice(-4)}; refusing to start.`, 'RECEIPT_TAMPERED');
+    }
+    if (committedCredits(receipt) < committedCredits(old)) throw fail('receipt.json shows less committed spend than receipt-history; refusing to start.', 'RECEIPT_TAMPERED');
+  }
+  const tracked = new Set(receipt.attempts.map(a => a.clipFile).filter(Boolean));
+  const untracked = clips.filter(name => !tracked.has(name));
+  if (untracked.length) throw fail(`clips/ has ${untracked.length} clip(s) that receipt.json does not record; refusing to start.`, 'UNTRACKED_CLIPS');
+}
+
+// Read-only summary for the dry run: pending tasks, and pending tasks whose
+// shot is no longer in the brief (orphaned; they still count toward the cap).
+export async function receiptStatus(outDir, plan) {
+  let receipt;
+  try { receipt = JSON.parse(await readFile(join(outDir, 'receipt.json'), 'utf8')); } catch (error) { return error.code === 'ENOENT' ? null : { unreadable: true }; }
+  if (!Array.isArray(receipt.attempts)) return { unreadable: true };
+  const shotIds = new Set(plan.shots.map(s => s.id));
+  const pending = pendingAttempts(receipt).map(a => ({ shotId: a.shotId, taskId: a.taskId ? `…${a.taskId.slice(-4)}` : null, status: a.status, credits: a.credits }));
+  return { status: receipt.status, run: receipt.run, committedCredits: committedCredits(receipt), pending, orphanedPending: pending.filter(a => !shotIds.has(a.shotId)) };
+}
+
+export async function runPipeline(options) {
+  const briefDir = options.briefDir || process.cwd();
+  await assertVoiceContained(options.assets, briefDir);
+  await mkdir(options.outDir, { recursive: true });
+  const lock = await acquireLock(options.outDir, { breakLock: Boolean(options.breakLock) });
+  try {
+    await cleanTempFiles(options.outDir);
+    return await runPipelineLocked({ ...options, briefDir });
+  } finally {
+    await lock.release();
+  }
+}
+
+async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg, runwayEnv, runwayDeps, resume = false }) {
   const { width, height } = ASPECTS[brief.aspect];
-  briefDir = briefDir || process.cwd();
-  await assertVoiceContained(assets, briefDir);
-  await mkdir(outDir, { recursive: true });
   const receiptPath = join(outDir, 'receipt.json');
   let prior = null;
   try {
@@ -428,12 +526,14 @@ export async function runPipeline({ brief, briefDir, plan, outDir, assets, ffmpe
         : fail('receipt.json already exists in this output folder. Use --resume or a new --out.', 'RECEIPT_EXISTS');
     }
     if (prior.status === 'complete') throw fail('This render is already complete. Use a new --out.', 'RENDER_COMPLETE');
+    await crossCheckReceipt(outDir, prior);
     if (prior.slug !== brief.slug) throw fail('receipt.json belongs to a different brief.', 'RECEIPT_MISMATCH');
     const historyDir = join(outDir, 'receipt-history');
     await mkdir(historyDir, { recursive: true });
     await copyFile(receiptPath, join(historyDir, `receipt-run${prior.run || 0}-${Date.now()}.json`), fsConstants.COPYFILE_EXCL);
-  } else if (resume) {
-    throw fail('--resume was given but there is no receipt.json in the output folder.', 'RESUME_NO_RECEIPT');
+  } else {
+    await crossCheckReceipt(outDir, null);
+    if (resume) throw fail('--resume was given but there is no receipt.json in the output folder.', 'RESUME_NO_RECEIPT');
   }
   const ledger = createLedger(receiptPath, prior || { version: RECEIPT_VERSION, slug: brief.slug, createdAt: new Date().toISOString(), caps: plan.caps, run: 0 });
   const nextRun = (ledger.state.run || 0) + 1;

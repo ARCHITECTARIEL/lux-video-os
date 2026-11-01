@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -7,9 +8,10 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { parseBrief } from '../lib/luxify-local-brief.js';
-import { RECEIPT_VERSION, createLedger, defaultAssetsRoot, ffFilterPath, generateClips, loadShotImage, planBrief, resolveAssets, resolveFfmpeg, runFfmpeg, runPipeline, writeJsonAtomic, xfadeGraph } from '../services/luxify-local-pipeline.js';
+import { LOCK_FILE, acquireLock, inputHash, titleFilters, RECEIPT_VERSION, createLedger, defaultAssetsRoot, ffFilterPath, generateClips, loadShotImage, planBrief, resolveAssets, resolveFfmpeg, runFfmpeg, runPipeline, writeJsonAtomic, xfadeGraph } from '../services/luxify-local-pipeline.js';
 import { homedir } from 'node:os';
-import { readdir, truncate } from 'node:fs/promises';
+import { chmod, readdir, truncate } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import { main } from '../tools/luxify-local.mjs';
 
 const SECRET = 'key_local_test_NEVER_PRINT_0000';
@@ -523,4 +525,181 @@ test('Info: default assets root comes from LUX_ASSETS_DIR or the home folder, no
   const src = await readFile(new URL('../services/luxify-local-pipeline.js', import.meta.url), 'utf8');
   assert.ok(!/Users\\\\[a-z]+\\\\lux-assets/i.test(src));
   assert.match(src, /expansion=none/);
+});
+
+// ---- QA r3 (#135 r2 report) regressions ------------------------------------
+
+function voiceBrief(extra = {}) { return parseBrief(baseBrief({ voice: { source: 'heygen_audio_file', path: 'voice.wav' }, ...extra })); }
+async function pipelineArgs(dir, extra = {}) {
+  await writeFile(join(dir, 'voice.wav'), 'x');
+  const brief = extra.brief || voiceBrief();
+  return { brief, briefDir: dir, plan: planBrief(brief), outDir: join(dir, 'render'), assets: resolveAssets(brief, join(dir, 'assets'), dir), ffmpeg: 'ffmpeg', runwayEnv: LIVE_ENV, ...extra };
+}
+
+test('M-A: an O_EXCL lock with pid/start time refuses a second run; stale locks need --break-lock', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'luxify-lock-'));
+  try {
+    const lock = await acquireLock(dir);
+    const held = JSON.parse(await readFile(join(dir, LOCK_FILE), 'utf8'));
+    assert.equal(held.pid, process.pid);
+    assert.equal(held.host, hostname());
+    assert.ok(!Number.isNaN(Date.parse(held.startedAt)));
+    await assert.rejects(acquireLock(dir), { code: 'OUTPUT_LOCKED' });
+    await assert.rejects(acquireLock(dir, { breakLock: true }), { code: 'OUTPUT_LOCKED' }, 'a live holder is never broken');
+    // Concurrent pipeline on the same folder: refused before any create.
+    const calls = { create: [], retrieve: [], offset: 0 };
+    const args = await pipelineArgs(dir, { outDir: dir });
+    await assert.rejects(runPipeline({ ...args, runwayDeps: scriptedRunway([Buffer.from('x')], {}, calls) }), { code: 'OUTPUT_LOCKED' });
+    assert.equal(calls.create.length, 0);
+    await lock.release();
+    // Stale lock (dead pid on this host): refused without --break-lock, broken with it.
+    await writeFile(join(dir, LOCK_FILE), JSON.stringify({ pid: 2147483646, host: hostname(), startedAt: '2026-01-01T00:00:00Z' }));
+    await assert.rejects(acquireLock(dir), err => err.code === 'OUTPUT_LOCKED' && /--break-lock/.test(err.message));
+    const broken = await acquireLock(dir, { breakLock: true });
+    assert.equal(JSON.parse(await readFile(join(dir, LOCK_FILE), 'utf8')).pid, process.pid);
+    await broken.release();
+    // A lock from another host is never treated as stale.
+    await writeFile(join(dir, LOCK_FILE), JSON.stringify({ pid: 2147483646, host: 'other-host', startedAt: '2026-01-01T00:00:00Z' }));
+    await assert.rejects(acquireLock(dir, { breakLock: true }), { code: 'OUTPUT_LOCKED' });
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('M-A: two concurrent runs on one folder create tasks for only one of them; lock released after', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'luxify-conc-'));
+  try {
+    const args = await pipelineArgs(dir);
+    const calls = { create: [], retrieve: [], offset: 0 };
+    const deps = scriptedRunway([Buffer.from('x')], { [TASK(1)]: 'timeout', [TASK(2)]: 'timeout' }, calls);
+    const results = await Promise.allSettled([runPipeline({ ...args, runwayDeps: deps }), runPipeline({ ...args, runwayDeps: deps })]);
+    const codes = results.map(r => r.reason?.code).sort();
+    assert.deepEqual(codes, ['OUTPUT_LOCKED', 'RUNWAY_TIMEOUT']);
+    assert.equal(calls.create.length, 1);
+    const saved = JSON.parse(await readFile(join(dir, 'render', 'receipt.json'), 'utf8'));
+    assert.equal(saved.attempts.length, 1);
+    assert.ok(!(await readdir(join(dir, 'render'))).includes(LOCK_FILE));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('M-B: refuse when receipt-history or clips show spend the receipt is missing', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'luxify-xcheck-'));
+  try {
+    const args = await pipelineArgs(dir);
+    const outDir = args.outDir;
+    const history = join(outDir, 'receipt-history');
+    const go = async (resume = true) => { const calls = { create: [], retrieve: [], offset: 0 }; const e = await runPipeline({ ...args, resume, runwayDeps: scriptedRunway([Buffer.from('x')], {}, calls) }).catch(x => x); assert.equal(calls.create.length, 0); return e.code; };
+    // Receipt deleted, history left behind.
+    await mkdir(history, { recursive: true });
+    const old = { version: RECEIPT_VERSION, slug: 'unit', status: 'aborted', run: 1, runs: [], attempts: [{ shotId: 'a', run: 1, status: 'stored', credits: 24, taskId: TASK(1), clipFile: 'c1.mp4', sha256: '0' }] };
+    await writeFile(join(history, 'receipt-run1-1.json'), JSON.stringify(old));
+    assert.equal(await go(false), 'RECEIPT_MISSING');
+    // Receipt deleted, clips left behind.
+    await rm(history, { recursive: true });
+    await mkdir(join(outDir, 'clips'), { recursive: true });
+    await writeFile(join(outDir, 'clips', 'c1.mp4'), 'x');
+    assert.equal(await go(false), 'RECEIPT_MISSING');
+    // Receipt present but a clip is untracked.
+    await receiptWith(dir, [{ shotId: 'a', run: 1, status: 'unresolved', credits: 24, taskId: TASK(1) }]);
+    assert.equal(await go(), 'UNTRACKED_CLIPS');
+    await rm(join(outDir, 'clips'), { recursive: true });
+    // Task in history dropped from the receipt.
+    await mkdir(history, { recursive: true });
+    await writeFile(join(history, 'receipt-run1-1.json'), JSON.stringify(old));
+    await receiptWith(dir, [{ shotId: 'b', run: 1, status: 'unresolved', credits: 96, taskId: TASK(2) }]);
+    assert.equal(await go(), 'RECEIPT_TAMPERED');
+    // Final status downgraded (stored -> failed) to free cap room.
+    await receiptWith(dir, [{ shotId: 'a', run: 1, status: 'failed', credits: 24, taskId: TASK(1) }]);
+    assert.equal(await go(), 'RECEIPT_TAMPERED');
+    // Credits lowered.
+    await receiptWith(dir, [{ shotId: 'a', run: 1, status: 'stored', credits: 0, taskId: TASK(1), clipFile: 'c1.mp4', sha256: '0' }]);
+    assert.equal(await go(), 'RECEIPT_TAMPERED');
+    // Unreadable history.
+    await writeFile(join(history, 'receipt-run2-2.json'), '{');
+    assert.equal(await go(), 'RECEIPT_TAMPERED');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('Low: crash temp files are removed on start; unrelated files are kept', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'luxify-tmpclean-'));
+  try {
+    const args = await pipelineArgs(dir);
+    await receiptWith(dir, [{ shotId: 'a', run: 1, status: 'unresolved', credits: 24, taskId: TASK(1) }]);
+    const junk = `receipt.json.1234.${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}.tmp`;
+    await writeFile(join(args.outDir, junk), '{partial');
+    await writeFile(join(args.outDir, 'notes.tmp'), 'keep');
+    const calls = { create: [], retrieve: [], offset: 0 };
+    await runPipeline({ ...args, resume: true, runwayDeps: scriptedRunway([Buffer.from('x')], { [TASK(1)]: 'timeout' }, calls) }).catch(() => {});
+    const files = await readdir(args.outDir);
+    assert.ok(!files.includes(junk));
+    assert.ok(files.includes('notes.tmp'));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('Low: drive-relative C:file paths are rejected; C:\\ absolute is left to containment', () => {
+  for (const path of ['C:relative.png', 'c:a\\b.png', 'Z:voice.wav']) {
+    assert.throws(() => parseBrief(baseBrief({ voice: { source: 'heygen_audio_file', path } })), { code: 'BRIEF_INVALID' }, path);
+    assert.throws(() => parseBrief(baseBrief({ shots: [{ id: 'a', model: 'runway', prompt: 'x', duration: 2, promptImage: path }], transitions: [] })), { code: 'BRIEF_INVALID' }, path);
+  }
+  assert.equal(parseBrief(baseBrief({ voice: { source: 'heygen_audio_file', path: 'C:\\briefs\\v.wav' } })).voice.path, 'C:\\briefs\\v.wav');
+});
+
+test('Low: dry run flags pending and orphaned pending shots from an existing receipt', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'luxify-orphan-'));
+  try {
+    await writeFile(join(dir, 'brief.json'), JSON.stringify(baseBrief()));
+    await receiptWith(dir, [
+      { shotId: 'a', run: 1, status: 'unresolved', credits: 24, taskId: TASK(1) },
+      { shotId: 'renamed-shot', run: 1, status: 'submitted', credits: 96, taskId: TASK(2) },
+      { shotId: 'b', run: 1, status: 'stored', credits: 96, taskId: TASK(3) },
+    ]);
+    let out = '';
+    await main(['--brief', join(dir, 'brief.json'), '--assets', join(dir, 'assets')], { env: {}, stdout: { write: x => { out += x; } } });
+    const view = JSON.parse(out);
+    assert.deepEqual(view.orphanedPendingShots, ['renamed-shot']);
+    assert.deepEqual(view.receipt.pending.map(p => p.shotId), ['a', 'renamed-shot']);
+    assert.equal(view.receipt.committedCredits, 216);
+    assert.ok(!out.includes(TASK(1)), 'task ids are masked');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('L6: a stored clip is reused only when the shot inputs hash matches', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'luxify-l6-'));
+  try {
+    const brief = voiceBrief({ shots: [{ id: 'a', model: 'runway', prompt: 'x', duration: 2 }], transitions: [] });
+    const args = await pipelineArgs(dir, { brief });
+    const clip = Buffer.from('clip-bytes');
+    const sha = createHash('sha256').update(clip).digest('hex');
+    const run = async hash => {
+      await rm(args.outDir, { recursive: true, force: true });
+      await receiptWith(dir, [{ shotId: 'a', run: 1, status: 'stored', credits: 24, taskId: TASK(9), inputHash: hash, clipFile: 'a.mp4', sha256: sha }]);
+      await mkdir(join(args.outDir, 'clips'), { recursive: true });
+      await writeFile(join(args.outDir, 'clips', 'a.mp4'), clip);
+      const calls = { create: [], retrieve: [], offset: 0 };
+      await runPipeline({ ...args, resume: true, runwayDeps: scriptedRunway([clip], { [TASK(1)]: 'timeout' }, calls) }).catch(() => {});
+      return calls.create.length;
+    };
+    assert.equal(await run(inputHash(brief.shots[0], args.plan.shots[0])), 0, 'same inputs: reused');
+    assert.equal(await run('0'.repeat(32)), 1, 'changed inputs: regenerated');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('A3: every drawtext uses expansion=none', () => {
+  const shot = { titles: [{ kind: 'banner', text: 'a', start: 0, end: 1 }, { kind: 'lower_third', text: 'b', subtext: 'c', start: 0, end: 1 }] };
+  const files = { '0-main': '/t/0.txt', '1-main': '/t/1.txt', '1-sub': '/t/1s.txt' };
+  const draws = titleFilters(shot, '/f.ttf', 1280, 720, files).filter(f => f.startsWith('drawtext='));
+  assert.equal(draws.length, 3);
+  for (const d of draws) assert.match(d, /:expansion=none:/);
+});
+
+test('A2: ffmpeg is spawned with -n and never -y', { skip: process.platform === 'win32' ? 'posix shim' : false }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'luxify-a2-'));
+  try {
+    const shim = join(dir, 'ffmpeg');
+    const argsFile = join(dir, 'args.txt');
+    await writeFile(shim, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\nfor last; do :; done\n: > "$last"\n`);
+    await chmod(shim, 0o755);
+    await runFfmpeg(shim, ['-i', 'in.mp4', join(dir, 'out.mp4')]);
+    const args = (await readFile(argsFile, 'utf8')).trim().split('\n');
+    assert.ok(args.includes('-n'));
+    assert.ok(!args.includes('-y'));
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
