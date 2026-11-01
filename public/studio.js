@@ -676,13 +676,25 @@ function luxifyLookChoice(look, locked) {
   return button;
 }
 
+function luxifyConsentLink(label) {
+  const link = node('a', 'text-link', label);
+  link.href = '/luxify-consent';
+  return link;
+}
+
+function luxifyNoEligibleLooks() {
+  const message = node('p', 'inline-empty', 'No eligible LUXIFY looks are available. ');
+  message.append(luxifyConsentLink('Give or review LUXIFY consent for your looks'), '.');
+  return message;
+}
+
 function renderLuxifyLooks(locked) {
   const target = $('#luxify-look-list');
   const capability = state.luxify.capability;
   if (!state.signedIn) target.replaceChildren(node('p', 'inline-empty', 'Sign in to check eligible LUXIFY looks.'));
   else if (state.luxify.loading) target.replaceChildren(node('p', 'inline-empty', 'Checking eligible looks.'));
   else if (state.luxify.error) target.replaceChildren(node('p', 'inline-empty', 'Eligible looks could not be checked. Try availability again.'));
-  else if (!capability?.eligibleLooks?.length) target.replaceChildren(node('p', 'inline-empty', 'No eligible LUXIFY looks are available.'));
+  else if (!capability?.eligibleLooks?.length) target.replaceChildren(luxifyNoEligibleLooks());
   else target.replaceChildren(...capability.eligibleLooks.map(look => luxifyLookChoice(look, locked || capability.available !== true)));
   $('#luxify-look-count').textContent = state.luxify.lookIdentityIds.length + ' of 3';
 }

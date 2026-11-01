@@ -7,6 +7,7 @@ import { exchangeGoogleCode, fetchGoogleProfile, googleAuthorizationUrl, googleO
 import { containedRenderingEntitlementKeys, isTesterAccountId, isTesterEmailDomain, isTesterEmailExact, publicOrigin } from '../../lib/video-os-security.js';
 import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 import { deferAdminResponse } from '../../lib/admin-request-audit.js';
+import { recordMagicLinkEmailProof } from '../../db/auth-email-proof.js';
 
 function route(req) {
   const url = new URL(req.url, 'https://lux-video-os.vercel.app');
@@ -227,8 +228,12 @@ export async function handleAuthRequest(req, res, deps = {}) {
     if (action === 'auth-verify') {
       const url = new URL(req.url, `https://${req.headers.host || 'lux-video-os.vercel.app'}`);
       const token = url.searchParams.get('token');
-      const { accountId: tokenAccountId, email } = await validateMagicToken(token);
-      const accountId = await authenticatedAccountId(tokenAccountId, email);
+      const magic = deps.magicLink || {};
+      const resolveAccountId = magic.authenticatedAccountId || authenticatedAccountId;
+      const recordSession = magic.recordSignIn || recordSignIn;
+      const recordEmailProof = magic.recordEmailProof || recordMagicLinkEmailProof;
+      const { accountId: tokenAccountId, email } = magic.validate ? await magic.validate(token) : await validateMagicToken(token);
+      const accountId = await resolveAccountId(tokenAccountId, email);
       const isTester = isTesterEmailDomain(email) || isTesterAccountId(accountId);
       const role = (isTesterEmailExact(email) || isTesterAccountId(accountId)) ? 'tester' : 'customer';
       const initialCredits = isTester ? 5000 : DEFAULT_TRIAL_CREDITS;
@@ -237,10 +242,26 @@ export async function handleAuthRequest(req, res, deps = {}) {
       // never register into the global tester bypass set (see
       // updateAuthenticatedAccount's own comment for why).
       const registerAsTester = isTesterEmailExact(email) || isTesterAccountId(accountId);
-      await updateAuthenticatedAccount({ accountId, email, name: email, role, initialCredits, entitlementKeys, sourceId: 'magic_link', registerAsTester });
-      await consumeMagicToken(token);
+      if (magic.updateAuthenticatedAccount) await magic.updateAuthenticatedAccount({ accountId, email, name: email, role, initialCredits, entitlementKeys, sourceId: 'magic_link', registerAsTester });
+      else await updateAuthenticatedAccount({ accountId, email, name: email, role, initialCredits, entitlementKeys, sourceId: 'magic_link', registerAsTester });
+      const consumed = magic.consume ? await magic.consume(token) : await consumeMagicToken(token);
+      // The single-use link was just consumed (compare-and-swap), which
+      // proves this account controls the address the link was sent to.
+      // Record that as a used auth_challenges row so the existing
+      // verified-email check (Lux staff grants) can see it. Best effort:
+      // a failure leaves the email unverified but never blocks sign-in.
+      try {
+        if (String(consumed?.email || '').toLowerCase() !== String(email || '').toLowerCase()) throw Object.assign(new Error('mismatch'), { failureCategory: 'VALIDATION' });
+        await recordEmailProof({
+          accountId,
+          email,
+          magicTokenHash: crypto.createHash('sha256').update(String(token || '')).digest('hex'),
+        });
+      } catch (proofError) {
+        console.error('video_os_magic_link_email_proof_failed', { failureCategory: proofError?.failureCategory || 'PERSISTENCE' });
+      }
       const session = makeSession(accountId, email);
-      await recordSignIn(accountId);
+      await recordSession(accountId);
       res.setHeader('Set-Cookie', sessionCookie(session));
       res.statusCode = 302;
       res.setHeader('Location', '/?signed_in=1');

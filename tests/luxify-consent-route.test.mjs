@@ -37,7 +37,6 @@ function fixture(overrides = {}) {
     grantStaff: record('grantStaff'),
     revokeStaffGrant: record('revokeStaffGrant'),
     approveCreativeAsset: record('approveCreativeAsset'),
-    recordLookCapabilityEvidence: record('recordLookCapabilityEvidence'),
   };
   const handler = createLuxifyConsentHandler({
     authenticate: overrides.authenticate || (() => ({ accountId: ACCOUNT, email: 'subject@example.test' })),

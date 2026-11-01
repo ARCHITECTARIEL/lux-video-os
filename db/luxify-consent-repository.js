@@ -42,6 +42,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_ENGINE = /^[A-Za-z0-9_.:-]{1,80}$/;
 const CAPABILITY_EVIDENCE_MAX_MS = 30 * 86_400_000;
 const LOOK_APPROVAL_MAX_MS = 30 * 86_400_000;
+export const LUXIFY_EVIDENCE_SOURCE = 'heygen_check';
 
 function failure(code, message, statusCode = 409, failureCategory = 'CONSENT') {
   return Object.assign(new Error(message), { code, statusCode, failureCategory });
@@ -153,6 +154,12 @@ export function luxifyConsentDto(row, now = new Date()) {
 const maskLook = value => {
   const text = String(value || '');
   return text.length > 4 ? `…${text.slice(-4)}` : '…';
+};
+
+const maskEmail = value => {
+  const text = String(value || '');
+  const at = text.lastIndexOf('@');
+  return at > 0 ? `${text[0]}…${text.slice(at)}` : '…';
 };
 
 export function lookApprovalDto(row, { now = new Date(), staffGrantId = null } = {}) {
@@ -358,6 +365,8 @@ export function createLuxifyConsentRepository({ executor } = {}) {
       eq(authChallenges.accountId, account.id),
       sql`lower(${authChallenges.email}) = ${email}`,
       isNotNull(authChallenges.usedAt),
+      // QA I1: only a consumed magic-link proof verifies an email.
+      eq(authChallenges.challengeType, 'magic_link'),
     )).orderBy(desc(authChallenges.usedAt)).limit(1);
     return { email, verifiedAt: challenge?.usedAt || null };
   }
@@ -486,35 +495,177 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     });
   }
 
-  /** Records staff-observed HeyGen cinematic_avatar support for one look. */
-  async function recordLookCapabilityEvidence({ staffAccountId, accountId, providerLookId, eligible, avatarType, supportedApiEngines = [], observedAt, expiresAt, evidenceSha256 }) {
-    const owner = exactAccount(accountId);
-    if (!PROVIDER_ID.test(String(providerLookId || '')) || typeof eligible !== 'boolean' || !SAFE_ENGINE.test(String(avatarType || ''))
-      || !Array.isArray(supportedApiEngines) || supportedApiEngines.length > 20 || supportedApiEngines.some(item => !SAFE_ENGINE.test(String(item)))
-      || !SHA256.test(String(evidenceSha256 || ''))) {
-      throw failure('LUXIFY_CAPABILITY_EVIDENCE_INVALID', 'Capability evidence is invalid.', 400, 'VALIDATION');
+  async function insertCapabilityEvidenceTx(tx, { owner, grant, space, providerLookId, eligible, avatarType, supportedApiEngines, evidenceSha256, observed, expires, now }) {
+    await tx.update(luxifyLookCapabilityEvidence).set({ revokedAt: now }).where(and(
+      eq(luxifyLookCapabilityEvidence.accountId, owner), eq(luxifyLookCapabilityEvidence.providerLookId, providerLookId),
+      eq(luxifyLookCapabilityEvidence.providerSpaceFingerprint, space.providerSpaceFingerprint), isNull(luxifyLookCapabilityEvidence.revokedAt),
+    ));
+    const [row] = await tx.insert(luxifyLookCapabilityEvidence).values({
+      id: randomUUID(), accountId: owner, providerLookId, providerSpaceFingerprint: space.providerSpaceFingerprint,
+      capability: LUXIFY_CINEMATIC_CAPABILITY, eligible, avatarType, supportedApiEngines: [...supportedApiEngines],
+      // QA L5: source='heygen_check' (0020 CHECK) is written ONLY here and is
+      // what resolveLuxifyEligibilityTx filters on; created_at = observed_at
+      // (both DB now) is kept as a second guard.
+      evidenceSha256, staffGrantId: grant.id, observedAt: observed, expiresAt: expires, createdAt: observed, source: LUXIFY_EVIDENCE_SOURCE,
+    }).returning({ id: luxifyLookCapabilityEvidence.id });
+    return row;
+  }
+
+  // The identity's own HeyGen avatar group: the ownership anchor for the
+  // run-time capability check. Missing or malformed -> 409, nothing read.
+  function ownedGroupId(identity) {
+    const group = String(identity?.providerAvatarGroupId || '');
+    if (!PROVIDER_ID.test(group)) throw failure('LUXIFY_LOOK_OWNERSHIP_UNPROVEN', 'This look has no recorded HeyGen avatar group, so ownership cannot be shown.', 409, 'OWNERSHIP');
+    return group;
+  }
+
+  async function readyLookForStaffTx(tx, owner, identityId) {
+    const [identity] = await tx.select().from(userIdentities).where(and(eq(userIdentities.id, identityId), eq(userIdentities.accountId, owner))).limit(1);
+    const lookId = String(identity?.providerRenderableAvatarId || '');
+    if (!identity || identity.archivedAt || !PROVIDER_ID.test(lookId)) throw failure('LUXIFY_LOOK_NOT_FOUND', 'Look not found.', 404, 'OWNERSHIP');
+    if (identity.provider !== 'heygen' || identity.avatarStatus !== 'READY') throw failure('LUXIFY_LOOK_NOT_READY', 'This look is not ready for LUXIFY approval.', 409);
+    return { identity, lookId };
+  }
+
+  async function ceoTx(tx, accountId) {
+    const [account] = await tx.select({ id: users.id, email: users.email, role: users.role }).from(users).where(eq(users.id, accountId)).limit(1);
+    if (account?.role !== 'ceo') return null;
+    const verified = await verifiedStaffEmailTx(tx, account);
+    try {
+      assertLuxStaffGrantRules({ email: verified.email, emailVerified: Boolean(verified.verifiedAt), explicitGrant: true });
+    } catch {
+      return { account, verified: false };
     }
-    const observed = new Date(observedAt);
-    const expires = new Date(expiresAt);
-    if (!Number.isFinite(observed.getTime()) || !Number.isFinite(expires.getTime()) || expires <= observed
-      || expires.getTime() - observed.getTime() > CAPABILITY_EVIDENCE_MAX_MS) {
-      throw failure('LUXIFY_CAPABILITY_EVIDENCE_INVALID', 'Capability evidence window is invalid.', 400, 'VALIDATION');
+    return { account, verified: true };
+  }
+
+  async function requireCeoTx(tx, accountId) {
+    const ceo = await ceoTx(tx, accountId);
+    if (!ceo?.verified) throw failure('LUX_STAFF_GRANTOR_REQUIRED', 'Only the Lux owner account can manage staff access.', 403, 'ENTITLEMENT');
+    return ceo.account;
+  }
+
+  async function staffGrantOrNullTx(tx, accountId) {
+    try { return await requireActiveStaffGrantTx(tx, accountId); } catch (error) {
+      if (error?.statusCode === 403 || error?.code === 'LUX_STAFF_GRANT_REQUIRED') return null;
+      throw error;
+    }
+  }
+
+  /**
+   * What the signed-in account may do on the staff page. Usable only by the
+   * verified CEO account or an active, verified Lux staff grant holder; every
+   * other account gets a 403 (the page shows nothing).
+   */
+  async function staffContext({ accountId }) {
+    const actor = exactAccount(accountId);
+    return db().transaction(async (tx) => {
+      const ceo = await ceoTx(tx, actor);
+      const grant = await staffGrantOrNullTx(tx, actor);
+      if (!ceo && !grant) throw failure('LUX_STAFF_PAGE_FORBIDDEN', 'This page is only for the Lux owner account and Lux staff.', 403, 'ENTITLEMENT');
+      return {
+        isCeo: Boolean(ceo),
+        ceoEmailVerified: Boolean(ceo?.verified),
+        canManageStaff: Boolean(ceo?.verified),
+        hasStaffGrant: Boolean(grant),
+      };
+    });
+  }
+
+  /** CEO-only list of staff grants, newest first, max 50. Emails and ids are masked for display. */
+  async function listStaffGrants({ grantorAccountId }) {
+    const grantorId = exactAccount(grantorAccountId);
+    return db().transaction(async (tx) => {
+      await requireCeoTx(tx, grantorId);
+      const rows = await tx.select({
+        id: luxStaffGrants.id, staffAccountId: luxStaffGrants.staffAccountId, staffEmail: luxStaffGrants.staffEmail,
+        grantedAt: luxStaffGrants.grantedAt, revokedAt: luxStaffGrants.revokedAt,
+      }).from(luxStaffGrants).where(eq(luxStaffGrants.scope, LUX_STAFF_GRANT_SCOPE)).orderBy(desc(luxStaffGrants.grantedAt)).limit(50);
+      return { grants: rows.map(row => Object.freeze({
+        staffAccountId: row.staffAccountId,
+        staffRef: maskLook(row.staffAccountId),
+        emailRef: maskEmail(row.staffEmail),
+        active: !row.revokedAt,
+        grantedAt: iso(row.grantedAt),
+        ...(row.revokedAt ? { revokedAt: iso(row.revokedAt) } : {}),
+      })) };
+    });
+  }
+
+  /**
+   * CEO or Lux staff only: resolve one account by its exact email, for the
+   * staff page. Returns the account id (for follow-up actions, displayed
+   * masked), whether its email is verified, and its READY HeyGen looks.
+   */
+  async function lookupStaffTarget({ actorAccountId, email }) {
+    const actor = exactAccount(actorAccountId);
+    const target = normalizeStaffEmail(email);
+    if (!/^[^\s@]{1,64}@[^\s@]+\.[^\s@]+$/.test(target) || target.length > 254) throw failure('LUXIFY_CONSENT_INVALID_REQUEST', 'Enter a valid email address.', 400, 'VALIDATION');
+    return db().transaction(async (tx) => {
+      const ceo = await ceoTx(tx, actor);
+      const grant = ceo?.verified ? null : await staffGrantOrNullTx(tx, actor);
+      if (!ceo?.verified && !grant) throw failure('LUX_STAFF_PAGE_FORBIDDEN', 'This page is only for the Lux owner account and Lux staff.', 403, 'ENTITLEMENT');
+      const accounts = await tx.select({ id: users.id, email: users.email }).from(users).where(sql`lower(${users.email}) = ${target}`).limit(2);
+      if (accounts.length !== 1) throw failure('LUX_STAFF_ACCOUNT_NOT_FOUND', 'No single account uses that email.', 404, 'OWNERSHIP');
+      const [account] = accounts;
+      const verified = await verifiedStaffEmailTx(tx, account);
+      const looks = await tx.select({ id: userIdentities.id, displayName: userIdentities.displayName, providerRenderableAvatarId: userIdentities.providerRenderableAvatarId })
+        .from(userIdentities).where(and(
+          eq(userIdentities.accountId, account.id), isNull(userIdentities.archivedAt),
+          eq(userIdentities.provider, 'heygen'), eq(userIdentities.avatarStatus, 'READY'),
+        )).orderBy(asc(userIdentities.createdAt)).limit(50);
+      return {
+        accountId: account.id,
+        accountRef: maskLook(account.id),
+        emailVerified: Boolean(verified.verifiedAt),
+        identities: looks.map(look => Object.freeze({ identityId: look.id, identityRef: maskLook(look.id), displayName: look.displayName, lookRef: maskLook(look.providerRenderableAvatarId) })),
+      };
+    });
+  }
+
+  /**
+   * Step 1 of the run-time capability check: staff authority, the READY look
+   * and the account's active HeyGen space, from DB rows only. Writes nothing.
+   */
+  async function prepareLookCapabilityCheck({ staffAccountId, accountId, identityId }) {
+    const owner = exactAccount(accountId);
+    const id = exactUuid(identityId, 'look identity');
+    return db().transaction(async (tx) => {
+      await requireActiveStaffGrantTx(tx, staffAccountId);
+      const { identity, lookId } = await readyLookForStaffTx(tx, owner, id);
+      const space = await loadActiveProviderSpaceTx(tx, owner);
+      return { accountId: owner, identityId: id, providerLookId: lookId, providerSpaceFingerprint: space.providerSpaceFingerprint, providerAvatarGroupId: ownedGroupId(identity) };
+    });
+  }
+
+  /**
+   * Step 3 of the run-time capability check: records evidence derived by the
+   * server from its own HeyGen read. observedAt is DB now and the window is
+   * exactly 30 days (the maximum). Re-checks the grant, that the identity
+   * still points at the same look and that the space did not change between
+   * the read and the write; any change fails closed with nothing written.
+   */
+  async function recordCheckedLookCapability({ staffAccountId, accountId, identityId, providerLookId, providerSpaceFingerprint, providerAvatarGroupId, eligible, avatarType, supportedApiEngines, evidenceSha256 }) {
+    const owner = exactAccount(accountId);
+    const id = exactUuid(identityId, 'look identity');
+    if (!PROVIDER_ID.test(String(providerLookId || '')) || !SHA256.test(String(providerSpaceFingerprint || '')) || typeof eligible !== 'boolean'
+      || typeof providerAvatarGroupId !== 'string' || !PROVIDER_ID.test(providerAvatarGroupId)
+      || !SAFE_ENGINE.test(String(avatarType || '')) || !Array.isArray(supportedApiEngines) || supportedApiEngines.length > 20
+      || supportedApiEngines.some(item => !SAFE_ENGINE.test(String(item))) || !SHA256.test(String(evidenceSha256 || ''))) {
+      throw failure('LUXIFY_CAPABILITY_EVIDENCE_INVALID', 'Capability evidence is invalid.', 400, 'VALIDATION');
     }
     return db().transaction(async (tx) => {
       const grant = await requireActiveStaffGrantTx(tx, staffAccountId);
+      const { identity, lookId } = await readyLookForStaffTx(tx, owner, id);
       const space = await loadActiveProviderSpaceTx(tx, owner);
+      if (lookId !== providerLookId || space.providerSpaceFingerprint !== providerSpaceFingerprint || ownedGroupId(identity) !== providerAvatarGroupId) {
+        throw failure('LUXIFY_CAPABILITY_STALE', 'The look or HeyGen space changed during the check. Run it again.', 409, 'PROVIDER_READBACK');
+      }
+      await lockAccount(tx, owner, 'capability-evidence');
       const now = await dbNow(tx);
-      if (observed > now) throw failure('LUXIFY_CAPABILITY_EVIDENCE_INVALID', 'Capability evidence is from the future.', 400, 'VALIDATION');
-      await tx.update(luxifyLookCapabilityEvidence).set({ revokedAt: now }).where(and(
-        eq(luxifyLookCapabilityEvidence.accountId, owner), eq(luxifyLookCapabilityEvidence.providerLookId, providerLookId),
-        eq(luxifyLookCapabilityEvidence.providerSpaceFingerprint, space.providerSpaceFingerprint), isNull(luxifyLookCapabilityEvidence.revokedAt),
-      ));
-      const [row] = await tx.insert(luxifyLookCapabilityEvidence).values({
-        id: randomUUID(), accountId: owner, providerLookId, providerSpaceFingerprint: space.providerSpaceFingerprint,
-        capability: LUXIFY_CINEMATIC_CAPABILITY, eligible, avatarType, supportedApiEngines: [...supportedApiEngines],
-        evidenceSha256, staffGrantId: grant.id, observedAt: observed, expiresAt: expires,
-      }).returning({ id: luxifyLookCapabilityEvidence.id });
-      return { evidenceId: row.id };
+      const expires = new Date(now.getTime() + CAPABILITY_EVIDENCE_MAX_MS);
+      const row = await insertCapabilityEvidenceTx(tx, { owner, grant, space, providerLookId, eligible, avatarType, supportedApiEngines, evidenceSha256, observed: now, expires, now });
+      return { evidenceId: row.id, eligible, observedAt: iso(now), expiresAt: iso(expires) };
     });
   }
 
@@ -625,7 +776,11 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     approveLookCreative,
     revokeLookCreativeApproval,
     listLookCreativeApprovals,
-    recordLookCapabilityEvidence,
+    staffContext,
+    listStaffGrants,
+    lookupStaffTarget,
+    prepareLookCapabilityCheck,
+    recordCheckedLookCapability,
   });
 }
 
@@ -749,6 +904,12 @@ export async function resolveLuxifyEligibilityTx(tx, { accountId, lookIdentityId
       eq(luxifyLookCapabilityEvidence.accountId, owner), eq(luxifyLookCapabilityEvidence.providerLookId, String(lookId || '')),
       eq(luxifyLookCapabilityEvidence.providerSpaceFingerprint, space.providerSpaceFingerprint),
       isNull(luxifyLookCapabilityEvidence.revokedAt),
+      // QA M1 + L5: only server-checked evidence counts. The check path is the
+      // only writer of source='heygen_check'; legacy rows (source null, closed
+      // by 0020) and manual inserts without it never match. created_at =
+      // observed_at = DB now stays as a second guard.
+      eq(luxifyLookCapabilityEvidence.source, LUXIFY_EVIDENCE_SOURCE),
+      sql`${luxifyLookCapabilityEvidence.createdAt} = ${luxifyLookCapabilityEvidence.observedAt}`,
     )).orderBy(desc(luxifyLookCapabilityEvidence.observedAt)).limit(1);
     if (!resource || !evidence) throw failure('LUXIFY_LOOK_NOT_ELIGIBLE', 'LUXIFY look eligibility could not be established.', 409);
     const approvalExpiry = await assertLuxifyLookCreativeApprovalTx(tx, {

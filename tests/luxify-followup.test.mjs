@@ -297,8 +297,8 @@ test('0019 adds single-use challenge storage and the grant-revoke cascade withou
   ]) assert.match(text, clause);
   assert.doesNotMatch(text, /DROP |ALTER TABLE "luxify_cinematic_consents"|CREATE OR REPLACE/);
   const journal = JSON.parse(journalText);
-  assert.equal(journal.entries.at(-1).tag, '0019_luxify_followup');
-  assert.equal(journal.entries.at(-2).tag, '0018_luxify_consent_lifecycle');
+  assert.equal(journal.entries[19].tag, '0019_luxify_followup');
+  assert.equal(journal.entries[18].tag, '0018_luxify_consent_lifecycle');
   const table = JSON.parse(snapshotText).tables['public.luxify_consent_challenge_uses'];
   assert.ok(table);
   assert.ok(table.indexes.luxify_consent_challenge_uses_used_at_idx, 'used_at index in snapshot (I-1)');
@@ -372,4 +372,27 @@ test('the staff grant behind every staff action is locked FOR SHARE so a concurr
     const grantSelect = db.log[1];
     assert.ok(grantSelect.calls.some(([name, args]) => name === 'for' && args[0] === 'share'), 'staff grant row locked FOR SHARE');
   }
+});
+
+// ---- 0020 migration (static, QA L5) ------------------------------------------
+test('0020 adds the evidence source column with CHECK heygen_check and closes older open evidence, without editing 0018/0019', async () => {
+  const read = file => readFile(new URL(file, import.meta.url), 'utf8');
+  const [sql, journalText, snapshotText] = await Promise.all([
+    read('../drizzle/0020_luxify_evidence_source.sql'), read('../drizzle/meta/_journal.json'), read('../drizzle/meta/0020_snapshot.json'),
+  ]);
+  const text = sql.replace(/\r\n/g, '\n');
+  assert.match(text, /ALTER TABLE "luxify_look_capability_evidence" ADD COLUMN "source" text;/);
+  assert.match(text, /ADD CONSTRAINT "luxify_look_capability_evidence_source_ck" CHECK \("luxify_look_capability_evidence"\."source" = 'heygen_check'\)/);
+  assert.match(text, /UPDATE "luxify_look_capability_evidence" SET "revoked_at" = [^;]+ WHERE "revoked_at" IS NULL AND "source" IS NULL;/);
+  assert.ok(text.indexOf('ADD COLUMN "source"') < text.indexOf('UPDATE "luxify_look_capability_evidence"'));
+  assert.doesNotMatch(text, /DROP |CREATE OR REPLACE|DELETE /);
+  const journal = JSON.parse(journalText);
+  const entry = journal.entries.at(-1);
+  assert.equal(entry.tag, '0020_luxify_evidence_source');
+  assert.equal(entry.idx, 20);
+  assert.ok(entry.when > journal.entries[19].when);
+  const table = JSON.parse(snapshotText).tables['public.luxify_look_capability_evidence'];
+  assert.equal(table.columns.source.type, 'text');
+  assert.equal(table.columns.source.notNull, false);
+  assert.ok(table.checkConstraints.luxify_look_capability_evidence_source_ck);
 });

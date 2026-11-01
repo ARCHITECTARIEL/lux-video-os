@@ -10,6 +10,10 @@ import {
 } from '../../lib/luxify-consent-policy.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { logOpsEvent } from '../../lib/ops-log.js';
+import { deriveLuxifyLookCapability } from '../../lib/luxify-look-capability.js';
+import { assertFreshHeygenSpaceBinding, resolveFreshHeygenSpaceBinding } from '../../db/heygen-space-binding-repository.js';
+import { readHeygenAvatarLookRaw } from '../../services/heygen.js';
+import { consumeRateLimit } from '../../db/repositories.js';
 
 const uuid = z.string().uuid().transform(value => value.toLowerCase());
 const accountRef = z.string().trim().min(1).max(160);
@@ -34,18 +38,83 @@ const schemas = {
   'approve-look': z.object({ action: z.literal('approve-look'), accountId: accountRef, identityId: uuid, expiresInDays: z.number().int().min(1).max(30).optional() }).strict(),
   'revoke-look-approval': z.object({ action: z.literal('revoke-look-approval'), approvalId: uuid }).strict(),
   'list-look-approvals': z.object({ action: z.literal('list-look-approvals'), accountId: accountRef, identityId: uuid.optional() }).strict(),
-  'record-capability': z.object({
-    action: z.literal('record-capability'),
-    accountId: accountRef,
-    providerLookId: z.string().regex(/^[A-Za-z0-9_.:-]{1,255}$/),
-    eligible: z.boolean(),
-    avatarType: z.string().regex(/^[A-Za-z0-9_.:-]{1,80}$/),
-    supportedApiEngines: z.array(z.string().regex(/^[A-Za-z0-9_.:-]{1,80}$/)).max(20),
-    observedAt: z.string().datetime(),
-    expiresAt: z.string().datetime(),
-    evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/),
-  }).strict(),
+  // Staff page (/luxify-staff). check-capability takes NO evidence values:
+  // the server reads HeyGen itself and derives them.
+  'staff-context': z.object({ action: z.literal('staff-context') }).strict(),
+  'list-staff': z.object({ action: z.literal('list-staff') }).strict(),
+  'staff-lookup': z.object({ action: z.literal('staff-lookup'), email: z.string().trim().min(3).max(254) }).strict(),
+  'check-capability': z.object({ action: z.literal('check-capability'), accountId: accountRef, identityId: uuid }).strict(),
 };
+
+// QA L3: each check costs a look GET plus a binding qualification, so it is
+// throttled per staff actor with the repo's atomic fixed-window counter.
+export const LUXIFY_CAPABILITY_CHECK_HOURLY_LIMIT = 5;
+const CAPABILITY_CHECK_WINDOW_MS = 60 * 60 * 1000;
+// QA L4: the capability check (the only staff action that calls HeyGen) is
+// refused while LUXIFY is off. Grant/list/revoke/approve stay available.
+const LUXIFY_FEATURE_FLAG = 'VIDEO_OS_LUXIFY_ENABLED';
+function luxifyEnabled(environment) {
+  return String(environment?.[LUXIFY_FEATURE_FLAG] || '').trim().toLowerCase() === 'true';
+}
+
+const defaultCapabilityReader = Object.freeze({
+  resolveBinding: input => resolveFreshHeygenSpaceBinding(input),
+  assertBinding: binding => assertFreshHeygenSpaceBinding(binding),
+  readLook: lookId => readHeygenAvatarLookRaw(lookId),
+});
+
+/**
+ * Run-time LUXIFY capability check. Order: (1) staff authority + READY look +
+ * active space from the DB, no writes; (2) the existing fresh HeyGen space
+ * binding path, which proves the configured HeyGen key belongs to the
+ * account's pinned space; (3) ONE read-only HeyGen GET of the look; (4)
+ * server-side derivation (completed + owned by the pinned space's avatar
+ * group; no engine requirement) and hashing; (5) evidence write, re-checked in its
+ * own transaction. Any failure before (5) writes nothing.
+ */
+async function runCapabilityCheck({ repository, reader, staffAccountId, accountId, identityId }) {
+  const target = await repository.prepareLookCapabilityCheck({ staffAccountId, accountId, identityId });
+  let binding;
+  try {
+    binding = await reader.resolveBinding({ accountId: target.accountId });
+    reader.assertBinding(binding);
+  } catch {
+    throw routeError('LUXIFY_PROVIDER_SPACE_UNAVAILABLE', 'The HeyGen space for this account could not be verified.', 409, 'PROVIDER_BINDING');
+  }
+  if (binding?.providerSpaceFingerprint !== target.providerSpaceFingerprint) {
+    throw routeError('LUXIFY_PROVIDER_SPACE_MISMATCH', 'The HeyGen space for this account does not match its binding.', 409, 'PROVIDER_BINDING');
+  }
+  let read;
+  try {
+    read = await reader.readLook(target.providerLookId);
+  } catch {
+    throw routeError('LUXIFY_CAPABILITY_READ_FAILED', 'HeyGen could not be read for this look. Nothing was recorded.', 503, 'LUXIFY_CAPABILITY_READ');
+  }
+  const derived = deriveLuxifyLookCapability({
+    providerLookId: target.providerLookId, expectedGroupId: target.providerAvatarGroupId, responseText: read?.text, payload: read?.payload,
+  });
+  const recorded = await repository.recordCheckedLookCapability({
+    staffAccountId,
+    accountId: target.accountId,
+    identityId: target.identityId,
+    providerLookId: target.providerLookId,
+    providerSpaceFingerprint: target.providerSpaceFingerprint,
+    providerAvatarGroupId: target.providerAvatarGroupId,
+    eligible: derived.eligible,
+    avatarType: derived.avatarType,
+    supportedApiEngines: [...derived.supportedApiEngines],
+    evidenceSha256: derived.evidenceSha256,
+  });
+  return {
+    eligible: derived.eligible,
+    ...(derived.ineligibleReason ? { ineligibleReason: derived.ineligibleReason } : {}),
+    avatarType: derived.avatarType,
+    supportedApiEngines: [...derived.supportedApiEngines],
+    evidenceRef: `…${derived.evidenceSha256.slice(-8)}`,
+    observedAt: recorded.observedAt,
+    expiresAt: recorded.expiresAt,
+  };
+}
 
 function routeError(code, message, statusCode = 400, failureCategory = 'VALIDATION') {
   return Object.assign(new Error(message), { code, statusCode, failureCategory });
@@ -80,6 +149,8 @@ export function createLuxifyConsentHandler({
   environment = process.env,
   repository = luxifyConsentRepository,
   now = () => Date.now(),
+  capabilityReader = defaultCapabilityReader,
+  rateLimit = consumeRateLimit,
 } = {}) {
   return async function luxifyConsentHandler(req, res) {
     if (handleOptions(req, res)) return;
@@ -158,16 +229,28 @@ export function createLuxifyConsentHandler({
         case 'list-look-approvals':
           result = await repository.listLookCreativeApprovals({ staffAccountId: accountId, accountId: input.accountId, ...(input.identityId ? { identityId: input.identityId } : {}) });
           return send(res, 200, { ok: true, approvals: result.approvals });
-        case 'record-capability': {
-          const { action, ...evidence } = input;
-          await repository.recordLookCapabilityEvidence({ staffAccountId: accountId, ...evidence });
-          return send(res, 201, { ok: true });
+        case 'staff-context':
+          result = await repository.staffContext({ accountId });
+          return send(res, 200, { ok: true, ...result });
+        case 'list-staff':
+          result = await repository.listStaffGrants({ grantorAccountId: accountId });
+          return send(res, 200, { ok: true, grants: result.grants });
+        case 'staff-lookup':
+          result = await repository.lookupStaffTarget({ actorAccountId: accountId, email: input.email });
+          return send(res, 200, { ok: true, ...result });
+        case 'check-capability': {
+          if (!luxifyEnabled(environment)) throw routeError('luxify_unavailable', 'LUXIFY is off, so look capability checks are unavailable.', 503, 'CONFIG_MISSING');
+          const allowed = await rateLimit({ accountId, key: `luxify-capability:hourly:${accountId}`, limit: LUXIFY_CAPABILITY_CHECK_HOURLY_LIMIT, windowMs: CAPABILITY_CHECK_WINDOW_MS });
+          if (!allowed) throw routeError('rate_limited', 'Capability check limit reached. Try again later.', 429, 'RATE_LIMIT');
+          result = await runCapabilityCheck({ repository, reader: capabilityReader, staffAccountId: accountId, accountId: input.accountId, identityId: input.identityId });
+          logOpsEvent({ level: 'info', event: 'luxify.capability.checked', accountId, status: 201, code: result.eligible ? 'LUXIFY_CAPABILITY_ELIGIBLE' : 'LUXIFY_CAPABILITY_NOT_ELIGIBLE', message: 'LUXIFY look capability checked.' });
+          return send(res, 201, { ok: true, ...result });
         }
         default:
           throw routeError('invalid_request', 'Invalid consent action.');
       }
     } catch (error) {
-      const status = [400, 401, 403, 404, 409, 503].includes(error?.statusCode) ? error.statusCode : 503;
+      const status = [400, 401, 403, 404, 409, 429, 503].includes(error?.statusCode) ? error.statusCode : 503;
       const code = status === 503 && !error?.statusCode ? 'luxify_consent_unavailable' : error?.code || 'luxify_consent_unavailable';
       const message = status === 503 && !error?.statusCode ? 'Consent request could not be completed.' : error.message;
       logOpsEvent({ level: status >= 500 ? 'error' : 'warn', event: 'luxify.consent.rejected', accountId: session?.accountId, status, code, message: 'LUXIFY consent request was rejected.' });

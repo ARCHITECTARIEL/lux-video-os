@@ -435,6 +435,30 @@ async function heygenGet(path, category) {
   return responseJson(response, category);
 }
 
+/**
+ * Read-only HeyGen v3 look read (GET /v3/avatars/looks/{look_id}, the same
+ * look endpoint getHeygenPhotoAvatarStatus polls). Returns the exact response
+ * body text so callers can hash what HeyGen said, plus the parsed JSON.
+ * GET only: no render, no credits, no mutation.
+ */
+export async function readHeygenAvatarLookRaw(lookId, { fetchImpl = fetch, env = process.env } = {}) {
+  const lookReference = cleanProviderId(lookId, 'HeyGen avatar look ID');
+  const response = await fetchImpl(`${API_ORIGIN}/v3/avatars/looks/${encodeURIComponent(lookReference)}`, {
+    method: 'GET',
+    redirect: 'error',
+    signal: AbortSignal.timeout(timeoutMs(env)),
+    headers: { Accept: 'application/json', 'X-Api-Key': key(env) },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw Object.assign(new Error(`HeyGen request failed with HTTP ${response.status}.`), { statusCode: 502, failureCategory: 'LUXIFY_CAPABILITY_READ', providerHttpStatus: response.status });
+  }
+  if (text.length > 1_000_000) throw Object.assign(new Error('HeyGen returned an oversized look record.'), { statusCode: 502, failureCategory: 'LUXIFY_CAPABILITY_READ' });
+  let payload;
+  try { payload = JSON.parse(text); } catch { throw Object.assign(new Error('HeyGen returned invalid JSON.'), { statusCode: 502, failureCategory: 'LUXIFY_CAPABILITY_READ' }); }
+  return { text, payload };
+}
+
 export function providerMediaHostname(value) {
   let url;
   try { url = new URL(String(value || '')); } catch { throw Object.assign(new Error('HeyGen media URL was invalid.'), { failureCategory: 'PROVIDER_POLL' }); }
