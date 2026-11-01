@@ -520,8 +520,8 @@ test('/luxify-staff is served no-store and no-referrer, and the page shows only 
   assert.match(js, /const endpoint = '\/api\/video-os-lite\/luxify-consent';/);
   assert.doesNotMatch(js, /innerHTML/);
   assert.doesNotMatch(js, /record-capability|evidenceSha256|supportedApiEngines:/, 'the page never supplies evidence values');
-  for (const raw of ['grant.staffAccountId}', 'subject.accountId}', 'look.identityId}', 'approval.approvalId}']) {
-    assert.ok(!js.includes('${' + raw.replace('}', '') + '}'), `${raw} must not be displayed`);
+  for (const field of ['grant.staffAccountId', 'subject.accountId', 'look.identityId', 'approval.approvalId']) {
+    assert.ok(!js.includes('${' + field + '}'), `${field} must not be displayed`);
   }
 });
 
