@@ -8,6 +8,7 @@ import {
   RUNWAY_OUTPUT_HOSTS,
   buildRunwayRequest,
   createRunwayTask,
+  resumeRunwayTask,
   estimateRunwayCredits,
   generateRunwayVideo,
   imageFileToDataUri,
@@ -110,6 +111,16 @@ test('M2: task id is saved before polling starts', async () => {
   assert.equal(result.providerTaskId, TASK_ID);
 });
 
+test('resumeRunwayTask polls an existing id and never creates', async () => {
+  const { calls, deps } = harness();
+  const result = await resumeRunwayTask(JOB, { taskId: TASK_ID, input: T2V }, deps);
+  assert.equal(calls.create.length, 0);
+  assert.deepEqual(calls.retrieve, [TASK_ID]);
+  assert.equal(result.providerTaskId, TASK_ID);
+  await assert.rejects(resumeRunwayTask(JOB, { taskId: 'nope', input: T2V }, deps), { code: 'RUNWAY_TASK_ID_INVALID' });
+  await assert.rejects(resumeRunwayTask(JOB, { taskId: TASK_ID, input: T2V }, { ...deps, env: { ...ENV, VIDEO_OS_RUNWAY_ENABLED: 'false' } }), { statusCode: 503 });
+});
+
 test('M2: createRunwayTask returns the id without polling', async () => {
   const { calls, deps } = harness();
   const created = await createRunwayTask(JOB, T2V, deps);
@@ -137,12 +148,31 @@ test('stored pathname mismatch is rejected (kills F21)', async () => {
   await assert.rejects(generateRunwayVideo(JOB, T2V, { ...deps, putPrivateBlob: async () => ({ pathname: 'video-os/finals/other.mp4' }) }), { code: 'FINAL_STORE' });
 });
 
-test('task failure maps to 502, releases, and the failure code is from a fixed set (L5)', async () => {
+test('r2 Low 1: a failure saving the task id is unresolved with the id and does not poll', async () => {
+  const { calls, deps } = harness();
+  const error = await generateRunwayVideo(JOB, T2V, { ...deps, onTaskCreated: async () => { throw new Error('ENOSPC'); } }).catch(e => e);
+  assert.equal(error.code, 'RUNWAY_TASK_ID_NOT_SAVED');
+  assert.equal(error.unresolved, true);
+  assert.equal(error.releaseCredits, false);
+  assert.equal(error.providerTaskId, TASK_ID);
+  assert.equal(calls.retrieve.length, 0);
+});
+
+test('r2 Low 2: non-safety-input failures release credits; SAFETY.INPUT does not', async () => {
+  for (const [code, release] of [['INTERNAL.BAD_OUTPUT.CODE01', true], ['SAFETY.OUTPUT.VIDEO', true], ['ASSET.INVALID', true], ['SAFETY.INPUT.IMAGE', false]]) {
+    const { deps } = harness({ waitImpl: async () => { throw new TaskFailedError({ status: 'FAILED', failureCode: code }); } });
+    const error = await generateRunwayVideo(JOB, T2V, deps).catch(e => e);
+    assert.equal(error.releaseCredits, release, code);
+    assert.equal(error.creditsSpent, !release, code);
+  }
+});
+
+test('task failure maps to 502, does not release SAFETY.INPUT, and the failure code is from a fixed set (L5)', async () => {
   const { calls, deps } = harness({ waitImpl: async () => { throw new TaskFailedError({ status: 'FAILED', failure: `bad ${SECRET}`, failureCode: 'SAFETY.INPUT.TEXT' }); } });
   const error = await generateRunwayVideo(JOB, T2V, deps).catch(e => e);
   assert.equal(error.code, 'RUNWAY_TASK_FAILED');
   assert.equal(error.providerFailureCode, 'SAFETY_INPUT');
-  assert.equal(error.releaseCredits, true);
+  assert.equal(error.releaseCredits, false);
   assert.equal(error.providerTaskId, TASK_ID);
   assert.equal(calls.put.length, 0);
   assert.equal(mapRunwayFailureCode('INTERNAL.BAD_OUTPUT.01'), 'BAD_OUTPUT');
