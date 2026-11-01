@@ -38,6 +38,22 @@ export const RUNWAY_MODELS = Object.freeze({
     minDuration: 2,
     maxDuration: 10,
   }),
+  // Seedance 2.0 Fast via Runway (openapi.json: text_to_video / image_to_video
+  // variant `seedance2_fast`; pricing.md: 720p 24 credits/s, 44 credit minimum).
+  // Only the two 720p 16:9 / 9:16 ratios are allowed so the 720p rate applies.
+  // `audio` is always sent as false (narration comes from HeyGen).
+  seedance2_fast: Object.freeze({
+    creditsPerSecond: 24,
+    minimumCredits: 44,
+    promptMax: 3500,
+    fixedFields: Object.freeze({ audio: false }),
+    modes: Object.freeze({
+      text_to_video: Object.freeze({ ratios: Object.freeze(['1280:720', '720:1280']), promptTextRequired: true }),
+      image_to_video: Object.freeze({ ratios: Object.freeze(['1280:720', '720:1280']), promptTextRequired: false }),
+    }),
+    minDuration: 4,
+    maxDuration: 15,
+  }),
 });
 
 const PROMPT_MAX = 1000;

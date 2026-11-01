@@ -1,0 +1,21 @@
+{
+  "version": "luxify-local/v1",
+  "slug": "example-luxify",
+  "title": "LUX Example",
+  "aspect": "16:9",
+  "script": "Welcome to LUX. This is an example narration recorded with HeyGen.",
+  "shots": [
+    { "id": "open", "model": "runway", "prompt": "Slow dolly through a sunlit modern lobby, cinematic, shallow depth of field", "duration": 5,
+      "titles": [{ "kind": "banner", "text": "LUX Marketing", "start": 0.5, "end": 4.5 }] },
+    { "id": "detail", "model": "seedance", "prompt": "Macro shot of hands signing a contract on a walnut desk, warm light", "duration": 4,
+      "titles": [{ "kind": "lower_third", "text": "Ariel", "subtext": "Founder, LUX", "start": 0.3, "end": 3.7 }] },
+    { "id": "close", "model": "runway", "prompt": "Golden hour skyline timelapse, gentle camera rise", "duration": 5 }
+  ],
+  "transitions": [{ "type": "fade", "duration": 0.5 }, { "type": "smoothleft", "duration": 0.6 }],
+  "fontPreset": "lux-sans-bold",
+  "lut": "lux-warm.cube",
+  "music": { "track": "lux-bed.mp3", "volume": 0.35 },
+  "logoOverlay": "lux-logo.png",
+  "voice": { "source": "heygen_audio_file", "path": "video_productions/example-luxify/voice.wav" },
+  "loudnessLufs": -14
+}

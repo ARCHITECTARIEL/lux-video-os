@@ -217,7 +217,13 @@ test('guardrails: model/ratio/duration/prompt allowlists from docs', () => {
   assert.throws(() => buildRunwayRequest({ ...T2V, promptText: 'x'.repeat(1001) }, ENV), { code: 'RUNWAY_PROMPT_INVALID' });
   assert.equal(estimateRunwayCredits({ model: 'gen4.5', duration: 10 }), 120);
   assert.equal(estimateRunwayCredits({ model: 'gen4_turbo', duration: 10 }), 50);
-  assert.ok(Object.keys(RUNWAY_MODELS).includes('gen4.5'));
+  assert.deepEqual(Object.keys(RUNWAY_MODELS).sort(), ['gen4.5', 'gen4_turbo', 'seedance2_fast']);
+  assert.equal(estimateRunwayCredits({ model: 'seedance2_fast', duration: 4 }), 96);
+  assert.equal(estimateRunwayCredits({ model: 'seedance2_fast', duration: 1 }), 44);
+  const seed = buildRunwayRequest({ mode: 'text_to_video', model: 'seedance2_fast', promptText: 'x', ratio: '1280:720', duration: 4 }, { ...ENV, VIDEO_OS_RUNWAY_MAX_CREDITS_PER_TASK: '100' });
+  assert.deepEqual(seed.body, { model: 'seedance2_fast', ratio: '1280:720', duration: 4, promptText: 'x', audio: false });
+  assert.throws(() => buildRunwayRequest({ mode: 'text_to_video', model: 'seedance2_fast', promptText: 'x', ratio: '1920:1080', duration: 4 }, ENV), { code: 'RUNWAY_RATIO_NOT_ALLOWED' });
+  assert.throws(() => buildRunwayRequest({ mode: 'text_to_video', model: 'seedance2_fast', promptText: 'x', ratio: '1280:720', duration: 3 }, ENV), { code: 'RUNWAY_DURATION_INVALID' });
 });
 
 test('M3: image inputs accept only png/jpeg/webp data URIs <= 5 MB', () => {
