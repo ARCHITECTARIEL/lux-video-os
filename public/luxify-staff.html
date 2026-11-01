@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>LUXIFY staff | LUX Video OS</title>
+  <link rel="stylesheet" href="/provider-consent.css">
+</head>
+<body>
+  <main>
+    <p class="eyebrow">LUX VIDEO OS</p>
+    <h1>LUXIFY staff</h1>
+    <p class="fine">For the Lux owner account and Lux staff only. Nothing here turns LUXIFY on; it stays off until its own settings are changed.</p>
+    <p id="status" role="status" aria-live="polite">Checking access.</p>
+
+    <section id="staff-panel" aria-labelledby="staff-heading" hidden>
+      <h2 id="staff-heading">Staff access (owner only)</h2>
+      <label for="staff-email">Staff email</label>
+      <input id="staff-email" type="email" autocomplete="off" maxlength="254">
+      <label class="affirm"><input id="explicit-grant" type="checkbox"><span>I explicitly grant this person Lux staff creative-approval access.</span></label>
+      <button id="grant-staff" type="button" disabled>Grant staff access</button>
+      <ul id="staff-list"></ul>
+    </section>
+
+    <section id="look-panel" aria-labelledby="look-heading" hidden>
+      <h2 id="look-heading">Looks</h2>
+      <label for="subject-email">Account email</label>
+      <input id="subject-email" type="email" autocomplete="off" maxlength="254">
+      <button id="find-subject" type="button">Find looks</button>
+      <p id="subject-summary"></p>
+      <label for="look">Look</label>
+      <select id="look"></select>
+      <button id="check-capability" type="button" disabled>Run capability check</button>
+      <p id="capability-result"></p>
+      <button id="approve-look" type="button" disabled>Approve look (30 days)</button>
+      <h3>Approvals</h3>
+      <ul id="approvals"></ul>
+    </section>
+  </main>
+  <script type="module" src="/luxify-staff.js"></script>
+</body>
+</html>

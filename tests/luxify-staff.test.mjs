@@ -1,0 +1,397 @@
+// Unit tests for LUXIFY-STAFF-1031: magic-link email proof, the /luxify-staff
+// page actions, and the run-time capability check. No DB, no network: HeyGen
+// and the space binding are always mocked.
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+import { createLuxifyConsentRepository } from '../db/luxify-consent-repository.js';
+import { magicLinkProofTokenHash, recordMagicLinkEmailProof } from '../db/auth-email-proof.js';
+import { createLuxifyConsentHandler } from '../routes/video-os-lite/luxify-consent.js';
+import { requireLuxifyActivation } from '../routes/video-os-lite/luxify.js';
+import { handleAuthRequest } from '../api/video-os-lite/auth.js';
+import {
+  LUXIFY_CAPABILITY_PROOF_FIELD,
+  LUXIFY_CAPABILITY_PROOF_VALUE,
+  deriveLuxifyLookCapability,
+} from '../lib/luxify-look-capability.js';
+
+const NOW = new Date('2026-11-02T10:00:00.000Z');
+const DAY = 86_400_000;
+const ACCOUNT = 'subject-account-test';
+const STAFF = 'staff-account-test';
+const CEO = 'owner-account-test';
+const IDENTITY = '0d0d0d0d-0000-4000-8000-000000000001';
+const GRANT = '0d0d0d0d-0000-4000-8000-000000000004';
+const EVIDENCE = '0d0d0d0d-0000-4000-8000-000000000005';
+const FP = 'f'.repeat(64);
+const LOOK = 'look_test_1234';
+const ORIGIN = 'https://video.example';
+const ENV = { VIDEO_OS_PUBLIC_ORIGIN: ORIGIN, VIDEO_OS_SESSION_SECRET: 'staff-route-test-secret-at-least-32-bytes-long' };
+
+function fakeDb(queue, now = NOW) {
+  const log = [];
+  const chain = kind => {
+    const entry = { kind, calls: [] };
+    log.push(entry);
+    const proxy = new Proxy(function chainFn() {}, {
+      get(_target, prop) {
+        if (prop === 'then') {
+          let value = queue.shift();
+          if (typeof value === 'function') value = value(entry);
+          return value instanceof Error ? (_resolve, reject) => reject(value) : resolve => resolve(value ?? []);
+        }
+        return (...args) => { entry.calls.push([prop, args]); return proxy; };
+      },
+    });
+    return proxy;
+  };
+  const tx = { execute: async () => [{ now }], select: () => chain('select'), update: () => chain('update'), insert: () => chain('insert') };
+  return { log, tx, executor: { transaction: async callback => callback(tx), insert: () => chain('insert') } };
+}
+const arg = (entry, method) => entry.calls.find(([name]) => name === method)?.[1]?.[0];
+const writes = log => log.filter(entry => entry.kind !== 'select');
+const repoFor = queue => { const db = fakeDb(queue); return { db, repo: createLuxifyConsentRepository({ executor: db.executor }) }; };
+
+const staffUser = [{ id: STAFF, email: 'staff@luxmarketingcompany.com' }];
+const staffGrant = [{ id: GRANT, staffAccountId: STAFF, staffEmail: 'staff@luxmarketingcompany.com', explicitGrant: true }];
+const verified = [{ usedAt: NOW }];
+const staffOk = () => [staffUser, staffGrant, verified];
+const identity = (overrides = {}) => ({ id: IDENTITY, accountId: ACCOUNT, archivedAt: null, provider: 'heygen', avatarStatus: 'READY', providerRenderableAvatarId: LOOK, ...overrides });
+const space = { bindingId: 'b', originScopeKey: 'e'.repeat(64), verifiedAccountScopeId: 's', verifiedAt: NOW, providerSpaceFingerprint: FP };
+
+const lookBody = (overrides = {}) => JSON.stringify({ data: { id: LOOK, name: 'Look', avatar_type: 'digital_twin', supported_api_engines: ['avatar_iv', 'cinematic_avatar'], status: 'completed', ...overrides } });
+const sha = value => createHash('sha256').update(value, 'utf8').digest('hex');
+
+// ---- capability derivation (HeyGen field decision) --------------------------
+test('capability: only data.supported_api_engines containing "cinematic_avatar" proves support', () => {
+  assert.equal(LUXIFY_CAPABILITY_PROOF_FIELD, 'data.supported_api_engines');
+  assert.equal(LUXIFY_CAPABILITY_PROOF_VALUE, 'cinematic_avatar');
+  const text = lookBody();
+  const ok = deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: text, payload: JSON.parse(text) });
+  assert.equal(ok.eligible, true);
+  assert.equal(ok.avatarType, 'digital_twin');
+  assert.deepEqual([...ok.supportedApiEngines], ['avatar_iv', 'cinematic_avatar']);
+  assert.equal(ok.evidenceSha256, sha(text), 'evidence hash is the hash of the exact response body');
+  for (const overrides of [
+    { supported_api_engines: ['avatar_iv', 'avatar_v'] },
+    { supported_api_engines: [] },
+    { status: 'processing' },
+    { status: 'failed' },
+    { supported_api_engines: ['CINEMATIC_AVATAR'] },
+  ]) {
+    const body = lookBody(overrides);
+    const derived = deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: body, payload: JSON.parse(body) });
+    assert.equal(derived.eligible, false, JSON.stringify(overrides));
+  }
+  // avatar_type alone, tags or a cinematic-looking name never prove support.
+  const tagged = lookBody({ avatar_type: 'cinematic_avatar', tags: ['cinematic_avatar'], supported_api_engines: ['avatar_v'] });
+  assert.equal(deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: tagged, payload: JSON.parse(tagged) }).eligible, false);
+  const dup = lookBody({ supported_api_engines: ['cinematic_avatar', 'cinematic_avatar'] });
+  assert.deepEqual([...deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: dup, payload: JSON.parse(dup) }).supportedApiEngines], ['cinematic_avatar']);
+});
+
+test('capability: fails closed (no evidence) when the proof field or the look is absent or malformed', () => {
+  const cases = [
+    [lookBody({ supported_api_engines: undefined }), 'ENGINES_FIELD_MISSING'],
+    [lookBody({ supported_api_engines: 'cinematic_avatar' }), 'ENGINES_FIELD_MISSING'],
+    [lookBody({ supported_api_engines: ['ok', 7] }), 'ENGINES_FIELD_INVALID'],
+    [lookBody({ supported_api_engines: Array.from({ length: 21 }, (_, i) => `e${i}`) }), 'ENGINES_FIELD_INVALID'],
+    [lookBody({ avatar_type: undefined }), 'AVATAR_TYPE_MISSING'],
+    [lookBody({ id: 'look_other' }), 'LOOK_MISMATCH'],
+    [JSON.stringify({ data: [] }), 'RESPONSE_SHAPE'],
+    [JSON.stringify({}), 'RESPONSE_SHAPE'],
+  ];
+  for (const [text, reason] of cases) {
+    assert.throws(() => deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: text, payload: JSON.parse(text) }), { code: 'LUXIFY_CAPABILITY_UNPROVEN', statusCode: 409, reason });
+  }
+  assert.throws(() => deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: '', payload: JSON.parse(lookBody()) }), { reason: 'RESPONSE_EMPTY' });
+  assert.throws(() => deriveLuxifyLookCapability({ providerLookId: 'bad id', responseText: lookBody(), payload: JSON.parse(lookBody()) }), { reason: 'LOOK_ID_INVALID' });
+});
+
+// ---- repository: capability check steps ------------------------------------
+test('prepareLookCapabilityCheck needs a staff grant and a READY look and writes nothing', async () => {
+  const ok = repoFor([...staffOk(), [identity()], [space]]);
+  assert.deepEqual(await ok.repo.prepareLookCapabilityCheck({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY }),
+    { accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP });
+  assert.equal(writes(ok.db.log).length, 0);
+  const noGrant = repoFor([staffUser, []]);
+  await assert.rejects(noGrant.repo.prepareLookCapabilityCheck({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY }), { code: 'LUX_STAFF_GRANT_REQUIRED', statusCode: 403 });
+  const unverified = repoFor([staffUser, staffGrant, []]);
+  await assert.rejects(unverified.repo.prepareLookCapabilityCheck({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY }), { code: 'LUX_STAFF_EMAIL_UNVERIFIED' });
+  const notReady = repoFor([...staffOk(), [identity({ avatarStatus: 'PROCESSING' })]]);
+  await assert.rejects(notReady.repo.prepareLookCapabilityCheck({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY }), { code: 'LUXIFY_LOOK_NOT_READY' });
+});
+
+test('recordCheckedLookCapability uses DB now and an exact 30-day window, superseding older evidence', async () => {
+  const { repo, db } = repoFor([...staffOk(), [identity()], [space], [], [{ id: EVIDENCE }]]);
+  const result = await repo.recordCheckedLookCapability({
+    staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP,
+    eligible: true, avatarType: 'digital_twin', supportedApiEngines: ['avatar_iv', 'cinematic_avatar'], evidenceSha256: 'a'.repeat(64),
+  });
+  assert.deepEqual(result, { evidenceId: EVIDENCE, eligible: true, observedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + 30 * DAY).toISOString() });
+  const [update, insert] = writes(db.log);
+  assert.equal(update.kind, 'update');
+  assert.ok(arg(update, 'set').revokedAt instanceof Date);
+  const values = arg(insert, 'values');
+  assert.equal(values.staffGrantId, GRANT);
+  assert.equal(values.capability, 'cinematic_avatar');
+  assert.equal(values.providerSpaceFingerprint, FP);
+  assert.equal(values.expiresAt.getTime() - values.observedAt.getTime(), 30 * DAY);
+});
+
+test('recordCheckedLookCapability fails closed when the look or space changed, or input is invalid', async () => {
+  const input = { staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP, eligible: true, avatarType: 'digital_twin', supportedApiEngines: ['cinematic_avatar'], evidenceSha256: 'a'.repeat(64) };
+  const moved = repoFor([...staffOk(), [identity({ providerRenderableAvatarId: 'look_new_9999' })], [space]]);
+  await assert.rejects(moved.repo.recordCheckedLookCapability(input), { code: 'LUXIFY_CAPABILITY_STALE', statusCode: 409 });
+  assert.equal(writes(moved.db.log).length, 0);
+  const otherSpace = repoFor([...staffOk(), [identity()], [{ ...space, providerSpaceFingerprint: 'd'.repeat(64) }]]);
+  await assert.rejects(otherSpace.repo.recordCheckedLookCapability(input), { code: 'LUXIFY_CAPABILITY_STALE' });
+  assert.equal(writes(otherSpace.db.log).length, 0);
+  for (const bad of [{ evidenceSha256: 'x' }, { eligible: 'true' }, { avatarType: 'bad type' }, { supportedApiEngines: ['ok', 'bad engine'] }, { providerSpaceFingerprint: 'f' }]) {
+    const r = repoFor([]);
+    await assert.rejects(r.repo.recordCheckedLookCapability({ ...input, ...bad }), { code: 'LUXIFY_CAPABILITY_EVIDENCE_INVALID', statusCode: 400 });
+    assert.equal(r.db.log.length, 0);
+  }
+});
+
+// ---- repository: staff page access -----------------------------------------
+test('staff page context: CEO or active staff only; everyone else is refused', async () => {
+  const customer = repoFor([[{ id: ACCOUNT, email: 'a@example.test', role: 'customer' }], [{ id: ACCOUNT, email: 'a@example.test' }], []]);
+  await assert.rejects(customer.repo.staffContext({ accountId: ACCOUNT }), { code: 'LUX_STAFF_PAGE_FORBIDDEN', statusCode: 403 });
+  const ceoUnverified = repoFor([[{ id: CEO, email: 'ceo@luxmarketingcompany.com', role: 'ceo' }], [], [{ id: CEO, email: 'ceo@luxmarketingcompany.com' }], []]);
+  assert.deepEqual(await ceoUnverified.repo.staffContext({ accountId: CEO }), { isCeo: true, ceoEmailVerified: false, canManageStaff: false, hasStaffGrant: false });
+  const ceo = repoFor([[{ id: CEO, email: 'ceo@luxmarketingcompany.com', role: 'ceo' }], verified, [{ id: CEO, email: 'ceo@luxmarketingcompany.com' }], []]);
+  assert.deepEqual(await ceo.repo.staffContext({ accountId: CEO }), { isCeo: true, ceoEmailVerified: true, canManageStaff: true, hasStaffGrant: false });
+  const staff = repoFor([[{ id: STAFF, email: 'staff@luxmarketingcompany.com', role: 'customer' }], ...staffOk()]);
+  assert.deepEqual(await staff.repo.staffContext({ accountId: STAFF }), { isCeo: false, ceoEmailVerified: false, canManageStaff: false, hasStaffGrant: true });
+  for (const r of [customer, ceoUnverified, ceo, staff]) assert.equal(writes(r.db.log).length, 0);
+});
+
+test('list-staff is CEO-only and masks ids and emails; staff-lookup refuses non-staff', async () => {
+  const ceoRows = [[{ id: CEO, email: 'ceo@luxmarketingcompany.com', role: 'ceo' }], verified];
+  const { repo } = repoFor([...ceoRows, [{ id: GRANT, staffAccountId: 'user-abcdef123456', staffEmail: 'staff@luxmarketingcompany.com', grantedAt: NOW, revokedAt: null }]]);
+  const { grants } = await repo.listStaffGrants({ grantorAccountId: CEO });
+  assert.deepEqual(grants[0], { staffAccountId: 'user-abcdef123456', staffRef: '…3456', emailRef: 's…@luxmarketingcompany.com', active: true, grantedAt: NOW.toISOString() });
+  const notCeo = repoFor([[{ id: STAFF, email: 'staff@luxmarketingcompany.com', role: 'customer' }]]);
+  await assert.rejects(notCeo.repo.listStaffGrants({ grantorAccountId: STAFF }), { code: 'LUX_STAFF_GRANTOR_REQUIRED', statusCode: 403 });
+  const outsider = repoFor([[{ id: ACCOUNT, email: 'a@example.test', role: 'customer' }], [{ id: ACCOUNT, email: 'a@example.test' }], []]);
+  await assert.rejects(outsider.repo.lookupStaffTarget({ actorAccountId: ACCOUNT, email: 'x@example.test' }), { code: 'LUX_STAFF_PAGE_FORBIDDEN' });
+  const found = repoFor([...ceoRows, [{ id: 'user-target-0001', email: 'Subject@Example.test' }], [], [{ id: IDENTITY, displayName: 'Look A', providerRenderableAvatarId: LOOK }]]);
+  const target = await found.repo.lookupStaffTarget({ actorAccountId: CEO, email: ' subject@example.test ' });
+  assert.deepEqual(target, { accountId: 'user-target-0001', accountRef: '…0001', emailVerified: false, identities: [{ identityId: IDENTITY, identityRef: '…0001', displayName: 'Look A', lookRef: '…1234' }] });
+  const ambiguous = repoFor([...ceoRows, [{ id: 'u1', email: 'x@example.test' }, { id: 'u2', email: 'X@example.test' }]]);
+  await assert.rejects(ambiguous.repo.lookupStaffTarget({ actorAccountId: CEO, email: 'x@example.test' }), { code: 'LUX_STAFF_ACCOUNT_NOT_FOUND', statusCode: 404 });
+  await assert.rejects(repoFor([]).repo.lookupStaffTarget({ actorAccountId: CEO, email: 'not-an-email' }), { statusCode: 400 });
+});
+
+// ---- route: run-time capability check --------------------------------------
+function response() {
+  return { headers: {}, setHeader(name, value) { this.headers[name] = value; }, end(raw) { try { this.body = raw ? JSON.parse(raw) : null; } catch { this.body = raw; } } };
+}
+function request(body, headers = {}) {
+  return { method: 'POST', url: '/api/video-os-lite/luxify-consent', headers: { origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json', ...headers }, body };
+}
+function capabilityFixture({ binding = { providerSpaceFingerprint: FP }, read, resolveThrows = false, prepare } = {}) {
+  const calls = [];
+  const repository = {
+    prepareLookCapabilityCheck: async input => { calls.push(['prepare', input]); if (prepare) return prepare(input); return { accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP }; },
+    recordCheckedLookCapability: async input => { calls.push(['record', input]); return { evidenceId: EVIDENCE, eligible: input.eligible, observedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + 30 * DAY).toISOString() }; },
+    staffContext: async input => { calls.push(['context', input]); return { isCeo: false, ceoEmailVerified: false, canManageStaff: false, hasStaffGrant: true }; },
+  };
+  const capabilityReader = {
+    resolveBinding: async input => { calls.push(['binding', input]); if (resolveThrows) throw new Error('binding unavailable'); return binding; },
+    assertBinding: () => { calls.push(['assert']); },
+    readLook: async lookId => { calls.push(['read', lookId]); if (read) return read(lookId); const text = lookBody(); return { text, payload: JSON.parse(text) }; },
+  };
+  const handler = createLuxifyConsentHandler({ authenticate: () => ({ accountId: STAFF }), environment: ENV, repository, now: () => NOW.getTime(), capabilityReader });
+  return { handler, calls };
+}
+
+test('route check-capability: DB prep, binding, ONE HeyGen read, server-derived evidence, then the write', async () => {
+  const { handler, calls } = capabilityFixture();
+  const res = response();
+  await handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), res);
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.headers['Cache-Control'], 'no-store');
+  assert.deepEqual(calls.map(([name]) => name), ['prepare', 'binding', 'assert', 'read', 'record']);
+  assert.deepEqual(calls[1][1], { accountId: ACCOUNT });
+  assert.equal(calls[3][1], LOOK);
+  const record = calls[4][1];
+  assert.equal(record.staffAccountId, STAFF);
+  assert.equal(record.eligible, true);
+  assert.equal(record.evidenceSha256, sha(lookBody()));
+  assert.equal(record.providerSpaceFingerprint, FP);
+  assert.equal(res.body.eligible, true);
+  assert.equal(res.body.evidenceRef, `…${sha(lookBody()).slice(-8)}`);
+  assert.doesNotMatch(JSON.stringify(res.body), new RegExp(`${LOOK}|${FP}|${ACCOUNT}|${sha(lookBody())}`), 'no raw ids or full hashes in the response');
+});
+
+test('route check-capability: staff-supplied evidence is rejected; failures before the write record nothing', async () => {
+  const extra = capabilityFixture();
+  const bad = response();
+  await extra.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY, eligible: true, evidenceSha256: 'a'.repeat(64) }), bad);
+  assert.equal(bad.statusCode, 400);
+  assert.equal(extra.calls.length, 0);
+
+  const noBinding = capabilityFixture({ resolveThrows: true });
+  const r1 = response();
+  await noBinding.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r1);
+  assert.equal(r1.statusCode, 409);
+  assert.equal(r1.body.code, 'LUXIFY_PROVIDER_SPACE_UNAVAILABLE');
+  assert.deepEqual(noBinding.calls.map(([name]) => name), ['prepare', 'binding']);
+
+  const mismatch = capabilityFixture({ binding: { providerSpaceFingerprint: 'd'.repeat(64) } });
+  const r2 = response();
+  await mismatch.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r2);
+  assert.equal(r2.body.code, 'LUXIFY_PROVIDER_SPACE_MISMATCH');
+  assert.ok(!mismatch.calls.some(([name]) => name === 'read' || name === 'record'));
+
+  const readFails = capabilityFixture({ read: () => { throw new Error('HTTP 500'); } });
+  const r3 = response();
+  await readFails.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r3);
+  assert.equal(r3.statusCode, 503);
+  assert.equal(r3.body.code, 'LUXIFY_CAPABILITY_READ_FAILED');
+  assert.ok(!readFails.calls.some(([name]) => name === 'record'));
+
+  const noField = capabilityFixture({ read: () => { const text = lookBody({ supported_api_engines: undefined }); return { text, payload: JSON.parse(text) }; } });
+  const r4 = response();
+  await noField.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r4);
+  assert.equal(r4.statusCode, 409);
+  assert.equal(r4.body.code, 'LUXIFY_CAPABILITY_UNPROVEN');
+  assert.ok(!noField.calls.some(([name]) => name === 'record'));
+
+  const notCinematic = capabilityFixture({ read: () => { const text = lookBody({ supported_api_engines: ['avatar_iv'] }); return { text, payload: JSON.parse(text) }; } });
+  const r5 = response();
+  await notCinematic.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r5);
+  assert.equal(r5.statusCode, 201);
+  assert.equal(r5.body.eligible, false);
+  assert.equal(notCinematic.calls.find(([name]) => name === 'record')[1].eligible, false);
+});
+
+test('route staff actions keep the strict Origin/JSON rules and require sign-in', async () => {
+  const { handler, calls } = capabilityFixture();
+  for (const headers of [{ origin: 'https://evil.example' }, { 'sec-fetch-site': 'cross-site' }, { 'content-type': 'text/plain' }, { origin: undefined }]) {
+    const res = response();
+    await handler(request({ action: 'staff-context' }, headers), res);
+    assert.ok([400, 403].includes(res.statusCode), JSON.stringify(headers));
+  }
+  assert.equal(calls.length, 0);
+  const anon = createLuxifyConsentHandler({ authenticate: () => null, environment: ENV, repository: {}, capabilityReader: {} });
+  const res = response();
+  await anon(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), res);
+  assert.equal(res.statusCode, 401);
+  const ok = response();
+  await handler(request({ action: 'staff-context' }), ok);
+  assert.equal(ok.statusCode, 200);
+  assert.deepEqual(calls.at(-1), ['context', { accountId: STAFF }]);
+});
+
+// ---- magic-link verified email proof ----------------------------------------
+test('magic-link proof row: used auth_challenges row, domain-separated token hash, idempotent', async () => {
+  const db = fakeDb([[{ id: 'row' }], []]);
+  const tokenHash = sha('magic-token');
+  assert.deepEqual(await recordMagicLinkEmailProof({ accountId: STAFF, email: ' Staff@LuxMarketingCompany.com ', magicTokenHash: tokenHash, usedAt: NOW, executor: db.executor }), { recorded: true });
+  const values = arg(db.log[0], 'values');
+  assert.deepEqual(values, { accountId: STAFF, email: 'staff@luxmarketingcompany.com', tokenHash: magicLinkProofTokenHash(tokenHash), challengeType: 'magic_link', expiresAt: NOW, usedAt: NOW });
+  assert.notEqual(values.tokenHash, tokenHash, 'never equal to the Blob magic-token hash');
+  assert.ok(db.log[0].calls.some(([name]) => name === 'onConflictDoNothing'));
+  assert.deepEqual(await recordMagicLinkEmailProof({ accountId: STAFF, email: 'staff@luxmarketingcompany.com', magicTokenHash: tokenHash, usedAt: NOW, executor: db.executor }), { recorded: false });
+  for (const bad of [{ accountId: '' }, { email: 'nope' }, { magicTokenHash: 'abc' }, { usedAt: 'never' }]) {
+    const empty = fakeDb([]);
+    await assert.rejects(recordMagicLinkEmailProof({ accountId: STAFF, email: 'staff@luxmarketingcompany.com', magicTokenHash: tokenHash, usedAt: NOW, executor: empty.executor, ...bad }), { statusCode: 400 });
+    assert.equal(empty.log.length, 0);
+  }
+});
+
+function authFixture({ consumeThrows = false, proofThrows = false, consumedEmail } = {}) {
+  const calls = [];
+  const magicLink = {
+    validate: async token => { calls.push(['validate', token]); return { accountId: 'user-token-id', email: 'staff@luxmarketingcompany.com' }; },
+    authenticatedAccountId: async id => { calls.push(['resolve', id]); return STAFF; },
+    updateAuthenticatedAccount: async input => { calls.push(['update', input.accountId]); return {}; },
+    consume: async token => { calls.push(['consume', token]); if (consumeThrows) throw Object.assign(new Error('This sign-in link was already used.'), { statusCode: 401 }); return { accountId: 'user-token-id', email: consumedEmail ?? 'staff@luxmarketingcompany.com' }; },
+    recordSignIn: async id => { calls.push(['signin', id]); },
+    recordEmailProof: async input => { calls.push(['proof', input]); if (proofThrows) throw new Error('db down'); return { recorded: true }; },
+  };
+  return { calls, deps: { magicLink, env: { ...process.env, ...ENV } } };
+}
+const verifyRequest = () => ({ method: 'GET', url: '/api/video-os-lite/auth-verify?token=tok-123', headers: { host: 'video.example' }, async *[Symbol.asyncIterator]() {} });
+
+test('auth-verify records the verified-email proof only after the link was consumed', async (t) => {
+  const previous = process.env.VIDEO_OS_SESSION_SECRET;
+  process.env.VIDEO_OS_SESSION_SECRET = ENV.VIDEO_OS_SESSION_SECRET;
+  t.after(() => { if (previous === undefined) delete process.env.VIDEO_OS_SESSION_SECRET; else process.env.VIDEO_OS_SESSION_SECRET = previous; });
+  const errors = t.mock.method(console, 'error', () => {});
+
+  const ok = authFixture();
+  const res = response();
+  await handleAuthRequest(verifyRequest(), res, ok.deps);
+  assert.equal(res.statusCode, 302);
+  assert.deepEqual(ok.calls.map(([name]) => name), ['validate', 'resolve', 'update', 'consume', 'proof', 'signin']);
+  assert.deepEqual(ok.calls[4][1], { accountId: STAFF, email: 'staff@luxmarketingcompany.com', magicTokenHash: sha('tok-123') });
+
+  const replay = authFixture({ consumeThrows: true });
+  const replayRes = response();
+  await handleAuthRequest(verifyRequest(), replayRes, replay.deps);
+  assert.equal(replayRes.statusCode, 401);
+  assert.ok(!replay.calls.some(([name]) => name === 'proof'), 'a link that was not consumed proves nothing');
+
+  const mismatch = authFixture({ consumedEmail: 'other@luxmarketingcompany.com' });
+  const mismatchRes = response();
+  await handleAuthRequest(verifyRequest(), mismatchRes, mismatch.deps);
+  assert.equal(mismatchRes.statusCode, 302);
+  assert.ok(!mismatch.calls.some(([name]) => name === 'proof'), 'an email that differs from the consumed record is never recorded');
+
+  const down = authFixture({ proofThrows: true });
+  const downRes = response();
+  await handleAuthRequest(verifyRequest(), downRes, down.deps);
+  assert.equal(downRes.statusCode, 302, 'sign-in still succeeds when the proof write fails');
+  assert.ok(errors.mock.calls.every(call => !JSON.stringify(call.arguments).includes('staff@')), 'no email in error logs');
+});
+
+// ---- LUXIFY stays off -------------------------------------------------------
+test('LUXIFY stays off by default: no flag means unavailable before any look or DB check', async () => {
+  const touched = [];
+  const deps = {
+    env: {},
+    runtimePreflight: async () => { touched.push('runtime'); return { ready: true, reasons: [] }; },
+    authorizePremium: async () => { touched.push('premium'); return true; },
+    resolveEligibility: async () => { touched.push('eligibility'); return []; },
+  };
+  await assert.rejects(requireLuxifyActivation(ACCOUNT, [IDENTITY], deps), { code: 'luxify_unavailable', statusCode: 503 });
+  await assert.rejects(requireLuxifyActivation(ACCOUNT, [IDENTITY], { ...deps, env: { VIDEO_OS_LUXIFY_ENABLED: 'false' } }), { code: 'luxify_unavailable' });
+  assert.deepEqual(touched, []);
+  const vercel = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+  assert.doesNotMatch(JSON.stringify(vercel), /VIDEO_OS_LUXIFY_/);
+  for (const file of ['../public/luxify-staff.js', '../routes/video-os-lite/luxify-consent.js', '../db/luxify-consent-repository.js', '../lib/luxify-look-capability.js']) {
+    assert.doesNotMatch(await readFile(new URL(file, import.meta.url), 'utf8'), /(env|environment)\??\.VIDEO_OS_LUXIFY_ENABLED|\[\s*['"]VIDEO_OS_LUXIFY_ENABLED/, `${file} must not touch the LUXIFY flag`);
+  }
+});
+
+// ---- page, route and Studio link (static) -----------------------------------
+test('/luxify-staff is served no-store and no-referrer, and the page shows only masked refs', async () => {
+  const vercel = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+  const route = vercel.routes.find(entry => entry.src === '/luxify-staff');
+  assert.deepEqual(route, { src: '/luxify-staff', dest: '/luxify-staff.html', headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } });
+  const html = await readFile(new URL('../public/luxify-staff.html', import.meta.url), 'utf8');
+  assert.match(html, /<meta name="referrer" content="no-referrer">/);
+  assert.match(html, /<meta name="robots" content="noindex,nofollow">/);
+  assert.match(html, /id="explicit-grant" type="checkbox"/);
+  const js = await readFile(new URL('../public/luxify-staff.js', import.meta.url), 'utf8');
+  assert.match(js, /const endpoint = '\/api\/video-os-lite\/luxify-consent';/);
+  assert.doesNotMatch(js, /innerHTML/);
+  assert.doesNotMatch(js, /record-capability|evidenceSha256|supportedApiEngines:/, 'the page never supplies evidence values');
+  for (const raw of ['grant.staffAccountId}', 'subject.accountId}', 'look.identityId}', 'approval.approvalId}']) {
+    assert.ok(!js.includes('${' + raw.replace('}', '') + '}'), `${raw} must not be displayed`);
+  }
+});
+
+test('Studio LUXIFY panel links to /luxify-consent, including the no-eligible-looks message', async () => {
+  const studio = await readFile(new URL('../public/studio.js', import.meta.url), 'utf8');
+  assert.match(studio, /link\.href = '\/luxify-consent';/);
+  assert.match(studio, /function luxifyNoEligibleLooks\(\)[\s\S]*No eligible LUXIFY looks are available\. [\s\S]*luxifyConsentLink\(/);
+  const index = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.match(index, /<a class="text-link" href="\/luxify-consent">Manage LUXIFY consent for your looks<\/a>/);
+});
