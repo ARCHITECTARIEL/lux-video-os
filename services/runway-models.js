@@ -178,7 +178,7 @@ export function buildRunwayRequest(input, env = process.env) {
   return { mode, body, credits };
 }
 
-async function defaultClientFactory({ apiKey, timeout }) {
+export async function defaultClientFactory({ apiKey, timeout }) {
   const { default: RunwayML } = await import('@runwayml/sdk');
   // maxRetries 0: task creation is a non-idempotent paid POST (QA M1).
   return new RunwayML({ apiKey, timeout, maxRetries: 0, baseURL: RUNWAY_API_BASE_URL, logLevel: 'off' });
@@ -360,8 +360,14 @@ export async function resumeRunwayTask(job, { taskId, input }, dependencies = {}
   const env = dependencies.env || process.env;
   assertRunwayEnabled(env);
   assertJob(job);
-  if (!TASK_ID.test(String(taskId || ''))) throw failure('Invalid Runway task id.', 'RUNWAY_TASK_ID_INVALID', 400);
+  // Only plain strings: an object with a custom toString must not reach retrieve().
+  if (typeof taskId !== 'string' || !TASK_ID.test(taskId)) throw failure('Invalid Runway task id.', 'RUNWAY_TASK_ID_INVALID', 400);
+  // The input is validated and costed exactly like a create, and the caller must
+  // hold a reservation that covers it (QA r3: reservedCredits 0 was accepted).
   const request = buildRunwayRequest(input, env);
+  if (!Number.isSafeInteger(job.reservedCredits) || job.reservedCredits < request.credits) {
+    throw failure('Reserved credits do not cover the Runway estimate.', 'RUNWAY_CREDITS_UNRESERVED', 402);
+  }
   const client = await runwayClient(env, dependencies);
   return awaitRunwayTask(job, { client, taskId, request }, dependencies);
 }
