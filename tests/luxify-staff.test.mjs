@@ -13,8 +13,8 @@ import { requireLuxifyActivation } from '../routes/video-os-lite/luxify.js';
 import { handleAuthRequest } from '../api/video-os-lite/auth.js';
 import { readHeygenAvatarLookRaw } from '../services/heygen.js';
 import {
-  LUXIFY_CAPABILITY_PROOF_FIELD,
-  LUXIFY_CAPABILITY_PROOF_VALUE,
+  LUXIFY_CAPABILITY_OWNERSHIP_FIELD,
+  LUXIFY_CAPABILITY_REQUIRED_STATUS,
   deriveLuxifyLookCapability,
 } from '../lib/luxify-look-capability.js';
 
@@ -28,6 +28,7 @@ const GRANT = '0d0d0d0d-0000-4000-8000-000000000004';
 const EVIDENCE = '0d0d0d0d-0000-4000-8000-000000000005';
 const FP = 'f'.repeat(64);
 const LOOK = 'look_test_1234';
+const GROUP = 'group_test_5678';
 const ORIGIN = 'https://video.example';
 const ENV = { VIDEO_OS_PUBLIC_ORIGIN: ORIGIN, VIDEO_OS_SESSION_SECRET: 'staff-route-test-secret-at-least-32-bytes-long' };
 
@@ -59,64 +60,85 @@ const staffUser = [{ id: STAFF, email: 'staff@luxmarketingcompany.com' }];
 const staffGrant = [{ id: GRANT, staffAccountId: STAFF, staffEmail: 'staff@luxmarketingcompany.com', explicitGrant: true }];
 const verified = [{ usedAt: NOW }];
 const staffOk = () => [staffUser, staffGrant, verified];
-const identity = (overrides = {}) => ({ id: IDENTITY, accountId: ACCOUNT, archivedAt: null, provider: 'heygen', avatarStatus: 'READY', providerRenderableAvatarId: LOOK, ...overrides });
+const identity = (overrides = {}) => ({ id: IDENTITY, accountId: ACCOUNT, archivedAt: null, provider: 'heygen', avatarStatus: 'READY', providerRenderableAvatarId: LOOK, providerAvatarGroupId: GROUP, ...overrides });
 const space = { bindingId: 'b', originScopeKey: 'e'.repeat(64), verifiedAccountScopeId: 's', verifiedAt: NOW, providerSpaceFingerprint: FP };
 
-const lookBody = (overrides = {}) => JSON.stringify({ data: { id: LOOK, name: 'Look', avatar_type: 'digital_twin', supported_api_engines: ['avatar_iv', 'cinematic_avatar'], status: 'completed', ...overrides } });
+// Mirrors the real GET /v3/avatars/looks/{id} shape observed in LUXIFY-LOOK-READ-1101
+// (ids and URLs synthetic): photo_avatar, engines avatar_v/avatar_iv/avatar_iii.
+const lookBody = (overrides = {}) => JSON.stringify({ data: {
+  avatar_type: 'photo_avatar', group_id: GROUP, id: LOOK, image_height: 1920, image_width: 1080, name: 'Look',
+  preferred_orientation: 'portrait', preview_image_url: 'https://media.example/preview.webp', status: 'completed',
+  supported_api_engines: ['avatar_v', 'avatar_iv', 'avatar_iii'], tags: [], ...overrides,
+} });
+const derive = (overrides, expectedGroupId = GROUP) => { const text = lookBody(overrides); return deriveLuxifyLookCapability({ providerLookId: LOOK, expectedGroupId, responseText: text, payload: JSON.parse(text) }); };
 const sha = value => createHash('sha256').update(value, 'utf8').digest('hex');
 
-// ---- capability derivation (HeyGen field decision) --------------------------
-test('capability: only data.supported_api_engines containing "cinematic_avatar" proves support', () => {
-  assert.equal(LUXIFY_CAPABILITY_PROOF_FIELD, 'data.supported_api_engines');
-  assert.equal(LUXIFY_CAPABILITY_PROOF_VALUE, 'cinematic_avatar');
+// ---- capability derivation (owner rule Nov 1: completed + owned, no engine check)
+test('capability: a completed look in the pinned account\'s avatar group is eligible; engines never decide', () => {
+  assert.equal(LUXIFY_CAPABILITY_REQUIRED_STATUS, 'completed');
+  assert.equal(LUXIFY_CAPABILITY_OWNERSHIP_FIELD, 'data.group_id');
   const text = lookBody();
-  const ok = deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: text, payload: JSON.parse(text) });
+  const ok = deriveLuxifyLookCapability({ providerLookId: LOOK, expectedGroupId: GROUP, responseText: text, payload: JSON.parse(text) });
   assert.equal(ok.eligible, true);
-  assert.equal(ok.avatarType, 'digital_twin');
-  assert.deepEqual([...ok.supportedApiEngines], ['avatar_iv', 'cinematic_avatar']);
+  assert.equal(ok.ineligibleReason, null);
+  assert.equal(ok.avatarType, 'photo_avatar');
+  assert.deepEqual([...ok.supportedApiEngines], ['avatar_v', 'avatar_iv', 'avatar_iii']);
   assert.equal(ok.evidenceSha256, sha(text), 'evidence hash is the hash of the exact response body');
-  for (const overrides of [
-    { supported_api_engines: ['avatar_iv', 'avatar_v'] },
-    { supported_api_engines: [] },
-    { status: 'processing' },
-    { status: 'failed' },
-    { supported_api_engines: ['CINEMATIC_AVATAR'] },
-  ]) {
-    const body = lookBody(overrides);
-    const derived = deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: body, payload: JSON.parse(body) });
-    assert.equal(derived.eligible, false, JSON.stringify(overrides));
+  // No engine requirement: any engine list, an empty list or no field at all.
+  for (const overrides of [{ supported_api_engines: ['avatar_iv'] }, { supported_api_engines: [] }, { supported_api_engines: undefined }, { avatar_type: 'digital_twin' }]) {
+    assert.equal(derive(overrides).eligible, true, JSON.stringify(overrides));
   }
-  // avatar_type alone, tags or a cinematic-looking name never prove support.
-  const tagged = lookBody({ avatar_type: 'cinematic_avatar', tags: ['cinematic_avatar'], supported_api_engines: ['avatar_v'] });
-  assert.equal(deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: tagged, payload: JSON.parse(tagged) }).eligible, false);
-  const dup = lookBody({ supported_api_engines: ['cinematic_avatar', 'cinematic_avatar'] });
-  assert.deepEqual([...deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: dup, payload: JSON.parse(dup) }).supportedApiEngines], ['cinematic_avatar']);
+  assert.deepEqual([...derive({ supported_api_engines: ['avatar_v', 'avatar_v'] }).supportedApiEngines], ['avatar_v']);
 });
 
-test('capability: fails closed (no evidence) when the proof field or the look is absent or malformed', () => {
-  const cases = [
-    [lookBody({ supported_api_engines: undefined }), 'ENGINES_FIELD_MISSING'],
-    [lookBody({ supported_api_engines: 'cinematic_avatar' }), 'ENGINES_FIELD_MISSING'],
-    [lookBody({ supported_api_engines: ['ok', 7] }), 'ENGINES_FIELD_INVALID'],
-    [lookBody({ supported_api_engines: Array.from({ length: 21 }, (_, i) => `e${i}`) }), 'ENGINES_FIELD_INVALID'],
-    [lookBody({ avatar_type: undefined }), 'AVATAR_TYPE_MISSING'],
-    [lookBody({ id: 'look_other' }), 'LOOK_MISMATCH'],
-    [JSON.stringify({ data: [] }), 'RESPONSE_SHAPE'],
-    [JSON.stringify({}), 'RESPONSE_SHAPE'],
-  ];
-  for (const [text, reason] of cases) {
-    assert.throws(() => deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: text, payload: JSON.parse(text) }), { code: 'LUXIFY_CAPABILITY_UNPROVEN', statusCode: 409, reason });
+test('capability: not completed or another owner is recorded as eligible=false', () => {
+  for (const status of ['processing', 'pending', 'failed', 'COMPLETED']) {
+    const d = derive({ status });
+    assert.equal(d.eligible, false, status);
+    assert.equal(d.ineligibleReason, 'NOT_COMPLETED');
   }
-  assert.throws(() => deriveLuxifyLookCapability({ providerLookId: LOOK, responseText: '', payload: JSON.parse(lookBody()) }), { reason: 'RESPONSE_EMPTY' });
-  assert.throws(() => deriveLuxifyLookCapability({ providerLookId: 'bad id', responseText: lookBody(), payload: JSON.parse(lookBody()) }), { reason: 'LOOK_ID_INVALID' });
+  const other = derive({ group_id: 'group_someone_else' });
+  assert.equal(other.eligible, false);
+  assert.equal(other.ineligibleReason, 'OWNER_MISMATCH');
+  assert.equal(derive({ group_id: 'group_someone_else', status: 'processing' }).ineligibleReason, 'OWNER_MISMATCH');
+});
+
+test('capability: fails closed (no evidence) on a wrong look id, unprovable ownership or a malformed read', () => {
+  const cases = [
+    [{ id: 'look_other' }, 'LOOK_MISMATCH'],
+    [{ group_id: undefined }, 'OWNERSHIP_FIELD_MISSING'],
+    [{ group_id: '' }, 'OWNERSHIP_FIELD_MISSING'],
+    [{ status: undefined }, 'STATUS_MISSING'],
+    [{ avatar_type: undefined }, 'AVATAR_TYPE_MISSING'],
+    [{ supported_api_engines: 'avatar_v' }, 'ENGINES_FIELD_INVALID'],
+    [{ supported_api_engines: ['ok', 7] }, 'ENGINES_FIELD_INVALID'],
+    [{ supported_api_engines: Array.from({ length: 21 }, (_, i) => `e${i}`) }, 'ENGINES_FIELD_INVALID'],
+  ];
+  for (const [overrides, reason] of cases) {
+    assert.throws(() => derive(overrides), { code: 'LUXIFY_CAPABILITY_UNPROVEN', statusCode: 409, reason }, JSON.stringify(overrides));
+  }
+  for (const expected of [undefined, null, '', 'bad group']) {
+    const text = lookBody();
+    assert.throws(() => deriveLuxifyLookCapability({ providerLookId: LOOK, expectedGroupId: expected, responseText: text, payload: JSON.parse(text) }), { reason: 'OWNERSHIP_UNPROVEN' });
+  }
+  for (const text of [JSON.stringify({ data: [] }), JSON.stringify({})]) {
+    assert.throws(() => deriveLuxifyLookCapability({ providerLookId: LOOK, expectedGroupId: GROUP, responseText: text, payload: JSON.parse(text) }), { reason: 'RESPONSE_SHAPE' });
+  }
+  assert.throws(() => deriveLuxifyLookCapability({ providerLookId: LOOK, expectedGroupId: GROUP, responseText: '', payload: JSON.parse(lookBody()) }), { reason: 'RESPONSE_EMPTY' });
+  assert.throws(() => deriveLuxifyLookCapability({ providerLookId: 'bad id', expectedGroupId: GROUP, responseText: lookBody(), payload: JSON.parse(lookBody()) }), { reason: 'LOOK_ID_INVALID' });
 });
 
 // ---- repository: capability check steps ------------------------------------
 test('prepareLookCapabilityCheck needs a staff grant and a READY look and writes nothing', async () => {
   const ok = repoFor([...staffOk(), [identity()], [space]]);
   assert.deepEqual(await ok.repo.prepareLookCapabilityCheck({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY }),
-    { accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP });
+    { accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP, providerAvatarGroupId: GROUP });
   assert.equal(writes(ok.db.log).length, 0);
+  for (const providerAvatarGroupId of [null, '', 'bad group']) {
+    const noGroup = repoFor([...staffOk(), [identity({ providerAvatarGroupId })], [space]]);
+    await assert.rejects(noGroup.repo.prepareLookCapabilityCheck({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY }), { code: 'LUXIFY_LOOK_OWNERSHIP_UNPROVEN', statusCode: 409 });
+    assert.equal(writes(noGroup.db.log).length, 0);
+  }
   const noGrant = repoFor([staffUser, []]);
   await assert.rejects(noGrant.repo.prepareLookCapabilityCheck({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY }), { code: 'LUX_STAFF_GRANT_REQUIRED', statusCode: 403 });
   const unverified = repoFor([staffUser, staffGrant, []]);
@@ -128,8 +150,8 @@ test('prepareLookCapabilityCheck needs a staff grant and a READY look and writes
 test('recordCheckedLookCapability uses DB now and an exact 30-day window, superseding older evidence', async () => {
   const { repo, db } = repoFor([...staffOk(), [identity()], [space], [], [{ id: EVIDENCE }]]);
   const result = await repo.recordCheckedLookCapability({
-    staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP,
-    eligible: true, avatarType: 'digital_twin', supportedApiEngines: ['avatar_iv', 'cinematic_avatar'], evidenceSha256: 'a'.repeat(64),
+    staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP, providerAvatarGroupId: GROUP,
+    eligible: true, avatarType: 'photo_avatar', supportedApiEngines: ['avatar_v', 'avatar_iv', 'avatar_iii'], evidenceSha256: 'a'.repeat(64),
   });
   assert.deepEqual(result, { evidenceId: EVIDENCE, eligible: true, observedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + 30 * DAY).toISOString() });
   const [update, insert] = writes(db.log);
@@ -139,18 +161,22 @@ test('recordCheckedLookCapability uses DB now and an exact 30-day window, supers
   assert.equal(values.staffGrantId, GRANT);
   assert.equal(values.capability, 'cinematic_avatar');
   assert.equal(values.providerSpaceFingerprint, FP);
+  assert.equal(values.source, 'heygen_check', 'L5: the check path is the writer of source=heygen_check');
   assert.equal(values.expiresAt.getTime() - values.observedAt.getTime(), 30 * DAY);
 });
 
 test('recordCheckedLookCapability fails closed when the look or space changed, or input is invalid', async () => {
-  const input = { staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP, eligible: true, avatarType: 'digital_twin', supportedApiEngines: ['cinematic_avatar'], evidenceSha256: 'a'.repeat(64) };
+  const input = { staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP, providerAvatarGroupId: GROUP, eligible: true, avatarType: 'photo_avatar', supportedApiEngines: ['avatar_v'], evidenceSha256: 'a'.repeat(64) };
   const moved = repoFor([...staffOk(), [identity({ providerRenderableAvatarId: 'look_new_9999' })], [space]]);
   await assert.rejects(moved.repo.recordCheckedLookCapability(input), { code: 'LUXIFY_CAPABILITY_STALE', statusCode: 409 });
   assert.equal(writes(moved.db.log).length, 0);
   const otherSpace = repoFor([...staffOk(), [identity()], [{ ...space, providerSpaceFingerprint: 'd'.repeat(64) }]]);
   await assert.rejects(otherSpace.repo.recordCheckedLookCapability(input), { code: 'LUXIFY_CAPABILITY_STALE' });
   assert.equal(writes(otherSpace.db.log).length, 0);
-  for (const bad of [{ evidenceSha256: 'x' }, { eligible: 'true' }, { avatarType: 'bad type' }, { supportedApiEngines: ['ok', 'bad engine'] }, { providerSpaceFingerprint: 'f' }]) {
+  const regrouped = repoFor([...staffOk(), [identity({ providerAvatarGroupId: 'group_changed_0000' })], [space]]);
+  await assert.rejects(regrouped.repo.recordCheckedLookCapability(input), { code: 'LUXIFY_CAPABILITY_STALE' });
+  assert.equal(writes(regrouped.db.log).length, 0);
+  for (const bad of [{ providerAvatarGroupId: undefined }, { providerAvatarGroupId: 'bad group' }, { evidenceSha256: 'x' }, { eligible: 'true' }, { avatarType: 'bad type' }, { supportedApiEngines: ['ok', 'bad engine'] }, { providerSpaceFingerprint: 'f' }]) {
     const r = repoFor([]);
     await assert.rejects(r.repo.recordCheckedLookCapability({ ...input, ...bad }), { code: 'LUXIFY_CAPABILITY_EVIDENCE_INVALID', statusCode: 400 });
     assert.equal(r.db.log.length, 0);
@@ -199,7 +225,7 @@ function capabilityFixture({ binding = { providerSpaceFingerprint: FP }, read, r
   const calls = [];
   const rateLimit = async input => { calls.push(['rate', input]); return typeof allow === 'function' ? allow(input) : allow; };
   const repository = {
-    prepareLookCapabilityCheck: async input => { calls.push(['prepare', input]); if (prepare) return prepare(input); return { accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP }; },
+    prepareLookCapabilityCheck: async input => { calls.push(['prepare', input]); if (prepare) return prepare(input); return { accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP, providerAvatarGroupId: GROUP }; },
     recordCheckedLookCapability: async input => { calls.push(['record', input]); return { evidenceId: EVIDENCE, eligible: input.eligible, observedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + 30 * DAY).toISOString() }; },
     staffContext: async input => { calls.push(['context', input]); return { isCeo: false, ceoEmailVerified: false, canManageStaff: false, hasStaffGrant: true }; },
   };
@@ -227,9 +253,12 @@ test('route check-capability: DB prep, binding, ONE HeyGen read, server-derived 
   assert.equal(record.eligible, true);
   assert.equal(record.evidenceSha256, sha(lookBody()));
   assert.equal(record.providerSpaceFingerprint, FP);
+  assert.equal(record.providerAvatarGroupId, GROUP);
+  assert.deepEqual(record.supportedApiEngines, ['avatar_v', 'avatar_iv', 'avatar_iii']);
   assert.equal(res.body.eligible, true);
+  assert.equal(res.body.ineligibleReason, undefined);
   assert.equal(res.body.evidenceRef, `…${sha(lookBody()).slice(-8)}`);
-  assert.doesNotMatch(JSON.stringify(res.body), new RegExp(`${LOOK}|${FP}|${ACCOUNT}|${sha(lookBody())}`), 'no raw ids or full hashes in the response');
+  assert.doesNotMatch(JSON.stringify(res.body), new RegExp(`${LOOK}|${GROUP}|${FP}|${ACCOUNT}|${sha(lookBody())}`), 'no raw ids or full hashes in the response');
 });
 
 test('route check-capability: staff-supplied evidence is rejected; failures before the write record nothing', async () => {
@@ -259,19 +288,43 @@ test('route check-capability: staff-supplied evidence is rejected; failures befo
   assert.equal(r3.body.code, 'LUXIFY_CAPABILITY_READ_FAILED');
   assert.ok(!readFails.calls.some(([name]) => name === 'record'));
 
-  const noField = capabilityFixture({ read: () => { const text = lookBody({ supported_api_engines: undefined }); return { text, payload: JSON.parse(text) }; } });
-  const r4 = response();
-  await noField.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r4);
-  assert.equal(r4.statusCode, 409);
-  assert.equal(r4.body.code, 'LUXIFY_CAPABILITY_UNPROVEN');
-  assert.ok(!noField.calls.some(([name]) => name === 'record'));
+  const readOf = overrides => () => { const text = lookBody(overrides); return { text, payload: JSON.parse(text) }; };
+  for (const [overrides, reason] of [[{ group_id: undefined }, 'OWNERSHIP_FIELD_MISSING'], [{ id: 'look_other' }, 'LOOK_MISMATCH']]) {
+    const f = capabilityFixture({ read: readOf(overrides) });
+    const r = response();
+    await f.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r);
+    assert.equal(r.statusCode, 409, reason);
+    assert.equal(r.body.code, 'LUXIFY_CAPABILITY_UNPROVEN');
+    assert.ok(!f.calls.some(([name]) => name === 'record'), reason);
+  }
 
-  const notCinematic = capabilityFixture({ read: () => { const text = lookBody({ supported_api_engines: ['avatar_iv'] }); return { text, payload: JSON.parse(text) }; } });
-  const r5 = response();
-  await notCinematic.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r5);
-  assert.equal(r5.statusCode, 201);
-  assert.equal(r5.body.eligible, false);
-  assert.equal(notCinematic.calls.find(([name]) => name === 'record')[1].eligible, false);
+  const noGroup = capabilityFixture({ prepare: () => { throw Object.assign(new Error('no group'), { code: 'LUXIFY_LOOK_OWNERSHIP_UNPROVEN', statusCode: 409 }); } });
+  const r6 = response();
+  await noGroup.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r6);
+  assert.equal(r6.statusCode, 409);
+  assert.equal(r6.body.code, 'LUXIFY_LOOK_OWNERSHIP_UNPROVEN');
+  assert.deepEqual(noGroup.calls.map(([name]) => name), ['rate', 'prepare']);
+});
+
+test('route check-capability: not completed or wrong owner records eligible=false (superseding); engines never matter', async () => {
+  const readOf = overrides => () => { const text = lookBody(overrides); return { text, payload: JSON.parse(text) }; };
+  for (const [overrides, reason] of [[{ status: 'processing' }, 'NOT_COMPLETED'], [{ group_id: 'group_someone_else' }, 'OWNER_MISMATCH']]) {
+    const f = capabilityFixture({ read: readOf(overrides) });
+    const r = response();
+    await f.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r);
+    assert.equal(r.statusCode, 201, reason);
+    assert.equal(r.body.eligible, false);
+    assert.equal(r.body.ineligibleReason, reason);
+    assert.equal(f.calls.find(([name]) => name === 'record')[1].eligible, false);
+    assert.doesNotMatch(JSON.stringify(r.body), /group_someone_else/);
+  }
+  for (const overrides of [{ supported_api_engines: ['avatar_iv'] }, { supported_api_engines: [] }, { supported_api_engines: undefined }]) {
+    const f = capabilityFixture({ read: readOf(overrides) });
+    const r = response();
+    await f.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r);
+    assert.equal(r.statusCode, 201);
+    assert.equal(r.body.eligible, true, JSON.stringify(overrides));
+  }
 });
 
 test('route staff actions keep the strict Origin/JSON rules and require sign-in', async () => {
@@ -309,7 +362,7 @@ test('M1: the legacy record-capability action is gone from the route and the rep
 
 test('M1: checked evidence is written with created_at = observed_at, and eligibility reads only such rows', async () => {
   const r = repoFor([...staffOk(), [identity()], [space], [], [{ id: EVIDENCE }]]);
-  await r.repo.recordCheckedLookCapability({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP, eligible: false, avatarType: 'digital_twin', supportedApiEngines: [], evidenceSha256: 'b'.repeat(64) });
+  await r.repo.recordCheckedLookCapability({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP, providerAvatarGroupId: GROUP, eligible: false, avatarType: 'photo_avatar', supportedApiEngines: [], evidenceSha256: 'b'.repeat(64) });
   const insert = r.db.log.find(entry => entry.kind === 'insert');
   const values = arg(insert, 'values');
   assert.equal(values.createdAt.getTime(), values.observedAt.getTime());
@@ -317,6 +370,11 @@ test('M1: checked evidence is written with created_at = observed_at, and eligibi
   const source = await readFile(new URL('../db/luxify-consent-repository.js', import.meta.url), 'utf8');
   const eligibility = source.slice(source.indexOf('export async function resolveLuxifyEligibilityTx'));
   assert.match(eligibility, /luxifyLookCapabilityEvidence\.createdAt\} = \$\{luxifyLookCapabilityEvidence\.observedAt\}/);
+  // L5: eligibility also requires source = 'heygen_check', which only the check path writes.
+  assert.match(eligibility, /eq\(luxifyLookCapabilityEvidence\.source, LUXIFY_EVIDENCE_SOURCE\)/);
+  assert.equal(values.source, 'heygen_check');
+  const writers = source.match(/source: LUXIFY_EVIDENCE_SOURCE/g) || [];
+  assert.equal(writers.length, 1, 'exactly one writer of source=heygen_check (insertCapabilityEvidenceTx)');
 });
 
 test('L2: the HeyGen look read refuses redirects (no X-Api-Key forwarding)', async () => {

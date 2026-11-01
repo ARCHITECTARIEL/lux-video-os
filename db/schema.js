@@ -368,10 +368,14 @@ export const luxifyLookCapabilityEvidence = pgTable('luxify_look_capability_evid
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  // QA L5 (0020): written only by the run-time HeyGen check path; eligibility
+  // requires it. Legacy rows stay null and were closed by 0020.
+  source: text('source'),
 }, (table) => [
   foreignKey({ name: 'luxify_look_capability_evidence_staff_grant_fk', columns: [table.staffGrantId], foreignColumns: [luxStaffGrants.id] }).onDelete('restrict'),
   index('luxify_look_capability_evidence_look_idx').on(table.accountId, table.providerLookId, table.providerSpaceFingerprint).where(sql`${table.revokedAt} is null`),
   check('luxify_look_capability_evidence_capability_ck', sql`${table.capability} = 'cinematic_avatar'`),
+  check('luxify_look_capability_evidence_source_ck', sql`${table.source} = 'heygen_check'`),
   check('luxify_look_capability_evidence_look_ck', sql`${table.providerLookId} ~ '^[A-Za-z0-9_.:-]{1,255}$' and ${table.avatarType} ~ '^[A-Za-z0-9_.:-]{1,80}$'`),
   check('luxify_look_capability_evidence_hash_ck', sql`${table.providerSpaceFingerprint} ~ '^[a-f0-9]{64}$' and ${table.evidenceSha256} ~ '^[a-f0-9]{64}$'`),
   check('luxify_look_capability_evidence_window_ck', sql`${table.expiresAt} > ${table.observedAt} and ${table.expiresAt} <= ${table.observedAt} + interval '30 days'`),

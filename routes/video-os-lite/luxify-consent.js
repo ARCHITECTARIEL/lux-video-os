@@ -68,7 +68,8 @@ const defaultCapabilityReader = Object.freeze({
  * active space from the DB, no writes; (2) the existing fresh HeyGen space
  * binding path, which proves the configured HeyGen key belongs to the
  * account's pinned space; (3) ONE read-only HeyGen GET of the look; (4)
- * server-side derivation and hashing; (5) evidence write, re-checked in its
+ * server-side derivation (completed + owned by the pinned space's avatar
+ * group; no engine requirement) and hashing; (5) evidence write, re-checked in its
  * own transaction. Any failure before (5) writes nothing.
  */
 async function runCapabilityCheck({ repository, reader, staffAccountId, accountId, identityId }) {
@@ -89,13 +90,16 @@ async function runCapabilityCheck({ repository, reader, staffAccountId, accountI
   } catch {
     throw routeError('LUXIFY_CAPABILITY_READ_FAILED', 'HeyGen could not be read for this look. Nothing was recorded.', 503, 'LUXIFY_CAPABILITY_READ');
   }
-  const derived = deriveLuxifyLookCapability({ providerLookId: target.providerLookId, responseText: read?.text, payload: read?.payload });
+  const derived = deriveLuxifyLookCapability({
+    providerLookId: target.providerLookId, expectedGroupId: target.providerAvatarGroupId, responseText: read?.text, payload: read?.payload,
+  });
   const recorded = await repository.recordCheckedLookCapability({
     staffAccountId,
     accountId: target.accountId,
     identityId: target.identityId,
     providerLookId: target.providerLookId,
     providerSpaceFingerprint: target.providerSpaceFingerprint,
+    providerAvatarGroupId: target.providerAvatarGroupId,
     eligible: derived.eligible,
     avatarType: derived.avatarType,
     supportedApiEngines: [...derived.supportedApiEngines],
@@ -103,6 +107,7 @@ async function runCapabilityCheck({ repository, reader, staffAccountId, accountI
   });
   return {
     eligible: derived.eligible,
+    ...(derived.ineligibleReason ? { ineligibleReason: derived.ineligibleReason } : {}),
     avatarType: derived.avatarType,
     supportedApiEngines: [...derived.supportedApiEngines],
     evidenceRef: `…${derived.evidenceSha256.slice(-8)}`,

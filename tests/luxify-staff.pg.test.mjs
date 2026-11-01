@@ -2,7 +2,7 @@
 // verified-email proof row unlocks Lux staff grants, the staff page reads,
 // and the run-time capability check write (HeyGen mocked). Same guards as
 // luxify-consent.pg.test.mjs: skipped unless VIDEO_OS_PG_RACE_TEST_URL points
-// at a disposable loopback database migrated through 0019 and
+// at a disposable loopback database migrated through 0020 and
 // VIDEO_OS_PG_RACE_TEST_WSPROXY names a local WebSocket proxy.
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -17,10 +17,11 @@ const CEO = `user-pls${tag}ceo`, STAFF = `user-pls${tag}staff`, SUBJ = `user-pls
 const CEO_EMAIL = `ceo${tag}@luxmarketingcompany.com`, STAFF_EMAIL = `staff${tag}@luxmarketingcompany.com`, SUBJ_EMAIL = `subj${tag}@example.test`;
 const IDENT = randomUUID();
 const LOOK = `look_s_${tag}`;
+const GROUP = `group_s_${tag}`;
 const FP = hex(SUBJ + 'fp');
 const DAY = 86_400_000;
 
-let pool, repo, proof, routeMod;
+let pool, repo, proof, routeMod, db, mod, BIND, ORIGIN_KEY;
 const q = (text, values) => pool.query(text, values);
 const code = async p => { try { await p; return 'OK'; } catch (error) { return error.code || 'ERROR'; } };
 
@@ -42,8 +43,9 @@ async function connect() {
   pool = new Pool({ connectionString: raceUrl, max: 10, connectionTimeoutMillis: 15_000, query_timeout: 30_000 });
   pool.on('error', () => {});
   const schema = await import('../db/schema.js');
-  const db = drizzle({ client: pool, schema });
-  repo = (await import('../db/luxify-consent-repository.js')).createLuxifyConsentRepository({ executor: db });
+  db = drizzle({ client: pool, schema });
+  mod = await import('../db/luxify-consent-repository.js');
+  repo = mod.createLuxifyConsentRepository({ executor: db });
   const proofMod = await import('../db/auth-email-proof.js');
   proof = input => proofMod.recordMagicLinkEmailProof({ executor: db, ...input });
   routeMod = await import('../routes/video-os-lite/luxify-consent.js');
@@ -58,8 +60,9 @@ async function seed() {
     for (const [id, email, role] of [[CEO, CEO_EMAIL, 'ceo'], [STAFF, STAFF_EMAIL, 'customer'], [SUBJ, SUBJ_EMAIL, 'customer'], [OUT, `out${tag}@example.test`, 'customer']]) {
       await c.query('insert into users(id,email,role) values($1,$2,$3)', [id, email, role]);
     }
-    await c.query("insert into user_identities(id,account_id,display_name,avatar_status,source_photo_asset_id,source_voice_asset_id,provider_renderable_avatar_id) values($1,$2,'Look S','READY',gen_random_uuid(),gen_random_uuid(),$3)", [IDENT, SUBJ, LOOK]);
+    await c.query("insert into user_identities(id,account_id,display_name,avatar_status,source_photo_asset_id,source_voice_asset_id,provider_renderable_avatar_id,provider_avatar_group_id) values($1,$2,'Look S','READY',gen_random_uuid(),gen_random_uuid(),$3,$4)", [IDENT, SUBJ, LOOK, GROUP]);
     const scope = randomUUID(), bind = randomUUID();
+    BIND = bind; ORIGIN_KEY = hex(SUBJ + 'b');
     await c.query("insert into provider_verified_account_scopes(id,provider,provider_account_fingerprint,canonical_scope_key,evidence_digest,evidence_ref) values($1,'heygen',$2,$3,$3,'ref')", [scope, FP, hex(SUBJ + 'scope')]);
     await c.query("insert into provider_account_bindings(id,application_account_id,provider,environment,project_id,database_binding_sha256,credential_scope_fingerprint,origin_scope_key,lifecycle_state) values($1,$2,'heygen','pgt','pgt',$3,$3,$3,'active')", [bind, SUBJ, hex(SUBJ + 'b')]);
     await c.query("insert into provider_account_binding_promotions(binding_id,application_account_id,origin_scope_key,verified_account_scope_id,state,evidence_digest,evidence_ref,verified_at) values($1,$2,$3,$4,'verified',$3,'ref',now())", [bind, SUBJ, hex(SUBJ + 'b'), scope]);
@@ -110,12 +113,13 @@ test('staff lookup and run-time capability check write evidence with a 30-day wi
   assert.equal(await code(repo.lookupStaffTarget({ actorAccountId: OUT, email: SUBJ_EMAIL })), 'LUX_STAFF_PAGE_FORBIDDEN');
 
   let reads = 0;
-  const body = engines => JSON.stringify({ data: { id: LOOK, avatar_type: 'digital_twin', supported_api_engines: engines, status: 'completed' } });
-  let engines = ['avatar_iv'];
+  // Real GET /v3/avatars/looks/{id} shape (LUXIFY-LOOK-READ-1101), synthetic ids.
+  const body = status => JSON.stringify({ data: { avatar_type: 'photo_avatar', group_id: GROUP, id: LOOK, image_height: 1920, image_width: 1080, name: 'Look S', preferred_orientation: 'portrait', preview_image_url: 'https://media.example/p.webp', status, supported_api_engines: ['avatar_v', 'avatar_iv', 'avatar_iii'], tags: [] } });
+  let status = 'processing';
   const reader = {
     resolveBinding: async () => ({ providerSpaceFingerprint: FP }),
     assertBinding: () => {},
-    readLook: async id => { reads += 1; assert.equal(id, LOOK); const text = body(engines); return { text, payload: JSON.parse(text) }; },
+    readLook: async id => { reads += 1; assert.equal(id, LOOK); const text = body(status); return { text, payload: JSON.parse(text) }; },
   };
   const env = { VIDEO_OS_PUBLIC_ORIGIN: 'https://video.example', VIDEO_OS_LUXIFY_ENABLED: 'true' };
   const handler = routeMod.createLuxifyConsentHandler({ authenticate: () => ({ accountId: STAFF }), environment: env, repository: repo, capabilityReader: reader, rateLimit: async () => true });
@@ -127,7 +131,8 @@ test('staff lookup and run-time capability check write evidence with a 30-day wi
   const first = await call({ action: 'check-capability', accountId: SUBJ, identityId: IDENT });
   assert.equal(first.statusCode, 201, JSON.stringify(first.body));
   assert.equal(first.body.eligible, false);
-  engines = ['avatar_iv', 'cinematic_avatar'];
+  assert.equal(first.body.ineligibleReason, 'NOT_COMPLETED');
+  status = 'completed';
   const second = await call({ action: 'check-capability', accountId: SUBJ, identityId: IDENT });
   assert.equal(second.body.eligible, true);
   assert.equal(reads, 2);
@@ -138,10 +143,12 @@ test('staff lookup and run-time capability check write evidence with a 30-day wi
   assert.equal(open[0].eligible, true);
   assert.equal(open[0].has_grant, true);
   assert.equal(open[0].provider_space_fingerprint, FP);
-  assert.equal(open[0].evidence_sha256, hex(body(engines)));
+  assert.equal(open[0].evidence_sha256, hex(body(status)));
   assert.equal(new Date(open[0].expires_at).getTime() - new Date(open[0].observed_at).getTime(), 30 * DAY);
   // QA M1: checked rows carry created_at = observed_at; a staff-typed legacy row would not.
   assert.equal(Number((await q('select count(*) from luxify_look_capability_evidence where account_id=$1 and created_at <> observed_at', [SUBJ])).rows[0].count), 0);
+  // QA L5: every checked row carries source='heygen_check'.
+  assert.equal(Number((await q("select count(*) from luxify_look_capability_evidence where account_id=$1 and source is distinct from 'heygen_check'", [SUBJ])).rows[0].count), 0);
 
   // Staff can now approve the look; revoking the staff grant cascades.
   assert.equal(await code(repo.approveLookCreative({ staffAccountId: STAFF, accountId: SUBJ, identityId: IDENT })), 'OK');
@@ -160,4 +167,63 @@ test('QA I1: only a used magic_link challenge verifies an email; other used chal
   assert.equal((await repo.lookupStaffTarget({ actorAccountId: CEO, email: OUT_EMAIL })).emailVerified, false);
   await proof({ accountId: OUT, email: OUT_EMAIL, magicTokenHash: hex('out' + tag) });
   assert.equal((await repo.lookupStaffTarget({ actorAccountId: CEO, email: OUT_EMAIL })).emailVerified, true);
+});
+
+// ---- QA L5 (0020): source column ---------------------------------------------
+async function replica(statements) {
+  const c = await pool.connect();
+  try {
+    await c.query('begin');
+    await c.query('set local session_replication_role=replica');
+    for (const [text, values] of statements) await c.query(text, values);
+    await c.query('commit');
+  } catch (error) { await c.query('rollback').catch(() => {}); throw error; } finally { c.release(); }
+}
+const EVIDENCE_COLS = 'account_id,provider_look_id,provider_space_fingerprint,capability,eligible,avatar_type,evidence_sha256,staff_grant_id,observed_at,expires_at,created_at';
+
+test('L5: the source CHECK admits only heygen_check; legacy and manual rows are ignored by eligibility; only checked rows count', opts, async () => {
+  // CHECK: any other source value is refused; null (legacy) is allowed so 0020 can add the column.
+  await assert.rejects(q(`insert into luxify_look_capability_evidence(${EVIDENCE_COLS},source) values($1,$2,$3,'cinematic_avatar',true,'photo_avatar',repeat('9',64),gen_random_uuid(),now(),now()+interval '1 day',now(),'manual')`, [SUBJ, LOOK, FP]), /luxify_look_capability_evidence_source_ck/);
+
+  // Everything eligibility needs except evidence: consent, active source consent, provider resource.
+  const src = randomUUID();
+  await replica([
+    ["insert into identity_consents(id,account_id,identity_id,face_authorization,voice_authorization,provider_processing_authorization,archive_delete_acknowledgment,policy_version,photo_sha256,voice_sha256) values($1,$2,$3,true,true,true,true,$4,'x','x')", [src, SUBJ, IDENT, 'pls-' + randomUUID()]],
+    ["insert into luxify_cinematic_consents(id,account_id,identity_id,source_identity_consent_id,idempotency_key,provider_look_id,provider_space_fingerprint,policy_version,purpose,cinematic_generation_authorization,provider_processing_authorization,approval_evidence_sha256,accepted_at,expires_at) values(gen_random_uuid(),$1,$2,$3,gen_random_uuid(),$4,$5,'luxify-cinematic-consent/v1','luxify-cinematic-generation',true,true,repeat('b',64),now(),now()+interval '1 day')", [SUBJ, IDENT, src, LOOK, FP]],
+    ["insert into provider_resources(application_account_id,binding_id,origin_scope_key,kind,provider_resource_id,origin_operation_id,state) values($1,$2,$3,'avatar_look',$4,gen_random_uuid(),'ready')", [SUBJ, BIND, ORIGIN_KEY, LOOK]],
+  ]);
+  const eligibility = () => code(db.transaction(tx => mod.resolveLuxifyEligibilityTx(tx, { accountId: SUBJ, lookIdentityIds: [IDENT] })));
+  const openRows = async () => (await q('select source, revoked_at from luxify_look_capability_evidence where account_id=$1 and revoked_at is null', [SUBJ])).rows;
+  assert.equal((await openRows()).length, 0, 'the earlier grant revoke closed the checked rows');
+  assert.equal(await eligibility(), 'LUXIFY_LOOK_NOT_ELIGIBLE', 'no evidence at all');
+
+  // A pre-0020 legacy row (source null) that even satisfies created_at = observed_at, and a manual
+  // insert using now(): both are eligible=true, open and in-window, and both are ignored.
+  await replica([
+    [`insert into luxify_look_capability_evidence(${EVIDENCE_COLS}) values($1,$2,$3,'cinematic_avatar',true,'photo_avatar',repeat('1',64),gen_random_uuid(),now(),now()+interval '1 day',now())`, [SUBJ, LOOK, FP]],
+  ]);
+  await q(`insert into luxify_look_capability_evidence(${EVIDENCE_COLS.replace(',created_at', '')}) values($1,$2,$3,'cinematic_avatar',true,'photo_avatar',repeat('2',64),(select id from lux_staff_grants limit 1),now(),now()+interval '1 day')`, [SUBJ, LOOK, FP]);
+  assert.equal((await openRows()).length, 2);
+  assert.ok((await openRows()).every(row => row.source === null));
+  assert.equal(await eligibility(), 'LUXIFY_LOOK_NOT_ELIGIBLE', 'legacy and manual rows never establish eligibility');
+
+  // 0020's one-time close (run from the migration file, in a rolled-back transaction) closes them.
+  const { readFile } = await import('node:fs/promises');
+  const migration = (await readFile(new URL('../drizzle/0020_luxify_evidence_source.sql', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const close = migration.split('--> statement-breakpoint').map(part => part.split('\n').filter(line => !line.startsWith('--')).join('\n').trim()).find(part => /^UPDATE "luxify_look_capability_evidence"/.test(part));
+  assert.ok(close, '0020 has the one-time close statement');
+  const c = await pool.connect();
+  try {
+    await c.query('begin');
+    await c.query(close);
+    const left = Number((await c.query('select count(*) from luxify_look_capability_evidence where account_id=$1 and revoked_at is null and source is null', [SUBJ])).rows[0].count);
+    assert.equal(left, 0, '0020 closes older open evidence rows');
+  } finally { await c.query('rollback').catch(() => {}); c.release(); }
+
+  // Control: the same row with source='heygen_check' passes the evidence stage, so the
+  // filter is what rejected the others (the next gate is the creative approval).
+  await replica([
+    [`insert into luxify_look_capability_evidence(${EVIDENCE_COLS},source) values($1,$2,$3,'cinematic_avatar',true,'photo_avatar',repeat('3',64),gen_random_uuid(),now(),now()+interval '1 day',now(),'heygen_check')`, [SUBJ, LOOK, FP]],
+  ]);
+  assert.equal(await eligibility(), 'LUXIFY_CREATIVE_APPROVAL_REQUIRED');
 });

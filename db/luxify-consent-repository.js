@@ -42,6 +42,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_ENGINE = /^[A-Za-z0-9_.:-]{1,80}$/;
 const CAPABILITY_EVIDENCE_MAX_MS = 30 * 86_400_000;
 const LOOK_APPROVAL_MAX_MS = 30 * 86_400_000;
+export const LUXIFY_EVIDENCE_SOURCE = 'heygen_check';
 
 function failure(code, message, statusCode = 409, failureCategory = 'CONSENT') {
   return Object.assign(new Error(message), { code, statusCode, failureCategory });
@@ -502,11 +503,20 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     const [row] = await tx.insert(luxifyLookCapabilityEvidence).values({
       id: randomUUID(), accountId: owner, providerLookId, providerSpaceFingerprint: space.providerSpaceFingerprint,
       capability: LUXIFY_CINEMATIC_CAPABILITY, eligible, avatarType, supportedApiEngines: [...supportedApiEngines],
-      // created_at = observed_at (both DB now) marks a server-checked row; see
-      // resolveLuxifyEligibilityTx. The legacy staff-typed path is removed.
-      evidenceSha256, staffGrantId: grant.id, observedAt: observed, expiresAt: expires, createdAt: observed,
+      // QA L5: source='heygen_check' (0020 CHECK) is written ONLY here and is
+      // what resolveLuxifyEligibilityTx filters on; created_at = observed_at
+      // (both DB now) is kept as a second guard.
+      evidenceSha256, staffGrantId: grant.id, observedAt: observed, expiresAt: expires, createdAt: observed, source: LUXIFY_EVIDENCE_SOURCE,
     }).returning({ id: luxifyLookCapabilityEvidence.id });
     return row;
+  }
+
+  // The identity's own HeyGen avatar group: the ownership anchor for the
+  // run-time capability check. Missing or malformed -> 409, nothing read.
+  function ownedGroupId(identity) {
+    const group = String(identity?.providerAvatarGroupId || '');
+    if (!PROVIDER_ID.test(group)) throw failure('LUXIFY_LOOK_OWNERSHIP_UNPROVEN', 'This look has no recorded HeyGen avatar group, so ownership cannot be shown.', 409, 'OWNERSHIP');
+    return group;
   }
 
   async function readyLookForStaffTx(tx, owner, identityId) {
@@ -622,9 +632,9 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     const id = exactUuid(identityId, 'look identity');
     return db().transaction(async (tx) => {
       await requireActiveStaffGrantTx(tx, staffAccountId);
-      const { lookId } = await readyLookForStaffTx(tx, owner, id);
+      const { identity, lookId } = await readyLookForStaffTx(tx, owner, id);
       const space = await loadActiveProviderSpaceTx(tx, owner);
-      return { accountId: owner, identityId: id, providerLookId: lookId, providerSpaceFingerprint: space.providerSpaceFingerprint };
+      return { accountId: owner, identityId: id, providerLookId: lookId, providerSpaceFingerprint: space.providerSpaceFingerprint, providerAvatarGroupId: ownedGroupId(identity) };
     });
   }
 
@@ -635,19 +645,20 @@ export function createLuxifyConsentRepository({ executor } = {}) {
    * still points at the same look and that the space did not change between
    * the read and the write; any change fails closed with nothing written.
    */
-  async function recordCheckedLookCapability({ staffAccountId, accountId, identityId, providerLookId, providerSpaceFingerprint, eligible, avatarType, supportedApiEngines, evidenceSha256 }) {
+  async function recordCheckedLookCapability({ staffAccountId, accountId, identityId, providerLookId, providerSpaceFingerprint, providerAvatarGroupId, eligible, avatarType, supportedApiEngines, evidenceSha256 }) {
     const owner = exactAccount(accountId);
     const id = exactUuid(identityId, 'look identity');
     if (!PROVIDER_ID.test(String(providerLookId || '')) || !SHA256.test(String(providerSpaceFingerprint || '')) || typeof eligible !== 'boolean'
+      || typeof providerAvatarGroupId !== 'string' || !PROVIDER_ID.test(providerAvatarGroupId)
       || !SAFE_ENGINE.test(String(avatarType || '')) || !Array.isArray(supportedApiEngines) || supportedApiEngines.length > 20
       || supportedApiEngines.some(item => !SAFE_ENGINE.test(String(item))) || !SHA256.test(String(evidenceSha256 || ''))) {
       throw failure('LUXIFY_CAPABILITY_EVIDENCE_INVALID', 'Capability evidence is invalid.', 400, 'VALIDATION');
     }
     return db().transaction(async (tx) => {
       const grant = await requireActiveStaffGrantTx(tx, staffAccountId);
-      const { lookId } = await readyLookForStaffTx(tx, owner, id);
+      const { identity, lookId } = await readyLookForStaffTx(tx, owner, id);
       const space = await loadActiveProviderSpaceTx(tx, owner);
-      if (lookId !== providerLookId || space.providerSpaceFingerprint !== providerSpaceFingerprint) {
+      if (lookId !== providerLookId || space.providerSpaceFingerprint !== providerSpaceFingerprint || ownedGroupId(identity) !== providerAvatarGroupId) {
         throw failure('LUXIFY_CAPABILITY_STALE', 'The look or HeyGen space changed during the check. Run it again.', 409, 'PROVIDER_READBACK');
       }
       await lockAccount(tx, owner, 'capability-evidence');
@@ -893,9 +904,11 @@ export async function resolveLuxifyEligibilityTx(tx, { accountId, lookIdentityId
       eq(luxifyLookCapabilityEvidence.accountId, owner), eq(luxifyLookCapabilityEvidence.providerLookId, String(lookId || '')),
       eq(luxifyLookCapabilityEvidence.providerSpaceFingerprint, space.providerSpaceFingerprint),
       isNull(luxifyLookCapabilityEvidence.revokedAt),
-      // QA M1: only server-checked evidence counts. Checked rows are written with
-      // created_at = observed_at = DB now; rows typed in through the removed
-      // record-capability action carried a client observed_at, so they never match.
+      // QA M1 + L5: only server-checked evidence counts. The check path is the
+      // only writer of source='heygen_check'; legacy rows (source null, closed
+      // by 0020) and manual inserts without it never match. created_at =
+      // observed_at = DB now stays as a second guard.
+      eq(luxifyLookCapabilityEvidence.source, LUXIFY_EVIDENCE_SOURCE),
       sql`${luxifyLookCapabilityEvidence.createdAt} = ${luxifyLookCapabilityEvidence.observedAt}`,
     )).orderBy(desc(luxifyLookCapabilityEvidence.observedAt)).limit(1);
     if (!resource || !evidence) throw failure('LUXIFY_LOOK_NOT_ELIGIBLE', 'LUXIFY look eligibility could not be established.', 409);
