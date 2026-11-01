@@ -445,6 +445,7 @@ export async function readHeygenAvatarLookRaw(lookId, { fetchImpl = fetch, env =
   const lookReference = cleanProviderId(lookId, 'HeyGen avatar look ID');
   const response = await fetchImpl(`${API_ORIGIN}/v3/avatars/looks/${encodeURIComponent(lookReference)}`, {
     method: 'GET',
+    redirect: 'error',
     signal: AbortSignal.timeout(timeoutMs(env)),
     headers: { Accept: 'application/json', 'X-Api-Key': key(env) },
   });

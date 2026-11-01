@@ -117,8 +117,8 @@ test('staff lookup and run-time capability check write evidence with a 30-day wi
     assertBinding: () => {},
     readLook: async id => { reads += 1; assert.equal(id, LOOK); const text = body(engines); return { text, payload: JSON.parse(text) }; },
   };
-  const env = { VIDEO_OS_PUBLIC_ORIGIN: 'https://video.example' };
-  const handler = routeMod.createLuxifyConsentHandler({ authenticate: () => ({ accountId: STAFF }), environment: env, repository: repo, capabilityReader: reader });
+  const env = { VIDEO_OS_PUBLIC_ORIGIN: 'https://video.example', VIDEO_OS_LUXIFY_ENABLED: 'true' };
+  const handler = routeMod.createLuxifyConsentHandler({ authenticate: () => ({ accountId: STAFF }), environment: env, repository: repo, capabilityReader: reader, rateLimit: async () => true });
   const call = async payload => {
     const res = { headers: {}, setHeader(n, v) { this.headers[n] = v; }, end(raw) { this.body = JSON.parse(raw); } };
     await handler({ method: 'POST', url: '/api/video-os-lite/luxify-consent', headers: { origin: env.VIDEO_OS_PUBLIC_ORIGIN, 'content-type': 'application/json' }, body: payload }, res);
@@ -140,6 +140,8 @@ test('staff lookup and run-time capability check write evidence with a 30-day wi
   assert.equal(open[0].provider_space_fingerprint, FP);
   assert.equal(open[0].evidence_sha256, hex(body(engines)));
   assert.equal(new Date(open[0].expires_at).getTime() - new Date(open[0].observed_at).getTime(), 30 * DAY);
+  // QA M1: checked rows carry created_at = observed_at; a staff-typed legacy row would not.
+  assert.equal(Number((await q('select count(*) from luxify_look_capability_evidence where account_id=$1 and created_at <> observed_at', [SUBJ])).rows[0].count), 0);
 
   // Staff can now approve the look; revoking the staff grant cascades.
   assert.equal(await code(repo.approveLookCreative({ staffAccountId: STAFF, accountId: SUBJ, identityId: IDENT })), 'OK');
@@ -150,4 +152,12 @@ test('staff lookup and run-time capability check write evidence with a 30-day wi
   assert.equal(reads, 2, 'no HeyGen read without a staff grant');
   const after = Number((await q('select count(*) from luxify_look_capability_evidence where account_id=$1 and revoked_at is null', [SUBJ])).rows[0].count);
   assert.equal(after, 0, 'grant revoke cascades to evidence');
+});
+
+test('QA I1: only a used magic_link challenge verifies an email; other used challenge types do not', opts, async () => {
+  const OUT_EMAIL = `out${tag}@example.test`;
+  await q("insert into auth_challenges(account_id,email,token_hash,challenge_type,expires_at,used_at) values($1,$2,$3,'provider_subject_consent_launch',now(),now())", [OUT, OUT_EMAIL, hex('launch' + tag)]);
+  assert.equal((await repo.lookupStaffTarget({ actorAccountId: CEO, email: OUT_EMAIL })).emailVerified, false);
+  await proof({ accountId: OUT, email: OUT_EMAIL, magicTokenHash: hex('out' + tag) });
+  assert.equal((await repo.lookupStaffTarget({ actorAccountId: CEO, email: OUT_EMAIL })).emailVerified, true);
 });

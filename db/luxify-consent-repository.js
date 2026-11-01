@@ -364,6 +364,8 @@ export function createLuxifyConsentRepository({ executor } = {}) {
       eq(authChallenges.accountId, account.id),
       sql`lower(${authChallenges.email}) = ${email}`,
       isNotNull(authChallenges.usedAt),
+      // QA I1: only a consumed magic-link proof verifies an email.
+      eq(authChallenges.challengeType, 'magic_link'),
     )).orderBy(desc(authChallenges.usedAt)).limit(1);
     return { email, verifiedAt: challenge?.usedAt || null };
   }
@@ -500,7 +502,9 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     const [row] = await tx.insert(luxifyLookCapabilityEvidence).values({
       id: randomUUID(), accountId: owner, providerLookId, providerSpaceFingerprint: space.providerSpaceFingerprint,
       capability: LUXIFY_CINEMATIC_CAPABILITY, eligible, avatarType, supportedApiEngines: [...supportedApiEngines],
-      evidenceSha256, staffGrantId: grant.id, observedAt: observed, expiresAt: expires,
+      // created_at = observed_at (both DB now) marks a server-checked row; see
+      // resolveLuxifyEligibilityTx. The legacy staff-typed path is removed.
+      evidenceSha256, staffGrantId: grant.id, observedAt: observed, expiresAt: expires, createdAt: observed,
     }).returning({ id: luxifyLookCapabilityEvidence.id });
     return row;
   }
@@ -654,30 +658,6 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     });
   }
 
-  /** Records staff-observed HeyGen cinematic_avatar support for one look. */
-  async function recordLookCapabilityEvidence({ staffAccountId, accountId, providerLookId, eligible, avatarType, supportedApiEngines = [], observedAt, expiresAt, evidenceSha256 }) {
-    const owner = exactAccount(accountId);
-    if (!PROVIDER_ID.test(String(providerLookId || '')) || typeof eligible !== 'boolean' || !SAFE_ENGINE.test(String(avatarType || ''))
-      || !Array.isArray(supportedApiEngines) || supportedApiEngines.length > 20 || supportedApiEngines.some(item => !SAFE_ENGINE.test(String(item)))
-      || !SHA256.test(String(evidenceSha256 || ''))) {
-      throw failure('LUXIFY_CAPABILITY_EVIDENCE_INVALID', 'Capability evidence is invalid.', 400, 'VALIDATION');
-    }
-    const observed = new Date(observedAt);
-    const expires = new Date(expiresAt);
-    if (!Number.isFinite(observed.getTime()) || !Number.isFinite(expires.getTime()) || expires <= observed
-      || expires.getTime() - observed.getTime() > CAPABILITY_EVIDENCE_MAX_MS) {
-      throw failure('LUXIFY_CAPABILITY_EVIDENCE_INVALID', 'Capability evidence window is invalid.', 400, 'VALIDATION');
-    }
-    return db().transaction(async (tx) => {
-      const grant = await requireActiveStaffGrantTx(tx, staffAccountId);
-      const space = await loadActiveProviderSpaceTx(tx, owner);
-      const now = await dbNow(tx);
-      if (observed > now) throw failure('LUXIFY_CAPABILITY_EVIDENCE_INVALID', 'Capability evidence is from the future.', 400, 'VALIDATION');
-      const row = await insertCapabilityEvidenceTx(tx, { owner, grant, space, providerLookId, eligible, avatarType, supportedApiEngines, evidenceSha256, observed, expires, now });
-      return { evidenceId: row.id };
-    });
-  }
-
   /**
    * Lux staff creative approval for one exact look (owner decision Oct 30):
    * mandatory for every LUXIFY render. Bound to the look's current provider
@@ -785,7 +765,6 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     approveLookCreative,
     revokeLookCreativeApproval,
     listLookCreativeApprovals,
-    recordLookCapabilityEvidence,
     staffContext,
     listStaffGrants,
     lookupStaffTarget,
@@ -914,6 +893,10 @@ export async function resolveLuxifyEligibilityTx(tx, { accountId, lookIdentityId
       eq(luxifyLookCapabilityEvidence.accountId, owner), eq(luxifyLookCapabilityEvidence.providerLookId, String(lookId || '')),
       eq(luxifyLookCapabilityEvidence.providerSpaceFingerprint, space.providerSpaceFingerprint),
       isNull(luxifyLookCapabilityEvidence.revokedAt),
+      // QA M1: only server-checked evidence counts. Checked rows are written with
+      // created_at = observed_at = DB now; rows typed in through the removed
+      // record-capability action carried a client observed_at, so they never match.
+      sql`${luxifyLookCapabilityEvidence.createdAt} = ${luxifyLookCapabilityEvidence.observedAt}`,
     )).orderBy(desc(luxifyLookCapabilityEvidence.observedAt)).limit(1);
     if (!resource || !evidence) throw failure('LUXIFY_LOOK_NOT_ELIGIBLE', 'LUXIFY look eligibility could not be established.', 409);
     const approvalExpiry = await assertLuxifyLookCreativeApprovalTx(tx, {

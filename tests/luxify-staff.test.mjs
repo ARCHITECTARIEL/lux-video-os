@@ -11,6 +11,7 @@ import { magicLinkProofTokenHash, recordMagicLinkEmailProof } from '../db/auth-e
 import { createLuxifyConsentHandler } from '../routes/video-os-lite/luxify-consent.js';
 import { requireLuxifyActivation } from '../routes/video-os-lite/luxify.js';
 import { handleAuthRequest } from '../api/video-os-lite/auth.js';
+import { readHeygenAvatarLookRaw } from '../services/heygen.js';
 import {
   LUXIFY_CAPABILITY_PROOF_FIELD,
   LUXIFY_CAPABILITY_PROOF_VALUE,
@@ -193,8 +194,10 @@ function response() {
 function request(body, headers = {}) {
   return { method: 'POST', url: '/api/video-os-lite/luxify-consent', headers: { origin: ORIGIN, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json', ...headers }, body };
 }
-function capabilityFixture({ binding = { providerSpaceFingerprint: FP }, read, resolveThrows = false, prepare } = {}) {
+const FLAG_ON = { ...ENV, VIDEO_OS_LUXIFY_ENABLED: 'true' };
+function capabilityFixture({ binding = { providerSpaceFingerprint: FP }, read, resolveThrows = false, prepare, environment = FLAG_ON, allow = true } = {}) {
   const calls = [];
+  const rateLimit = async input => { calls.push(['rate', input]); return typeof allow === 'function' ? allow(input) : allow; };
   const repository = {
     prepareLookCapabilityCheck: async input => { calls.push(['prepare', input]); if (prepare) return prepare(input); return { accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP }; },
     recordCheckedLookCapability: async input => { calls.push(['record', input]); return { evidenceId: EVIDENCE, eligible: input.eligible, observedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + 30 * DAY).toISOString() }; },
@@ -205,7 +208,7 @@ function capabilityFixture({ binding = { providerSpaceFingerprint: FP }, read, r
     assertBinding: () => { calls.push(['assert']); },
     readLook: async lookId => { calls.push(['read', lookId]); if (read) return read(lookId); const text = lookBody(); return { text, payload: JSON.parse(text) }; },
   };
-  const handler = createLuxifyConsentHandler({ authenticate: () => ({ accountId: STAFF }), environment: ENV, repository, now: () => NOW.getTime(), capabilityReader });
+  const handler = createLuxifyConsentHandler({ authenticate: () => ({ accountId: STAFF }), environment, repository, now: () => NOW.getTime(), capabilityReader, rateLimit });
   return { handler, calls };
 }
 
@@ -215,10 +218,11 @@ test('route check-capability: DB prep, binding, ONE HeyGen read, server-derived 
   await handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), res);
   assert.equal(res.statusCode, 201);
   assert.equal(res.headers['Cache-Control'], 'no-store');
-  assert.deepEqual(calls.map(([name]) => name), ['prepare', 'binding', 'assert', 'read', 'record']);
-  assert.deepEqual(calls[1][1], { accountId: ACCOUNT });
-  assert.equal(calls[3][1], LOOK);
-  const record = calls[4][1];
+  assert.deepEqual(calls.map(([name]) => name), ['rate', 'prepare', 'binding', 'assert', 'read', 'record']);
+  assert.deepEqual(calls[0][1], { accountId: STAFF, key: `luxify-capability:hourly:${STAFF}`, limit: 5, windowMs: 60 * 60 * 1000 });
+  assert.deepEqual(calls[2][1], { accountId: ACCOUNT });
+  assert.equal(calls[4][1], LOOK);
+  const record = calls[5][1];
   assert.equal(record.staffAccountId, STAFF);
   assert.equal(record.eligible, true);
   assert.equal(record.evidenceSha256, sha(lookBody()));
@@ -240,7 +244,7 @@ test('route check-capability: staff-supplied evidence is rejected; failures befo
   await noBinding.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), r1);
   assert.equal(r1.statusCode, 409);
   assert.equal(r1.body.code, 'LUXIFY_PROVIDER_SPACE_UNAVAILABLE');
-  assert.deepEqual(noBinding.calls.map(([name]) => name), ['prepare', 'binding']);
+  assert.deepEqual(noBinding.calls.map(([name]) => name), ['rate', 'prepare', 'binding']);
 
   const mismatch = capabilityFixture({ binding: { providerSpaceFingerprint: 'd'.repeat(64) } });
   const r2 = response();
@@ -286,6 +290,80 @@ test('route staff actions keep the strict Origin/JSON rules and require sign-in'
   await handler(request({ action: 'staff-context' }), ok);
   assert.equal(ok.statusCode, 200);
   assert.deepEqual(calls.at(-1), ['context', { accountId: STAFF }]);
+});
+
+// ---- QA follow-ups (LUXIFY-STAFF-1101) ----------------------------------------
+test('M1: the legacy record-capability action is gone from the route and the repository', async () => {
+  const { handler, calls } = capabilityFixture();
+  const res = response();
+  await handler(request({ action: 'record-capability', accountId: ACCOUNT, providerLookId: LOOK, eligible: true, avatarType: 'studio', supportedApiEngines: ['cinematic_avatar'], observedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + DAY).toISOString(), evidenceSha256: 'a'.repeat(64) }), res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.code, 'invalid_request');
+  assert.equal(calls.length, 0);
+  const { repo } = repoFor([]);
+  assert.equal(repo.recordLookCapabilityEvidence, undefined);
+  for (const file of ['../routes/video-os-lite/luxify-consent.js', '../db/luxify-consent-repository.js', '../public/luxify-staff.js', '../public/luxify-consent.js']) {
+    assert.doesNotMatch(await readFile(new URL(file, import.meta.url), 'utf8'), /recordLookCapabilityEvidence|'record-capability'/, file);
+  }
+});
+
+test('M1: checked evidence is written with created_at = observed_at, and eligibility reads only such rows', async () => {
+  const r = repoFor([...staffOk(), [identity()], [space], [], [{ id: EVIDENCE }]]);
+  await r.repo.recordCheckedLookCapability({ staffAccountId: STAFF, accountId: ACCOUNT, identityId: IDENTITY, providerLookId: LOOK, providerSpaceFingerprint: FP, eligible: false, avatarType: 'digital_twin', supportedApiEngines: [], evidenceSha256: 'b'.repeat(64) });
+  const insert = r.db.log.find(entry => entry.kind === 'insert');
+  const values = arg(insert, 'values');
+  assert.equal(values.createdAt.getTime(), values.observedAt.getTime());
+  assert.equal(values.observedAt.getTime(), NOW.getTime());
+  const source = await readFile(new URL('../db/luxify-consent-repository.js', import.meta.url), 'utf8');
+  const eligibility = source.slice(source.indexOf('export async function resolveLuxifyEligibilityTx'));
+  assert.match(eligibility, /luxifyLookCapabilityEvidence\.createdAt\} = \$\{luxifyLookCapabilityEvidence\.observedAt\}/);
+});
+
+test('L2: the HeyGen look read refuses redirects (no X-Api-Key forwarding)', async () => {
+  const seen = [];
+  const text = lookBody();
+  const fetchImpl = async (url, init) => { seen.push([url, init]); return { ok: true, status: 200, text: async () => text }; };
+  const out = await readHeygenAvatarLookRaw(LOOK, { fetchImpl, env: { HEYGEN_API_KEY: 'test-key-not-real' } });
+  assert.equal(out.text, text);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0][1].method, 'GET');
+  assert.equal(seen[0][1].redirect, 'error');
+  const failing = async () => { throw new TypeError('fetch failed: redirect mode is set to error'); };
+  await assert.rejects(readHeygenAvatarLookRaw(LOOK, { fetchImpl: failing, env: { HEYGEN_API_KEY: 'test-key-not-real' } }), error => !String(error.message).includes('test-key-not-real'));
+});
+
+test('L3: capability checks are rate limited per staff actor (5/hour); over the limit nothing is read or written', async () => {
+  let used = 0;
+  const { handler, calls } = capabilityFixture({ allow: () => { used += 1; return used <= 5; } });
+  const codes = [];
+  for (let i = 0; i < 7; i += 1) {
+    const res = response();
+    await handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), res);
+    codes.push(res.statusCode);
+    if (i === 6) assert.equal(res.body.code, 'rate_limited');
+  }
+  assert.deepEqual(codes, [201, 201, 201, 201, 201, 429, 429]);
+  assert.equal(calls.filter(([name]) => name === 'read').length, 5);
+  assert.equal(calls.filter(([name]) => name === 'record').length, 5);
+  assert.ok(calls.filter(([name]) => name === 'rate').every(([, input]) => input.accountId === STAFF && input.key === `luxify-capability:hourly:${STAFF}`));
+});
+
+test('L4: with LUXIFY off the capability check refuses before any DB, rate-limit or HeyGen call; staff actions stay available', async () => {
+  for (const environment of [ENV, { ...ENV, VIDEO_OS_LUXIFY_ENABLED: 'false' }, { ...ENV, VIDEO_OS_LUXIFY_ENABLED: '1' }]) {
+    const { handler, calls } = capabilityFixture({ environment });
+    const res = response();
+    await handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), res);
+    assert.equal(res.statusCode, 503);
+    assert.equal(res.body.code, 'luxify_unavailable');
+    assert.equal(calls.length, 0);
+    const ctx = response();
+    await handler(request({ action: 'staff-context' }), ctx);
+    assert.equal(ctx.statusCode, 200);
+  }
+  const on = capabilityFixture({ environment: { ...ENV, VIDEO_OS_LUXIFY_ENABLED: ' TRUE ' } });
+  const res = response();
+  await on.handler(request({ action: 'check-capability', accountId: ACCOUNT, identityId: IDENTITY }), res);
+  assert.equal(res.statusCode, 201);
 });
 
 // ---- magic-link verified email proof ----------------------------------------
@@ -365,7 +443,8 @@ test('LUXIFY stays off by default: no flag means unavailable before any look or 
   assert.deepEqual(touched, []);
   const vercel = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
   assert.doesNotMatch(JSON.stringify(vercel), /VIDEO_OS_LUXIFY_/);
-  for (const file of ['../public/luxify-staff.js', '../routes/video-os-lite/luxify-consent.js', '../db/luxify-consent-repository.js', '../lib/luxify-look-capability.js']) {
+  // The consent route reads the flag only to refuse check-capability (QA L4); see the L4 test.
+  for (const file of ['../public/luxify-staff.js', '../db/luxify-consent-repository.js', '../lib/luxify-look-capability.js']) {
     assert.doesNotMatch(await readFile(new URL(file, import.meta.url), 'utf8'), /(env|environment)\??\.VIDEO_OS_LUXIFY_ENABLED|\[\s*['"]VIDEO_OS_LUXIFY_ENABLED/, `${file} must not touch the LUXIFY flag`);
   }
 });

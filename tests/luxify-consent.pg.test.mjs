@@ -533,13 +533,16 @@ test('R2-L1: approval approved at or before now is in effect at the boundary; ap
 
 test('J12: capability evidence never stays open under a revoked grant when record and revoke race (grant row locked FOR SHARE)', opts, async () => {
   const S = await addStaff('racestaff');
-  const look = `look_c_${tag}`;
+  // The legacy staff-typed record path is removed (QA M1); race the server-checked write.
+  const look = `look_j_${tag}`;
+  const idJ = randomUUID();
+  await legacyInsert("insert into user_identities(id,account_id,display_name,avatar_status,source_photo_asset_id,source_voice_asset_id,provider_renderable_avatar_id) values($1,$2,'L','READY',gen_random_uuid(),gen_random_uuid(),$3) returning id", [idJ, C, look]);
+  const space = await db.transaction(tx => mod.loadActiveProviderSpaceTx(tx, C));
   const outcomes = {};
   for (let i = 0; i < 30; i += 1) {
     await repo.grantStaff({ grantorAccountId: CEO, staffAccountId: S, explicitGrant: true }).catch(() => {});
-    const t = new Date();
     const [ev, rv] = await Promise.all([
-      (async () => { await sleep(i % 2 ? Math.floor(Math.random() * 20) : 0); return code(repo.recordLookCapabilityEvidence({ staffAccountId: S, accountId: C, providerLookId: look, eligible: true, avatarType: 'studio', supportedApiEngines: [], observedAt: t, expiresAt: new Date(t.getTime() + 86_400_000), evidenceSha256: hex(`race-ev-${tag}-${i}`) })); })(),
+      (async () => { await sleep(i % 2 ? Math.floor(Math.random() * 20) : 0); return code(repo.recordCheckedLookCapability({ staffAccountId: S, accountId: C, identityId: idJ, providerLookId: look, providerSpaceFingerprint: space.providerSpaceFingerprint, eligible: true, avatarType: 'studio', supportedApiEngines: [], evidenceSha256: hex(`race-ev-${tag}-${i}`) })); })(),
       (async () => { await sleep(i % 2 ? 0 : Math.floor(Math.random() * 6)); return code(repo.revokeStaffGrant({ grantorAccountId: CEO, staffAccountId: S })); })(),
     ]);
     outcomes[`${ev}/${rv}`] = (outcomes[`${ev}/${rv}`] || 0) + 1;
