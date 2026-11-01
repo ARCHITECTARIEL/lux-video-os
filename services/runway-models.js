@@ -278,7 +278,16 @@ export async function createRunwayTask(job, input, dependencies = {}) {
   }
   const taskId = String(created?.id || '');
   if (!TASK_ID.test(taskId)) throw failure('Runway returned an invalid task id.', 'RUNWAY_CREATE_UNKNOWN', 502, { releaseCredits: false, unresolved: true, providerTaskId: null });
-  if (dependencies.onTaskCreated) await dependencies.onTaskCreated({ taskId, model: request.body.model, credits: request.credits });
+  if (dependencies.onTaskCreated) {
+    try {
+      await dependencies.onTaskCreated({ taskId, model: request.body.model, credits: request.credits });
+    } catch {
+      // QA r2 Low 1: the task exists and is billable; never let a persistence
+      // failure look like a failed create.
+      log({ event: 'runway.persist_failed', jobId: job.id, taskId });
+      throw failure('Runway task was created but its id could not be saved.', 'RUNWAY_TASK_ID_NOT_SAVED', 500, { providerTaskId: taskId, unresolved: true, releaseCredits: false });
+    }
+  }
   log({ event: 'runway.created', jobId: job.id, taskId });
   return { client, taskId, request };
 }
@@ -297,8 +306,11 @@ export async function awaitRunwayTask(job, { client, taskId, request }, dependen
     if (errorName(error, TaskFailedError, 'TaskFailedError')) {
       const providerFailureCode = mapRunwayFailureCode(error?.taskDetails?.failureCode);
       log({ event: 'runway.failed', jobId: job.id, taskId, providerFailureCode });
-      // Docs: SAFETY.INPUT.* failures are not refunded by Runway.
-      throw failure('Runway task failed.', 'RUNWAY_TASK_FAILED', 502, { providerTaskId: taskId, providerFailureCode, unresolved: false, releaseCredits: true });
+      // Policy (QA r2 Low 2): Runway does not refund SAFETY.INPUT.* failures
+      // (docs: errors/task-failures), so those credits are treated as spent and
+      // are not released. Other failures are refunded by Runway and released.
+      const spent = providerFailureCode === 'SAFETY_INPUT';
+      throw failure('Runway task failed.', 'RUNWAY_TASK_FAILED', 502, { providerTaskId: taskId, providerFailureCode, unresolved: false, releaseCredits: !spent, creditsSpent: spent });
     }
     if (errorName(error, AbortError, 'AbortError') || dependencies.abortSignal?.aborted) {
       log({ event: 'runway.abort', jobId: job.id, taskId });
@@ -339,6 +351,19 @@ export async function awaitRunwayTask(job, { client, taskId, request }, dependen
     estimatedUsd: Number((request.credits * RUNWAY_USD_PER_CREDIT).toFixed(2)),
     adapter: 'runway-models',
   };
+}
+
+// Reconcile an already-created task (e.g. one left unresolved by an earlier
+// run): never creates anything, only polls the given id, then downloads and
+// stores like awaitRunwayTask.
+export async function resumeRunwayTask(job, { taskId, input }, dependencies = {}) {
+  const env = dependencies.env || process.env;
+  assertRunwayEnabled(env);
+  assertJob(job);
+  if (!TASK_ID.test(String(taskId || ''))) throw failure('Invalid Runway task id.', 'RUNWAY_TASK_ID_INVALID', 400);
+  const request = buildRunwayRequest(input, env);
+  const client = await runwayClient(env, dependencies);
+  return awaitRunwayTask(job, { client, taskId, request }, dependencies);
 }
 
 // Convenience entry point: create (id persisted via onTaskCreated), then await.
