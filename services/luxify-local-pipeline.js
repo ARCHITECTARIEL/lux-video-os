@@ -1,7 +1,8 @@
 // Local Luxify pipeline: Runway clips (via services/runway-models.js) ->
 // cinematic grade from services/media-finisher.js (LUT) -> drawtext titles ->
 // xfade transitions -> music ducked under the HeyGen voice -> loudnorm ->
-// final.mp4 + receipt.json. Makes no HeyGen calls. Runway is only contacted
+// themed captions / disclosure / bug / end card -> final.mp4 + VTT/SRT +
+// receipt.json. Makes no HeyGen calls (heygen_avatar shots are local files). Runway is only contacted
 // in live mode, which the CLI gates behind --live plus RUNWAYML_API_SECRET.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -10,7 +11,8 @@ import { access, copyFile, mkdir, open, readdir, readFile, realpath, rename, sta
 import { homedir, hostname } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
-import { ASPECTS, CLIP_CAP_USD, FONT_PRESETS, SHOT_MODELS, VIDEO_CAP_USD } from '../lib/luxify-local-brief.js';
+import { AI_DISCLOSURE_TEXT, ASPECTS, CLIP_CAP_USD, CLIP_SHOT_MODELS, FONT_PRESETS, HEYGEN_AVATAR_USD_PER_SECOND, SHOT_MODELS, VIDEO_CAP_USD } from '../lib/luxify-local-brief.js';
+import { buildCues, bugFilter, disclosureFilters, endCardGraph, kineticFilters, kineticWarnings, subtitleFilters, themeTokens, toSrt, toVtt, wavDurationSeconds } from './luxify-local-overlays.js';
 import { cinematicFinishingFilterGraph } from './media-finisher.js';
 import { RUNWAY_MAX_DATA_URI_BYTES, RUNWAY_USD_PER_CREDIT, awaitRunwayTask, buildRunwayRequest, createRunwayTask, imageFileToDataUri, resumeRunwayTask } from './runway-models.js';
 
@@ -44,6 +46,19 @@ export async function loadShotImage(path, { briefDir, assetsRoot }) {
   const info = await stat(real);
   if (!info.isFile() || info.size > Math.floor(RUNWAY_MAX_DATA_URI_BYTES * 3 / 4)) throw fail('Shot image must be a png/jpeg/webp file of at most ~3.75 MB.', 'RUNWAY_IMAGE_INVALID');
   return imageFileToDataUri(await readFile(real));
+}
+
+const isClipShot = shot => CLIP_SHOT_MODELS.includes(shot.model);
+
+// Pre-rendered clips (heygen_avatar / local_clip) follow the same containment
+// rule as shot images: inside the brief folder or the assets root.
+export async function resolveLocalClip(path, { briefDir, assetsRoot }) {
+  const roots = await realRoots(briefDir, assetsRoot);
+  let real;
+  try { real = await realpath(resolve(briefDir, path)); } catch { throw fail(`Clip not found: ${basename(path)}`, 'CLIP_NOT_FOUND'); }
+  if (!roots.some(root => inside(root, real))) throw fail('Clip must be inside the brief folder or the assets folder.', 'CLIP_OUTSIDE_ROOTS');
+  if (!(await stat(real)).isFile()) throw fail(`Clip is not a file: ${basename(path)}`, 'CLIP_NOT_FOUND');
+  return real;
 }
 
 // QA L2: the voice track must live in the brief folder or the assets folder.
@@ -84,6 +99,13 @@ function shotInput(brief, shot) {
 // anything is submitted; callers must not retry a CAP_EXCEEDED error.
 export function planBrief(brief) {
   const shots = brief.shots.map(shot => {
+    if (isClipShot(shot)) {
+      // No Runway call. HeyGen avatar seconds are estimated at list price and
+      // held to the same $1/clip cap (the render itself happens outside this tool).
+      const heygenEstUsd = shot.model === 'heygen_avatar' ? +(Math.ceil(shot.duration) * HEYGEN_AVATAR_USD_PER_SECOND).toFixed(2) : 0;
+      if (heygenEstUsd > CLIP_CAP_USD) throw fail(`Shot ${shot.id} exceeds the $${CLIP_CAP_USD} per-clip cap.`, 'CAP_EXCEEDED_CLIP');
+      return { id: shot.id, briefModel: shot.model, model: shot.model, mode: 'local_clip', duration: shot.duration, ratio: ASPECTS[brief.aspect].ratio, credits: 0, estUsd: heygenEstUsd, heygenEstUsd };
+    }
     const input = shotInput(brief, shot);
     let request;
     try {
@@ -98,16 +120,23 @@ export function planBrief(brief) {
     return { id: shot.id, briefModel: shot.model, model: request.body.model, mode: request.mode, duration: shot.duration, ratio: request.body.ratio, credits: request.credits, estUsd: +(request.credits * RUNWAY_USD_PER_CREDIT).toFixed(2), input };
   });
   const totalCredits = shots.reduce((sum, s) => sum + s.credits, 0);
-  if (totalCredits > VIDEO_CAP_CREDITS) throw fail(`Video estimate $${(totalCredits * RUNWAY_USD_PER_CREDIT).toFixed(2)} exceeds the $${VIDEO_CAP_USD} per-video cap.`, 'CAP_EXCEEDED_VIDEO');
+  const heygenEstUsd = +shots.reduce((sum, s) => sum + (s.heygenEstUsd || 0), 0).toFixed(2);
+  const totalEstUsd = +(totalCredits * RUNWAY_USD_PER_CREDIT + heygenEstUsd).toFixed(2);
+  if (totalCredits > VIDEO_CAP_CREDITS || totalEstUsd > VIDEO_CAP_USD) throw fail(`Video estimate $${totalEstUsd.toFixed(2)} exceeds the $${VIDEO_CAP_USD} per-video cap.`, 'CAP_EXCEEDED_VIDEO');
   const transitions = brief.transitions.reduce((sum, t) => sum + t.duration, 0);
   return {
     slug: brief.slug,
     aspect: brief.aspect,
     shots,
     totalCredits,
-    totalEstUsd: +(totalCredits * RUNWAY_USD_PER_CREDIT).toFixed(2),
+    totalEstUsd,
+    ...(heygenEstUsd ? { runwayEstUsd: +(totalCredits * RUNWAY_USD_PER_CREDIT).toFixed(2), heygenEstUsd } : {}),
     caps: { clipUsd: CLIP_CAP_USD, videoUsd: VIDEO_CAP_USD, usdPerCredit: RUNWAY_USD_PER_CREDIT },
-    timelineSeconds: +(shots.reduce((sum, s) => sum + s.duration, 0) - transitions).toFixed(3),
+    timelineSeconds: +(shots.reduce((sum, s) => sum + s.duration, 0) - transitions + (brief.endCard?.enabled ? brief.endCard.duration : 0)).toFixed(3),
+    theme: brief.theme,
+    captionStyle: brief.captionStyle,
+    disclosure: AI_DISCLOSURE_TEXT,
+    warnings: kineticWarnings(brief.captions || []),
   };
 }
 
@@ -126,10 +155,26 @@ export function resolveAssets(brief, assetsRoot, briefDir = process.cwd()) {
 export async function missingAssets(assets) {
   const missing = [];
   for (const [key, path] of Object.entries(assets)) {
-    if (key === 'root' || !path) continue;
+    if (key === 'root' || key === 'logo' || !path) continue;
     try { await access(path); } catch { missing.push({ key, path }); }
   }
   return missing;
+}
+
+// The logo is optional: a missing PNG skips the corner bug and the end-card
+// logo cleanly instead of blocking the render.
+export async function optionalAssetWarnings(assets) {
+  if (!assets.logo) return [];
+  try { await access(assets.logo); return []; } catch { return [`LOGO_MISSING: ${basename(assets.logo)} not found; corner bug and end-card logo will be skipped`]; }
+}
+
+// Clip-shot files (heygen_avatar / local_clip) that do not exist yet.
+export async function missingClips(brief, briefDir) {
+  const out = [];
+  for (const shot of brief.shots.filter(isClipShot)) {
+    try { await access(resolve(briefDir, shot.clip)); } catch { out.push({ key: `clip:${shot.id}`, path: resolve(briefDir, shot.clip) }); }
+  }
+  return out;
 }
 
 export function resolveFfmpeg(explicit, env = process.env) {
@@ -180,25 +225,26 @@ export async function sha256File(path) {
   return hash.digest('hex');
 }
 
-export function titleFilters(shot, font, width, height, textFiles) {
+export function titleFilters(shot, font, width, height, textFiles, theme = 'dark') {
+  const tk = themeTokens(theme);
   return shot.titles.flatMap((t, i) => {
     const enable = `enable='between(t,${t.start},${t.end})'`;
     const main = textFiles[`${i}-main`];
     const size = Math.round(height / (t.kind === 'banner' ? 14 : 20));
-    const base = `fontfile=${ffFilterPath(font)}:expansion=none:fontcolor=white:fontsize=${size}:borderw=2:bordercolor=black@0.6`;
+    const base = `fontfile=${ffFilterPath(font)}:expansion=none:fontcolor=${tk.text}:fontsize=${size}:borderw=2:bordercolor=${tk.stroke}`;
     if (t.kind === 'banner') {
-      return [`drawbox=x=0:y=ih*0.08:w=iw:h=${Math.round(size * 1.8)}:color=black@0.45:t=fill:${enable}`,
+      return [`drawbox=x=0:y=ih*0.08:w=iw:h=${Math.round(size * 1.8)}:color=${tk.titlePlate}:t=fill:${enable}`,
         `drawtext=${base}:textfile=${ffFilterPath(main)}:x=(w-text_w)/2:y=h*0.08+${Math.round(size * 0.4)}:${enable}`];
     }
-    const out = [`drawbox=x=iw*0.05:y=ih*0.76:w=iw*0.6:h=${Math.round(size * (t.subtext ? 2.8 : 1.7))}:color=black@0.5:t=fill:${enable}`,
+    const out = [`drawbox=x=iw*0.05:y=ih*0.76:w=iw*0.6:h=${Math.round(size * (t.subtext ? 2.8 : 1.7))}:color=${tk.lowerPlate}:t=fill:${enable}`,
       `drawtext=${base}:textfile=${ffFilterPath(main)}:x=w*0.07:y=h*0.76+${Math.round(size * 0.35)}:${enable}`];
-    if (t.subtext) out.push(`drawtext=fontfile=${ffFilterPath(font)}:expansion=none:fontcolor=white@0.85:fontsize=${Math.round(size * 0.65)}:textfile=${ffFilterPath(textFiles[`${i}-sub`])}:x=w*0.07:y=h*0.76+${Math.round(size * 1.7)}:${enable}`);
+    if (t.subtext) out.push(`drawtext=fontfile=${ffFilterPath(font)}:expansion=none:fontcolor=${tk.textSecondary}:fontsize=${Math.round(size * 0.65)}:textfile=${ffFilterPath(textFiles[`${i}-sub`])}:x=w*0.07:y=h*0.76+${Math.round(size * 1.7)}:${enable}`);
     return out;
   });
 }
 
 // Step 1+2 per clip: grade (media-finisher graph + optional LUT) and burn titles.
-export async function finishClip({ ffmpeg, input, output, shot, assets, width, height, workdir, grainStrength = 6 }) {
+export async function finishClip({ ffmpeg, input, output, shot, assets, width, height, workdir, grainStrength = 6, theme = 'dark' }) {
   const textFiles = {};
   for (const [i, t] of shot.titles.entries()) {
     textFiles[`${i}-main`] = join(workdir, `${shot.id}-t${i}.txt`);
@@ -213,8 +259,12 @@ export async function finishClip({ ffmpeg, input, output, shot, assets, width, h
     if (!grade.includes(anchor)) throw fail('media-finisher grade changed; LUT insertion point missing.', 'GRADE_UNSUPPORTED');
     grade = grade.replace(anchor, `${anchor},lut3d=file=${ffFilterPath(assets.lut)}`);
   }
-  const vf = [grade, ...titleFilters(shot, assets.font, width, height, textFiles), `fps=${FPS}`, 'settb=AVTB', 'format=yuv420p'].join(',');
-  await runFfmpeg(ffmpeg, ['-i', input, '-t', String(shot.duration), '-vf', vf, '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', output]);
+  // Clip shots: hold the last frame if the clip is short; their audio is always
+  // dropped (-an) so the master voice track stays the only voice.
+  const hold = isClipShot(shot) ? [`tpad=stop_mode=clone:stop_duration=${shot.duration}`] : [];
+  const vf = [grade, ...titleFilters(shot, assets.font, width, height, textFiles, theme), ...hold, `fps=${FPS}`, 'settb=AVTB', 'format=yuv420p'].join(',');
+  const seek = isClipShot(shot) && shot.clipStart ? ['-ss', String(shot.clipStart)] : [];
+  await runFfmpeg(ffmpeg, [...seek, '-i', input, '-t', String(shot.duration), '-vf', vf, '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', output]);
 }
 
 // Step 3: xfade chain. Returns filter text and the final video duration.
@@ -240,17 +290,57 @@ export function xfadeGraph(durations, transitions) {
 }
 
 // Steps 3-5: transitions, logo, music ducked under voice, loudness, mux.
-export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, output }) {
-  const { graph, duration } = xfadeGraph(durations, brief.transitions);
+export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, output, workdir, width, height, cues = [] }) {
+  const { graph, duration: contentDuration } = xfadeGraph(durations, brief.transitions);
+  const theme = brief.theme || 'dark';
+  const endCard = brief.endCard?.enabled ? brief.endCard : null;
+  const duration = +(contentDuration + (endCard ? endCard.duration : 0)).toFixed(3);
+  const esc = ffFilterPath;
+  const font = assets.font;
   const args = [];
   clips.forEach(clip => args.push('-i', clip));
   let idx = clips.length;
   const voiceIdx = idx++; args.push('-i', assets.voice);
   let musicIdx = null; if (assets.music) { musicIdx = idx++; args.push('-stream_loop', '-1', '-i', assets.music); }
-  let logoIdx = null; if (assets.logo) { logoIdx = idx++; args.push('-i', assets.logo); }
+  let logoIdx = null; if (assets.logo) { logoIdx = idx++; args.push('-loop', '1', '-framerate', String(FPS), '-i', assets.logo); }
+  const textFile = async (name, value) => { const f = join(workdir, name); await writeFile(f, value); return f; };
   const filters = [graph];
   let video = '[vout]';
-  if (logoIdx !== null) { filters.push(`[${logoIdx}:v]scale=-1:80[logo];${video}[logo]overlay=W-w-40:40[vlogo]`); video = '[vlogo]'; }
+  const logoUses = (logoIdx !== null && brief.bug?.enabled !== false ? 1 : 0) + (logoIdx !== null && endCard ? 1 : 0);
+  const logoLabels = [];
+  if (logoUses === 2) { filters.push(`[${logoIdx}:v]split=2[logo0][logo1]`); logoLabels.push('[logo0]', '[logo1]'); }
+  else if (logoUses === 1) logoLabels.push(`[${logoIdx}:v]`);
+  // 1. Corner bug (top-right) on the content only.
+  if (logoIdx !== null && brief.bug?.enabled !== false) {
+    filters.push(bugFilter({ logoLabel: logoLabels.shift(), videoLabel: video, outLabel: '[vbug]', width, height, opacity: brief.bug?.opacity ?? 0.85, until: contentDuration }));
+    video = '[vbug]';
+  }
+  // 2. Kinetic captions and burned-in subtitles.
+  const draws = [];
+  const style = brief.captionStyle || 'none';
+  if ((style === 'kinetic' || style === 'both') && brief.captions?.length) {
+    const files = [];
+    for (const [i, c] of brief.captions.entries()) files.push(await textFile(`cap-${i}.txt`, c.text));
+    draws.push(...kineticFilters(brief.captions, { font, width, height, theme, textFile: i => files[i], esc }));
+  }
+  if (style === 'subtitle' || brief.subtitles?.burnIn) {
+    const files = [];
+    for (const [i, c] of cues.entries()) files.push(await textFile(`sub-${i}.txt`, c.text));
+    draws.push(...subtitleFilters(cues, { font, width, height, theme, textFile: i => files[i], esc }));
+  }
+  if (draws.length) { filters.push(`${video}${draws.join(',')}[vcap]`); video = '[vcap]'; }
+  // 3. End card (appended after the content).
+  if (endCard) {
+    const ctaFile = endCard.cta ? await textFile('endcard-cta.txt', endCard.cta) : null;
+    const urlFile = endCard.url ? await textFile('endcard-url.txt', endCard.url) : null;
+    filters.push(endCardGraph({ width, height, duration: endCard.duration, theme, logoLabel: logoIdx !== null ? logoLabels.shift() : null, ctaFile, urlFile, font, esc, outLabel: '[vend]' }));
+    filters.push(`${video}format=yuv420p,setsar=1[vmain];[vmain][vend]concat=n=2:v=1:a=0[vcat]`);
+    video = '[vcat]';
+  }
+  // 4. Mandatory AI disclosure, last so nothing covers it, over the full duration.
+  const discFile = await textFile('disclosure.txt', AI_DISCLOSURE_TEXT);
+  filters.push(`${video}${disclosureFilters({ font, width, height, theme, textFile: discFile, esc }).join(',')}[vfinal]`);
+  video = '[vfinal]';
   const lufs = brief.loudnessLufs;
   filters.push(`[${voiceIdx}:a]aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=0:${duration}[voice]`);
   if (musicIdx !== null) {
@@ -265,7 +355,7 @@ export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, o
   args.push('-filter_complex', filters.join(';'), '-map', video, '-map', '[aout]', '-t', String(duration),
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', output);
   await runFfmpeg(ffmpeg, args);
-  return { duration };
+  return { duration, contentDuration, endCard: Boolean(endCard), bug: logoIdx !== null && brief.bug?.enabled !== false };
 }
 
 // ---------------------------------------------------------------------------
@@ -358,6 +448,11 @@ export async function generateClips(plan, { brief, briefDir, assetsRoot, runwayE
   const results = [];
   for (const [i, shot] of plan.shots.entries()) {
     const briefShot = brief.shots[i];
+    if (isClipShot(briefShot)) {
+      const file = await resolveLocalClip(briefShot.clip, { briefDir, assetsRoot });
+      results.push({ ...shot, file, sha256: await sha256File(file), providerTaskId: null, reused: false, clipFile: basename(file) });
+      continue;
+    }
     const hash = inputHash(briefShot, shot);
     const job = { id: shot.id, accountId: 'local', reservedCredits: shot.credits };
     const deps = { ...runwayDeps, env, putPrivateBlob: writer };
@@ -545,15 +640,24 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
   await mkdir(workdir, { recursive: true });
   let clips;
   let duration;
+  let assembled;
+  let cues = [];
+  // Optional logo: missing file -> skip bug and end-card logo (recorded below).
+  const logoPresent = assets.logo ? await exists(assets.logo) : false;
+  const renderAssets = { ...assets, logo: logoPresent ? assets.logo : null };
+  const voiceSeconds = wavDurationSeconds(await readFile(assets.voice)) ?? null;
   try {
     clips = await generateClips(plan, { brief, briefDir, assetsRoot: assets.root, runwayEnv, runwayDeps, clipsDir: join(outDir, 'clips'), ledger, run });
     const finished = [];
     for (const [i, clip] of clips.entries()) {
       const output = join(workdir, `${String(i).padStart(2, '0')}-${clip.id}.mp4`);
-      await finishClip({ ffmpeg, input: clip.file, output, shot: brief.shots[i], assets, width, height, workdir });
+      await finishClip({ ffmpeg, input: clip.file, output, shot: brief.shots[i], assets: renderAssets, width, height, workdir, theme: brief.theme });
       finished.push(output);
     }
-    ({ duration } = await assembleFinal({ ffmpeg, clips: finished, durations: brief.shots.map(s => s.duration), brief, assets, output: finalPath }));
+    const contentSeconds = plan.timelineSeconds - (brief.endCard?.enabled ? brief.endCard.duration : 0);
+    cues = buildCues(brief.script, Math.min(voiceSeconds ?? contentSeconds, contentSeconds));
+    assembled = await assembleFinal({ ffmpeg, clips: finished, durations: brief.shots.map(s => s.duration), brief, assets: renderAssets, output: finalPath, workdir, width, height, cues });
+    ({ duration } = assembled);
   } catch (error) {
     try { await ledger.endRun({ status: 'aborted', errorCode: error.code || 'ERROR' }); } catch { /* keep original error */ }
     throw error;
@@ -561,13 +665,24 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
   const info = await stat(finalPath);
   if (!info.size) throw fail('ffmpeg produced an empty final video.', 'FINAL_EMPTY');
   const assetHash = async path => (path ? { file: basename(path), sha256: await sha256File(path) } : null);
+  const sidecars = {};
+  if (brief.subtitles?.sidecar !== false) {
+    const stem = finalName.replace(/\.mp4$/, '');
+    for (const [ext, body] of [['vtt', toVtt(cues)], ['srt', toSrt(cues)]]) {
+      const file = join(outDir, `${stem}.${ext}`);
+      await writeFile(file, body, { flag: 'wx' });
+      sidecars[ext] = { file: basename(file), sha256: await sha256File(file) };
+    }
+  }
   await ledger.set({
-    shots: clips.map(c => ({ id: c.id, briefModel: c.briefModel, model: c.model, mode: c.mode, duration: c.duration, ratio: c.ratio, credits: c.credits, estUsd: c.estUsd, clipSha256: c.sha256, providerTaskId: c.providerTaskId, reused: c.reused })),
+    shots: clips.map(c => ({ id: c.id, briefModel: c.briefModel, model: c.model, mode: c.mode, duration: c.duration, ratio: c.ratio, credits: c.credits, estUsd: c.estUsd, clipSha256: c.sha256, providerTaskId: c.providerTaskId, reused: c.reused, ...(c.clipFile ? { clipFile: c.clipFile, heygenEstUsd: c.heygenEstUsd } : {}) })),
     totalCredits: plan.totalCredits,
     totalEstUsd: plan.totalEstUsd,
+    ...(plan.heygenEstUsd ? { heygenEstUsd: plan.heygenEstUsd } : {}),
+    overlays: { theme: brief.theme, captionStyle: brief.captionStyle, kineticBeats: brief.captions.length, disclosure: AI_DISCLOSURE_TEXT, bug: assembled.bug ? 'on' : (assets.logo && !logoPresent ? 'skipped-logo-missing' : 'off'), endCard: assembled.endCard ? (logoPresent ? 'logo' : 'text-only') : 'off', subtitleTiming: 'approx', sidecars },
     caps: plan.caps,
-    assets: { font: await assetHash(assets.font), lut: await assetHash(assets.lut), music: await assetHash(assets.music), logo: await assetHash(assets.logo), voice: await assetHash(assets.voice), voiceSource: brief.voice.source, heygenJobId: brief.voice.jobId || null },
-    final: { file: finalName, bytes: info.size, sha256: await sha256File(finalPath), durationSeconds: duration },
+    assets: { font: await assetHash(assets.font), lut: await assetHash(assets.lut), music: await assetHash(assets.music), logo: await assetHash(renderAssets.logo), voice: await assetHash(assets.voice), voiceSource: brief.voice.source, heygenJobId: brief.voice.jobId || null },
+    final: { file: finalName, bytes: info.size, sha256: await sha256File(finalPath), durationSeconds: duration, contentSeconds: assembled.contentDuration },
   });
   await ledger.endRun({ status: 'complete' });
   return ledger.view();

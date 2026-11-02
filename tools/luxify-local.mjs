@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { parseBrief } from '../lib/luxify-local-brief.js';
 import { runwayEnabled } from '../services/runway-models.js';
-import { defaultAssetsRoot, loadBriefFile, receiptStatus, missingAssets, planBrief, resolveAssets, resolveFfmpeg, runPipeline } from '../services/luxify-local-pipeline.js';
+import { defaultAssetsRoot, loadBriefFile, receiptStatus, missingAssets, missingClips, optionalAssetWarnings, planBrief, resolveAssets, resolveFfmpeg, runPipeline } from '../services/luxify-local-pipeline.js';
 
 export async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, runwayDeps = {} } = {}) {
   const { values } = parseArgs({ args: argv, options: {
@@ -25,14 +25,26 @@ export async function main(argv = process.argv.slice(2), { env = process.env, st
   const plan = planBrief(brief); // throws CAP_EXCEEDED_* before anything else
   const briefDir = dirname(resolve(values.brief));
   const assets = resolveAssets(brief, values.assets || defaultAssetsRoot(env), briefDir);
-  const missing = await missingAssets(assets);
+  const missing = [...await missingAssets(assets), ...await missingClips(brief, briefDir)];
+  const warnings = [...plan.warnings, ...await optionalAssetWarnings(assets)];
   const outDir = resolve(values.out || join(briefDir, 'render'));
   const prior = await receiptStatus(outDir, plan);
-  const view = { mode: values.live ? 'live' : 'dry-run', ...plan, shots: plan.shots.map(({ input: _input, ...s }) => s), assets: Object.fromEntries(Object.entries(assets).filter(([k]) => k !== 'root')), missingAssets: missing, receipt: prior, orphanedPendingShots: prior?.orphanedPending?.map(a => a.shotId) || [] };
+  const view = { mode: values.live ? 'live' : 'dry-run', ...plan, shots: plan.shots.map(({ input: _input, ...s }) => s), assets: Object.fromEntries(Object.entries(assets).filter(([k]) => k !== 'root')), missingAssets: missing, warnings, receipt: prior, orphanedPendingShots: prior?.orphanedPending?.map(a => a.shotId) || [] };
   stdout.write(`${JSON.stringify(view, null, 2)}\n`);
   if (!values.live) return { mode: 'dry-run', plan };
 
   if (missing.length) throw Object.assign(new Error(`Missing assets: ${missing.map(m => m.key).join(', ')}`), { code: 'ASSETS_MISSING' });
+  // Runway gates apply whenever a Runway shot exists. A brief made only of
+  // local clips (heygen_avatar / local_clip) cannot reach Runway, so it needs
+  // just --live and gets no secret.
+  const ffmpegOnly = plan.shots.every(s => s.credits === 0);
+  if (ffmpegOnly) {
+    const ffmpegPath = resolveFfmpeg(values.ffmpeg, env);
+    await mkdir(outDir, { recursive: true });
+    const receipt = await runPipeline({ brief, briefDir, plan, outDir, assets, ffmpeg: ffmpegPath, resume: Boolean(values.resume), breakLock: Boolean(values['break-lock']), runwayEnv: {}, runwayDeps: {} });
+    stdout.write(`final: ${join(outDir, receipt.final.file)}\nreceipt: ${join(outDir, 'receipt.json')}\nsha256: ${receipt.final.sha256}\n`);
+    return { mode: 'live', receipt };
+  }
   // Two explicit opt-ins: --live and VIDEO_OS_RUNWAY_ENABLED=true (exact string) in the env.
   if (!runwayEnabled(env)) throw Object.assign(new Error('VIDEO_OS_RUNWAY_ENABLED is not exactly "true"; live mode refused.'), { code: 'RUNWAY_FLAG_OFF' });
   const secret = env.RUNWAYML_API_SECRET;
