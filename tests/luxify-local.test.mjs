@@ -1,3 +1,4 @@
+import { buildRunwayRequest } from '../services/runway-models.js';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -702,4 +703,15 @@ test('A2: ffmpeg is spawned with -n and never -y', { skip: process.platform === 
     assert.ok(args.includes('-n'));
     assert.ok(!args.includes('-y'));
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('8 s / 96-credit defaults: 3x gen4.5 8 s + seedance 4 s plans 384 credits under both caps', () => {
+  const shots = [1, 2, 3].map(i => ({ id: `r${i}`, model: 'runway', prompt: 'x', duration: 8 })).concat([{ id: 's', model: 'seedance', prompt: 'x', duration: 4 }]);
+  const transitions = [0, 1, 2].map(() => ({ type: 'fade', duration: 0.5 }));
+  const plan = planBrief(parseBrief(baseBrief({ shots, transitions })));
+  assert.deepEqual(plan.shots.map(s => [s.model, s.credits]), [['gen4.5', 96], ['gen4.5', 96], ['gen4.5', 96], ['seedance2_fast', 96]]);
+  assert.equal(plan.totalCredits, 384);
+  assert.equal(plan.totalEstUsd, 3.84);
+  assert.equal(buildRunwayRequest({ mode: 'text_to_video', model: 'seedance2_fast', promptText: 'x', ratio: '1280:720', duration: 4 }, LIVE_ENV).credits, 96);
+  assert.throws(() => buildRunwayRequest({ mode: 'text_to_video', model: 'gen4.5', promptText: 'x', ratio: '1280:720', duration: 9 }, LIVE_ENV), { code: 'RUNWAY_DURATION_LIMIT' });
 });
