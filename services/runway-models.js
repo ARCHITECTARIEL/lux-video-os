@@ -106,8 +106,8 @@ export function runwayEnabled(env = process.env) {
 
 export function runwayLimits(env = process.env) {
   return {
-    maxDurationSeconds: boundedInteger(env.VIDEO_OS_RUNWAY_MAX_DURATION_SECONDS, 5, 2, 10),
-    maxCreditsPerTask: boundedInteger(env.VIDEO_OS_RUNWAY_MAX_CREDITS_PER_TASK, 60, 1, 120),
+    maxDurationSeconds: boundedInteger(env.VIDEO_OS_RUNWAY_MAX_DURATION_SECONDS, 8, 2, 10),
+    maxCreditsPerTask: boundedInteger(env.VIDEO_OS_RUNWAY_MAX_CREDITS_PER_TASK, 96, 1, 120),
     waitTimeoutMs: boundedInteger(env.VIDEO_OS_RUNWAY_WAIT_TIMEOUT_MS, 10 * 60_000, 30_000, 15 * 60_000),
     requestTimeoutMs: boundedInteger(env.VIDEO_OS_RUNWAY_REQUEST_TIMEOUT_MS, 60_000, 5_000, 120_000),
     downloadTimeoutMs: boundedInteger(env.VIDEO_OS_RUNWAY_DOWNLOAD_TIMEOUT_MS, 120_000, 5_000, 300_000),
