@@ -277,7 +277,7 @@ test('image_to_video routes to imageToVideo with the data URI', async () => {
 });
 
 test('guardrails: duration cap, credit cap and reservation block before any client call', async () => {
-  assert.throws(() => buildRunwayRequest({ ...T2V, duration: 6 }, ENV), { code: 'RUNWAY_DURATION_LIMIT' });
+  assert.throws(() => buildRunwayRequest({ ...T2V, duration: 9 }, ENV), { code: 'RUNWAY_DURATION_LIMIT' });
   assert.throws(() => buildRunwayRequest({ ...T2V, duration: 10 }, { ...ENV, VIDEO_OS_RUNWAY_MAX_DURATION_SECONDS: '10', VIDEO_OS_RUNWAY_MAX_CREDITS_PER_TASK: '100' }), { code: 'RUNWAY_CREDIT_LIMIT' });
   const { calls, deps } = harness();
   await assert.rejects(generateRunwayVideo({ ...JOB, reservedCredits: 59 }, T2V, deps), { code: 'RUNWAY_CREDITS_UNRESERVED', statusCode: 402 });
@@ -400,4 +400,12 @@ test('resume rejects reservedCredits 0 or below the estimate, and non-string tas
   const { calls, deps } = harness();
   await assert.rejects(resumeRunwayTask(JOB, { taskId: { toString: () => TASK_ID }, input: T2V }, deps), { code: 'RUNWAY_TASK_ID_INVALID' });
   assert.equal(calls.retrieve.length, 0);
+});
+
+test('per-clip defaults: 8 s and 96 credits; hard caps stay 10 s and 120 credits', () => {
+  assert.deepEqual({ d: runwayLimits({}).maxDurationSeconds, c: runwayLimits({}).maxCreditsPerTask }, { d: 8, c: 96 });
+  assert.equal(runwayLimits({ VIDEO_OS_RUNWAY_MAX_DURATION_SECONDS: '60' }).maxDurationSeconds, 10);
+  assert.equal(runwayLimits({ VIDEO_OS_RUNWAY_MAX_CREDITS_PER_TASK: '100000' }).maxCreditsPerTask, 120);
+  assert.equal(buildRunwayRequest({ ...T2V, duration: 8 }, ENV).credits, 96, 'gen4.5 8 s = 96 credits passes');
+  assert.throws(() => buildRunwayRequest({ ...T2V, duration: 9 }, ENV), { code: 'RUNWAY_DURATION_LIMIT' });
 });
