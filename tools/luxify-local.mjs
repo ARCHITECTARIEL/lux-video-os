@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { parseBrief } from '../lib/luxify-local-brief.js';
 import { runwayEnabled } from '../services/runway-models.js';
-import { defaultAssetsRoot, loadBriefFile, receiptStatus, missingAssets, missingClips, optionalAssetWarnings, planBrief, resolveAssets, resolveFfmpeg, runPipeline } from '../services/luxify-local-pipeline.js';
+import { defaultAssetsRoot, loadAvatarConsent, loadBriefFile, validateLogo, receiptStatus, missingAssets, missingClips, optionalAssetWarnings, planBrief, resolveAssets, resolveFfmpeg, runPipeline } from '../services/luxify-local-pipeline.js';
 
 export async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, runwayDeps = {} } = {}) {
   const { values } = parseArgs({ args: argv, options: {
@@ -27,13 +27,19 @@ export async function main(argv = process.argv.slice(2), { env = process.env, st
   const assets = resolveAssets(brief, values.assets || defaultAssetsRoot(env), briefDir);
   const missing = [...await missingAssets(assets), ...await missingClips(brief, briefDir)];
   const warnings = [...plan.warnings, ...await optionalAssetWarnings(assets)];
+  // QA M4 / M1: consent and logo problems are shown in the dry run and stop a live run.
+  const blockers = [];
+  let consent = null;
+  try { consent = await loadAvatarConsent(brief, { briefDir, assetsRoot: assets.root }); } catch (error) { blockers.push(error); }
+  try { await validateLogo(assets.logo, assets.root); } catch (error) { blockers.push(error); }
   const outDir = resolve(values.out || join(briefDir, 'render'));
   const prior = await receiptStatus(outDir, plan);
-  const view = { mode: values.live ? 'live' : 'dry-run', ...plan, shots: plan.shots.map(({ input: _input, ...s }) => s), assets: Object.fromEntries(Object.entries(assets).filter(([k]) => k !== 'root')), missingAssets: missing, warnings, receipt: prior, orphanedPendingShots: prior?.orphanedPending?.map(a => a.shotId) || [] };
+  const view = { mode: values.live ? 'live' : 'dry-run', ...plan, shots: plan.shots.map(({ input: _input, ...s }) => s), assets: Object.fromEntries(Object.entries(assets).filter(([k]) => k !== 'root')), missingAssets: missing, warnings, avatarConsent: consent ? { file: consent.file, method: consent.method, consentedAt: consent.consentedAt, expiresAt: consent.expiresAt } : null, blockers: blockers.map(e => ({ code: e.code || 'ERROR', message: e.message })), receipt: prior, orphanedPendingShots: prior?.orphanedPending?.map(a => a.shotId) || [] };
   stdout.write(`${JSON.stringify(view, null, 2)}\n`);
   if (!values.live) return { mode: 'dry-run', plan };
 
   if (missing.length) throw Object.assign(new Error(`Missing assets: ${missing.map(m => m.key).join(', ')}`), { code: 'ASSETS_MISSING' });
+  if (blockers.length) throw blockers[0];
   // Runway gates apply whenever a Runway shot exists. A brief made only of
   // local clips (heygen_avatar / local_clip) cannot reach Runway, so it needs
   // just --live and gets no secret.

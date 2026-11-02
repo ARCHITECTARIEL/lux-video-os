@@ -95,7 +95,9 @@ test('--live refuses without RUNWAYML_API_SECRET and on cap breach, before any s
   try {
     const assets = join(dir, 'assets');
     for (const sub of ['fonts', 'luts', 'music', 'overlays']) await mkdir(join(assets, sub), { recursive: true });
-    for (const f of ['fonts/lux-sans-bold.ttf', 'luts/id.cube', 'music/bed.wav', 'overlays/logo.png']) await writeFile(join(assets, f), 'x');
+    for (const f of ['fonts/lux-sans-bold.ttf', 'luts/id.cube', 'music/bed.wav']) await writeFile(join(assets, f), 'x');
+    // A real (1x1) PNG: the logo is validated before any live gate (QA M1).
+    await writeFile(join(assets, 'overlays/logo.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
     await writeFile(join(dir, 'voice.wav'), 'x');
     const brief = baseBrief({ voice: { source: 'heygen_audio_file', path: join(dir, 'voice.wav') } });
     await writeFile(join(dir, 'brief.json'), JSON.stringify(brief));
@@ -696,7 +698,7 @@ test('A2: ffmpeg is spawned with -n and never -y', { skip: process.platform === 
   try {
     const shim = join(dir, 'ffmpeg');
     const argsFile = join(dir, 'args.txt');
-    await writeFile(shim, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\nfor last; do :; done\n: > "$last"\n`);
+    await writeFile(shim, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\nfor last; do :; done\nprintf x > "$last"\n`);
     await chmod(shim, 0o755);
     await runFfmpeg(shim, ['-i', 'in.mp4', join(dir, 'out.mp4')]);
     const args = (await readFile(argsFile, 'utf8')).trim().split('\n');

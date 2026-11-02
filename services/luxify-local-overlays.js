@@ -12,7 +12,8 @@ export const THEME_TOKENS = Object.freeze({
 });
 
 export function themeTokens(theme = 'dark') {
-  const tokens = THEME_TOKENS[theme];
+  // QA L5: own keys only ('__proto__', 'constructor' are not themes).
+  const tokens = typeof theme === 'string' && Object.hasOwn(THEME_TOKENS, theme) ? THEME_TOKENS[theme] : null;
   if (!tokens) throw Object.assign(new Error(`Unknown theme ${theme}`), { code: 'THEME_INVALID' });
   return tokens;
 }
@@ -20,18 +21,42 @@ export function themeTokens(theme = 'dark') {
 const n = v => +Number(v).toFixed(3);
 
 // Layout fractions per aspect (spec section 3). Disclosure is priority 1, bottom-left.
+// The label plate is drawtext box=1 (QA M2), so it sizes itself to the text;
+// `pad` is its boxborderw. Subtitles are bottom-anchored just above the plate
+// so the two never overlap (QA L4).
 export function layout(width, height) {
   const portrait = height > width;
   const u = Math.min(width, height);
+  const size = Math.max(18, Math.round(u * 0.026));
+  const pad = Math.round(size * 0.4);
+  const disclosure = { x: portrait ? 0.06 : 0.05, y: portrait ? 0.83 : 0.93, size, pad };
+  const subtitleSize = Math.round(u * 0.05);
   return {
     u,
-    kineticY: portrait ? 0.58 : 0.66,
-    subtitleY: portrait ? 0.74 : 0.82,
-    disclosure: { x: portrait ? 0.06 : 0.05, y: portrait ? 0.83 : 0.93, size: Math.max(18, Math.round(u * 0.026)) },
+    kineticY: portrait ? 0.58 : 0.62,
+    // Bottom edge (px) every subtitle plate must stay above.
+    subtitleBottom: Math.round(height * disclosure.y) - pad - Math.round(size * 0.6),
+    disclosure,
     bug: { h: Math.round(height * (portrait ? 0.045 : 0.08)), x: portrait ? 0.06 : 0.05, y: portrait ? 0.10 : 0.05 },
     kineticSize: Math.round(u * (portrait ? 0.11 : 0.09)),
-    subtitleSize: Math.round(u * 0.05),
+    subtitleSize,
   };
+}
+
+// QA L4: kinetic lines shrink to fit 90% of the frame width. Bold sans glyphs
+// average under 0.62 em, so this bound keeps 40-char lines inside 9:16.
+export const KINETIC_EM_WIDTH = 0.62;
+export function kineticFontSize(textValue, width, height) {
+  const L = layout(width, height);
+  const fit = Math.floor((width * 0.9) / (Math.max(1, [...textValue].length) * KINETIC_EM_WIDTH));
+  return Math.max(16, Math.min(L.kineticSize, fit));
+}
+
+export function subtitleBox(textValue, width, height) {
+  const L = layout(width, height);
+  const lines = textValue.split('\n').length;
+  const h = Math.round(L.subtitleSize * (lines * 1.3 + 0.5));
+  return { x: Math.round(width * 0.08), y: L.subtitleBottom - h, w: Math.round(width * 0.84), h };
 }
 
 // Kinetic "pop": 180 ms fade/scale-in, 120 ms fade-out, timed to the brief's
@@ -43,7 +68,8 @@ export function kineticFilters(captions, { font, width, height, theme, textFile,
     const s = n(c.start), e = n(c.end);
     const alpha = `if(lt(t,${s}),0,if(lt(t,${n(s + 0.18)}),(t-${s})/0.18,if(gt(t,${n(e - 0.12)}),max(0,(${e}-t)/0.12),1)))`;
     const rise = `if(lt(t,${n(s + 0.18)}),${Math.round(L.u * 0.02)}*(1-(t-${s})/0.18),0)`;
-    return `drawtext=fontfile=${esc(font)}:expansion=none:textfile=${esc(textFile(i))}:fontcolor=${t.text}:fontsize=${L.kineticSize}:borderw=${Math.max(2, Math.round(L.kineticSize * 0.06))}:bordercolor=${t.stroke}:shadowx=0:shadowy=${Math.round(L.kineticSize * 0.04)}:shadowcolor=${t.shadow}:alpha='${alpha}':x=(w-text_w)/2:y='h*${L.kineticY}+${rise}':enable='between(t,${s},${e})'`;
+    const size = kineticFontSize(c.text, width, height);
+    return `drawtext=fontfile=${esc(font)}:expansion=none:textfile=${esc(textFile(i))}:fontcolor=${t.text}:fontsize=${size}:borderw=${Math.max(2, Math.round(size * 0.06))}:bordercolor=${t.stroke}:shadowx=0:shadowy=${Math.round(size * 0.04)}:shadowcolor=${t.shadow}:alpha='${alpha}':x=(w-text_w)/2:y='h*${L.kineticY}+${rise}':enable='between(t,${s},${e})'`;
   });
 }
 
@@ -53,10 +79,9 @@ export function subtitleFilters(cues, { font, width, height, theme, textFile, es
   const L = layout(width, height);
   return cues.flatMap((c, i) => {
     const enable = `enable='between(t,${n(c.start)},${n(c.end)})'`;
-    const lines = c.text.split('\n').length;
-    const boxH = Math.round(L.subtitleSize * (lines * 1.3 + 0.5));
-    return [`drawbox=x=iw*0.08:y=ih*${L.subtitleY}:w=iw*0.84:h=${boxH}:color=${t.plate}:t=fill:${enable}`,
-      `drawtext=fontfile=${esc(font)}:expansion=none:textfile=${esc(textFile(i))}:fontcolor=${t.text}:fontsize=${L.subtitleSize}:line_spacing=${Math.round(L.subtitleSize * 0.25)}:x=(w-text_w)/2:y=h*${L.subtitleY}+${Math.round(L.subtitleSize * 0.25)}:${enable}`];
+    const b = subtitleBox(c.text, width, height);
+    return [`drawbox=x=${b.x}:y=${b.y}:w=${b.w}:h=${b.h}:color=${t.plate}:t=fill:${enable}`,
+      `drawtext=fontfile=${esc(font)}:expansion=none:textfile=${esc(textFile(i))}:fontcolor=${t.text}:fontsize=${L.subtitleSize}:line_spacing=${Math.round(L.subtitleSize * 0.25)}:x=(w-text_w)/2:y=${b.y + Math.round(L.subtitleSize * 0.25)}:${enable}`];
   });
 }
 
@@ -64,18 +89,18 @@ export function subtitleFilters(cues, { font, width, height, theme, textFile, es
 export function disclosureFilters({ font, width, height, theme, textFile, esc }) {
   const t = themeTokens(theme);
   const L = layout(width, height);
-  const { size } = L.disclosure;
-  const padX = Math.round(size * 0.5), padY = Math.round(size * 0.3);
-  const boxW = Math.round(size * 0.55 * AI_DISCLOSURE_TEXT.length + padX * 2);
+  const { size, pad } = L.disclosure;
   const x = Math.round(width * L.disclosure.x), y = Math.round(height * L.disclosure.y);
-  return [`drawbox=x=${x}:y=${y}:w=${boxW}:h=${size + padY * 2}:color=${t.plate}:t=fill`,
-    `drawtext=fontfile=${esc(font)}:expansion=none:textfile=${esc(textFile)}:fontcolor=${t.text}:fontsize=${size}:x=${x + padX}:y=${y + padY}`];
+  // QA M2: box=1 makes ffmpeg size the plate to the rendered text (+pad on every side).
+  return [`drawtext=fontfile=${esc(font)}:expansion=none:textfile=${esc(textFile)}:fontcolor=${t.text}:fontsize=${size}:box=1:boxcolor=${t.plate}:boxborderw=${pad}:x=${x}:y=${y}`];
 }
 
+// Upper bound of the label plate (text width bounded at 0.7 em/char) for layout checks.
 export function disclosureBox(width, height) {
   const L = layout(width, height);
-  const { size } = L.disclosure;
-  return { x: Math.round(width * L.disclosure.x), y: Math.round(height * L.disclosure.y), w: Math.round(size * 0.55 * AI_DISCLOSURE_TEXT.length + size), h: size + Math.round(size * 0.3) * 2 };
+  const { size, pad } = L.disclosure;
+  const x = Math.round(width * L.disclosure.x), y = Math.round(height * L.disclosure.y);
+  return { x: x - pad, y: y - pad, w: Math.round(size * 0.7 * AI_DISCLOSURE_TEXT.length) + pad * 2, h: Math.round(size * 1.25) + pad * 2 };
 }
 
 // Corner bug: top-right (disclosure is bottom-left), hidden during the end card.
@@ -140,14 +165,36 @@ const stamp = (sec, sep) => {
   const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = Math.floor(ms / 1000) % 60, r = ms % 1000;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}${sep}${String(r).padStart(3, '0')}`;
 };
-const cueText = t => t.replace(/-->/g, '→').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+// QA B1: cue text is plain text in both formats. Every angle bracket is
+// dropped (no tags of any kind survive) and every run of two or more hyphens
+// becomes one en dash, so no cue-timing arrow or comment marker can form.
+// Ampersands are escaped for VTT; blank lines (which end a cue) are removed.
+// Tag-shaped spans (`<...>`) are removed whole by a character scan, then any
+// stray bracket is dropped, so the output can never contain `<` or `>`.
+function stripTags(value) {
+  let out = '', pending = null;
+  for (const ch of value) {
+    if (ch === '<') { if (pending !== null) out += pending; pending = ''; continue; }
+    if (ch === '>') { pending = null; continue; }
+    if (pending !== null) pending += ch; else out += ch;
+  }
+  return pending !== null ? out + pending : out;
+}
+
+export function sanitizeCueText(value) {
+  return stripTags(String(value).replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').replace(/[\uFF1C\u2039]/g, '<').replace(/[\uFF1E\u203A]/g, '>'))
+    .replace(/[<>]/g, '')
+    .replace(/-{2,}/g, '\u2013')
+    .split('\n').map(line => line.replace(/ {2,}/g, ' ').trim()).filter(Boolean).join('\n');
+}
+const vttText = value => sanitizeCueText(value).replace(/&/g, '&amp;');
 
 export function toVtt(cues) {
-  return `WEBVTT\n\n${cues.map((c, i) => `${i + 1}\n${stamp(c.start, '.')} --> ${stamp(c.end, '.')} line:82%\n${cueText(c.text)}\n`).join('\n')}`;
+  return `WEBVTT\n\n${cues.map((c, i) => `${i + 1}\n${stamp(c.start, '.')} --> ${stamp(c.end, '.')} line:82%\n${vttText(c.text)}\n`).join('\n')}`;
 }
 
 export function toSrt(cues) {
-  return cues.map((c, i) => `${i + 1}\n${stamp(c.start, ',')} --> ${stamp(c.end, ',')}\n${c.text.replace(/-->/g, '→')}\n`).join('\n');
+  return cues.map((c, i) => `${i + 1}\n${stamp(c.start, ',')} --> ${stamp(c.end, ',')}\n${sanitizeCueText(c.text)}\n`).join('\n');
 }
 
 // Reads a PCM WAV duration from its header (null if not a WAV).
@@ -165,4 +212,10 @@ export function wavDurationSeconds(buf) {
 
 export function kineticWarnings(captions) {
   return captions.filter(c => c.text.trim().split(/\s+/).length > 3).map(c => `KINETIC_LONG_BEAT: "${c.text}" has more than 3 words`);
+}
+
+// Advisory: a kinetic line that had to shrink a lot to fit the frame.
+export function kineticFitWarnings(captions, width, height) {
+  const full = layout(width, height).kineticSize;
+  return captions.filter(c => kineticFontSize(c.text, width, height) < full * 0.6).map(c => `KINETIC_SHRUNK: "${c.text}" was shrunk to fit the frame width`);
 }

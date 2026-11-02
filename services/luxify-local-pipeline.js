@@ -11,8 +11,8 @@ import { access, copyFile, mkdir, open, readdir, readFile, realpath, rename, sta
 import { homedir, hostname } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
-import { AI_DISCLOSURE_TEXT, ASPECTS, CLIP_CAP_USD, CLIP_SHOT_MODELS, FONT_PRESETS, HEYGEN_AVATAR_USD_PER_SECOND, SHOT_MODELS, VIDEO_CAP_USD } from '../lib/luxify-local-brief.js';
-import { buildCues, bugFilter, disclosureFilters, endCardGraph, kineticFilters, kineticWarnings, subtitleFilters, themeTokens, toSrt, toVtt, wavDurationSeconds } from './luxify-local-overlays.js';
+import { AI_DISCLOSURE_TEXT, ASPECTS, CLIP_CAP_USD, parseAvatarConsent, CLIP_SHOT_MODELS, FONT_PRESETS, HEYGEN_AVATAR_USD_PER_SECOND, SHOT_MODELS, VIDEO_CAP_USD } from '../lib/luxify-local-brief.js';
+import { buildCues, bugFilter, disclosureFilters, endCardGraph, kineticFilters, kineticFitWarnings, kineticWarnings, subtitleFilters, themeTokens, toSrt, toVtt, wavDurationSeconds } from './luxify-local-overlays.js';
 import { cinematicFinishingFilterGraph } from './media-finisher.js';
 import { RUNWAY_MAX_DATA_URI_BYTES, RUNWAY_USD_PER_CREDIT, awaitRunwayTask, buildRunwayRequest, createRunwayTask, imageFileToDataUri, resumeRunwayTask } from './runway-models.js';
 
@@ -20,6 +20,15 @@ export const REQUIRED_FILTERS = Object.freeze(['drawtext', 'xfade', 'sidechainco
 const CLIP_CAP_CREDITS = Math.round(CLIP_CAP_USD / RUNWAY_USD_PER_CREDIT);
 const VIDEO_CAP_CREDITS = Math.round(VIDEO_CAP_USD / RUNWAY_USD_PER_CREDIT);
 const FPS = 30;
+// Size caps (QA L3). Local inputs larger than these are refused before ffmpeg.
+export const MAX_CLIP_BYTES = 1024 * 1024 * 1024;
+export const MAX_VOICE_BYTES = 200 * 1024 * 1024;
+export const MAX_LOGO_BYTES = 5 * 1024 * 1024;
+export const MAX_LOGO_PIXELS = 4096;
+export const MAX_CONSENT_BYTES = 64 * 1024;
+// QA M1: every ffmpeg call is killed after this long (overridable per call).
+export const FFMPEG_TIMEOUT_MS = 10 * 60 * 1000;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 // 1x1 png used only to validate i2v shots while planning; the real image is
 // loaded from disk (loadShotImage) right before submit.
 const PLAN_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
@@ -57,8 +66,50 @@ export async function resolveLocalClip(path, { briefDir, assetsRoot }) {
   let real;
   try { real = await realpath(resolve(briefDir, path)); } catch { throw fail(`Clip not found: ${basename(path)}`, 'CLIP_NOT_FOUND'); }
   if (!roots.some(root => inside(root, real))) throw fail('Clip must be inside the brief folder or the assets folder.', 'CLIP_OUTSIDE_ROOTS');
-  if (!(await stat(real)).isFile()) throw fail(`Clip is not a file: ${basename(path)}`, 'CLIP_NOT_FOUND');
+  const info = await stat(real);
+  if (!info.isFile()) throw fail(`Clip is not a file: ${basename(path)}`, 'CLIP_NOT_FOUND');
+  if (info.size > MAX_CLIP_BYTES) throw fail(`Clip ${basename(path)} is larger than ${MAX_CLIP_BYTES / 1024 / 1024} MB.`, 'CLIP_TOO_LARGE');
   return real;
+}
+
+// QA M1/L3: the logo must be a real PNG inside <assets>/overlays (symlinks are
+// resolved first), at most 5 MB and 4096 px a side. Missing -> null (skipped);
+// anything else wrong -> LOGO_INVALID, before any ffmpeg run.
+export async function validateLogo(logoPath, assetsRoot) {
+  if (!logoPath) return null;
+  if (!(await exists(logoPath))) return null;
+  const roots = await realRoots(join(resolve(assetsRoot), 'overlays'));
+  let real;
+  try { real = await realpath(logoPath); } catch { return null; }
+  if (!roots.some(root => inside(root, real))) throw fail('Logo must be inside the assets overlays folder (symlinks pointing elsewhere are refused).', 'LOGO_OUTSIDE_ROOTS');
+  const info = await stat(real);
+  if (!info.isFile()) throw fail('Logo is not a file.', 'LOGO_INVALID');
+  if (info.size > MAX_LOGO_BYTES) throw fail(`Logo is larger than ${MAX_LOGO_BYTES / 1024 / 1024} MB.`, 'LOGO_INVALID');
+  const handle = await open(real, 'r');
+  let head;
+  try { head = Buffer.alloc(24); await handle.read(head, 0, 24, 0); } finally { await handle.close(); }
+  if (!head.subarray(0, 8).equals(PNG_MAGIC) || head.toString('ascii', 12, 16) !== 'IHDR') throw fail('Logo is not a PNG file.', 'LOGO_INVALID');
+  const w = head.readUInt32BE(16), h = head.readUInt32BE(20);
+  if (!w || !h || w > MAX_LOGO_PIXELS || h > MAX_LOGO_PIXELS) throw fail(`Logo must be 1-${MAX_LOGO_PIXELS} px a side.`, 'LOGO_INVALID');
+  return real;
+}
+
+// QA M4: avatar shots fail closed without a valid local consent record inside
+// the brief folder or the assets root. Returns { file, sha256, subject, ... } for the receipt.
+export async function loadAvatarConsent(brief, { briefDir, assetsRoot, now = Date.now() }) {
+  if (!brief.shots.some(s => s.model === 'heygen_avatar')) return null;
+  if (!brief.avatarConsent?.record) throw fail('heygen_avatar shots need avatarConsent.record; refusing to render.', 'AVATAR_CONSENT_MISSING');
+  const roots = await realRoots(briefDir, assetsRoot);
+  let real;
+  try { real = await realpath(resolve(briefDir, brief.avatarConsent.record)); } catch { throw fail(`Avatar consent record not found: ${basename(brief.avatarConsent.record)}`, 'AVATAR_CONSENT_MISSING'); }
+  if (!roots.some(root => inside(root, real))) throw fail('Avatar consent record must be inside the brief folder or the assets folder.', 'AVATAR_CONSENT_OUTSIDE_ROOTS');
+  const info = await stat(real);
+  if (!info.isFile() || info.size > MAX_CONSENT_BYTES) throw fail('Avatar consent record must be a JSON file of at most 64 KB.', 'AVATAR_CONSENT_INVALID');
+  const raw = await readFile(real);
+  let value;
+  try { value = JSON.parse(raw.toString('utf8')); } catch { throw fail('Avatar consent record is not valid JSON.', 'AVATAR_CONSENT_INVALID'); }
+  const record = parseAvatarConsent(value, { now });
+  return { file: basename(real), sha256: createHash('sha256').update(raw).digest('hex'), subject: record.subject, method: record.method, consentedAt: record.consentedAt, expiresAt: record.expiresAt || null, scope: record.scope };
 }
 
 // QA L2: the voice track must live in the brief folder or the assets folder.
@@ -67,6 +118,8 @@ export async function assertVoiceContained(assets, briefDir) {
   let real;
   try { real = await realpath(assets.voice); } catch { throw fail('Voice file not found.', 'VOICE_NOT_FOUND'); }
   if (!roots.some(root => inside(root, real))) throw fail('Voice file must be inside the brief folder or the assets folder.', 'VOICE_OUTSIDE_ROOTS');
+  const info = await stat(real);
+  if (!info.isFile() || info.size > MAX_VOICE_BYTES) throw fail(`Voice must be a file of at most ${MAX_VOICE_BYTES / 1024 / 1024} MB.`, 'VOICE_INVALID');
   return real;
 }
 
@@ -102,8 +155,10 @@ export function planBrief(brief) {
     if (isClipShot(shot)) {
       // No Runway call. HeyGen avatar seconds are estimated at list price and
       // held to the same $1/clip cap (the render itself happens outside this tool).
-      const heygenEstUsd = shot.model === 'heygen_avatar' ? +(Math.ceil(shot.duration) * HEYGEN_AVATAR_USD_PER_SECOND).toFixed(2) : 0;
-      if (heygenEstUsd > CLIP_CAP_USD) throw fail(`Shot ${shot.id} exceeds the $${CLIP_CAP_USD} per-clip cap.`, 'CAP_EXCEEDED_CLIP');
+      // QA L2: compare the unrounded estimate so the cap can actually bind.
+      const rawUsd = shot.model === 'heygen_avatar' ? Math.ceil(shot.duration) * HEYGEN_AVATAR_USD_PER_SECOND : 0;
+      const heygenEstUsd = +rawUsd.toFixed(2);
+      if (rawUsd > CLIP_CAP_USD) throw fail(`Shot ${shot.id} exceeds the $${CLIP_CAP_USD} per-clip cap.`, 'CAP_EXCEEDED_CLIP');
       return { id: shot.id, briefModel: shot.model, model: shot.model, mode: 'local_clip', duration: shot.duration, ratio: ASPECTS[brief.aspect].ratio, credits: 0, estUsd: heygenEstUsd, heygenEstUsd };
     }
     const input = shotInput(brief, shot);
@@ -136,7 +191,7 @@ export function planBrief(brief) {
     theme: brief.theme,
     captionStyle: brief.captionStyle,
     disclosure: AI_DISCLOSURE_TEXT,
-    warnings: kineticWarnings(brief.captions || []),
+    warnings: [...kineticWarnings(brief.captions || []), ...kineticFitWarnings(brief.captions || [], ASPECTS[brief.aspect].width, ASPECTS[brief.aspect].height)],
   };
 }
 
@@ -201,21 +256,39 @@ export function ffFilterPath(path, platform = process.platform) {
 // QA L1: never overwrite. `-n` alone is not enough (ffmpeg 7 exits 0 when it
 // refuses an existing output), so the output (last arg) is checked first and
 // confirmed afterwards.
-export async function runFfmpeg(ffmpeg, args) {
+// QA M1: a failed, timed-out or empty run removes the partial output (it did
+// not exist before this call), so no 0-byte final is ever left behind.
+export async function runFfmpeg(ffmpeg, args, { timeoutMs = FFMPEG_TIMEOUT_MS } = {}) {
   const output = args[args.length - 1];
   const checkOutput = output !== '-';
   if (checkOutput && await exists(output)) throw fail(`${basename(output)} already exists; refusing to overwrite.`, 'OUTPUT_EXISTS');
-  await spawnFfmpeg(ffmpeg, args);
-  if (checkOutput && !(await exists(output))) throw fail('ffmpeg did not write its output.', 'FFMPEG_FAILED');
+  try {
+    await spawnFfmpeg(ffmpeg, args, timeoutMs);
+    if (checkOutput) {
+      let size = -1;
+      try { size = (await stat(output)).size; } catch { /* missing */ }
+      if (size < 0) throw fail('ffmpeg did not write its output.', 'FFMPEG_FAILED');
+      if (size === 0) throw fail('ffmpeg wrote an empty output.', 'FFMPEG_EMPTY_OUTPUT');
+    }
+  } catch (error) {
+    if (checkOutput) { try { await unlink(output); } catch { /* nothing written */ } }
+    throw error;
+  }
 }
 
-function spawnFfmpeg(ffmpeg, args) {
+function spawnFfmpeg(ffmpeg, args, timeoutMs) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(ffmpeg, ['-hide_banner', '-nostdin', '-n', ...args], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
     let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-3000); });
-    child.on('error', reject);
-    child.on('close', code => code === 0 ? resolvePromise() : reject(fail(`ffmpeg exited ${code}: ${stderr.slice(-800)}`, 'FFMPEG_FAILED')));
+    child.on('error', error => { clearTimeout(timer); reject(error); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (timedOut) return reject(fail(`ffmpeg timed out after ${Math.round(timeoutMs / 1000)} s and was killed.`, 'FFMPEG_TIMEOUT'));
+      return code === 0 ? resolvePromise() : reject(fail(`ffmpeg exited ${code}: ${stderr.slice(-800)}`, 'FFMPEG_FAILED'));
+    });
   });
 }
 
@@ -244,7 +317,7 @@ export function titleFilters(shot, font, width, height, textFiles, theme = 'dark
 }
 
 // Step 1+2 per clip: grade (media-finisher graph + optional LUT) and burn titles.
-export async function finishClip({ ffmpeg, input, output, shot, assets, width, height, workdir, grainStrength = 6, theme = 'dark' }) {
+export async function finishClip({ ffmpeg, input, output, shot, assets, width, height, workdir, grainStrength = 6, theme = 'dark', ffmpegTimeoutMs }) {
   const textFiles = {};
   for (const [i, t] of shot.titles.entries()) {
     textFiles[`${i}-main`] = join(workdir, `${shot.id}-t${i}.txt`);
@@ -264,7 +337,7 @@ export async function finishClip({ ffmpeg, input, output, shot, assets, width, h
   const hold = isClipShot(shot) ? [`tpad=stop_mode=clone:stop_duration=${shot.duration}`] : [];
   const vf = [grade, ...titleFilters(shot, assets.font, width, height, textFiles, theme), ...hold, `fps=${FPS}`, 'settb=AVTB', 'format=yuv420p'].join(',');
   const seek = isClipShot(shot) && shot.clipStart ? ['-ss', String(shot.clipStart)] : [];
-  await runFfmpeg(ffmpeg, [...seek, '-i', input, '-t', String(shot.duration), '-vf', vf, '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', output]);
+  await runFfmpeg(ffmpeg, [...seek, '-i', input, '-t', String(shot.duration), '-vf', vf, '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', output], { timeoutMs: ffmpegTimeoutMs });
 }
 
 // Step 3: xfade chain. Returns filter text and the final video duration.
@@ -290,7 +363,7 @@ export function xfadeGraph(durations, transitions) {
 }
 
 // Steps 3-5: transitions, logo, music ducked under voice, loudness, mux.
-export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, output, workdir, width, height, cues = [] }) {
+export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, output, workdir, width, height, cues = [], ffmpegTimeoutMs }) {
   const { graph, duration: contentDuration } = xfadeGraph(durations, brief.transitions);
   const theme = brief.theme || 'dark';
   const endCard = brief.endCard?.enabled ? brief.endCard : null;
@@ -354,7 +427,7 @@ export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, o
   }
   args.push('-filter_complex', filters.join(';'), '-map', video, '-map', '[aout]', '-t', String(duration),
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', output);
-  await runFfmpeg(ffmpeg, args);
+  await runFfmpeg(ffmpeg, args, { timeoutMs: ffmpegTimeoutMs });
   return { duration, contentDuration, endCard: Boolean(endCard), bug: logoIdx !== null && brief.bug?.enabled !== false };
 }
 
@@ -380,6 +453,16 @@ export async function writeJsonAtomic(path, data) {
   try { const dir = await open(dirname(path), 'r'); try { await dir.sync(); } finally { await dir.close(); } } catch { /* dir fsync unsupported (Windows) */ }
 }
 
+// QA L1: HeyGen avatar spend (estimated) joins the cumulative ledger. Each
+// distinct avatar clip (by sha256) counts once, across all runs and resumes.
+export function committedAvatarUsd(state) {
+  return +(state.avatarClips || []).reduce((sum, a) => sum + (a.estUsd || 0), 0).toFixed(2);
+}
+
+export function committedUsd(state) {
+  return +(committedCredits(state) * RUNWAY_USD_PER_CREDIT + committedAvatarUsd(state)).toFixed(2);
+}
+
 export function committedCredits(state) {
   return (state.attempts || []).filter(a => COUNTED.has(a.status)).reduce((sum, a) => sum + (a.credits || 0), 0);
 }
@@ -389,11 +472,11 @@ export function pendingAttempts(state) {
 }
 
 export function createLedger(path, initial) {
-  const state = { ...initial, attempts: [...(initial.attempts || [])], runs: [...(initial.runs || [])] };
+  const state = { ...initial, attempts: [...(initial.attempts || [])], runs: [...(initial.runs || [])], avatarClips: [...(initial.avatarClips || [])] };
   const view = () => {
     const tasks = {};
     for (const a of state.attempts) tasks[a.shotId] = { taskId: a.taskId ?? null, status: a.status, credits: a.credits, model: a.model, run: a.run, ...(a.sha256 ? { sha256: a.sha256 } : {}), ...(a.errorCode ? { errorCode: a.errorCode } : {}), ...(a.providerFailureCode ? { providerFailureCode: a.providerFailureCode } : {}) };
-    return { ...state, tasks, committedCredits: committedCredits(state), committedEstUsd: +(committedCredits(state) * RUNWAY_USD_PER_CREDIT).toFixed(2) };
+    return { ...state, tasks, committedCredits: committedCredits(state), committedEstUsd: committedUsd(state), committedAvatarEstUsd: committedAvatarUsd(state) };
   };
   const save = () => writeJsonAtomic(path, view());
   return {
@@ -401,6 +484,8 @@ export function createLedger(path, initial) {
     view,
     latest: shotId => [...state.attempts].reverse().find(a => a.shotId === shotId) || null,
     committed: () => committedCredits(state),
+    committedUsd: () => committedUsd(state),
+    async addAvatarClip(entry) { if (state.avatarClips.some(a => a.sha256 === entry.sha256)) return false; state.avatarClips.push({ ...entry, recordedAt: new Date().toISOString() }); await save(); return true; },
     async add(attempt) { const a = { ...attempt, updatedAt: new Date().toISOString() }; state.attempts.push(a); await save(); return a; },
     async update(attempt, patch) { Object.assign(attempt, patch, { updatedAt: new Date().toISOString() }); await save(); },
     async set(patch) { Object.assign(state, patch); await save(); },
@@ -450,7 +535,15 @@ export async function generateClips(plan, { brief, briefDir, assetsRoot, runwayE
     const briefShot = brief.shots[i];
     if (isClipShot(briefShot)) {
       const file = await resolveLocalClip(briefShot.clip, { briefDir, assetsRoot });
-      results.push({ ...shot, file, sha256: await sha256File(file), providerTaskId: null, reused: false, clipFile: basename(file) });
+      const sha256 = await sha256File(file);
+      if (shot.heygenEstUsd) {
+        const known = (ledger.state.avatarClips || []).some(a => a.sha256 === sha256);
+        if (!known && ledger.committedUsd() + shot.heygenEstUsd > VIDEO_CAP_USD + 1e-9) {
+          throw fail(`Avatar shot ${shot.id} would take this video past the $${VIDEO_CAP_USD} cap across runs (committed $${ledger.committedUsd().toFixed(2)}).`, 'CAP_EXCEEDED_VIDEO_CUMULATIVE');
+        }
+        await ledger.addAvatarClip({ shotId: shot.id, run, sha256, seconds: shot.duration, estUsd: shot.heygenEstUsd });
+      }
+      results.push({ ...shot, file, sha256, providerTaskId: null, reused: false, clipFile: basename(file) });
       continue;
     }
     const hash = inputHash(briefShot, shot);
@@ -478,7 +571,7 @@ export async function generateClips(plan, { brief, briefDir, assetsRoot, runwayE
         }
       }
     }
-    if (ledger.committed() + shot.credits > videoCap) {
+    if (ledger.committed() + shot.credits > videoCap || ledger.committedUsd() + shot.credits * RUNWAY_USD_PER_CREDIT > VIDEO_CAP_USD + 1e-9) {
       throw fail(`Submitting shot ${shot.id} would take this video past the $${VIDEO_CAP_USD} cap across runs (committed ${ledger.committed()} credits).`, 'CAP_EXCEEDED_VIDEO_CUMULATIVE');
     }
     const input = briefShot.promptImage ? { ...shot.input, promptImage: await loadShotImage(briefShot.promptImage, { briefDir, assetsRoot }) } : shot.input;
@@ -572,7 +665,7 @@ export async function crossCheckReceipt(outDir, receipt) {
       if (FINAL.has(a.status) && now.status !== a.status) throw fail(`receipt.json changed a final task status (…${a.taskId.slice(-4)}); refusing to start.`, 'RECEIPT_TAMPERED');
       if ((now.credits || 0) < (a.credits || 0)) throw fail(`receipt.json lowered the credits of task …${a.taskId.slice(-4)}; refusing to start.`, 'RECEIPT_TAMPERED');
     }
-    if (committedCredits(receipt) < committedCredits(old)) throw fail('receipt.json shows less committed spend than receipt-history; refusing to start.', 'RECEIPT_TAMPERED');
+    if (committedCredits(receipt) < committedCredits(old) || committedAvatarUsd(receipt) < committedAvatarUsd(old)) throw fail('receipt.json shows less committed spend than receipt-history; refusing to start.', 'RECEIPT_TAMPERED');
   }
   const tracked = new Set(receipt.attempts.map(a => a.clipFile).filter(Boolean));
   const untracked = clips.filter(name => !tracked.has(name));
@@ -593,17 +686,20 @@ export async function receiptStatus(outDir, plan) {
 export async function runPipeline(options) {
   const briefDir = options.briefDir || process.cwd();
   await assertVoiceContained(options.assets, briefDir);
+  // QA M4 / M1: consent and logo are checked before the lock or any spend.
+  const consent = await loadAvatarConsent(options.brief, { briefDir, assetsRoot: options.assets.root, now: options.now });
+  const logo = await validateLogo(options.assets.logo, options.assets.root);
   await mkdir(options.outDir, { recursive: true });
   const lock = await acquireLock(options.outDir, { breakLock: Boolean(options.breakLock) });
   try {
     await cleanTempFiles(options.outDir);
-    return await runPipelineLocked({ ...options, briefDir });
+    return await runPipelineLocked({ ...options, briefDir, consent, validLogo: logo });
   } finally {
     await lock.release();
   }
 }
 
-async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg, runwayEnv, runwayDeps, resume = false }) {
+async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg, runwayEnv, runwayDeps, resume = false, consent = null, validLogo = null, ffmpegTimeoutMs }) {
   const { width, height } = ASPECTS[brief.aspect];
   const receiptPath = join(outDir, 'receipt.json');
   let prior = null;
@@ -643,20 +739,20 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
   let assembled;
   let cues = [];
   // Optional logo: missing file -> skip bug and end-card logo (recorded below).
-  const logoPresent = assets.logo ? await exists(assets.logo) : false;
-  const renderAssets = { ...assets, logo: logoPresent ? assets.logo : null };
+  const logoPresent = Boolean(validLogo);
+  const renderAssets = { ...assets, logo: validLogo };
   const voiceSeconds = wavDurationSeconds(await readFile(assets.voice)) ?? null;
   try {
     clips = await generateClips(plan, { brief, briefDir, assetsRoot: assets.root, runwayEnv, runwayDeps, clipsDir: join(outDir, 'clips'), ledger, run });
     const finished = [];
     for (const [i, clip] of clips.entries()) {
       const output = join(workdir, `${String(i).padStart(2, '0')}-${clip.id}.mp4`);
-      await finishClip({ ffmpeg, input: clip.file, output, shot: brief.shots[i], assets: renderAssets, width, height, workdir, theme: brief.theme });
+      await finishClip({ ffmpeg, input: clip.file, output, shot: brief.shots[i], assets: renderAssets, width, height, workdir, theme: brief.theme, ffmpegTimeoutMs });
       finished.push(output);
     }
     const contentSeconds = plan.timelineSeconds - (brief.endCard?.enabled ? brief.endCard.duration : 0);
     cues = buildCues(brief.script, Math.min(voiceSeconds ?? contentSeconds, contentSeconds));
-    assembled = await assembleFinal({ ffmpeg, clips: finished, durations: brief.shots.map(s => s.duration), brief, assets: renderAssets, output: finalPath, workdir, width, height, cues });
+    assembled = await assembleFinal({ ffmpeg, clips: finished, durations: brief.shots.map(s => s.duration), brief, assets: renderAssets, output: finalPath, workdir, width, height, cues, ffmpegTimeoutMs });
     ({ duration } = assembled);
   } catch (error) {
     try { await ledger.endRun({ status: 'aborted', errorCode: error.code || 'ERROR' }); } catch { /* keep original error */ }
@@ -681,6 +777,7 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
     ...(plan.heygenEstUsd ? { heygenEstUsd: plan.heygenEstUsd } : {}),
     overlays: { theme: brief.theme, captionStyle: brief.captionStyle, kineticBeats: brief.captions.length, disclosure: AI_DISCLOSURE_TEXT, bug: assembled.bug ? 'on' : (assets.logo && !logoPresent ? 'skipped-logo-missing' : 'off'), endCard: assembled.endCard ? (logoPresent ? 'logo' : 'text-only') : 'off', subtitleTiming: 'approx', sidecars },
     caps: plan.caps,
+    ...(consent ? { avatarConsent: consent } : {}),
     assets: { font: await assetHash(assets.font), lut: await assetHash(assets.lut), music: await assetHash(assets.music), logo: await assetHash(renderAssets.logo), voice: await assetHash(assets.voice), voiceSource: brief.voice.source, heygenJobId: brief.voice.jobId || null },
     final: { file: finalName, bytes: info.size, sha256: await sha256File(finalPath), durationSeconds: duration, contentSeconds: assembled.contentDuration },
   });
