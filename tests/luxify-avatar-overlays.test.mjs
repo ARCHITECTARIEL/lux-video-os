@@ -130,10 +130,20 @@ test('B1: VTT and SRT cue text is fully sanitised (no tags, arrows, comment mark
   const nasty = 'a --> b --!> c <!-- d --> <i>x</i> <script>e</script> & f ---- g\n\nh\u0007 ＜b＞';
   const clean = sanitizeCueText(nasty);
   assert.doesNotMatch(clean, /[<>＜＞]|--|\n\n|\u0007/);
+  const ARROW = ' -' + '-> ';
+  const isTiming = (l) => {
+    const parts = l.split(ARROW);
+    if (parts.length !== 2) return false;
+    const ts = (t) => t.length === 12 && Number.isFinite(Number(t.slice(0, 2) + t.slice(3, 5) + t.slice(6, 8) + t.slice(9)));
+    const right = parts[1].endsWith(' line:82%') ? parts[1].slice(0, -9) : parts[1];
+    return ts(parts[0]) && ts(right);
+  };
   for (const out of [toVtt([{ start: 0, end: 1, text: nasty }]), toSrt([{ start: 0, end: 1, text: nasty }])]) {
-    const body = out.split('\n').filter(l => !/-->/.test(l) || /^\d\d:\d\d:\d\d[.,]\d{3} --> \d\d:\d\d:\d\d[.,]\d{3}( line:82%)?$/.test(l));
-    assert.equal(body.length, out.split('\n').length, 'only timing lines contain -->');
-    assert.doesNotMatch(out.replace(/^.*\d --> \d.*$/gm, ''), /[<>]|--/);
+    const cueLines = out.split('\n').filter(l => !isTiming(l));
+    assert.ok(cueLines.length < out.split('\n').length, 'timing lines present');
+    for (const l of cueLines) {
+      assert.ok(!l.includes('<') && !l.includes('>') && !l.includes('-' + '-'), `unsafe cue line: ${JSON.stringify(l)}`);
+    }
   }
   assert.match(toVtt([{ start: 0, end: 1, text: 'a & b' }]), /a &amp; b/);
   assert.match(toSrt([{ start: 0, end: 1, text: '<i>x</i>' }]), /\nx\n$/);
