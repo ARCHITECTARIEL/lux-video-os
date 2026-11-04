@@ -10,7 +10,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { assText, buildCues, cardLayout, cardPlate, cardPlatePad, cardsAss, endCardGraph, layout, scaleCube, subtitleBox, subtitleMaxChars, subtitleTop, SUBTITLE_EM_WIDTH } from '../services/luxify-local-overlays.js';
-import { CARD_FONT_FAMILY, MAX_LUT_BYTES, ffFilterPath, fontFamilyName, parseFontNameTable, renameFontFamily, resolveAssets, resolveFfmpeg, shotWindows, validateAssetFile, validateAssets } from '../services/luxify-local-pipeline.js';
+import { titleFilters, CARD_FONT_FAMILY, MAX_LUT_BYTES, ffFilterPath, fontFamilyName, parseFontNameTable, renameFontFamily, resolveAssets, resolveFfmpeg, shotWindows, validateAssetFile, validateAssets } from '../services/luxify-local-pipeline.js';
 
 const FIXTURE_FONT = fileURLToPath(new URL('./fixtures/fonts/ofl-test-bold.ttf', import.meta.url));
 const LOGO = fileURLToPath(new URL('../brand-assets/overlays/lux-logo.png', import.meta.url));
@@ -193,4 +193,17 @@ test('T1 frame: end card shows the logo at 0.40 H and the CTA pill at 0.60 H', {
   assert.ok(bg < 40, `navy background (${bg.toFixed(1)})`);
   assert.ok(logo > 800, `logo pixels around 0.40 H: ${logo}`);
   assert.ok(cta > 150, `white CTA pill at 0.60 H (${cta.toFixed(1)})`);
+});
+
+test('v3c: with burned-in subtitles the lower-third plate ends above the subtitle plate', () => {
+  const shot = { titles: [{ kind: 'lower_third', text: 'Name', subtext: 'Role', start: 0, end: 3 }] };
+  const files = { '0-main': '/a.txt', '0-sub': '/b.txt' };
+  for (const [w, h] of [[1080, 1920], [1920, 1080]]) {
+    const avoid = subtitleTop(w, h) - 20;
+    const box = titleFilters(shot, '/f.ttf', w, h, files, 'dark', { avoidBottom: avoid }).find(f => f.startsWith('drawbox'));
+    const [, y, ph] = box.match(/y=ih\*([\d.]+):w=iw\*0\.6:h=(\d+)/);
+    assert.ok(Number(y) * h + Number(ph) <= avoid + 1, `${w}x${h}`);
+  }
+  const free = titleFilters(shot, '/f.ttf', 1080, 1920, files).find(f => f.startsWith('drawbox'));
+  assert.match(free, /y=ih\*0\.67:/);
 });

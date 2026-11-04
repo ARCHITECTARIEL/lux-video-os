@@ -349,15 +349,18 @@ export async function sha256File(path) {
   return hash.digest('hex');
 }
 
-export function titleFilters(shot, font, width, height, textFiles, theme = 'dark') {
+export function titleFilters(shot, font, width, height, textFiles, theme = 'dark', { avoidBottom = null } = {}) {
   const tk = themeTokens(theme);
   // 1104: in portrait the lower third sat at 0.76 H and its plate ran into the
   // AI label at 0.83 H; it now ends above the label.
-  const ly = height > width ? 0.67 : 0.76;
+  const ly0 = height > width ? 0.67 : 0.76;
   return shot.titles.flatMap((t, i) => {
     const enable = `enable='between(t,${t.start},${t.end})'`;
     const main = textFiles[`${i}-main`];
     const size = Math.round(height / (t.kind === 'banner' ? 14 : 20));
+    // v3c: with burned-in subtitles the lower-third plate ends above the subtitle plate.
+    const plateH = Math.round(size * (t.subtext ? 2.8 : 1.7));
+    const ly = avoidBottom == null ? ly0 : Math.min(ly0, Math.floor(((avoidBottom - plateH) / height) * 1000) / 1000);
     const base = `fontfile=${ffFilterPath(font)}:expansion=none:fontcolor=${tk.text}:fontsize=${size}:borderw=2:bordercolor=${tk.stroke}`;
     if (t.kind === 'banner') {
       return [`drawbox=x=0:y=ih*0.08:w=iw:h=${Math.round(size * 1.8)}:color=${tk.titlePlate}:t=fill:${enable}`,
@@ -371,7 +374,7 @@ export function titleFilters(shot, font, width, height, textFiles, theme = 'dark
 }
 
 // Step 1+2 per clip: grade (media-finisher graph + optional LUT) and burn titles.
-export async function finishClip({ ffmpeg, input, output, shot, assets, width, height, workdir, grainStrength = 6, theme = 'dark', lutStrength = 1, ffmpegTimeoutMs }) {
+export async function finishClip({ ffmpeg, input, output, shot, assets, width, height, workdir, grainStrength = 6, theme = 'dark', lutStrength = 1, ffmpegTimeoutMs, avoidBottom = null }) {
   const textFiles = {};
   for (const [i, t] of shot.titles.entries()) {
     textFiles[`${i}-main`] = join(workdir, `${shot.id}-t${i}.txt`);
@@ -394,7 +397,7 @@ export async function finishClip({ ffmpeg, input, output, shot, assets, width, h
   // Clip shots: hold the last frame if the clip is short; their audio is always
   // dropped (-an) so the master voice track stays the only voice.
   const hold = isClipShot(shot) ? [`tpad=stop_mode=clone:stop_duration=${shot.duration}`] : [];
-  const vf = [grade, ...titleFilters(shot, assets.font, width, height, textFiles, theme), ...hold, `fps=${FPS}`, 'settb=AVTB', 'format=yuv420p'].join(',');
+  const vf = [grade, ...titleFilters(shot, assets.font, width, height, textFiles, theme, { avoidBottom }), ...hold, `fps=${FPS}`, 'settb=AVTB', 'format=yuv420p'].join(',');
   const seek = isClipShot(shot) && shot.clipStart ? ['-ss', String(shot.clipStart)] : [];
   await runFfmpeg(ffmpeg, [...seek, '-i', input, '-t', String(shot.duration), '-vf', vf, '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', output], { timeoutMs: ffmpegTimeoutMs });
 }
@@ -933,7 +936,7 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
     const finished = [];
     for (const [i, clip] of clips.entries()) {
       const output = join(workdir, `${String(i).padStart(2, '0')}-${clip.id}.mp4`);
-      await finishClip({ ffmpeg, input: clip.file, output, shot: brief.shots[i], assets: renderAssets, width, height, workdir, theme: brief.theme, lutStrength: brief.lutStrength ?? 1, ffmpegTimeoutMs });
+      await finishClip({ ffmpeg, input: clip.file, output, shot: brief.shots[i], assets: renderAssets, width, height, workdir, theme: brief.theme, lutStrength: brief.lutStrength ?? 1, ffmpegTimeoutMs, avoidBottom: (brief.captionStyle === 'subtitle' || brief.subtitles?.burnIn) ? subtitleTop(width, height) - Math.round(Math.min(width, height) * 0.02) : null });
       finished.push(output);
     }
     const contentSeconds = plan.timelineSeconds - (brief.endCard?.enabled ? brief.endCard.duration : 0);
