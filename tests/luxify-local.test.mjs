@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -95,7 +95,8 @@ test('--live refuses without RUNWAYML_API_SECRET and on cap breach, before any s
   try {
     const assets = join(dir, 'assets');
     for (const sub of ['fonts', 'luts', 'music', 'overlays']) await mkdir(join(assets, sub), { recursive: true });
-    for (const f of ['fonts/lux-sans-bold.ttf', 'luts/id.cube', 'music/bed.wav']) await writeFile(join(assets, f), 'x');
+    for (const f of ['luts/id.cube', 'music/bed.wav']) await writeFile(join(assets, f), 'x');
+    await writeFile(join(assets, 'fonts/lux-sans-bold.ttf'), readFileSync(new URL('./fixtures/fonts/ofl-test-bold.ttf', import.meta.url))); // fonts are parsed up front (QA L5)
     // A real (1x1) PNG: the logo is validated before any live gate (QA M1).
     await writeFile(join(assets, 'overlays/logo.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
     await writeFile(join(dir, 'voice.wav'), 'x');

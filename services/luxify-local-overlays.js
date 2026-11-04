@@ -52,6 +52,20 @@ export function kineticFontSize(textValue, width, height) {
   return Math.max(16, Math.min(L.kineticSize, fit));
 }
 
+// QA N1: subtitle lines wrap by frame width. Sans glyphs at the subtitle size
+// average under 0.6 em, so this keeps every line inside the plate (about 25
+// characters in 9:16, capped at 42 in 16:9).
+export const SUBTITLE_EM_WIDTH = 0.6;
+export function subtitleMaxChars(width, height) {
+  const L = layout(width, height);
+  return Math.max(12, Math.min(42, Math.floor((width * 0.84 * 0.92) / (L.subtitleSize * SUBTITLE_EM_WIDTH))));
+}
+
+// Top edge (px) of the tallest (2-line) subtitle plate; cards stay above it.
+export function subtitleTop(width, height) {
+  return subtitleBox('a\nb', width, height).y;
+}
+
 export function subtitleBox(textValue, width, height) {
   const L = layout(width, height);
   const lines = textValue.split('\n').length;
@@ -232,6 +246,7 @@ export function scaleCube(text, strength) {
   const sizeLine = lines.find(l => /^\s*LUT_3D_SIZE\s+\d+/.test(l));
   if (!sizeLine) throw Object.assign(new Error('Not a 3D .cube LUT (LUT_3D_SIZE missing)'), { code: 'LUT_INVALID' });
   const N = Number(sizeLine.trim().split(/\s+/)[1]);
+  if (!Number.isInteger(N) || N < 2 || N > 256) throw Object.assign(new Error(`LUT_3D_SIZE must be 2-256 (got ${N})`), { code: 'LUT_INVALID' });
   const clamp = v => Math.min(1, Math.max(0, v));
   let k = 0;
   const out = lines.map(line => {
@@ -270,29 +285,55 @@ export function cardLines(textValue, maxLines = 3) {
 }
 
 // Card geometry for one beat. `onAvatar` beats sit lower (block centre at
-// 0.54 H, under Kristian's face, which sits in the top third) and b-roll beats
+// 0.54 H, under the presenter's face, which sits in the top third) and b-roll beats
 // sit at 0.46 H. Bold caps run ~0.74 em, so lines shrink to fit 84% width.
 export const CARD_EM_WIDTH = 0.8;
-export function cardLayout(textValue, width, height, { onAvatar = false } = {}) {
+// `avoidBottom` (px): when subtitles are burned in, the whole card block
+// (plate included) ends above this line; the block moves up first, then
+// shrinks if it would climb past the logo bug zone (QA N2).
+export function cardLayout(textValue, width, height, { onAvatar = false, avoidBottom = null } = {}) {
   const u = Math.min(width, height);
   const lines = cardLines(textValue);
-  const full = Math.round(u * 0.2);
+  let full = Math.round(u * 0.2);
   // One size per card (the widest line decides) so the keyword bar is never
   // smaller than the lines above it.
   const longest = Math.max(1, ...lines.map(l => [...l].length));
-  const size = Math.max(24, Math.min(full, Math.floor((width * 0.84) / (longest * CARD_EM_WIDTH))));
-  const sizes = lines.map(() => size);
   const gap = Math.round(u * 0.025);
+  const topLimit = Math.round(height * (height > width ? 0.16 : 0.15));
+  let size, total, y;
+  for (;;) {
+    size = Math.max(24, Math.min(full, Math.floor((width * 0.84) / (longest * CARD_EM_WIDTH))));
+    total = Math.round(size * 0.95) * lines.length + gap * (lines.length - 1);
+    const centre = Math.round(height * (height > width ? (onAvatar ? 0.54 : 0.46) : 0.5));
+    y = centre - Math.round(total / 2);
+    const platePad = cardPlatePad(size);
+    if (avoidBottom != null && y + total + platePad > avoidBottom) y = avoidBottom - platePad - total;
+    if (avoidBottom == null || y - platePad >= topLimit || size <= 24) break;
+    full = size - 4;
+  }
+  const sizes = lines.map(() => size);
   const heights = sizes.map(s => Math.round(s * 0.95));
-  const total = heights.reduce((a, h) => a + h, 0) + gap * (lines.length - 1);
-  const centre = Math.round(height * (height > width ? (onAvatar ? 0.54 : 0.46) : 0.5));
-  let y = centre - Math.round(total / 2);
   const x = Math.round(width * 0.07);
   return lines.map((text, i) => {
     const row = { text, size: sizes[i], x, y, h: heights[i], keyword: i === lines.length - 1 && lines.length > 0 };
     y += heights[i] + gap;
     return row;
   });
+}
+
+export const cardPlatePad = size => Math.round(size * 0.3);
+
+// Translucent dark plate behind the whole card block (QA N2) so white caps stay
+// readable on light footage. Width is estimated from the widest line.
+export function cardPlate(rows, width) {
+  if (!rows.length) return null;
+  const size = rows[0].size, pad = cardPlatePad(size);
+  const longest = Math.max(...rows.map(r => [...r.text].length));
+  const x = Math.max(0, rows[0].x - pad);
+  const w = Math.min(width - x, Math.round(longest * size * CARD_EM_WIDTH) + pad * 2 + Math.round(size * 0.32));
+  const y = rows[0].y - pad;
+  const last = rows[rows.length - 1];
+  return { x, y, w, h: last.y + last.h - y + pad };
 }
 
 const assTime = sec => {
@@ -304,21 +345,24 @@ const assTime = sec => {
 // are dropped from user text (plus control characters).
 export const assText = value => String(value).replace(/[\u0000-\u001f\u007f{}\\]/g, '').trim();
 
-export function cardsAss(captions, { width, height, fontName, avatarWindows = [] }) {
+export function cardsAss(captions, { width, height, fontName, avatarWindows = [], avoidBottom = null }) {
   const blue = assColor(BRAND_BLUE);
   const head = [
     '[Script Info]', 'ScriptType: v4.00+', `PlayResX: ${width}`, `PlayResY: ${height}`, 'WrapStyle: 2', 'ScaledBorderAndShadow: yes', '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Card,${fontName},80,&H00FFFFFF,&H00FFFFFF,&H00000000,&H8C000000,-1,0,0,0,100,100,0,0,1,0,5,7,0,0,0,1`,
+    `Style: Card,${fontName},80,&H00FFFFFF,&H00FFFFFF,&H40000000,&H8C000000,-1,0,0,0,100,100,0,0,1,4,3,7,0,0,0,1`,
     `Style: Key,${fontName},80,&H00FFFFFF,&H00FFFFFF,${blue},&H00000000,-1,0,0,0,100,100,0,0,3,0,0,7,0,0,0,1`,
+    'Style: Plate,Arial,20,&H50200A05,&H50200A05,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1',
     '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
   const events = [];
   captions.forEach((c, beat) => {
     const mid = (c.start + c.end) / 2;
     const onAvatar = avatarWindows.some(w => mid >= w.start && mid < w.end);
-    const rows = cardLayout(c.text, width, height, { onAvatar });
+    const rows = cardLayout(c.text, width, height, { onAvatar, avoidBottom }).filter(r => assText(r.text));
+    const plate = cardPlate(rows, width);
+    if (plate) events.push(`Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Plate,,0,0,0,,{\\an7\\pos(${plate.x},${plate.y})\\fad(120,120)\\p1}m 0 0 l ${plate.w} 0 ${plate.w} ${plate.h} 0 ${plate.h}{\\p0}`);
     rows.forEach((r, i) => {
       const d = i * 80; // stagger (ms)
       const text = assText(r.text);
@@ -330,10 +374,10 @@ export function cardsAss(captions, { width, height, fontName, avatarWindows = []
         const x = r.x + pad, y = r.y;
         events.push(`Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Key,,0,0,0,,{\\an7\\pos(${x},${y})\\fs${r.size}\\bord${pad}\\fscx0\\alpha&HFF&\\t(${d},${d + 1},\\alpha&H00&)\\t(${d},${d + 220},0.6,\\fscx104)\\t(${d + 220},${d + 300},\\fscx100)${fade}}${text}`);
       } else if (beat % 2 === 0) {
-        events.push(`Dialogue: 2,${assTime(c.start)},${assTime(c.end)},Card,,0,0,0,,{\\an7\\pos(${r.x},${r.y})\\fs${r.size}\\org(${r.x},${r.y + Math.round(r.h / 2)})\\fscx40\\fscy40\\alpha&HFF&\\t(${d},${d + 150},\\fscx112\\fscy112\\alpha&H00&)\\t(${d + 150},${d + 260},\\fscx100\\fscy100)${fade}}${text}`);
+        events.push(`Dialogue: 2,${assTime(c.start)},${assTime(c.end)},Card,,0,0,0,,{\\an7\\pos(${r.x},${r.y})\\fs${r.size}\\bord${Math.max(2, Math.round(r.size * 0.04))}\\org(${r.x},${r.y + Math.round(r.h / 2)})\\fscx40\\fscy40\\alpha&HFF&\\t(${d},${d + 150},\\fscx112\\fscy112\\alpha&H00&)\\t(${d + 150},${d + 260},\\fscx100\\fscy100)${fade}}${text}`);
       } else {
         const from = r.x - Math.round(width * 0.35);
-        events.push(`Dialogue: 2,${assTime(c.start)},${assTime(c.end)},Card,,0,0,0,,{\\an7\\move(${from},${r.y},${r.x},${r.y},${d},${d + 240})\\fs${r.size}\\alpha&HFF&\\t(${d},${d + 160},\\alpha&H00&)${fade}}${text}`);
+        events.push(`Dialogue: 2,${assTime(c.start)},${assTime(c.end)},Card,,0,0,0,,{\\an7\\move(${from},${r.y},${r.x},${r.y},${d},${d + 240})\\fs${r.size}\\bord${Math.max(2, Math.round(r.size * 0.04))}\\alpha&HFF&\\t(${d},${d + 160},\\alpha&H00&)${fade}}${text}`);
       }
     });
   });

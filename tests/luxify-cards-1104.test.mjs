@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import { parseBrief, CAPTION_STYLES } from '../lib/luxify-local-brief.js';
@@ -72,7 +73,8 @@ test('cardsAss: brand blue bar, pop and slide entrances, no bottom-centred lines
   assert.match(ass, /PlayResX: 720\nPlayResY: 1280/);
   assert.match(ass, /Style: Key,LuxCardBold,.*,&H009E2B1A,.*,-1,0,0,0,100,100,0,0,3,/);
   assert.equal(BRAND_BLUE, '1A2B9E');
-  const ev = ass.split('\n').filter(l => l.startsWith('Dialogue'));
+  const ev = ass.split('\n').filter(l => l.startsWith('Dialogue') && !l.includes(',Plate,'));
+  assert.equal(ass.split('\n').filter(l => l.includes(',Plate,')).length, 2, 'one plate per card');
   assert.equal(ev.length, 4);
   assert.ok(ev.some(l => /\\fscx40\\fscy40/.test(l)), 'pop');
   assert.ok(ev.some(l => /\\move\(/.test(l)), 'slide');
@@ -86,8 +88,9 @@ test('assText strips ASS override syntax from user text', () => {
 });
 
 test('renameFontFamily gives the brand file a unique libass name; glyph bytes kept', async () => {
-  const path = process.env.LUX_TEST_FONT || '/workspace/lux-assets/fonts/lux-sans-bold.ttf';
-  let buf; try { buf = await readFile(path); } catch { return; } // asset pack not present
+  // QA T1: committed OFL fixture (Montserrat Bold subset), never skipped.
+  const path = fileURLToPath(new URL('./fixtures/fonts/ofl-test-bold.ttf', import.meta.url));
+  const buf = await readFile(path);
   assert.equal(await fontFamilyName(path), 'Montserrat');
   const dir = await mkdtemp(join(tmpdir(), 'card-font-'));
   const out = join(dir, 'f.ttf');

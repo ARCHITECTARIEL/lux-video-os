@@ -7,15 +7,15 @@ folder first when `--assets` is not given. Anything missing here falls back to
 
 | Path | Source | License |
 |---|---|---|
-| `luts/lux-cinematic.cube`, `luts/lux-clean.cube`, `luts/lux-warm.cube` | Generated in-house by OSO Consulting / LUX Video OS (33^3 3D LUTs). Copied from `C:\Users\ariel\lux-assets\luts` on 2026-11-04; SHA-256 verified against the PC. | Owned by OSO Consulting; no third-party rights. |
-| `overlays/lux-logo.png` | LUX Digital Marketing logo supplied by Ariel (OSO Consulting), 797x313 RGBA, 2026-11-04. | Owned by OSO Consulting / LUX Digital Marketing. All rights reserved; not covered by any open-source license in this repo. |
+| `luts/lux-cinematic.cube`, `luts/lux-clean.cube`, `luts/lux-warm.cube` | Generated in-house by OSO Consulting / LUX Video OS (33^3 3D LUTs). Copied from the owner's `%USERPROFILE%\lux-assets\luts` on 2026-11-04; SHA-256 verified against the source. | Owned by OSO Consulting; no third-party rights. |
+| `overlays/lux-logo.png` | LUX Digital Marketing logo supplied by the owner (OSO Consulting), 797x313 RGBA, 2026-11-04. | Owned by OSO Consulting / LUX Digital Marketing. All rights reserved; not covered by any open-source license in this repo. |
 | `overlays/lux-logo-dark.png` | Derived from `lux-logo.png` for dark backgrounds: black bar turned white with navy (#09113E) lettering, blue kept, light outline so the blue LUX reads on navy. | Same as `lux-logo.png`. |
 
 ## Not tracked (repository is public)
 
-The repo `ARCHITECTARIEL/lux-video-os` was **public** on 2026-11-04, so these
+This repository was **public** on 2026-11-04, so these
 stay in `%USERPROFILE%\lux-assets` and are git-ignored here
-(`brand-assets/fonts/`, `brand-assets/music/`):
+(`brand-assets/fonts/`, `brand-assets/music/` and any font or audio file under `brand-assets/`, in any letter case):
 
 | File | Source | License |
 |---|---|---|

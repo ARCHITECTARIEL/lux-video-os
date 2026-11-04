@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { AI_DISCLOSURE_TEXT, ASPECTS, CLIP_CAP_USD, parseAvatarConsent, CLIP_SHOT_MODELS, FONT_PRESETS, HEYGEN_AVATAR_USD_PER_SECOND, SHOT_MODELS, VIDEO_CAP_USD } from '../lib/luxify-local-brief.js';
-import { buildCues, bugFilter, cardsAss, scaleCube, disclosureFilters, endCardGraph, kineticFilters, kineticFitWarnings, kineticWarnings, subtitleFilters, themeTokens, toSrt, toVtt, wavDurationSeconds } from './luxify-local-overlays.js';
+import { buildCues, bugFilter, cardsAss, subtitleMaxChars, subtitleTop, scaleCube, disclosureFilters, endCardGraph, kineticFilters, kineticFitWarnings, kineticWarnings, subtitleFilters, themeTokens, toSrt, toVtt, wavDurationSeconds } from './luxify-local-overlays.js';
 import { cinematicFinishingFilterGraph } from './media-finisher.js';
 import { RUNWAY_MAX_DATA_URI_BYTES, RUNWAY_USD_PER_CREDIT, awaitRunwayTask, buildRunwayRequest, createRunwayTask, imageFileToDataUri, resumeRunwayTask } from './runway-models.js';
 
@@ -27,6 +27,10 @@ export const MAX_VOICE_BYTES = 200 * 1024 * 1024;
 export const MAX_LOGO_BYTES = 5 * 1024 * 1024;
 export const MAX_LOGO_PIXELS = 4096;
 export const MAX_CONSENT_BYTES = 64 * 1024;
+// QA L4/L5: caps for the other owner assets (checked with realpath containment).
+export const MAX_LUT_BYTES = 10 * 1024 * 1024;
+export const MAX_FONT_BYTES = 20 * 1024 * 1024;
+export const MAX_MUSIC_BYTES = 50 * 1024 * 1024;
 // QA M1: every ffmpeg call is killed after this long (overridable per call).
 export const FFMPEG_TIMEOUT_MS = 10 * 60 * 1000;
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -93,6 +97,36 @@ export async function validateLogo(logoPath, assetsRoot) {
   const w = head.readUInt32BE(16), h = head.readUInt32BE(20);
   if (!w || !h || w > MAX_LOGO_PIXELS || h > MAX_LOGO_PIXELS) throw fail(`Logo must be 1-${MAX_LOGO_PIXELS} px a side.`, 'LOGO_INVALID');
   return real;
+}
+
+// QA L4: LUT, font and music files must resolve (symlinks followed) inside
+// <root>/<sub> of one of the asset roots, be regular files and stay under a
+// size cap. Missing files are left to missingAssets(); returns the real path.
+const ASSET_RULES = Object.freeze({
+  lut: { sub: 'luts', max: MAX_LUT_BYTES, code: 'LUT_INVALID' },
+  font: { sub: 'fonts', max: MAX_FONT_BYTES, code: 'FONT_INVALID' },
+  cardFont: { sub: 'fonts', max: MAX_FONT_BYTES, code: 'FONT_INVALID' },
+  music: { sub: 'music', max: MAX_MUSIC_BYTES, code: 'MUSIC_INVALID' },
+});
+export async function validateAssetFile(kind, path, roots) {
+  const rule = ASSET_RULES[kind];
+  if (!rule) throw fail(`Unknown asset kind ${kind}`, 'ASSET_INVALID');
+  if (!path || !(await exists(path))) return null;
+  const allowed = await realRoots(...[roots].flat().filter(Boolean).map(r => join(resolve(r), rule.sub)));
+  let real;
+  try { real = await realpath(path); } catch { return null; }
+  if (!allowed.some(root => inside(root, real))) throw fail(`${kind} must be inside an assets ${rule.sub} folder (symlinks pointing elsewhere are refused).`, `${rule.code.split('_')[0]}_OUTSIDE_ROOTS`);
+  const info = await stat(real);
+  if (!info.isFile()) throw fail(`${kind} is not a file: ${basename(path)}`, rule.code);
+  if (info.size > rule.max) throw fail(`${kind} ${basename(path)} is larger than ${rule.max / 1024 / 1024} MB.`, rule.code);
+  if (rule.sub === 'fonts') parseFontNameTable(await readFile(real));
+  return real;
+}
+
+// Validates every capped asset of a resolved asset set (CLI + runPipeline).
+export async function validateAssets(assets) {
+  const roots = assets.roots || [assets.root];
+  for (const kind of Object.keys(ASSET_RULES)) await validateAssetFile(kind, assets[kind], roots);
 }
 
 // QA M4: avatar shots fail closed without a valid local consent record inside
@@ -365,25 +399,45 @@ export async function finishClip({ ffmpeg, input, output, shot, assets, width, h
   await runFfmpeg(ffmpeg, [...seek, '-i', input, '-t', String(shot.duration), '-vf', vf, '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', output], { timeoutMs: ffmpegTimeoutMs });
 }
 
+// QA L5: bounds-checked sfnt reader. Any out-of-range offset or length is a
+// clean FONT_INVALID, never a RangeError or a silently garbled table.
+function fontInvalid(why) { return fail(`Font is malformed: ${why}`, 'FONT_INVALID'); }
+export function parseFontNameTable(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) throw fontInvalid('too short');
+  if (buf.length > MAX_FONT_BYTES) throw fail(`Font is larger than ${MAX_FONT_BYTES / 1024 / 1024} MB.`, 'FONT_INVALID');
+  const tag = buf.readUInt32BE(0);
+  if (![0x00010000, 0x4f54544f, 0x74727565].includes(tag)) throw fontInvalid('not a TrueType/OpenType file');
+  const tables = buf.readUInt16BE(4);
+  if (!tables || 12 + tables * 16 > buf.length) throw fontInvalid('table directory out of range');
+  let entry = -1;
+  for (let i = 0; i < tables; i += 1) if (buf.toString('latin1', 12 + i * 16, 16 + i * 16) === 'name') entry = 12 + i * 16;
+  if (entry < 0) throw fontInvalid('no name table');
+  const off = buf.readUInt32BE(entry + 8), size = buf.readUInt32BE(entry + 12);
+  if (off + 6 > buf.length || size < 6 || off + size > buf.length) throw fontInvalid('name table out of range');
+  const count = buf.readUInt16BE(off + 2), strings = off + buf.readUInt16BE(off + 4);
+  if (off + 6 + count * 12 > off + size || strings > off + size) throw fontInvalid('name records out of range');
+  const records = [];
+  for (let j = 0; j < count; j += 1) {
+    const r = off + 6 + j * 12;
+    const platform = buf.readUInt16BE(r), id = buf.readUInt16BE(r + 6), len = buf.readUInt16BE(r + 8), at = strings + buf.readUInt16BE(r + 10);
+    if (at + len > off + size) throw fontInvalid('name string out of range');
+    records.push({ platform, id, raw: buf.subarray(at, at + len) });
+  }
+  return { entry, records };
+}
+
 // Family name (name ID 16, else 1) from a TTF/OTF name table, for libass.
 export async function fontFamilyName(path) {
-  const buf = await readFile(path);
-  const tables = buf.readUInt16BE(4);
-  for (let i = 0; i < tables; i += 1) {
-    const rec = 12 + i * 16;
-    if (buf.toString('latin1', rec, rec + 4) !== 'name') continue;
-    const off = buf.readUInt32BE(rec + 8);
-    const count = buf.readUInt16BE(off + 2), strings = off + buf.readUInt16BE(off + 4);
-    const found = {};
-    for (let j = 0; j < count; j += 1) {
-      const r = off + 6 + j * 12;
-      const platform = buf.readUInt16BE(r), id = buf.readUInt16BE(r + 6), len = buf.readUInt16BE(r + 8), at = strings + buf.readUInt16BE(r + 10);
-      if ((id !== 1 && id !== 16) || found[id]) continue;
-      const raw = buf.subarray(at, at + len);
-      found[id] = platform === 3 || platform === 0 ? Buffer.from(raw).swap16().toString('utf16le') : raw.toString('latin1');
-    }
-    if (found[16] || found[1]) return (found[16] || found[1]).replace(/[,\r\n]/g, ' ');
+  const info = await stat(path);
+  if (!info.isFile() || info.size > MAX_FONT_BYTES) throw fail(`Font ${basename(path)} is not a file of at most ${MAX_FONT_BYTES / 1024 / 1024} MB.`, 'FONT_INVALID');
+  const { records } = parseFontNameTable(await readFile(path));
+  const found = {};
+  for (const { platform, id, raw } of records) {
+    if ((id !== 1 && id !== 16) || found[id]) continue;
+    if ((platform === 3 || platform === 0) && raw.length % 2) throw fontInvalid('odd-length UTF-16 name');
+    found[id] = platform === 3 || platform === 0 ? Buffer.from(raw).swap16().toString('utf16le') : raw.toString('latin1');
   }
+  if (found[16] || found[1]) return (found[16] || found[1]).replace(/[,\r\n]/g, ' ');
   throw fail(`No family name in ${basename(path)}`, 'FONT_INVALID');
 }
 
@@ -394,10 +448,7 @@ export const CARD_FONT_FAMILY = 'LuxCardBold';
 // untouched.
 export function renameFontFamily(buf, family) {
   if (!/^[A-Za-z0-9]{1,31}$/.test(family)) throw fail('Font family must be 1-31 ASCII letters/digits.', 'FONT_INVALID');
-  const tables = buf.readUInt16BE(4);
-  let entry = -1;
-  for (let i = 0; i < tables; i += 1) if (buf.toString('latin1', 12 + i * 16, 16 + i * 16) === 'name') entry = 12 + i * 16;
-  if (entry < 0) throw fail('Font has no name table.', 'FONT_INVALID');
+  const { entry } = parseFontNameTable(buf);
   const names = [[1, family], [2, 'Regular'], [4, family], [6, family]];
   const strings = names.map(([, v]) => Buffer.from(v, 'utf16le').swap16());
   const header = Buffer.alloc(6 + names.length * 12);
@@ -439,6 +490,21 @@ export function xfadeGraph(durations, transitions) {
   return { graph: parts.join(';'), duration: length };
 }
 
+// QA L6: on-screen window of each shot after xfade overlaps. Shot i starts at
+// sum(durations before i) - sum(transitions before i); neighbouring windows
+// meet at the middle of each crossfade, so per-shot overlays swap there.
+export function shotWindows(durations, transitions = []) {
+  const out = [];
+  let start = 0;
+  durations.forEach((d, i) => {
+    const before = i > 0 ? (transitions[i - 1]?.duration || 0) : 0;
+    const after = i < durations.length - 1 ? (transitions[i]?.duration || 0) : 0;
+    out.push({ start: +(start + before / 2).toFixed(3), end: +(start + d - after / 2).toFixed(3) });
+    start += d - after;
+  });
+  return out;
+}
+
 // Steps 3-5: transitions, logo, music ducked under voice, loudness, mux.
 export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, output, workdir, width, height, cues = [], ffmpegTimeoutMs }) {
   const { graph, duration: contentDuration } = xfadeGraph(durations, brief.transitions);
@@ -461,9 +527,9 @@ export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, o
   // Logo uses: light bug, dark bug, end card. With a dark variant the bug
   // swaps per shot tone and the end card takes the variant matching its theme.
   const uses = { light: [], dark: [] };
-  let t0 = 0;
+  const shotWin = shotWindows(durations, brief.transitions);
   const windows = { light: [], dark: [] };
-  brief.shots.forEach((s, i) => { windows[s.tone || theme].push({ start: t0, end: t0 + durations[i] }); t0 += durations[i]; });
+  brief.shots.forEach((s, i) => { windows[s.tone || theme].push(shotWin[i]); });
   if (bugOn && darkIdx === null) uses.light.push('bug');
   if (bugOn && darkIdx !== null) { if (windows.light.length) uses.light.push('bug'); if (windows.dark.length) uses.dark.push('bug'); }
   if (logoIdx !== null && endCard) (darkIdx !== null && theme === 'dark' ? uses.dark : uses.light).push('end');
@@ -509,10 +575,14 @@ export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, o
     const fontsDir = join(workdir, 'card-fonts');
     await mkdir(fontsDir, { recursive: true });
     const cardFont = assets.cardFont || font;
+    const fontInfo = await stat(cardFont);
+    if (fontInfo.size > MAX_FONT_BYTES) throw fail(`Card font is larger than ${MAX_FONT_BYTES / 1024 / 1024} MB.`, 'FONT_INVALID');
     await writeFile(join(fontsDir, 'lux-card.ttf'), renameFontFamily(await readFile(cardFont), CARD_FONT_FAMILY));
-    let t = 0;
-    const avatarWindows = brief.shots.map((s, i) => { const w = { start: t, end: t + durations[i], avatar: s.model === 'heygen_avatar' }; t += durations[i]; return w; }).filter(w => w.avatar);
-    const assFile = await textFile('cards.ass', cardsAss(brief.captions, { width, height, fontName: CARD_FONT_FAMILY, avatarWindows }));
+    const avatarWindows = brief.shots.map((s, i) => ({ ...shotWin[i], avatar: s.model === 'heygen_avatar' })).filter(w => w.avatar);
+    // QA N2: with burned-in subtitles the card block ends above the subtitle plate.
+    const subsOn = style === 'subtitle' || Boolean(brief.subtitles?.burnIn);
+    const avoidBottom = subsOn ? subtitleTop(width, height) - Math.round(Math.min(width, height) * 0.02) : null;
+    const assFile = await textFile('cards.ass', cardsAss(brief.captions, { width, height, fontName: CARD_FONT_FAMILY, avatarWindows, avoidBottom }));
     draws.push(`ass=filename=${esc(assFile)}:fontsdir=${esc(fontsDir)}:shaping=simple`);
   }
   if (draws.length) { filters.push(`${video}${draws.join(',')}[vcap]`); video = '[vcap]'; }
@@ -803,6 +873,7 @@ export async function runPipeline(options) {
   // QA M4 / M1: consent and logo are checked before the lock or any spend.
   const consent = await loadAvatarConsent(options.brief, { briefDir, assetsRoot: options.assets.root, now: options.now });
   const logo = await validateLogo(options.assets.logo, options.assets.roots || options.assets.root);
+  await validateAssets(options.assets);
   await mkdir(options.outDir, { recursive: true });
   const lock = await acquireLock(options.outDir, { breakLock: Boolean(options.breakLock) });
   try {
@@ -866,7 +937,7 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
       finished.push(output);
     }
     const contentSeconds = plan.timelineSeconds - (brief.endCard?.enabled ? brief.endCard.duration : 0);
-    cues = buildCues(brief.script, Math.min(voiceSeconds ?? contentSeconds, contentSeconds));
+    cues = buildCues(brief.script, Math.min(voiceSeconds ?? contentSeconds, contentSeconds), { maxChars: subtitleMaxChars(width, height) });
     assembled = await assembleFinal({ ffmpeg, clips: finished, durations: brief.shots.map(s => s.duration), brief, assets: renderAssets, output: finalPath, workdir, width, height, cues, ffmpegTimeoutMs });
     ({ duration } = assembled);
   } catch (error) {

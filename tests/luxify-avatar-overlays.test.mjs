@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -255,7 +255,7 @@ test('M1: ffmpeg is killed on timeout, partial and empty outputs are removed, th
     // Full pipeline: a hung ffmpeg aborts the run, releases the lock, leaves no final.
     const assets = join(dir, 'assets');
     await mkdir(join(assets, 'fonts'), { recursive: true });
-    await writeFile(join(assets, 'fonts', 'lux-sans-bold.ttf'), 'x');
+    await writeFile(join(assets, 'fonts', 'lux-sans-bold.ttf'), readFileSync(new URL('./fixtures/fonts/ofl-test-bold.ttf', import.meta.url)));
     await writeFile(join(dir, 'voice.wav'), 'x');
     await writeFile(join(dir, 'r.mp4'), 'x');
     const brief = parseBrief(avatarBrief({ logoOverlay: null, avatarConsent: undefined, captions: [], endCard: { enabled: false }, shots: [{ id: 'r', model: 'local_clip', clip: 'r.mp4', duration: 2 }] }));
@@ -272,7 +272,7 @@ test('M1: a corrupt logo is refused before the lock, so nothing hangs and no fin
   try {
     const assets = join(dir, 'assets');
     for (const sub of ['fonts', 'overlays']) await mkdir(join(assets, sub), { recursive: true });
-    await writeFile(join(assets, 'fonts', 'lux-sans-bold.ttf'), 'x');
+    await writeFile(join(assets, 'fonts', 'lux-sans-bold.ttf'), readFileSync(new URL('./fixtures/fonts/ofl-test-bold.ttf', import.meta.url)));
     await writeFile(join(assets, 'overlays', 'logo.png'), 'GIF89a not a png..........');
     await writeFile(join(dir, 'voice.wav'), 'x');
     const brief = parseBrief(avatarBrief({ avatarConsent: undefined, captions: [], shots: [{ id: 'r', model: 'local_clip', clip: 'r.mp4', duration: 2 }] }));

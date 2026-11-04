@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { parseBrief } from '../lib/luxify-local-brief.js';
 import { runwayEnabled } from '../services/runway-models.js';
-import { REPO_ASSETS_ROOT, defaultAssetsRoot, loadAvatarConsent, loadBriefFile, validateLogo, receiptStatus, missingAssets, missingClips, optionalAssetWarnings, planBrief, resolveAssets, resolveFfmpeg, runPipeline } from '../services/luxify-local-pipeline.js';
+import { REPO_ASSETS_ROOT, defaultAssetsRoot, loadAvatarConsent, loadBriefFile, validateAssets, validateLogo, receiptStatus, missingAssets, missingClips, optionalAssetWarnings, planBrief, resolveAssets, resolveFfmpeg, runPipeline } from '../services/luxify-local-pipeline.js';
 
 export async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, runwayDeps = {} } = {}) {
   const { values } = parseArgs({ args: argv, options: {
@@ -37,6 +37,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, st
   let consent = null;
   try { consent = await loadAvatarConsent(brief, { briefDir, assetsRoot: assets.root }); } catch (error) { blockers.push(error); }
   try { await validateLogo(assets.logo, assets.roots); await validateLogo(assets.logoDark, assets.roots); } catch (error) { blockers.push(error); }
+  try { await validateAssets(assets); } catch (error) { blockers.push(error); }
   const outDir = resolve(values.out || join(briefDir, 'render'));
   const prior = await receiptStatus(outDir, plan);
   const view = { mode: values.live ? 'live' : 'dry-run', ...plan, shots: plan.shots.map(({ input: _input, ...s }) => s), assets: Object.fromEntries(Object.entries(assets).filter(([k]) => k !== 'root' && k !== 'roots')), missingAssets: missing, warnings, avatarConsent: consent ? { file: consent.file, method: consent.method, consentedAt: consent.consentedAt, expiresAt: consent.expiresAt } : null, blockers: blockers.map(e => ({ code: e.code || 'ERROR', message: e.message })), receipt: prior, orphanedPendingShots: prior?.orphanedPending?.map(a => a.shotId) || [] };

@@ -77,14 +77,46 @@ test-results-*/
 
 # Brand pack (brand-assets/): only LUTs and logos are tracked while the repo is
 # public. Fonts and music stay in %USERPROFILE%\lux-assets until it is private.
-brand-assets/fonts/
-brand-assets/music/
+# Patterns use [Xx] classes so Linux/macOS clones (case-sensitive) match too.
+brand-assets/[Ff][Oo][Nn][Tt][Ss]/
+brand-assets/[Mm][Uu][Ss][Ii][Cc]/
+brand-assets/**/*.[Tt][Tt][Ff]
+brand-assets/**/*.[Oo][Tt][Ff]
+brand-assets/**/*.[Tt][Tt][Cc]
+brand-assets/**/*.[Ww][Oo][Ff][Ff]
+brand-assets/**/*.[Ww][Oo][Ff][Ff]2
+brand-assets/**/*.[Mm][Pp]3
+brand-assets/**/*.[Ww][Aa][Vv]
+brand-assets/**/*.[Mm]4[Aa]
+brand-assets/**/*.[Aa][Aa][Cc]
+brand-assets/**/*.[Ff][Ll][Aa][Cc]
+brand-assets/**/*.[Oo][Gg][Gg]
+# Stray fonts and audio at the repo root (e.g. a dragged-in brand pack).
+/*.[Tt][Tt][Ff]
+/*.[Oo][Tt][Ff]
+/*.[Ww][Oo][Ff][Ff]
+/*.[Ww][Oo][Ff][Ff]2
+/*.[Mm][Pp]3
+/*.[Ww][Aa][Vv]
+/*.[Mm]4[Aa]
+/*.[Aa][Aa][Cc]
+/*.[Ff][Ll][Aa][Cc]
+/*.[Oo][Gg][Gg]
 # Production inputs that hold personal data or paid outputs never go in git.
-video_productions/**/consent*.json
-video_productions/**/receipt.json
-video_productions/**/*.wav
-video_productions/**/*.mp4
-video_productions/**/*.mov
-video_productions/**/render/
-video_productions/**/heygen-state.json
-video_productions/**/voice-words.json
+[Vv]ideo_[Pp]roductions/**/[Cc][Oo][Nn][Ss][Ee][Nn][Tt]*.[Jj][Ss][Oo][Nn]
+[Vv]ideo_[Pp]roductions/**/[Rr][Ee][Cc][Ee][Ii][Pp][Tt]*.[Jj][Ss][Oo][Nn]
+[Vv]ideo_[Pp]roductions/**/*.[Ww][Aa][Vv]
+[Vv]ideo_[Pp]roductions/**/*.[Mm][Pp]3
+[Vv]ideo_[Pp]roductions/**/*.[Mm]4[Aa]
+[Vv]ideo_[Pp]roductions/**/*.[Aa][Aa][Cc]
+[Vv]ideo_[Pp]roductions/**/*.[Ff][Ll][Aa][Cc]
+[Vv]ideo_[Pp]roductions/**/*.[Oo][Gg][Gg]
+[Vv]ideo_[Pp]roductions/**/*.[Mm][Pp]4
+[Vv]ideo_[Pp]roductions/**/*.[Mm]4[Vv]
+[Vv]ideo_[Pp]roductions/**/*.[Mm][Oo][Vv]
+[Vv]ideo_[Pp]roductions/**/*.[Ww][Ee][Bb][Mm]
+[Vv]ideo_[Pp]roductions/**/*.[Mm][Kk][Vv]
+[Vv]ideo_[Pp]roductions/**/[Rr]ender/
+[Vv]ideo_[Pp]roductions/**/[Rr]eceipt-history/
+[Vv]ideo_[Pp]roductions/**/[Hh]ey[Gg]en-state.json
+[Vv]ideo_[Pp]roductions/**/[Vv]oice-words.json
