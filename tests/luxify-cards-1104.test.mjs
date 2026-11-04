@@ -96,3 +96,35 @@ test('renameFontFamily gives the brand file a unique libass name; glyph bytes ke
   assert.ok((await readFile(out)).subarray(0, 12).equals(buf.subarray(0, 12)));
   assert.throws(() => renameFontFamily(buf, 'bad name'), { code: 'FONT_INVALID' });
 });
+
+test('brand-assets: tracked pack resolves first, falls back per file to the PC folder', async () => {
+  const { REPO_ASSETS_ROOT } = await import('../services/luxify-local-pipeline.js');
+  const { existsSync } = await import('node:fs');
+  assert.ok(existsSync(join(REPO_ASSETS_ROOT, 'luts', 'lux-cinematic.cube')));
+  assert.ok(existsSync(join(REPO_ASSETS_ROOT, 'overlays', 'lux-logo.png')));
+  assert.ok(existsSync(join(REPO_ASSETS_ROOT, 'overlays', 'lux-logo-dark.png')));
+  const fb = await mkdtemp(join(tmpdir(), 'pc-assets-'));
+  const brief = { fontPreset: 'lux-sans-bold', lut: 'lux-cinematic.cube', logoOverlay: 'lux-logo.png', logoOverlayDark: 'lux-logo-dark.png', captionStyle: 'cards', music: { track: 'bed.mp3' }, voice: { path: 'v.wav' } };
+  const a = resolveAssets(brief, REPO_ASSETS_ROOT, '/b', { fallbackRoots: [fb] });
+  assert.equal(a.lut, join(REPO_ASSETS_ROOT, 'luts', 'lux-cinematic.cube'));
+  assert.equal(a.logoDark, join(REPO_ASSETS_ROOT, 'overlays', 'lux-logo-dark.png'));
+  const { mkdir } = await import('node:fs/promises');
+  await mkdir(join(fb, 'music'), { recursive: true }); await writeFile(join(fb, 'music', 'bed.mp3'), 'x');
+  const b = resolveAssets(brief, REPO_ASSETS_ROOT, '/b', { fallbackRoots: [fb] });
+  assert.equal(b.music, join(fb, 'music', 'bed.mp3'));
+  assert.deepEqual(b.roots, [REPO_ASSETS_ROOT, fb]);
+});
+
+test('bugFilter with tone windows enables the bug only inside them', async () => {
+  const { bugFilter } = await import('../services/luxify-local-overlays.js');
+  const f = bugFilter({ logoLabel: '[l]', videoLabel: '[v]', outLabel: '[o]', width: 720, height: 1280, opacity: 0.85, until: 33, windows: [{ start: 0, end: 5 }, { start: 29, end: 35 }] });
+  assert.match(f, /enable='between\(t,0,5\)\+between\(t,29,33\)'/);
+  assert.match(bugFilter({ logoLabel: '[l]', videoLabel: '[v]', outLabel: '[o]', width: 720, height: 1280, opacity: 1, until: 33, windows: [] }), /enable='0'/);
+});
+
+test('brief accepts logoOverlayDark and per-shot tone', () => {
+  const base = { version: 'luxify-local/v1', slug: 'x', title: 'x', aspect: '9:16', script: 'Hi.', shots: [{ id: 'a', model: 'local_clip', clip: 'a.mp4', duration: 5, tone: 'light', titles: [] }], fontPreset: 'lux-sans', voice: { source: 'heygen_audio_file', path: 'v.wav' }, logoOverlay: 'lux-logo.png', logoOverlayDark: 'lux-logo-dark.png' };
+  const b = parseBrief(base);
+  assert.equal(b.shots[0].tone, 'light');
+  assert.throws(() => parseBrief({ ...base, shots: [{ ...base.shots[0], tone: 'grey' }] }));
+});

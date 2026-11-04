@@ -104,9 +104,9 @@ export function disclosureBox(width, height) {
 }
 
 // Corner bug: top-right (disclosure is bottom-left), hidden during the end card.
-export function bugFilter({ logoLabel, videoLabel, outLabel, width, height, opacity, until }) {
+export function bugFilter({ logoLabel, videoLabel, outLabel, width, height, opacity, until, windows = null }) {
   const L = layout(width, height);
-  return `${logoLabel}scale=-1:${L.bug.h},format=rgba,colorchannelmixer=aa=${opacity}[bugimg];${videoLabel}[bugimg]overlay=W-w-${Math.round(width * L.bug.x)}:${Math.round(height * L.bug.y)}:shortest=1:enable='lt(t,${n(until)})'${outLabel}`;
+  return `${logoLabel}scale=-1:${L.bug.h},format=rgba,colorchannelmixer=aa=${opacity}[bugimg];${videoLabel}[bugimg]overlay=W-w-${Math.round(width * L.bug.x)}:${Math.round(height * L.bug.y)}:shortest=1:enable='${windows ? (windows.map(w => `between(t,${n(w.start)},${n(Math.min(w.end, until))})`).join('+') || '0') : `lt(t,${n(until)})`}'${outLabel}`;
 }
 
 // End card (D2: appended). Logo centred at y 0.40 when present; CTA pill and URL.

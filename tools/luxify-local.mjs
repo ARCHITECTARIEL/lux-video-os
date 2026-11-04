@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { parseBrief } from '../lib/luxify-local-brief.js';
 import { runwayEnabled } from '../services/runway-models.js';
-import { defaultAssetsRoot, loadAvatarConsent, loadBriefFile, validateLogo, receiptStatus, missingAssets, missingClips, optionalAssetWarnings, planBrief, resolveAssets, resolveFfmpeg, runPipeline } from '../services/luxify-local-pipeline.js';
+import { REPO_ASSETS_ROOT, defaultAssetsRoot, loadAvatarConsent, loadBriefFile, validateLogo, receiptStatus, missingAssets, missingClips, optionalAssetWarnings, planBrief, resolveAssets, resolveFfmpeg, runPipeline } from '../services/luxify-local-pipeline.js';
 
 export async function main(argv = process.argv.slice(2), { env = process.env, stdout = process.stdout, runwayDeps = {} } = {}) {
   const { values } = parseArgs({ args: argv, options: {
@@ -24,17 +24,22 @@ export async function main(argv = process.argv.slice(2), { env = process.env, st
   const brief = parseBrief(await loadBriefFile(values.brief));
   const plan = planBrief(brief); // throws CAP_EXCEEDED_* before anything else
   const briefDir = dirname(resolve(values.brief));
-  const assets = resolveAssets(brief, values.assets || defaultAssetsRoot(env), briefDir);
+  // No --assets: the repo's brand-assets/ first, then LUX_ASSETS_DIR or
+  // %USERPROFILE%\lux-assets (~/lux-assets) for anything not tracked in git.
+  // With --assets: that folder first, then the repo pack (e.g. for the logo).
+  const assets = values.assets
+    ? resolveAssets(brief, values.assets, briefDir, { fallbackRoots: [REPO_ASSETS_ROOT] })
+    : resolveAssets(brief, REPO_ASSETS_ROOT, briefDir, { fallbackRoots: [defaultAssetsRoot(env)] });
   const missing = [...await missingAssets(assets), ...await missingClips(brief, briefDir)];
   const warnings = [...plan.warnings, ...await optionalAssetWarnings(assets)];
   // QA M4 / M1: consent and logo problems are shown in the dry run and stop a live run.
   const blockers = [];
   let consent = null;
   try { consent = await loadAvatarConsent(brief, { briefDir, assetsRoot: assets.root }); } catch (error) { blockers.push(error); }
-  try { await validateLogo(assets.logo, assets.root); } catch (error) { blockers.push(error); }
+  try { await validateLogo(assets.logo, assets.roots); await validateLogo(assets.logoDark, assets.roots); } catch (error) { blockers.push(error); }
   const outDir = resolve(values.out || join(briefDir, 'render'));
   const prior = await receiptStatus(outDir, plan);
-  const view = { mode: values.live ? 'live' : 'dry-run', ...plan, shots: plan.shots.map(({ input: _input, ...s }) => s), assets: Object.fromEntries(Object.entries(assets).filter(([k]) => k !== 'root')), missingAssets: missing, warnings, avatarConsent: consent ? { file: consent.file, method: consent.method, consentedAt: consent.consentedAt, expiresAt: consent.expiresAt } : null, blockers: blockers.map(e => ({ code: e.code || 'ERROR', message: e.message })), receipt: prior, orphanedPendingShots: prior?.orphanedPending?.map(a => a.shotId) || [] };
+  const view = { mode: values.live ? 'live' : 'dry-run', ...plan, shots: plan.shots.map(({ input: _input, ...s }) => s), assets: Object.fromEntries(Object.entries(assets).filter(([k]) => k !== 'root' && k !== 'roots')), missingAssets: missing, warnings, avatarConsent: consent ? { file: consent.file, method: consent.method, consentedAt: consent.consentedAt, expiresAt: consent.expiresAt } : null, blockers: blockers.map(e => ({ code: e.code || 'ERROR', message: e.message })), receipt: prior, orphanedPendingShots: prior?.orphanedPending?.map(a => a.shotId) || [] };
   stdout.write(`${JSON.stringify(view, null, 2)}\n`);
   if (!values.live) return { mode: 'dry-run', plan };
 

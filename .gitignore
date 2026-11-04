@@ -74,3 +74,17 @@ until=*/
 
 # Per-suite Playwright result dirs (not the gitignored default test-results/)
 test-results-*/
+
+# Brand pack (brand-assets/): only LUTs and logos are tracked while the repo is
+# public. Fonts and music stay in %USERPROFILE%\lux-assets until it is private.
+brand-assets/fonts/
+brand-assets/music/
+# Production inputs that hold personal data or paid outputs never go in git.
+video_productions/**/consent*.json
+video_productions/**/receipt.json
+video_productions/**/*.wav
+video_productions/**/*.mp4
+video_productions/**/*.mov
+video_productions/**/render/
+video_productions/**/heygen-state.json
+video_productions/**/voice-words.json

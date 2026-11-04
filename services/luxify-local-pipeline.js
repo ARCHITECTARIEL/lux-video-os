@@ -6,9 +6,10 @@
 // in live mode, which the CLI gates behind --live plus RUNWAYML_API_SECRET.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { constants as fsConstants, createReadStream } from 'node:fs';
+import { constants as fsConstants, createReadStream, existsSync } from 'node:fs';
 import { access, copyFile, mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { AI_DISCLOSURE_TEXT, ASPECTS, CLIP_CAP_USD, parseAvatarConsent, CLIP_SHOT_MODELS, FONT_PRESETS, HEYGEN_AVATAR_USD_PER_SECOND, SHOT_MODELS, VIDEO_CAP_USD } from '../lib/luxify-local-brief.js';
@@ -78,7 +79,7 @@ export async function resolveLocalClip(path, { briefDir, assetsRoot }) {
 export async function validateLogo(logoPath, assetsRoot) {
   if (!logoPath) return null;
   if (!(await exists(logoPath))) return null;
-  const roots = await realRoots(join(resolve(assetsRoot), 'overlays'));
+  const roots = await realRoots(...[assetsRoot].flat().map(r => join(resolve(r), 'overlays')));
   let real;
   try { real = await realpath(logoPath); } catch { return null; }
   if (!roots.some(root => inside(root, real))) throw fail('Logo must be inside the assets overlays folder (symlinks pointing elsewhere are refused).', 'LOGO_OUTSIDE_ROOTS');
@@ -195,16 +196,30 @@ export function planBrief(brief) {
   };
 }
 
-export function resolveAssets(brief, assetsRoot, briefDir = process.cwd()) {
+// Tracked brand pack in this repo (LUTs + logos; fonts/music only when the
+// repo is private, see brand-assets/README.md).
+export const REPO_ASSETS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'brand-assets');
+
+// Each asset comes from the first root that has it: the primary root, then
+// the fallbacks in order (e.g. repo brand-assets, then %USERPROFILE%\lux-assets).
+export function resolveAssets(brief, assetsRoot, briefDir = process.cwd(), { fallbackRoots = [] } = {}) {
   const root = resolve(assetsRoot);
+  const roots = [root, ...fallbackRoots.map(r => resolve(r)).filter(r => r !== root)];
+  const pick = (sub, name) => {
+    if (!name) return null;
+    for (const r of roots) { const p = join(r, sub, name); if (existsSync(p)) return p; }
+    return join(root, sub, name);
+  };
   return {
     root,
-    font: join(root, 'fonts', FONT_PRESETS[brief.fontPreset]),
-    lut: brief.lut ? join(root, 'luts', brief.lut) : null,
+    roots,
+    font: pick('fonts', FONT_PRESETS[brief.fontPreset]),
+    lut: pick('luts', brief.lut),
     // Keyword cards always use the bold brand face, whatever fontPreset says.
-    ...(brief.captionStyle === 'cards' ? { cardFont: join(root, 'fonts', FONT_PRESETS['lux-sans-bold']) } : {}),
-    music: brief.music ? join(root, 'music', brief.music.track) : null,
-    logo: brief.logoOverlay ? join(root, 'overlays', brief.logoOverlay) : null,
+    ...(brief.captionStyle === 'cards' ? { cardFont: pick('fonts', FONT_PRESETS['lux-sans-bold']) } : {}),
+    music: brief.music ? pick('music', brief.music.track) : null,
+    logo: pick('overlays', brief.logoOverlay),
+    logoDark: pick('overlays', brief.logoOverlayDark),
     voice: resolve(briefDir, brief.voice.path),
   };
 }
@@ -212,7 +227,7 @@ export function resolveAssets(brief, assetsRoot, briefDir = process.cwd()) {
 export async function missingAssets(assets) {
   const missing = [];
   for (const [key, path] of Object.entries(assets)) {
-    if (key === 'root' || key === 'logo' || !path) continue;
+    if (key === 'root' || key === 'roots' || key === 'logo' || key === 'logoDark' || !path) continue;
     try { await access(path); } catch { missing.push({ key, path }); }
   }
   return missing;
@@ -438,17 +453,39 @@ export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, o
   const voiceIdx = idx++; args.push('-i', assets.voice);
   let musicIdx = null; if (assets.music) { musicIdx = idx++; args.push('-stream_loop', '-1', '-i', assets.music); }
   let logoIdx = null; if (assets.logo) { logoIdx = idx++; args.push('-loop', '1', '-framerate', String(FPS), '-i', assets.logo); }
+  let darkIdx = null; if (assets.logo && assets.logoDark) { darkIdx = idx++; args.push('-loop', '1', '-framerate', String(FPS), '-i', assets.logoDark); }
   const textFile = async (name, value) => { const f = join(workdir, name); await writeFile(f, value); return f; };
   const filters = [graph];
   let video = '[vout]';
-  const logoUses = (logoIdx !== null && brief.bug?.enabled !== false ? 1 : 0) + (logoIdx !== null && endCard ? 1 : 0);
-  const logoLabels = [];
-  if (logoUses === 2) { filters.push(`[${logoIdx}:v]split=2[logo0][logo1]`); logoLabels.push('[logo0]', '[logo1]'); }
-  else if (logoUses === 1) logoLabels.push(`[${logoIdx}:v]`);
+  const bugOn = logoIdx !== null && brief.bug?.enabled !== false;
+  // Logo uses: light bug, dark bug, end card. With a dark variant the bug
+  // swaps per shot tone and the end card takes the variant matching its theme.
+  const uses = { light: [], dark: [] };
+  let t0 = 0;
+  const windows = { light: [], dark: [] };
+  brief.shots.forEach((s, i) => { windows[s.tone || theme].push({ start: t0, end: t0 + durations[i] }); t0 += durations[i]; });
+  if (bugOn && darkIdx === null) uses.light.push('bug');
+  if (bugOn && darkIdx !== null) { if (windows.light.length) uses.light.push('bug'); if (windows.dark.length) uses.dark.push('bug'); }
+  if (logoIdx !== null && endCard) (darkIdx !== null && theme === 'dark' ? uses.dark : uses.light).push('end');
+  const labels = {};
+  for (const [tone, list] of Object.entries(uses)) {
+    const input = tone === 'dark' ? darkIdx : logoIdx;
+    if (list.length === 2) { filters.push(`[${input}:v]split=2[${tone}0][${tone}1]`); list.forEach((u, k) => { labels[`${tone}-${u}`] = `[${tone}${k}]`; }); }
+    else if (list.length === 1) labels[`${tone}-${list[0]}`] = `[${input}:v]`;
+  }
   // 1. Corner bug (top-right) on the content only.
-  if (logoIdx !== null && brief.bug?.enabled !== false) {
-    filters.push(bugFilter({ logoLabel: logoLabels.shift(), videoLabel: video, outLabel: '[vbug]', width, height, opacity: brief.bug?.opacity ?? 0.85, until: contentDuration }));
-    video = '[vbug]';
+  if (bugOn) {
+    const opacity = brief.bug?.opacity ?? 0.85;
+    if (darkIdx === null) {
+      filters.push(bugFilter({ logoLabel: labels['light-bug'], videoLabel: video, outLabel: '[vbug]', width, height, opacity, until: contentDuration }));
+      video = '[vbug]';
+    } else {
+      for (const tone of ['light', 'dark']) {
+        if (!labels[`${tone}-bug`]) continue;
+        filters.push(bugFilter({ logoLabel: labels[`${tone}-bug`], videoLabel: video, outLabel: `[vbug${tone}]`, width, height, opacity, until: contentDuration, windows: windows[tone] }));
+        video = `[vbug${tone}]`;
+      }
+    }
   }
   // 2. Kinetic captions and burned-in subtitles.
   const draws = [];
@@ -483,7 +520,7 @@ export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, o
   if (endCard) {
     const ctaFile = endCard.cta ? await textFile('endcard-cta.txt', endCard.cta) : null;
     const urlFile = endCard.url ? await textFile('endcard-url.txt', endCard.url) : null;
-    filters.push(endCardGraph({ width, height, duration: endCard.duration, theme, logoLabel: logoIdx !== null ? logoLabels.shift() : null, ctaFile, urlFile, font, esc, outLabel: '[vend]' }));
+    filters.push(endCardGraph({ width, height, duration: endCard.duration, theme, logoLabel: labels['dark-end'] || labels['light-end'] || null, ctaFile, urlFile, font, esc, outLabel: '[vend]' }));
     filters.push(`${video}format=yuv420p,setsar=1[vmain];[vmain][vend]concat=n=2:v=1:a=0[vcat]`);
     video = '[vcat]';
   }
@@ -505,7 +542,7 @@ export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, o
   args.push('-filter_complex', filters.join(';'), '-map', video, '-map', '[aout]', '-t', String(duration),
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', output);
   await runFfmpeg(ffmpeg, args, { timeoutMs: ffmpegTimeoutMs });
-  return { duration, contentDuration, endCard: Boolean(endCard), bug: logoIdx !== null && brief.bug?.enabled !== false };
+  return { duration, contentDuration, endCard: Boolean(endCard), bug: bugOn, bugVariants: darkIdx !== null };
 }
 
 // ---------------------------------------------------------------------------
@@ -765,7 +802,7 @@ export async function runPipeline(options) {
   await assertVoiceContained(options.assets, briefDir);
   // QA M4 / M1: consent and logo are checked before the lock or any spend.
   const consent = await loadAvatarConsent(options.brief, { briefDir, assetsRoot: options.assets.root, now: options.now });
-  const logo = await validateLogo(options.assets.logo, options.assets.root);
+  const logo = await validateLogo(options.assets.logo, options.assets.roots || options.assets.root);
   await mkdir(options.outDir, { recursive: true });
   const lock = await acquireLock(options.outDir, { breakLock: Boolean(options.breakLock) });
   try {
@@ -817,7 +854,8 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
   let cues = [];
   // Optional logo: missing file -> skip bug and end-card logo (recorded below).
   const logoPresent = Boolean(validLogo);
-  const renderAssets = { ...assets, logo: validLogo };
+  const validDark = validLogo ? await validateLogo(assets.logoDark, assets.roots || assets.root) : null;
+  const renderAssets = { ...assets, logo: validLogo, logoDark: validDark };
   const voiceSeconds = wavDurationSeconds(await readFile(assets.voice)) ?? null;
   try {
     clips = await generateClips(plan, { brief, briefDir, assetsRoot: assets.root, runwayEnv, runwayDeps, clipsDir: join(outDir, 'clips'), ledger, run });
@@ -855,7 +893,7 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
     overlays: { theme: brief.theme, captionStyle: brief.captionStyle, lutStrength: brief.lutStrength ?? 1, kineticBeats: brief.captions.length, disclosure: AI_DISCLOSURE_TEXT, bug: assembled.bug ? 'on' : (assets.logo && !logoPresent ? 'skipped-logo-missing' : 'off'), endCard: assembled.endCard ? (logoPresent ? 'logo' : 'text-only') : 'off', subtitleTiming: 'approx', sidecars },
     caps: plan.caps,
     ...(consent ? { avatarConsent: consent } : {}),
-    assets: { font: await assetHash(assets.font), lut: await assetHash(assets.lut), music: await assetHash(assets.music), logo: await assetHash(renderAssets.logo), voice: await assetHash(assets.voice), voiceSource: brief.voice.source, heygenJobId: brief.voice.jobId || null },
+    assets: { font: await assetHash(assets.font), lut: await assetHash(assets.lut), music: await assetHash(assets.music), logo: await assetHash(renderAssets.logo), logoDark: await assetHash(renderAssets.logoDark), voice: await assetHash(assets.voice), voiceSource: brief.voice.source, heygenJobId: brief.voice.jobId || null },
     final: { file: finalName, bytes: info.size, sha256: await sha256File(finalPath), durationSeconds: duration, contentSeconds: assembled.contentDuration },
   });
   await ledger.endRun({ status: 'complete' });
