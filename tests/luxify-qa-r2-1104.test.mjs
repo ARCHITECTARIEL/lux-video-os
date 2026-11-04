@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { parseBrief } from '../lib/luxify-local-brief.js';
-import { cardAvoidBottom, cardsAss, scaleCube, subtitleMaxChars, subtitleTop } from '../services/luxify-local-overlays.js';
+import { MIN_CARD_SECONDS, cardTiming, cardsAss, scaleCube, subtitleMaxChars, subtitleTop } from '../services/luxify-local-overlays.js';
 import { LOCK_FILE, isAudioHeader, lowerThirdTop, lowerThirdWindows, parseFontNameTable, planBrief, renameFontFamily, resolveAssets, runPipeline, subtitleCues, titleFilters, validateAssetFile, validateAssets, validateLogo } from '../services/luxify-local-pipeline.js';
 
 const FONT = readFileSync(new URL('./fixtures/fonts/ofl-test-bold.ttf', import.meta.url));
@@ -22,28 +22,40 @@ function platesOf(ass) {
   });
 }
 
-// ---- N3 ----
-test('N3: 12 cases (3 aspects x subtitles on/off x 2 texts): a card shown with a lower third ends above it and above the subtitles', () => {
+// ---- N3 (timing fix) ----
+const tsec = t => { const [h, m, x] = t.split(':'); return +h * 3600 + +m * 60 + +x; };
+function eventsOf(ass) {
+  return ass.split('\n').filter(l => l.startsWith('Dialogue')).map(l => { const p = l.split(','); return { start: tsec(p[1]), end: tsec(p[2]), style: p[3], line: l }; });
+}
+
+test('N3: 12 cases (3 aspects x subtitles on/off x 2 texts): no card is ever on screen with a lower third, and cards keep their normal position', () => {
   let cases = 0;
   for (const [w, h] of [[1920, 1080], [1080, 1920], [1080, 1080]]) {
     for (const subsOn of [true, false]) {
       for (const text of ['every line', 'your story, cinematic and private']) {
-        const gap = Math.round(Math.min(w, h) * 0.02);
-        const subAvoid = subsOn ? subtitleTop(w, h) - gap : null;
+        const subAvoid = subsOn ? subtitleTop(w, h) - Math.round(Math.min(w, h) * 0.02) : null;
         const lt = { kind: 'lower_third', text: 'Name', subtext: 'Role', start: 0.6, end: 4.4 };
-        const lowerThirds = lowerThirdWindows([{ titles: [lt] }, { titles: [] }], [5, 6], [], w, h, subAvoid);
-        // The lower-third top we avoid is exactly where titleFilters draws the plate.
-        const box = titleFilters({ titles: [lt] }, '/f.ttf', w, h, { '0-main': '/a', '0-sub': '/b' }, 'dark', { avoidBottom: subAvoid }).find(f => f.startsWith('drawbox'));
-        assert.equal(lowerThirds[0].top, Math.floor(Number(box.match(/y=ih\*([\d.]+)/)[1]) * h));
-        const ass = cardsAss([{ start: 3.5, end: 5.5, text }, { start: 7, end: 9, text }], { width: w, height: h, fontName: 'X', avoidBottom: subAvoid, lowerThirds });
-        const [during, after] = platesOf(ass);
+        const lowerThirds = lowerThirdWindows([{ titles: [lt] }, { titles: [] }], [5, 6], [{ type: 'fade', duration: 0.5 }], w, h, subAvoid);
+        const caps = [
+          { start: 0.2, end: 1.2, text },  // mostly under the lower third -> dropped
+          { start: 3.5, end: 5.5, text },  // tail overlaps -> delayed past it
+          { start: 0.0, end: 2.0, text: `${text} b` }, // fully covers its start -> dropped (too short before)
+          { start: 7, end: 9, text },      // after -> untouched
+        ];
+        const opts = { width: w, height: h, fontName: 'X', avoidBottom: subAvoid };
+        const ass = cardsAss(caps, { ...opts, lowerThirds });
         const label = `${w}x${h} subs=${subsOn} "${text}"`;
-        assert.ok(during.y + during.h <= lowerThirds[0].top - gap, `${label}: plate bottom ${during.y + during.h} vs lower third ${lowerThirds[0].top}`);
-        if (subAvoid != null) assert.ok(during.y + during.h <= subAvoid && after.y + after.h <= subAvoid, `${label}: above subtitles`);
-        assert.ok(during.y >= 0, `${label}: inside frame`);
-        // A card after the lower third ends is not pushed up by it.
-        const [alone] = platesOf(cardsAss([{ start: 7, end: 9, text }], { width: w, height: h, fontName: 'X', avoidBottom: subAvoid }));
-        assert.deepEqual(after, alone, `${label}: later card unaffected`);
+        const ev = eventsOf(ass);
+        assert.ok(ev.length > 0, label);
+        for (const e of ev) for (const l of lowerThirds) assert.ok(e.end <= l.start || e.start >= l.end, `${label}: ${e.style} ${e.start}-${e.end} overlaps lower third ${l.start}-${l.end}`);
+        // The delayed and untouched cards are drawn exactly where they would be with no lower third (no lift).
+        const plates = platesOf(ass);
+        assert.equal(plates.length, 2, `${label}: two cards kept`);
+        const alone = platesOf(cardsAss([caps[1], caps[3]], opts));
+        assert.deepEqual(plates, alone, `${label}: same position as without a lower third`);
+        const kept = ev.filter(e => e.style === 'Plate').map(e => [e.start, e.end]);
+        assert.deepEqual(kept, [[4.55, 5.5], [7, 9]], label);
+        if (subAvoid != null) for (const p of plates) assert.ok(p.y + p.h <= subAvoid, `${label}: above subtitles`);
         cases += 1;
       }
     }
@@ -51,12 +63,15 @@ test('N3: 12 cases (3 aspects x subtitles on/off x 2 texts): a card shown with a
   assert.equal(cases, 12);
 });
 
-test('N3: cardAvoidBottom takes the higher (smaller y) of subtitles and every overlapping lower third', () => {
-  const lts = [{ start: 0, end: 2, top: 700 }, { start: 5, end: 6, top: 500 }];
-  assert.equal(cardAvoidBottom({ start: 1, end: 3 }, { avoidBottom: 900, lowerThirds: lts, gap: 10 }), 690);
-  assert.equal(cardAvoidBottom({ start: 1, end: 3 }, { avoidBottom: 600, lowerThirds: lts, gap: 10 }), 600);
-  assert.equal(cardAvoidBottom({ start: 2, end: 5 }, { avoidBottom: null, lowerThirds: lts }), null, 'touching windows do not overlap');
-  assert.equal(cardAvoidBottom({ start: 1, end: 5.5 }, { lowerThirds: lts }), 500);
+test('N3: cardTiming delays, cuts or drops a card around lower-third windows', () => {
+  const lts = [{ start: 2, end: 4 }];
+  assert.deepEqual(cardTiming({ start: 0, end: 1.5 }, lts), { start: 0, end: 1.5 }, 'clear of the gap');
+  assert.deepEqual(cardTiming({ start: 0, end: 3 }, lts), { start: 0, end: 1.85 }, 'cut before');
+  assert.deepEqual(cardTiming({ start: 3, end: 6 }, lts), { start: 4.15, end: 6 }, 'delayed after');
+  assert.equal(cardTiming({ start: 2.2, end: 3.8 }, lts), null, 'inside -> dropped');
+  assert.equal(cardTiming({ start: 1.5, end: 4.5 }, lts), null, 'leftovers under MIN_CARD_SECONDS -> dropped');
+  assert.deepEqual(cardTiming({ start: 1, end: 9 }, [{ start: 2, end: 4 }, { start: 5, end: 6 }]), { start: 6.15, end: 9 }, 'skips several windows');
+  assert.equal(MIN_CARD_SECONDS, 0.5);
 });
 
 test('N3: lower-third windows follow xfade clip starts', () => {

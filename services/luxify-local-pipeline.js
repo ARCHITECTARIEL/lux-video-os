@@ -635,7 +635,7 @@ export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, o
     // QA N2: with burned-in subtitles the card block ends above the subtitle plate.
     const subsOn = style === 'subtitle' || Boolean(brief.subtitles?.burnIn);
     const avoidBottom = subsOn ? subtitleTop(width, height) - Math.round(Math.min(width, height) * 0.02) : null;
-    // QA r2 N3: and above any lower third showing at the same time.
+    // QA r2 N3: cards are timed out of every lower-third window.
     const lowerThirds = lowerThirdWindows(brief.shots, durations, brief.transitions, width, height, avoidBottom);
     const assFile = await textFile('cards.ass', cardsAss(brief.captions, { width, height, fontName: CARD_FONT_FAMILY, avatarWindows, avoidBottom, lowerThirds }));
     draws.push(`ass=filename=${esc(assFile)}:fontsdir=${esc(fontsDir)}:shaping=simple`);

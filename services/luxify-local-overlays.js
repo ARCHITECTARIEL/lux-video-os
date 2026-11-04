@@ -345,12 +345,24 @@ const assTime = sec => {
 // are dropped from user text (plus control characters).
 export const assText = value => String(value).replace(/[\u0000-\u001f\u007f{}\\]/g, '').trim();
 
-// QA r2 N3: while a lower third is on screen the card block must end above
-// whichever is higher, the lower third or the subtitle plate.
-export function cardAvoidBottom(caption, { avoidBottom = null, lowerThirds = [], gap = 0 } = {}) {
-  const tops = lowerThirds.filter(l => caption.start < l.end && caption.end > l.start).map(l => l.top - gap);
-  if (avoidBottom != null) tops.push(avoidBottom);
-  return tops.length ? Math.min(...tops) : null;
+// QA r2 N3 (timing fix): a keyword card never shares the screen with a lower
+// third. The card is delayed past the lower third, or cut short before it;
+// if less than MIN_CARD_SECONDS is left it is dropped. Cards keep their normal
+// position (no vertical lift over the presenter).
+export const MIN_CARD_SECONDS = 0.5;
+export const CARD_LT_GAP = 0.15;
+export function cardTiming(caption, lowerThirds = []) {
+  let { start, end } = caption;
+  const lts = [...lowerThirds].sort((a, b) => a.start - b.start);
+  for (let pass = 0; pass < lts.length + 1; pass += 1) {
+    const hit = lts.find(l => start < l.end + CARD_LT_GAP && end > l.start - CARD_LT_GAP);
+    if (!hit) break;
+    const delayed = hit.end + CARD_LT_GAP, cut = hit.start - CARD_LT_GAP;
+    // Prefer the longer remaining piece of the caption window.
+    if (end - delayed >= cut - start) start = delayed; else end = cut;
+    if (end - start < MIN_CARD_SECONDS) return null;
+  }
+  return end - start >= MIN_CARD_SECONDS ? { start: +start.toFixed(3), end: +end.toFixed(3) } : null;
 }
 
 export function cardsAss(captions, { width, height, fontName, avatarWindows = [], avoidBottom = null, lowerThirds = [] }) {
@@ -365,11 +377,13 @@ export function cardsAss(captions, { width, height, fontName, avatarWindows = []
     '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
   const events = [];
-  captions.forEach((c, beat) => {
+  captions.forEach((orig, beat) => {
+    const when = cardTiming(orig, lowerThirds);
+    if (!when) return;
+    const c = { ...orig, ...when };
     const mid = (c.start + c.end) / 2;
     const onAvatar = avatarWindows.some(w => mid >= w.start && mid < w.end);
-    const avoid = cardAvoidBottom(c, { avoidBottom, lowerThirds, gap: Math.round(Math.min(width, height) * 0.02) });
-    const rows = cardLayout(c.text, width, height, { onAvatar, avoidBottom: avoid }).filter(r => assText(r.text));
+    const rows = cardLayout(c.text, width, height, { onAvatar, avoidBottom }).filter(r => assText(r.text));
     const plate = cardPlate(rows, width);
     if (plate) events.push(`Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Plate,,0,0,0,,{\\an7\\pos(${plate.x},${plate.y})\\fad(120,120)\\p1}m 0 0 l ${plate.w} 0 ${plate.w} ${plate.h} 0 ${plate.h}{\\p0}`);
     rows.forEach((r, i) => {
