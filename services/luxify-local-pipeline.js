@@ -12,7 +12,7 @@ import { homedir, hostname } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { AI_DISCLOSURE_TEXT, ASPECTS, CLIP_CAP_USD, parseAvatarConsent, CLIP_SHOT_MODELS, FONT_PRESETS, HEYGEN_AVATAR_USD_PER_SECOND, SHOT_MODELS, VIDEO_CAP_USD } from '../lib/luxify-local-brief.js';
-import { buildCues, bugFilter, disclosureFilters, endCardGraph, kineticFilters, kineticFitWarnings, kineticWarnings, subtitleFilters, themeTokens, toSrt, toVtt, wavDurationSeconds } from './luxify-local-overlays.js';
+import { buildCues, bugFilter, cardsAss, scaleCube, disclosureFilters, endCardGraph, kineticFilters, kineticFitWarnings, kineticWarnings, subtitleFilters, themeTokens, toSrt, toVtt, wavDurationSeconds } from './luxify-local-overlays.js';
 import { cinematicFinishingFilterGraph } from './media-finisher.js';
 import { RUNWAY_MAX_DATA_URI_BYTES, RUNWAY_USD_PER_CREDIT, awaitRunwayTask, buildRunwayRequest, createRunwayTask, imageFileToDataUri, resumeRunwayTask } from './runway-models.js';
 
@@ -201,6 +201,8 @@ export function resolveAssets(brief, assetsRoot, briefDir = process.cwd()) {
     root,
     font: join(root, 'fonts', FONT_PRESETS[brief.fontPreset]),
     lut: brief.lut ? join(root, 'luts', brief.lut) : null,
+    // Keyword cards always use the bold brand face, whatever fontPreset says.
+    ...(brief.captionStyle === 'cards' ? { cardFont: join(root, 'fonts', FONT_PRESETS['lux-sans-bold']) } : {}),
     music: brief.music ? join(root, 'music', brief.music.track) : null,
     logo: brief.logoOverlay ? join(root, 'overlays', brief.logoOverlay) : null,
     voice: resolve(briefDir, brief.voice.path),
@@ -300,6 +302,9 @@ export async function sha256File(path) {
 
 export function titleFilters(shot, font, width, height, textFiles, theme = 'dark') {
   const tk = themeTokens(theme);
+  // 1104: in portrait the lower third sat at 0.76 H and its plate ran into the
+  // AI label at 0.83 H; it now ends above the label.
+  const ly = height > width ? 0.67 : 0.76;
   return shot.titles.flatMap((t, i) => {
     const enable = `enable='between(t,${t.start},${t.end})'`;
     const main = textFiles[`${i}-main`];
@@ -309,15 +314,15 @@ export function titleFilters(shot, font, width, height, textFiles, theme = 'dark
       return [`drawbox=x=0:y=ih*0.08:w=iw:h=${Math.round(size * 1.8)}:color=${tk.titlePlate}:t=fill:${enable}`,
         `drawtext=${base}:textfile=${ffFilterPath(main)}:x=(w-text_w)/2:y=h*0.08+${Math.round(size * 0.4)}:${enable}`];
     }
-    const out = [`drawbox=x=iw*0.05:y=ih*0.76:w=iw*0.6:h=${Math.round(size * (t.subtext ? 2.8 : 1.7))}:color=${tk.lowerPlate}:t=fill:${enable}`,
-      `drawtext=${base}:textfile=${ffFilterPath(main)}:x=w*0.07:y=h*0.76+${Math.round(size * 0.35)}:${enable}`];
-    if (t.subtext) out.push(`drawtext=fontfile=${ffFilterPath(font)}:expansion=none:fontcolor=${tk.textSecondary}:fontsize=${Math.round(size * 0.65)}:textfile=${ffFilterPath(textFiles[`${i}-sub`])}:x=w*0.07:y=h*0.76+${Math.round(size * 1.7)}:${enable}`);
+    const out = [`drawbox=x=iw*0.05:y=ih*${ly}:w=iw*0.6:h=${Math.round(size * (t.subtext ? 2.8 : 1.7))}:color=${tk.lowerPlate}:t=fill:${enable}`,
+      `drawtext=${base}:textfile=${ffFilterPath(main)}:x=w*0.07:y=h*${ly}+${Math.round(size * 0.35)}:${enable}`];
+    if (t.subtext) out.push(`drawtext=fontfile=${ffFilterPath(font)}:expansion=none:fontcolor=${tk.textSecondary}:fontsize=${Math.round(size * 0.65)}:textfile=${ffFilterPath(textFiles[`${i}-sub`])}:x=w*0.07:y=h*${ly}+${Math.round(size * 1.7)}:${enable}`);
     return out;
   });
 }
 
 // Step 1+2 per clip: grade (media-finisher graph + optional LUT) and burn titles.
-export async function finishClip({ ffmpeg, input, output, shot, assets, width, height, workdir, grainStrength = 6, theme = 'dark', ffmpegTimeoutMs }) {
+export async function finishClip({ ffmpeg, input, output, shot, assets, width, height, workdir, grainStrength = 6, theme = 'dark', lutStrength = 1, ffmpegTimeoutMs }) {
   const textFiles = {};
   for (const [i, t] of shot.titles.entries()) {
     textFiles[`${i}-main`] = join(workdir, `${shot.id}-t${i}.txt`);
@@ -330,7 +335,12 @@ export async function finishClip({ ffmpeg, input, output, shot, assets, width, h
   if (assets.lut) {
     const anchor = 'eq=saturation=1.14:contrast=1.06';
     if (!grade.includes(anchor)) throw fail('media-finisher grade changed; LUT insertion point missing.', 'GRADE_UNSUPPORTED');
-    grade = grade.replace(anchor, `${anchor},lut3d=file=${ffFilterPath(assets.lut)}`);
+    let lutPath = assets.lut;
+    if (lutStrength !== 1) {
+      lutPath = join(workdir, `${shot.id}-lut-x${lutStrength}.cube`);
+      await writeFile(lutPath, scaleCube(await readFile(assets.lut, 'utf8'), lutStrength));
+    }
+    grade = grade.replace(anchor, `${anchor},lut3d=file=${ffFilterPath(lutPath)}:interp=tetrahedral`);
   }
   // Clip shots: hold the last frame if the clip is short; their audio is always
   // dropped (-an) so the master voice track stays the only voice.
@@ -338,6 +348,58 @@ export async function finishClip({ ffmpeg, input, output, shot, assets, width, h
   const vf = [grade, ...titleFilters(shot, assets.font, width, height, textFiles, theme), ...hold, `fps=${FPS}`, 'settb=AVTB', 'format=yuv420p'].join(',');
   const seek = isClipShot(shot) && shot.clipStart ? ['-ss', String(shot.clipStart)] : [];
   await runFfmpeg(ffmpeg, [...seek, '-i', input, '-t', String(shot.duration), '-vf', vf, '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', output], { timeoutMs: ffmpegTimeoutMs });
+}
+
+// Family name (name ID 16, else 1) from a TTF/OTF name table, for libass.
+export async function fontFamilyName(path) {
+  const buf = await readFile(path);
+  const tables = buf.readUInt16BE(4);
+  for (let i = 0; i < tables; i += 1) {
+    const rec = 12 + i * 16;
+    if (buf.toString('latin1', rec, rec + 4) !== 'name') continue;
+    const off = buf.readUInt32BE(rec + 8);
+    const count = buf.readUInt16BE(off + 2), strings = off + buf.readUInt16BE(off + 4);
+    const found = {};
+    for (let j = 0; j < count; j += 1) {
+      const r = off + 6 + j * 12;
+      const platform = buf.readUInt16BE(r), id = buf.readUInt16BE(r + 6), len = buf.readUInt16BE(r + 8), at = strings + buf.readUInt16BE(r + 10);
+      if ((id !== 1 && id !== 16) || found[id]) continue;
+      const raw = buf.subarray(at, at + len);
+      found[id] = platform === 3 || platform === 0 ? Buffer.from(raw).swap16().toString('utf16le') : raw.toString('latin1');
+    }
+    if (found[16] || found[1]) return (found[16] || found[1]).replace(/[,\r\n]/g, ' ');
+  }
+  throw fail(`No family name in ${basename(path)}`, 'FONT_INVALID');
+}
+
+export const CARD_FONT_FAMILY = 'LuxCardBold';
+// Returns a copy of a TrueType/OpenType font whose 'name' table is replaced by
+// a minimal one (family, subfamily, full name, PostScript name = `family`).
+// The new table is appended; only its directory entry changes. Glyphs are
+// untouched.
+export function renameFontFamily(buf, family) {
+  if (!/^[A-Za-z0-9]{1,31}$/.test(family)) throw fail('Font family must be 1-31 ASCII letters/digits.', 'FONT_INVALID');
+  const tables = buf.readUInt16BE(4);
+  let entry = -1;
+  for (let i = 0; i < tables; i += 1) if (buf.toString('latin1', 12 + i * 16, 16 + i * 16) === 'name') entry = 12 + i * 16;
+  if (entry < 0) throw fail('Font has no name table.', 'FONT_INVALID');
+  const names = [[1, family], [2, 'Regular'], [4, family], [6, family]];
+  const strings = names.map(([, v]) => Buffer.from(v, 'utf16le').swap16());
+  const header = Buffer.alloc(6 + names.length * 12);
+  header.writeUInt16BE(0, 0); header.writeUInt16BE(names.length, 2); header.writeUInt16BE(header.length, 4);
+  let off = 0;
+  names.forEach(([id], j) => {
+    const r = 6 + j * 12;
+    header.writeUInt16BE(3, r); header.writeUInt16BE(1, r + 2); header.writeUInt16BE(0x409, r + 4);
+    header.writeUInt16BE(id, r + 6); header.writeUInt16BE(strings[j].length, r + 8); header.writeUInt16BE(off, r + 10);
+    off += strings[j].length;
+  });
+  const table = Buffer.concat([header, ...strings]);
+  const pad = (4 - (buf.length % 4)) % 4;
+  const out = Buffer.concat([buf, Buffer.alloc(pad), table, Buffer.alloc((4 - (table.length % 4)) % 4)]);
+  out.writeUInt32BE(buf.length + pad, entry + 8);
+  out.writeUInt32BE(table.length, entry + 12);
+  return out;
 }
 
 // Step 3: xfade chain. Returns filter text and the final video duration.
@@ -400,6 +462,21 @@ export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, o
     const files = [];
     for (const [i, c] of cues.entries()) files.push(await textFile(`sub-${i}.txt`, c.text));
     draws.push(...subtitleFilters(cues, { font, width, height, theme, textFile: i => files[i], esc }));
+  }
+  if (style === 'cards' && brief.captions?.length) {
+    // libass picks fonts BY NAME. lux-sans-bold.ttf is internally named
+    // "Montserrat" / "Montserrat Thin" (static cut of the variable font), so a
+    // name lookup silently resolves to any system Montserrat at weight 400
+    // (seen on the box: Montserrat-VariableFont_wght.ttf). The cards get a
+    // private copy renamed to a unique family so only the brand file matches.
+    const fontsDir = join(workdir, 'card-fonts');
+    await mkdir(fontsDir, { recursive: true });
+    const cardFont = assets.cardFont || font;
+    await writeFile(join(fontsDir, 'lux-card.ttf'), renameFontFamily(await readFile(cardFont), CARD_FONT_FAMILY));
+    let t = 0;
+    const avatarWindows = brief.shots.map((s, i) => { const w = { start: t, end: t + durations[i], avatar: s.model === 'heygen_avatar' }; t += durations[i]; return w; }).filter(w => w.avatar);
+    const assFile = await textFile('cards.ass', cardsAss(brief.captions, { width, height, fontName: CARD_FONT_FAMILY, avatarWindows }));
+    draws.push(`ass=filename=${esc(assFile)}:fontsdir=${esc(fontsDir)}:shaping=simple`);
   }
   if (draws.length) { filters.push(`${video}${draws.join(',')}[vcap]`); video = '[vcap]'; }
   // 3. End card (appended after the content).
@@ -747,7 +824,7 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
     const finished = [];
     for (const [i, clip] of clips.entries()) {
       const output = join(workdir, `${String(i).padStart(2, '0')}-${clip.id}.mp4`);
-      await finishClip({ ffmpeg, input: clip.file, output, shot: brief.shots[i], assets: renderAssets, width, height, workdir, theme: brief.theme, ffmpegTimeoutMs });
+      await finishClip({ ffmpeg, input: clip.file, output, shot: brief.shots[i], assets: renderAssets, width, height, workdir, theme: brief.theme, lutStrength: brief.lutStrength ?? 1, ffmpegTimeoutMs });
       finished.push(output);
     }
     const contentSeconds = plan.timelineSeconds - (brief.endCard?.enabled ? brief.endCard.duration : 0);
@@ -775,7 +852,7 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
     totalCredits: plan.totalCredits,
     totalEstUsd: plan.totalEstUsd,
     ...(plan.heygenEstUsd ? { heygenEstUsd: plan.heygenEstUsd } : {}),
-    overlays: { theme: brief.theme, captionStyle: brief.captionStyle, kineticBeats: brief.captions.length, disclosure: AI_DISCLOSURE_TEXT, bug: assembled.bug ? 'on' : (assets.logo && !logoPresent ? 'skipped-logo-missing' : 'off'), endCard: assembled.endCard ? (logoPresent ? 'logo' : 'text-only') : 'off', subtitleTiming: 'approx', sidecars },
+    overlays: { theme: brief.theme, captionStyle: brief.captionStyle, lutStrength: brief.lutStrength ?? 1, kineticBeats: brief.captions.length, disclosure: AI_DISCLOSURE_TEXT, bug: assembled.bug ? 'on' : (assets.logo && !logoPresent ? 'skipped-logo-missing' : 'off'), endCard: assembled.endCard ? (logoPresent ? 'logo' : 'text-only') : 'off', subtitleTiming: 'approx', sidecars },
     caps: plan.caps,
     ...(consent ? { avatarConsent: consent } : {}),
     assets: { font: await assetHash(assets.font), lut: await assetHash(assets.lut), music: await assetHash(assets.music), logo: await assetHash(renderAssets.logo), voice: await assetHash(assets.voice), voiceSource: brief.voice.source, heygenJobId: brief.voice.jobId || null },

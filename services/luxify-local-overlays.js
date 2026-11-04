@@ -219,3 +219,123 @@ export function kineticFitWarnings(captions, width, height) {
   const full = layout(width, height).kineticSize;
   return captions.filter(c => kineticFontSize(c.text, width, height) < full * 0.6).map(c => `KINETIC_SHRUNK: "${c.text}" was shrunk to fit the frame width`);
 }
+
+// ---- LUT strength (LUXIFY-OVERLAYS-1104) ------------------------------------
+// lux-cinematic.cube moves an average pixel by ~10/255 (33^3 grid vs identity),
+// which reads as "no LUT" after the media-finisher grade. Strength rescales the
+// LUT's offset from identity: out = in + s * (lut(in) - in), clamped to [0,1].
+// s = 1 returns the file unchanged in meaning; s > 1 exaggerates the grade.
+export function scaleCube(text, strength) {
+  const s = Number(strength);
+  if (!Number.isFinite(s) || s < 0 || s > 3) throw Object.assign(new Error('LUT strength must be 0-3'), { code: 'LUT_STRENGTH_INVALID' });
+  const lines = String(text).split(/\r?\n/);
+  const sizeLine = lines.find(l => /^\s*LUT_3D_SIZE\s+\d+/.test(l));
+  if (!sizeLine) throw Object.assign(new Error('Not a 3D .cube LUT (LUT_3D_SIZE missing)'), { code: 'LUT_INVALID' });
+  const N = Number(sizeLine.trim().split(/\s+/)[1]);
+  const clamp = v => Math.min(1, Math.max(0, v));
+  let k = 0;
+  const out = lines.map(line => {
+    const p = line.trim().split(/\s+/);
+    if (p.length !== 3 || !p.every(v => /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(v))) return line;
+    // .cube order: red varies fastest, then green, then blue.
+    const id = [k % N, Math.floor(k / N) % N, Math.floor(k / (N * N))].map(v => v / (N - 1));
+    k += 1;
+    return p.map((v, c) => clamp(id[c] + s * (Number(v) - id[c])).toFixed(6)).join(' ');
+  });
+  if (k !== N * N * N) throw Object.assign(new Error(`LUT has ${k} entries, expected ${N ** 3}`), { code: 'LUT_INVALID' });
+  return out.join('\n');
+}
+
+// ---- Keyword cards (captionStyle "cards", LUXIFY-OVERLAYS-1104) -------------
+// Each beat becomes a stacked 1-3 line card of big uppercase words in
+// lux-sans-bold, left-aligned mid-frame (never a centred bottom line). The
+// last line is the keyword on a brand-blue (#1A2B9E) highlight bar that
+// sweeps in from the left. Beats alternate "pop" (scale overshoot) and
+// "slide" (from the left) entrances; lines stagger by 80 ms. Rendered with
+// libass (ffmpeg `ass` filter) so the box, scale and motion are per-frame.
+export const BRAND_BLUE = '1A2B9E';
+const assColor = (hex, alpha = '00') => `&H${alpha}${hex.slice(4, 6)}${hex.slice(2, 4)}${hex.slice(0, 2)}`.toUpperCase();
+
+export function cardLines(textValue, maxLines = 3) {
+  const words = String(textValue).replace(/\s+/g, ' ').trim().toUpperCase().split(' ').filter(Boolean);
+  // One word per line (stacked punch lines); beyond maxLines the shortest
+  // adjacent pair is joined until it fits.
+  const lines = [...words];
+  while (lines.length > maxLines) {
+    let best = 0;
+    for (let i = 1; i < lines.length - 1; i += 1) if (lines[i].length + lines[i + 1].length < lines[best].length + lines[best + 1].length) best = i;
+    lines.splice(best, 2, `${lines[best]} ${lines[best + 1]}`);
+  }
+  return lines;
+}
+
+// Card geometry for one beat. `onAvatar` beats sit lower (block centre at
+// 0.54 H, under Kristian's face, which sits in the top third) and b-roll beats
+// sit at 0.46 H. Bold caps run ~0.74 em, so lines shrink to fit 84% width.
+export const CARD_EM_WIDTH = 0.8;
+export function cardLayout(textValue, width, height, { onAvatar = false } = {}) {
+  const u = Math.min(width, height);
+  const lines = cardLines(textValue);
+  const full = Math.round(u * 0.2);
+  // One size per card (the widest line decides) so the keyword bar is never
+  // smaller than the lines above it.
+  const longest = Math.max(1, ...lines.map(l => [...l].length));
+  const size = Math.max(24, Math.min(full, Math.floor((width * 0.84) / (longest * CARD_EM_WIDTH))));
+  const sizes = lines.map(() => size);
+  const gap = Math.round(u * 0.025);
+  const heights = sizes.map(s => Math.round(s * 0.95));
+  const total = heights.reduce((a, h) => a + h, 0) + gap * (lines.length - 1);
+  const centre = Math.round(height * (height > width ? (onAvatar ? 0.54 : 0.46) : 0.5));
+  let y = centre - Math.round(total / 2);
+  const x = Math.round(width * 0.07);
+  return lines.map((text, i) => {
+    const row = { text, size: sizes[i], x, y, h: heights[i], keyword: i === lines.length - 1 && lines.length > 0 };
+    y += heights[i] + gap;
+    return row;
+  });
+}
+
+const assTime = sec => {
+  const cs = Math.max(0, Math.round(sec * 100));
+  const h = Math.floor(cs / 360000), m = Math.floor(cs / 6000) % 60, s = Math.floor(cs / 100) % 60, r = cs % 100;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(r).padStart(2, '0')}`;
+};
+// ASS text: braces start override blocks and backslashes start tags, so both
+// are dropped from user text (plus control characters).
+export const assText = value => String(value).replace(/[\u0000-\u001f\u007f{}\\]/g, '').trim();
+
+export function cardsAss(captions, { width, height, fontName, avatarWindows = [] }) {
+  const blue = assColor(BRAND_BLUE);
+  const head = [
+    '[Script Info]', 'ScriptType: v4.00+', `PlayResX: ${width}`, `PlayResY: ${height}`, 'WrapStyle: 2', 'ScaledBorderAndShadow: yes', '',
+    '[V4+ Styles]',
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+    `Style: Card,${fontName},80,&H00FFFFFF,&H00FFFFFF,&H00000000,&H8C000000,-1,0,0,0,100,100,0,0,1,0,5,7,0,0,0,1`,
+    `Style: Key,${fontName},80,&H00FFFFFF,&H00FFFFFF,${blue},&H00000000,-1,0,0,0,100,100,0,0,3,0,0,7,0,0,0,1`,
+    '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+  ];
+  const events = [];
+  captions.forEach((c, beat) => {
+    const mid = (c.start + c.end) / 2;
+    const onAvatar = avatarWindows.some(w => mid >= w.start && mid < w.end);
+    const rows = cardLayout(c.text, width, height, { onAvatar });
+    rows.forEach((r, i) => {
+      const d = i * 80; // stagger (ms)
+      const text = assText(r.text);
+      if (!text) return;
+      const fade = `\\fad(0,120)`;
+      if (r.keyword) {
+        const pad = Math.round(r.size * 0.16);
+        // Bar sweep: the boxed keyword scales in from the left edge.
+        const x = r.x + pad, y = r.y;
+        events.push(`Dialogue: 1,${assTime(c.start)},${assTime(c.end)},Key,,0,0,0,,{\\an7\\pos(${x},${y})\\fs${r.size}\\bord${pad}\\fscx0\\alpha&HFF&\\t(${d},${d + 1},\\alpha&H00&)\\t(${d},${d + 220},0.6,\\fscx104)\\t(${d + 220},${d + 300},\\fscx100)${fade}}${text}`);
+      } else if (beat % 2 === 0) {
+        events.push(`Dialogue: 2,${assTime(c.start)},${assTime(c.end)},Card,,0,0,0,,{\\an7\\pos(${r.x},${r.y})\\fs${r.size}\\org(${r.x},${r.y + Math.round(r.h / 2)})\\fscx40\\fscy40\\alpha&HFF&\\t(${d},${d + 150},\\fscx112\\fscy112\\alpha&H00&)\\t(${d + 150},${d + 260},\\fscx100\\fscy100)${fade}}${text}`);
+      } else {
+        const from = r.x - Math.round(width * 0.35);
+        events.push(`Dialogue: 2,${assTime(c.start)},${assTime(c.end)},Card,,0,0,0,,{\\an7\\move(${from},${r.y},${r.x},${r.y},${d},${d + 240})\\fs${r.size}\\alpha&HFF&\\t(${d},${d + 160},\\alpha&H00&)${fade}}${text}`);
+      }
+    });
+  });
+  return `${[...head, ...events].join('\n')}\n`;
+}
