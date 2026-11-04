@@ -345,7 +345,15 @@ const assTime = sec => {
 // are dropped from user text (plus control characters).
 export const assText = value => String(value).replace(/[\u0000-\u001f\u007f{}\\]/g, '').trim();
 
-export function cardsAss(captions, { width, height, fontName, avatarWindows = [], avoidBottom = null }) {
+// QA r2 N3: while a lower third is on screen the card block must end above
+// whichever is higher, the lower third or the subtitle plate.
+export function cardAvoidBottom(caption, { avoidBottom = null, lowerThirds = [], gap = 0 } = {}) {
+  const tops = lowerThirds.filter(l => caption.start < l.end && caption.end > l.start).map(l => l.top - gap);
+  if (avoidBottom != null) tops.push(avoidBottom);
+  return tops.length ? Math.min(...tops) : null;
+}
+
+export function cardsAss(captions, { width, height, fontName, avatarWindows = [], avoidBottom = null, lowerThirds = [] }) {
   const blue = assColor(BRAND_BLUE);
   const head = [
     '[Script Info]', 'ScriptType: v4.00+', `PlayResX: ${width}`, `PlayResY: ${height}`, 'WrapStyle: 2', 'ScaledBorderAndShadow: yes', '',
@@ -360,7 +368,8 @@ export function cardsAss(captions, { width, height, fontName, avatarWindows = []
   captions.forEach((c, beat) => {
     const mid = (c.start + c.end) / 2;
     const onAvatar = avatarWindows.some(w => mid >= w.start && mid < w.end);
-    const rows = cardLayout(c.text, width, height, { onAvatar, avoidBottom }).filter(r => assText(r.text));
+    const avoid = cardAvoidBottom(c, { avoidBottom, lowerThirds, gap: Math.round(Math.min(width, height) * 0.02) });
+    const rows = cardLayout(c.text, width, height, { onAvatar, avoidBottom: avoid }).filter(r => assText(r.text));
     const plate = cardPlate(rows, width);
     if (plate) events.push(`Dialogue: 0,${assTime(c.start)},${assTime(c.end)},Plate,,0,0,0,,{\\an7\\pos(${plate.x},${plate.y})\\fad(120,120)\\p1}m 0 0 l ${plate.w} 0 ${plate.w} ${plate.h} 0 ${plate.h}{\\p0}`);
     rows.forEach((r, i) => {

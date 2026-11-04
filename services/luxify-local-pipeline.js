@@ -120,13 +120,39 @@ export async function validateAssetFile(kind, path, roots) {
   if (!info.isFile()) throw fail(`${kind} is not a file: ${basename(path)}`, rule.code);
   if (info.size > rule.max) throw fail(`${kind} ${basename(path)} is larger than ${rule.max / 1024 / 1024} MB.`, rule.code);
   if (rule.sub === 'fonts') parseFontNameTable(await readFile(real));
+  if (kind === 'music') await assertAudioFile(real);
   return real;
 }
 
+// QA r2: music must really be audio (WAV, MP3, AAC/M4A, FLAC or Ogg), by magic bytes.
+export function isAudioHeader(head) {
+  if (!Buffer.isBuffer(head) || head.length < 12) return false;
+  const at = (o, str) => head.toString('latin1', o, o + str.length) === str;
+  if (at(0, 'RIFF') && at(8, 'WAVE')) return true;
+  if (at(0, 'ID3')) return true;
+  if (head[0] === 0xff && (head[1] & 0xe0) === 0xe0) return true; // MPEG/ADTS frame sync
+  if (at(4, 'ftyp')) return true;
+  return at(0, 'fLaC') || at(0, 'OggS');
+}
+async function assertAudioFile(real) {
+  const handle = await open(real, 'r');
+  const head = Buffer.alloc(12);
+  let n;
+  try { ({ bytesRead: n } = await handle.read(head, 0, 12, 0)); } finally { await handle.close(); }
+  if (n < 12 || !isAudioHeader(head)) throw fail(`music ${basename(real)} is not a WAV, MP3, M4A/AAC, FLAC or Ogg file.`, 'MUSIC_INVALID');
+}
+
 // Validates every capped asset of a resolved asset set (CLI + runPipeline).
+// Returns the asset set with each checked file replaced by its resolved
+// realpath, so later reads use exactly the file that was validated (QA r2).
 export async function validateAssets(assets) {
   const roots = assets.roots || [assets.root];
-  for (const kind of Object.keys(ASSET_RULES)) await validateAssetFile(kind, assets[kind], roots);
+  const out = { ...assets };
+  for (const kind of Object.keys(ASSET_RULES)) {
+    const real = await validateAssetFile(kind, assets[kind], roots);
+    if (real) out[kind] = real;
+  }
+  return out;
 }
 
 // QA M4: avatar shots fail closed without a valid local consent record inside
@@ -349,6 +375,25 @@ export async function sha256File(path) {
   return hash.digest('hex');
 }
 
+// Top y (px) of a lower-third plate; the same formula titleFilters draws with.
+export function lowerThirdTop(t, width, height, avoidBottom = null) {
+  const ly0 = height > width ? 0.67 : 0.76;
+  const plateH = Math.round(Math.round(height / 20) * (t.subtext ? 2.8 : 1.7));
+  const ly = avoidBottom == null ? ly0 : Math.min(ly0, Math.floor(((avoidBottom - plateH) / height) * 1000) / 1000);
+  return Math.floor(ly * height);
+}
+
+// Timeline windows of every lower third (clip starts account for xfade overlap).
+export function lowerThirdWindows(shots, durations, transitions, width, height, avoidBottom = null) {
+  const out = [];
+  let start = 0;
+  shots.forEach((shot, i) => {
+    for (const t of shot.titles || []) if (t.kind === 'lower_third') out.push({ start: +(start + t.start).toFixed(3), end: +(start + t.end).toFixed(3), top: lowerThirdTop(t, width, height, avoidBottom) });
+    if (i < shots.length - 1) start += durations[i] - (transitions?.[i]?.duration || 0);
+  });
+  return out;
+}
+
 export function titleFilters(shot, font, width, height, textFiles, theme = 'dark', { avoidBottom = null } = {}) {
   const tk = themeTokens(theme);
   // 1104: in portrait the lower third sat at 0.76 H and its plate ran into the
@@ -496,6 +541,11 @@ export function xfadeGraph(durations, transitions) {
 // QA L6: on-screen window of each shot after xfade overlaps. Shot i starts at
 // sum(durations before i) - sum(transitions before i); neighbouring windows
 // meet at the middle of each crossfade, so per-shot overlays swap there.
+// Burned-in / sidecar subtitle cues wrapped to the frame width (QA N1).
+export function subtitleCues(script, seconds, width, height) {
+  return buildCues(script, seconds, { maxChars: subtitleMaxChars(width, height) });
+}
+
 export function shotWindows(durations, transitions = []) {
   const out = [];
   let start = 0;
@@ -585,7 +635,9 @@ export async function assembleFinal({ ffmpeg, clips, durations, brief, assets, o
     // QA N2: with burned-in subtitles the card block ends above the subtitle plate.
     const subsOn = style === 'subtitle' || Boolean(brief.subtitles?.burnIn);
     const avoidBottom = subsOn ? subtitleTop(width, height) - Math.round(Math.min(width, height) * 0.02) : null;
-    const assFile = await textFile('cards.ass', cardsAss(brief.captions, { width, height, fontName: CARD_FONT_FAMILY, avatarWindows, avoidBottom }));
+    // QA r2 N3: and above any lower third showing at the same time.
+    const lowerThirds = lowerThirdWindows(brief.shots, durations, brief.transitions, width, height, avoidBottom);
+    const assFile = await textFile('cards.ass', cardsAss(brief.captions, { width, height, fontName: CARD_FONT_FAMILY, avatarWindows, avoidBottom, lowerThirds }));
     draws.push(`ass=filename=${esc(assFile)}:fontsdir=${esc(fontsDir)}:shaping=simple`);
   }
   if (draws.length) { filters.push(`${video}${draws.join(',')}[vcap]`); video = '[vcap]'; }
@@ -876,12 +928,12 @@ export async function runPipeline(options) {
   // QA M4 / M1: consent and logo are checked before the lock or any spend.
   const consent = await loadAvatarConsent(options.brief, { briefDir, assetsRoot: options.assets.root, now: options.now });
   const logo = await validateLogo(options.assets.logo, options.assets.roots || options.assets.root);
-  await validateAssets(options.assets);
+  const assets = await validateAssets({ ...options.assets, ...(logo ? { logo } : {}) });
   await mkdir(options.outDir, { recursive: true });
   const lock = await acquireLock(options.outDir, { breakLock: Boolean(options.breakLock) });
   try {
     await cleanTempFiles(options.outDir);
-    return await runPipelineLocked({ ...options, briefDir, consent, validLogo: logo });
+    return await runPipelineLocked({ ...options, assets, briefDir, consent, validLogo: logo });
   } finally {
     await lock.release();
   }
@@ -940,7 +992,7 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
       finished.push(output);
     }
     const contentSeconds = plan.timelineSeconds - (brief.endCard?.enabled ? brief.endCard.duration : 0);
-    cues = buildCues(brief.script, Math.min(voiceSeconds ?? contentSeconds, contentSeconds), { maxChars: subtitleMaxChars(width, height) });
+    cues = subtitleCues(brief.script, Math.min(voiceSeconds ?? contentSeconds, contentSeconds), width, height);
     assembled = await assembleFinal({ ffmpeg, clips: finished, durations: brief.shots.map(s => s.duration), brief, assets: renderAssets, output: finalPath, workdir, width, height, cues, ffmpegTimeoutMs });
     ({ duration } = assembled);
   } catch (error) {

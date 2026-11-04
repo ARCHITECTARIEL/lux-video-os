@@ -95,7 +95,8 @@ test('--live refuses without RUNWAYML_API_SECRET and on cap breach, before any s
   try {
     const assets = join(dir, 'assets');
     for (const sub of ['fonts', 'luts', 'music', 'overlays']) await mkdir(join(assets, sub), { recursive: true });
-    for (const f of ['luts/id.cube', 'music/bed.wav']) await writeFile(join(assets, f), 'x');
+    await writeFile(join(assets, 'luts/id.cube'), 'x');
+    await writeFile(join(assets, 'music/bed.wav'), Buffer.from('RIFF\0\0\0\0WAVEfmt ', 'latin1')); // music is type-checked (QA r2)
     await writeFile(join(assets, 'fonts/lux-sans-bold.ttf'), readFileSync(new URL('./fixtures/fonts/ofl-test-bold.ttf', import.meta.url))); // fonts are parsed up front (QA L5)
     // A real (1x1) PNG: the logo is validated before any live gate (QA M1).
     await writeFile(join(assets, 'overlays/logo.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
