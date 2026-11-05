@@ -928,7 +928,9 @@ export async function runPipeline(options) {
   // QA M4 / M1: consent and logo are checked before the lock or any spend.
   const consent = await loadAvatarConsent(options.brief, { briefDir, assetsRoot: options.assets.root, now: options.now });
   const logo = await validateLogo(options.assets.logo, options.assets.roots || options.assets.root);
-  const assets = await validateAssets({ ...options.assets, ...(logo ? { logo } : {}) });
+  // Validate both logo variants before the lock, even when the primary is absent.
+  const logoDark = await validateLogo(options.assets.logoDark, options.assets.roots || options.assets.root);
+  const assets = await validateAssets({ ...options.assets, ...(logo ? { logo } : {}), logoDark });
   await mkdir(options.outDir, { recursive: true });
   const lock = await acquireLock(options.outDir, { breakLock: Boolean(options.breakLock) });
   try {
@@ -980,7 +982,7 @@ async function runPipelineLocked({ brief, briefDir, plan, outDir, assets, ffmpeg
   let cues = [];
   // Optional logo: missing file -> skip bug and end-card logo (recorded below).
   const logoPresent = Boolean(validLogo);
-  const validDark = validLogo ? await validateLogo(assets.logoDark, assets.roots || assets.root) : null;
+  const validDark = validLogo ? assets.logoDark : null; // validated up front by runPipeline
   const renderAssets = { ...assets, logo: validLogo, logoDark: validDark };
   const voiceSeconds = wavDurationSeconds(await readFile(assets.voice)) ?? null;
   try {

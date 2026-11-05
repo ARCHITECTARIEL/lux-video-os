@@ -2,14 +2,14 @@
 // resolved asset paths, music type check.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { parseBrief } from '../lib/luxify-local-brief.js';
 import { MIN_CARD_SECONDS, cardTiming, cardsAss, scaleCube, subtitleMaxChars, subtitleTop } from '../services/luxify-local-overlays.js';
-import { LOCK_FILE, isAudioHeader, lowerThirdTop, lowerThirdWindows, parseFontNameTable, planBrief, renameFontFamily, resolveAssets, runPipeline, subtitleCues, titleFilters, validateAssetFile, validateAssets, validateLogo } from '../services/luxify-local-pipeline.js';
+import { LOCK_FILE, assembleFinal, isAudioHeader, lowerThirdTop, lowerThirdWindows, parseFontNameTable, planBrief, renameFontFamily, resolveAssets, runPipeline, subtitleCues, titleFilters, validateAssetFile, validateAssets, validateLogo } from '../services/luxify-local-pipeline.js';
 
 const FONT = readFileSync(new URL('./fixtures/fonts/ofl-test-bold.ttf', import.meta.url));
 const SCRIPT = 'No camera. No studio... Meet LUX Video OS. Enroll your presenter once, with recorded consent. Then write. Our built-in AI copywriter helps you shape every line. Hit render and step away.';
@@ -196,5 +196,56 @@ test('T1: a logo without PNG magic is refused even with an IHDR-like body', asyn
     const fake = Buffer.alloc(24); fake.write('IHDR', 12, 'latin1'); fake.writeUInt32BE(10, 16); fake.writeUInt32BE(10, 20);
     await writeFile(join(assets, 'overlays', 'x.png'), fake);
     await assert.rejects(validateLogo(join(assets, 'overlays', 'x.png'), assets), { code: 'LOGO_INVALID' });
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+
+// QA r3a: the alternate logo has the same trust boundary as the primary.
+test('T1-r3a: pipeline rejects outside-root and non-PNG dark logos before locking, with or without a primary logo', async () => {
+  const { dir, assets } = await scaffold();
+  try {
+    const png = readFileSync(new URL('../brand-assets/overlays/lux-logo.png', import.meta.url));
+    await writeFile(join(assets, 'overlays', 'primary.png'), png);
+    await writeFile(join(dir, 'outside.png'), png);
+    await symlink(join(dir, 'outside.png'), join(assets, 'overlays', 'escape.png'));
+    await writeFile(join(assets, 'overlays', 'invalid.png'), 'not a PNG file at all.........');
+    for (const primary of ['primary.png', null]) {
+      for (const [dark, code] of [['escape.png', 'LOGO_OUTSIDE_ROOTS'], ['invalid.png', 'LOGO_INVALID']]) {
+        const b = brief({ lut: null, logoOverlay: primary, logoOverlayDark: dark });
+        const outDir = join(dir, `rejected-${primary}-${dark}`);
+        await assert.rejects(runPipeline({ brief: b, briefDir: dir, plan: planBrief(b), outDir,
+          assets: resolveAssets(b, assets, dir), ffmpeg: '/nonexistent/ffmpeg', runwayEnv: {}, runwayDeps: {} }), { code });
+        assert.ok(!existsSync(outDir), 'rejected before creating output or taking a lock');
+      }
+    }
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+// QA r3b: exercise the real assembly path, not just cardsAss in isolation.
+// An absent executable stops assembly AFTER cards.ass is written: no rendering.
+test('T1-r3b: assembleFinal passes timeline lower thirds into cards.ass', async () => {
+  const { dir, assets } = await scaffold();
+  try {
+    const b = brief({ lut: null, captionStyle: 'cards', shots: [
+      { id: 'r', model: 'local_clip', clip: 'r.mp4', duration: 6, titles: [
+        { kind: 'lower_third', text: 'Presenter', start: 0.6, end: 4.4 },
+      ] },
+    ], captions: [
+      { start: 1, end: 2, text: 'hidden card' },
+      { start: 3.5, end: 5.5, text: 'delayed card' },
+    ] });
+    const workdir = join(dir, 'assembly'); await mkdir(workdir);
+    // This executable path cannot exist; do not invoke ffmpeg or produce media.
+    await assert.rejects(assembleFinal({ ffmpeg: join(dir, 'missing-ffmpeg'), clips: [join(dir, 'r.mp4')],
+      durations: [6], brief: b, assets: resolveAssets(b, assets, dir), output: join(dir, 'must-not-render.mp4'),
+      workdir, width: 720, height: 1280 }), { code: 'ENOENT' });
+    const ass = await readFile(join(workdir, 'cards.ass'), 'utf8');
+    const events = eventsOf(ass);
+    assert.ok(events.length > 0, 'assembly emitted caption events');
+    assert.ok(!ass.includes('HIDDEN'), 'card fully under the lower third was dropped');
+    assert.ok(ass.includes('DELAYED'), 'the partially overlapping card was retained');
+    assert.deepEqual(events.filter(e => e.style === 'Plate').map(e => [e.start, e.end]), [[4.55, 5.5]]);
+    assert.ok(events.every(e => e.start >= 4.55), 'every card layer starts after the lower third and gap');
+    assert.ok(!existsSync(join(dir, 'must-not-render.mp4')));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
