@@ -8,6 +8,8 @@ const node = (tag, className, text) => {
 };
 
 const ADMIN_BASE = '/api/video-os-lite/admin';
+const TESTER_CREDIT_MIN = 100;
+const TESTER_CREDIT_MAX = 180;
 const panelData = { overview: null, activity: null, jobs: null, attention: null, accounts: null, testers: null, billing: null };
 let currentTimelineJob = null;
 let activityOffset = 0;
@@ -207,30 +209,6 @@ function renderTestersTable(testers) {
       node('td', null, formatDate(tester.createdAt)),
     );
     const actionCell = node('td');
-    const topUpButton = node('button', 'button quiet compact', '+1,000');
-    topUpButton.type = 'button';
-    topUpButton.title = 'Grant 1,000 testing credits';
-    topUpButton.style.marginRight = '0.5rem';
-    topUpButton.addEventListener('click', async () => {
-      topUpButton.disabled = true;
-      topUpButton.textContent = '…';
-      try {
-        await postJson(`${ADMIN_BASE}?operation=grant-credit`, {
-          accountId: tester.accountId,
-          amount: 1000,
-          idempotencyKey: crypto.randomUUID(),
-          note: 'Tester top-up via Admin Console',
-        });
-        panelData.testers = null;
-        await loadPanel('testers', true);
-      } catch (err) {
-        setStatus(err.message || 'Credit grant failed.', true);
-        topUpButton.disabled = false;
-        topUpButton.textContent = '+1,000';
-      }
-    });
-    actionCell.append(topUpButton);
-
     if (!isDomainTester) {
       const revokeButton = node('button', 'button quiet compact', 'Revoke');
       revokeButton.type = 'button';
@@ -250,6 +228,8 @@ function renderTestersTable(testers) {
         }
       });
       actionCell.append(revokeButton);
+    } else {
+      actionCell.append(node('span', null, '—'));
     }
     row.append(actionCell);
     tbody.append(row);
@@ -267,19 +247,26 @@ async function registerTester(event) {
 
   const email = emailInput.value.trim();
   const name = nameInput.value.trim();
-  const credits = Number(creditsInput.value) || 5000;
+  const credits = Number(creditsInput.value);
   const note = noteInput.value.trim();
 
   if (!email) return;
+  if (!Number.isInteger(credits) || credits < TESTER_CREDIT_MIN || credits > TESTER_CREDIT_MAX) {
+    status.textContent = `Enter an approved whole-number grant from ${TESTER_CREDIT_MIN} to ${TESTER_CREDIT_MAX} credits.`;
+    status.style.color = 'var(--danger)';
+    creditsInput.focus();
+    return;
+  }
   submit.disabled = true;
   status.textContent = 'Registering tester…';
   status.style.color = '';
 
   try {
     await postJson(`${ADMIN_BASE}?operation=register-tester`, { email, name, credits, note });
-    status.textContent = `Tester ${email} registered with ${credits} credits!`;
+    status.textContent = `Tester ${email} registered with an approved credit floor of ${credits}. Existing higher balances are unchanged. Premium access still requires separate account and provider eligibility.`;
     emailInput.value = '';
     nameInput.value = '';
+    creditsInput.value = '';
     noteInput.value = '';
     panelData.testers = null;
     await loadPanel('testers', true);
