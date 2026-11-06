@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -95,7 +95,11 @@ test('--live refuses without RUNWAYML_API_SECRET and on cap breach, before any s
   try {
     const assets = join(dir, 'assets');
     for (const sub of ['fonts', 'luts', 'music', 'overlays']) await mkdir(join(assets, sub), { recursive: true });
-    for (const f of ['fonts/lux-sans-bold.ttf', 'luts/id.cube', 'music/bed.wav', 'overlays/logo.png']) await writeFile(join(assets, f), 'x');
+    await writeFile(join(assets, 'luts/id.cube'), 'x');
+    await writeFile(join(assets, 'music/bed.wav'), Buffer.from('RIFF\0\0\0\0WAVEfmt ', 'latin1')); // music is type-checked (QA r2)
+    await writeFile(join(assets, 'fonts/lux-sans-bold.ttf'), readFileSync(new URL('./fixtures/fonts/ofl-test-bold.ttf', import.meta.url))); // fonts are parsed up front (QA L5)
+    // A real (1x1) PNG: the logo is validated before any live gate (QA M1).
+    await writeFile(join(assets, 'overlays/logo.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
     await writeFile(join(dir, 'voice.wav'), 'x');
     const brief = baseBrief({ voice: { source: 'heygen_audio_file', path: join(dir, 'voice.wav') } });
     await writeFile(join(dir, 'brief.json'), JSON.stringify(brief));
@@ -696,7 +700,7 @@ test('A2: ffmpeg is spawned with -n and never -y', { skip: process.platform === 
   try {
     const shim = join(dir, 'ffmpeg');
     const argsFile = join(dir, 'args.txt');
-    await writeFile(shim, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\nfor last; do :; done\n: > "$last"\n`);
+    await writeFile(shim, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argsFile}'\nfor last; do :; done\nprintf x > "$last"\n`);
     await chmod(shim, 0o755);
     await runFfmpeg(shim, ['-i', 'in.mp4', join(dir, 'out.mp4')]);
     const args = (await readFile(argsFile, 'utf8')).trim().split('\n');

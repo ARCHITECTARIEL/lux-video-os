@@ -74,3 +74,60 @@ until=*/
 
 # Per-suite Playwright result dirs (not the gitignored default test-results/)
 test-results-*/
+
+# Brand pack (brand-assets/): only LUTs and logos are tracked while the repo is
+# public. Fonts and music stay in %USERPROFILE%\lux-assets until it is private.
+# Patterns use [Xx] classes so Linux/macOS clones (case-sensitive) match too.
+brand-assets/[Ff][Oo][Nn][Tt][Ss]/
+brand-assets/[Mm][Uu][Ss][Ii][Cc]/
+brand-assets/**/*.[Tt][Tt][Ff]
+brand-assets/**/*.[Oo][Tt][Ff]
+brand-assets/**/*.[Tt][Tt][Cc]
+brand-assets/**/*.[Ww][Oo][Ff][Ff]
+brand-assets/**/*.[Ww][Oo][Ff][Ff]2
+brand-assets/**/*.[Mm][Pp]3
+brand-assets/**/*.[Ww][Aa][Vv]
+brand-assets/**/*.[Mm]4[Aa]
+brand-assets/**/*.[Aa][Aa][Cc]
+brand-assets/**/*.[Ff][Ll][Aa][Cc]
+brand-assets/**/*.[Oo][Gg][Gg]
+# Stray fonts and audio at the repo root (e.g. a dragged-in brand pack).
+/*.[Tt][Tt][Ff]
+/*.[Oo][Tt][Ff]
+/*.[Ww][Oo][Ff][Ff]
+/*.[Ww][Oo][Ff][Ff]2
+/*.[Mm][Pp]3
+/*.[Ww][Aa][Vv]
+/*.[Mm]4[Aa]
+/*.[Aa][Aa][Cc]
+/*.[Ff][Ll][Aa][Cc]
+/*.[Oo][Gg][Gg]
+# QA r2: stray font files anywhere in the tree (brand fonts are licensed and
+# the repo is public). Only the OFL test fixture and the studio web font that
+# was already tracked are allowed.
+*.[Tt][Tt][Ff]
+*.[Oo][Tt][Ff]
+*.[Tt][Tt][Cc]
+*.[Oo][Tt][Cc]
+*.[Ww][Oo][Ff][Ff]
+*.[Ww][Oo][Ff][Ff]2
+!tests/fixtures/fonts/ofl-test-bold.ttf
+!public/assets/studio/geist-latin.woff2
+# Production inputs that hold personal data or paid outputs never go in git.
+[Vv]ideo_[Pp]roductions/**/[Cc][Oo][Nn][Ss][Ee][Nn][Tt]*.[Jj][Ss][Oo][Nn]
+[Vv]ideo_[Pp]roductions/**/[Rr][Ee][Cc][Ee][Ii][Pp][Tt]*.[Jj][Ss][Oo][Nn]
+[Vv]ideo_[Pp]roductions/**/*.[Ww][Aa][Vv]
+[Vv]ideo_[Pp]roductions/**/*.[Mm][Pp]3
+[Vv]ideo_[Pp]roductions/**/*.[Mm]4[Aa]
+[Vv]ideo_[Pp]roductions/**/*.[Aa][Aa][Cc]
+[Vv]ideo_[Pp]roductions/**/*.[Ff][Ll][Aa][Cc]
+[Vv]ideo_[Pp]roductions/**/*.[Oo][Gg][Gg]
+[Vv]ideo_[Pp]roductions/**/*.[Mm][Pp]4
+[Vv]ideo_[Pp]roductions/**/*.[Mm]4[Vv]
+[Vv]ideo_[Pp]roductions/**/*.[Mm][Oo][Vv]
+[Vv]ideo_[Pp]roductions/**/*.[Ww][Ee][Bb][Mm]
+[Vv]ideo_[Pp]roductions/**/*.[Mm][Kk][Vv]
+[Vv]ideo_[Pp]roductions/**/[Rr]ender/
+[Vv]ideo_[Pp]roductions/**/[Rr]eceipt-history/
+[Vv]ideo_[Pp]roductions/**/[Hh][Ee][Yy][Gg][Ee][Nn]-[Ss][Tt][Aa][Tt][Ee].[Jj][Ss][Oo][Nn]
+[Vv]ideo_[Pp]roductions/**/[Vv][Oo][Ii][Cc][Ee]-[Ww][Oo][Rr][Dd][Ss].[Jj][Ss][Oo][Nn]

@@ -10,7 +10,15 @@ permissions:
   contents: read
 jobs:
   analyze:
-    runs-on: ubuntu-latest
+    # Pinned image (ubuntu-latest is moving to 26.04).
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    env:
+      # Keep file coverage information on pull requests (CodeQL Action, Apr 2026).
+      CODEQL_ACTION_FILE_COVERAGE_ON_PRS: 'true'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -19,6 +27,8 @@ jobs:
       - uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript,python
+          # Pinned CodeQL CLI bundle for reproducible results.
+          tools: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.4/codeql-bundle-linux64.tar.gz
       - uses: github/codeql-action/analyze@v4
         with:
           upload: never
