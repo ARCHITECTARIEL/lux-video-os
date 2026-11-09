@@ -13,6 +13,13 @@
     <p class="eyebrow">LUX VIDEO OS</p>
     <h1 id="notice-title">LUXIFY cinematic consent</h1>
     <p class="fine">Only you can give this consent, for your own enrolled look, while signed in to your own account.</p>
+    <section id="confirm-panel" hidden aria-labelledby="confirm-heading" data-state="idle">
+      <h2 id="confirm-heading">Confirm consent recorded for you</h2>
+      <p id="confirm-detail">Lux staff recorded LUXIFY cinematic consent on your behalf. It does nothing until you confirm it here, while signed in with the email address the link was sent to.</p>
+      <ul id="confirm-pending"></ul>
+      <button id="confirm" type="button" disabled>Confirm this consent</button>
+      <p id="confirm-status" role="status" aria-live="polite"></p>
+    </section>
     <section id="notice-panel" aria-labelledby="notice-heading">
       <h2 id="notice-heading">What you are authorizing</h2>
       <div id="notice-body"></div>
