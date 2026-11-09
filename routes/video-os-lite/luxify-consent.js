@@ -1,11 +1,16 @@
+import { randomUUID } from 'node:crypto';
+
 import { z } from 'zod';
 
 import { luxifyConsentRepository } from '../../db/luxify-consent-repository.js';
 import {
   LUXIFY_CONSENT_NOTICE,
   LUXIFY_CONSENT_NOTICE_SHA256,
+  LUXIFY_OPERATOR_ATTESTATION_METHODS,
+  LUXIFY_OPERATOR_ATTESTATION_VERSION,
   issueLuxifyConsentChallenge,
   luxifyConsentChallengeDigest,
+  luxifyOperatorChallengeSubject,
   verifyLuxifyConsentChallenge,
 } from '../../lib/luxify-consent-policy.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
@@ -44,7 +49,39 @@ const schemas = {
   'list-staff': z.object({ action: z.literal('list-staff') }).strict(),
   'staff-lookup': z.object({ action: z.literal('staff-lookup'), email: z.string().trim().min(3).max(254) }).strict(),
   'check-capability': z.object({ action: z.literal('check-capability'), accountId: accountRef, identityId: uuid }).strict(),
+  // CORE-CONSENT-OBO: operator-recorded consent on behalf of a subject. The
+  // operator is ALWAYS the session account; a body operator field is refused
+  // by .strict(). Authority (consent_operator grant) is checked server-side.
+  'grant-consent-operator': z.object({ action: z.literal('grant-consent-operator'), staffAccountId: accountRef, explicitGrant: z.literal(true) }).strict(),
+  'operator-context': z.object({ action: z.literal('operator-context'), onBehalfOfAccountId: accountRef }).strict(),
+  'grant-on-behalf': z.object({
+    action: z.literal('grant-on-behalf'),
+    onBehalfOfAccountId: accountRef,
+    identityId: uuid,
+    idempotencyKey: uuid,
+    challenge: z.string().min(1).max(1024),
+    noticeSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    cinematicGenerationAuthorization: z.literal(true),
+    providerProcessingAuthorization: z.literal(true),
+    subjectName: z.string().trim().min(1).max(120),
+    attestationMethod: z.enum(LUXIFY_OPERATOR_ATTESTATION_METHODS),
+    attestedAt: z.string().datetime({ offset: true }),
+    attestationEvidenceRef: z.string().min(1).max(200),
+    attestationConfirmed: z.literal(true),
+    expiryDays: z.number().int().min(1).max(365).optional(),
+  }).strict(),
+  'operator-withdraw': z.object({ action: z.literal('operator-withdraw'), consentId: uuid }).strict(),
 };
+
+const REQUEST_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+/** Request id for the audit trail: the platform id when well-formed, else a fresh UUID. Never a token. */
+function requestIdFrom(req) {
+  for (const name of ['x-vercel-id', 'x-request-id']) {
+    const value = String(req.headers?.[name] || '').trim();
+    if (REQUEST_ID.test(value)) return value;
+  }
+  return randomUUID();
+}
 
 // QA L3: each check costs a look GET plus a binding qualification, so it is
 // throttled per staff actor with the repo's atomic fixed-window counter.
@@ -202,14 +239,14 @@ export function createLuxifyConsentHandler({
           logOpsEvent({ level: 'info', event: 'luxify.consent.granted', accountId, status: 201, code: 'LUXIFY_CONSENT_GRANTED', message: 'LUXIFY consent recorded.' });
           return send(res, result.replayed ? 200 : 201, { ok: true, ...result });
         case 'withdraw':
-          result = await repository.withdrawConsent({ accountId, consentId: input.consentId });
+          result = await repository.withdrawConsent({ accountId, consentId: input.consentId, requestId: requestIdFrom(req) });
           logOpsEvent({ level: 'info', event: 'luxify.consent.withdrawn', accountId, status: 200, code: 'LUXIFY_CONSENT_WITHDRAWN', message: 'LUXIFY consent withdrawn.' });
           return send(res, 200, { ok: true, ...result });
         case 'revoke-source':
           result = await repository.revokeSourceIdentityConsent({ accountId, identityConsentId: input.identityConsentId });
           return send(res, 200, { ok: true, ...result });
         case 'revoke':
-          result = await repository.revokeConsent({ staffAccountId: accountId, consentId: input.consentId });
+          result = await repository.revokeConsent({ staffAccountId: accountId, consentId: input.consentId, requestId: requestIdFrom(req) });
           return send(res, 200, { ok: true, ...result });
         case 'grant-staff':
           result = await repository.grantStaff({ grantorAccountId: accountId, staffAccountId: input.staffAccountId, explicitGrant: input.explicitGrant });
@@ -246,6 +283,54 @@ export function createLuxifyConsentHandler({
           logOpsEvent({ level: 'info', event: 'luxify.capability.checked', accountId, status: 201, code: result.eligible ? 'LUXIFY_CAPABILITY_ELIGIBLE' : 'LUXIFY_CAPABILITY_NOT_ELIGIBLE', message: 'LUXIFY look capability checked.' });
           return send(res, 201, { ok: true, ...result });
         }
+        case 'grant-consent-operator':
+          result = await repository.grantConsentOperator({ grantorAccountId: accountId, staffAccountId: input.staffAccountId, explicitGrant: input.explicitGrant });
+          return send(res, result.replayed ? 200 : 201, { ok: true, replayed: result.replayed });
+        case 'operator-context': {
+          const state = await repository.operatorConsentContext({ operatorAccountId: accountId, onBehalfOfAccountId: input.onBehalfOfAccountId });
+          const issuedAt = now();
+          const subject = luxifyOperatorChallengeSubject({ operatorAccountId: accountId, onBehalfOfAccountId: input.onBehalfOfAccountId });
+          return send(res, 200, {
+            ok: true,
+            notice: LUXIFY_CONSENT_NOTICE,
+            noticeSha256: LUXIFY_CONSENT_NOTICE_SHA256,
+            attestationVersion: LUXIFY_OPERATOR_ATTESTATION_VERSION,
+            identities: state.identities.map(identity => ({
+              identityId: identity.id,
+              displayName: identity.displayName,
+              challenge: issueLuxifyConsentChallenge({ accountId: subject, identityId: identity.id, now: issuedAt, env: environment }),
+            })),
+            consents: state.consents,
+          });
+        }
+        case 'grant-on-behalf': {
+          const subject = luxifyOperatorChallengeSubject({ operatorAccountId: accountId, onBehalfOfAccountId: input.onBehalfOfAccountId });
+          verifyLuxifyConsentChallenge(input.challenge, { accountId: subject, identityId: input.identityId, now: now(), env: environment });
+          result = await repository.grantConsentOnBehalf({
+            operatorAccountId: accountId,
+            onBehalfOfAccountId: input.onBehalfOfAccountId,
+            identityId: input.identityId,
+            idempotencyKey: input.idempotencyKey,
+            noticeSha256: input.noticeSha256,
+            challengeSha256: luxifyConsentChallengeDigest(input.challenge),
+            cinematicGenerationAuthorization: input.cinematicGenerationAuthorization,
+            providerProcessingAuthorization: input.providerProcessingAuthorization,
+            subjectName: input.subjectName,
+            attestationMethod: input.attestationMethod,
+            attestedAt: input.attestedAt,
+            attestationEvidenceRef: input.attestationEvidenceRef,
+            attestationConfirmed: input.attestationConfirmed,
+            requestId: requestIdFrom(req),
+            ...(input.expiryDays ? { expiryDays: input.expiryDays } : {}),
+          });
+          // Ids only: no subject name, attestation text or evidence path in logs.
+          logOpsEvent({ level: 'info', event: 'luxify.consent.granted_on_behalf', accountId, status: 201, code: 'LUXIFY_CONSENT_GRANTED_ON_BEHALF', message: 'LUXIFY consent recorded on behalf of a subject.' });
+          return send(res, result.replayed ? 200 : 201, { ok: true, ...result });
+        }
+        case 'operator-withdraw':
+          result = await repository.operatorWithdrawConsent({ operatorAccountId: accountId, consentId: input.consentId, requestId: requestIdFrom(req) });
+          logOpsEvent({ level: 'info', event: 'luxify.consent.operator_withdrawn', accountId, status: 200, code: 'LUXIFY_CONSENT_WITHDRAWN', message: 'LUXIFY on-behalf consent withdrawn by an operator.' });
+          return send(res, 200, { ok: true, ...result });
         default:
           throw routeError('invalid_request', 'Invalid consent action.');
       }

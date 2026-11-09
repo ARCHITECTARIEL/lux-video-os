@@ -8,6 +8,7 @@ import {
   identityConsents,
   luxStaffGrants,
   luxifyCinematicConsents,
+  luxifyConsentAuditEvents,
   luxifyConsentChallengeUses,
   luxifyCreativeAssetApprovals,
   luxifyLookCapabilityEvidence,
@@ -29,8 +30,14 @@ import {
   LUXIFY_CINEMATIC_CONSENT_PURPOSE,
   LUXIFY_CONSENT_NOTICE_SHA256,
   LUXIFY_CONSENT_NOTICE_VERSION,
+  LUX_CONSENT_OPERATOR_SCOPE,
   LUX_STAFF_GRANT_SCOPE,
+  LUXIFY_OPERATOR_ATTESTATION_MAX_AGE_MS,
+  LUXIFY_OPERATOR_ATTESTATION_MAX_SKEW_MS,
+  LUXIFY_OPERATOR_EVIDENCE_REF,
   assertLuxStaffGrantRules,
+  luxifyOperatorAttestationSha256,
+  renderLuxifyOperatorAttestation,
   luxifyConsentExpiry,
   normalizeStaffEmail,
   sha256Hex,
@@ -40,6 +47,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const PROVIDER_ID = /^[A-Za-z0-9_.:-]{1,255}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_ENGINE = /^[A-Za-z0-9_.:-]{1,80}$/;
+const REQUEST_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const CAPABILITY_EVIDENCE_MAX_MS = 30 * 86_400_000;
 const LOOK_APPROVAL_MAX_MS = 30 * 86_400_000;
 export const LUXIFY_EVIDENCE_SOURCE = 'heygen_check';
@@ -148,7 +156,18 @@ export function luxifyConsentDto(row, now = new Date()) {
     expiresAt: iso(row.expiresAt),
     status: row.revokedAt ? row.terminalReason || 'revoked' : expired ? 'expired' : 'active',
     ...(row.revokedAt ? { closedAt: iso(row.revokedAt) } : {}),
+    // On-behalf grants say so to the subject; self rows are unchanged.
+    ...(row.consentMode === 'operator_on_behalf' ? { consentMode: 'operator_on_behalf', attestedAt: iso(row.attestedAt) } : {}),
   });
+}
+
+/** Append-only audit row (0021). Hashes and ids only; never attestation text, names or tokens. */
+async function insertConsentAuditTx(tx, { consentId, accountId, event, actorType, actorAccountId, onBehalfOfAccountId = null, staffGrantId = null, attestationTextSha256 = null, requestId = null, occurredAt }) {
+  const [row] = await tx.insert(luxifyConsentAuditEvents).values({
+    id: randomUUID(), consentId, accountId, event, actorType, actorAccountId, onBehalfOfAccountId, staffGrantId,
+    attestationTextSha256, requestId: REQUEST_ID.test(String(requestId || '')) ? requestId : null, occurredAt,
+  }).returning({ id: luxifyConsentAuditEvents.id });
+  return row;
 }
 
 const maskLook = value => {
@@ -295,38 +314,48 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     });
   }
 
-  async function closeConsentTx(tx, { consentId, accountId, reason }) {
+  async function closeConsentTx(tx, { consentId, accountId, reason, actor = null, requireOnBehalf = false }) {
     const now = await dbNow(tx);
     const [row] = await tx.select().from(luxifyCinematicConsents).where(and(
       eq(luxifyCinematicConsents.id, consentId),
       ...(accountId ? [eq(luxifyCinematicConsents.accountId, accountId)] : []),
     )).limit(1).for('update');
     if (!row) throw failure('LUXIFY_CONSENT_NOT_FOUND', 'Consent not found.', 404, 'OWNERSHIP');
+    if (requireOnBehalf && row.consentMode !== 'operator_on_behalf') throw failure('LUXIFY_CONSENT_NOT_FOUND', 'Consent not found.', 404, 'OWNERSHIP');
     if (row.revokedAt) return { consent: luxifyConsentDto(row, now), changed: false };
     const [closed] = await tx.update(luxifyCinematicConsents).set({ revokedAt: now, terminalReason: reason })
       .where(and(eq(luxifyCinematicConsents.id, row.id), isNull(luxifyCinematicConsents.revokedAt))).returning();
+    // Every closure of an on-behalf grant is audited (subject, operator or
+    // staff). Self rows keep the pre-0021 behaviour: no audit write.
+    if (row.consentMode === 'operator_on_behalf' && actor) {
+      await insertConsentAuditTx(tx, {
+        consentId: row.id, accountId: row.accountId, event: reason === 'withdrawn' ? 'consent.withdrawn' : 'consent.revoked',
+        actorType: actor.type, actorAccountId: actor.accountId, onBehalfOfAccountId: actor.type === 'subject' ? null : row.accountId,
+        staffGrantId: actor.staffGrantId ?? null, requestId: actor.requestId ?? null, occurredAt: now,
+      });
+    }
     return { consent: luxifyConsentDto(closed, now), changed: true };
   }
 
   /** Subject withdrawal of their own consent. Idempotent; never deletes. */
-  async function withdrawConsent({ accountId, consentId }) {
+  async function withdrawConsent({ accountId, consentId, requestId = null }) {
     const owner = exactAccount(accountId);
     const id = exactUuid(consentId, 'consent');
     return db().transaction(async (tx) => {
       await lockAccount(tx, owner, 'grant');
-      return closeConsentTx(tx, { consentId: id, accountId: owner, reason: 'withdrawn' });
+      return closeConsentTx(tx, { consentId: id, accountId: owner, reason: 'withdrawn', actor: { type: 'subject', accountId: owner, requestId } });
     });
   }
 
   /** Lux staff revocation (active staff grant required). Never deletes. */
-  async function revokeConsent({ staffAccountId, consentId }) {
+  async function revokeConsent({ staffAccountId, consentId, requestId = null }) {
     const id = exactUuid(consentId, 'consent');
     return db().transaction(async (tx) => {
-      await requireActiveStaffGrantTx(tx, staffAccountId);
+      const grant = await requireActiveStaffGrantTx(tx, staffAccountId);
       const [target] = await tx.select({ accountId: luxifyCinematicConsents.accountId }).from(luxifyCinematicConsents).where(eq(luxifyCinematicConsents.id, id)).limit(1);
       if (!target) throw failure('LUXIFY_CONSENT_NOT_FOUND', 'Consent not found.', 404, 'OWNERSHIP');
       await lockAccount(tx, target.accountId, 'grant');
-      return closeConsentTx(tx, { consentId: id, reason: 'revoked' });
+      return closeConsentTx(tx, { consentId: id, reason: 'revoked', actor: { type: 'staff', accountId: grant.staffAccountId, staffGrantId: grant.id, requestId } });
     });
   }
 
@@ -764,6 +793,239 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     });
   }
 
+  // ---- Operator / on-behalf-of consent (CORE-CONSENT-OBO, 0021) -----------
+
+  /**
+   * The operator gate (ARCH-ONBEHALF-CONSENT-1109): an active, explicit
+   * consent_operator grant with a magic-link-verified luxmarketingcompany.com
+   * email that matches the grant, never self-granted. Role or body fields
+   * are never trusted. The 0021 insert trigger re-checks the same row.
+   */
+  async function requireConsentOperatorGrantTx(tx, operatorAccountId) {
+    const operatorId = exactAccount(operatorAccountId);
+    const denied = () => failure('LUX_CONSENT_OPERATOR_REQUIRED', 'Only a Lux consent operator can record consent on behalf of a subject.', 403, 'ENTITLEMENT');
+    const [account] = await tx.select({ id: users.id, email: users.email }).from(users).where(eq(users.id, operatorId)).limit(1);
+    const [grant] = await tx.select().from(luxStaffGrants).where(and(
+      eq(luxStaffGrants.staffAccountId, operatorId), eq(luxStaffGrants.scope, LUX_CONSENT_OPERATOR_SCOPE), isNull(luxStaffGrants.revokedAt),
+    )).limit(1).for('share');
+    if (!account || !grant) throw denied();
+    if (grant.grantedByAccountId === grant.staffAccountId) throw denied();
+    const verified = await verifiedStaffEmailTx(tx, account);
+    assertLuxStaffGrantRules({ email: verified.email, emailVerified: Boolean(verified.verifiedAt), explicitGrant: grant.explicitGrant });
+    if (verified.email !== grant.staffEmail) throw denied();
+    return grant;
+  }
+
+  /**
+   * CEO-only: give a Lux staff account the consent_operator scope. Same rules
+   * as grantStaff, plus no self-grant (the CEO cannot make itself operator).
+   */
+  async function grantConsentOperator({ grantorAccountId, staffAccountId, explicitGrant }) {
+    const grantorId = exactAccount(grantorAccountId);
+    const staffId = exactAccount(staffAccountId);
+    if (grantorId === staffId) throw failure('LUX_CONSENT_OPERATOR_SELF_GRANT', 'The consent operator grant cannot be self-granted.', 403, 'ENTITLEMENT');
+    return db().transaction(async (tx) => {
+      await requireCeoTx(tx, grantorId);
+      const [staff] = await tx.select({ id: users.id, email: users.email }).from(users).where(eq(users.id, staffId)).limit(1);
+      if (!staff) throw failure('LUX_STAFF_ACCOUNT_NOT_FOUND', 'Staff account not found.', 404, 'OWNERSHIP');
+      const verified = await verifiedStaffEmailTx(tx, staff);
+      const email = assertLuxStaffGrantRules({ email: verified.email, emailVerified: Boolean(verified.verifiedAt), explicitGrant });
+      await lockAccount(tx, staffId, 'staff-grant');
+      const [existing] = await tx.select().from(luxStaffGrants).where(and(
+        eq(luxStaffGrants.staffAccountId, staffId), eq(luxStaffGrants.scope, LUX_CONSENT_OPERATOR_SCOPE), isNull(luxStaffGrants.revokedAt),
+      )).limit(1);
+      if (existing) return { grantId: existing.id, replayed: true };
+      const now = await dbNow(tx);
+      const [row] = await tx.insert(luxStaffGrants).values({
+        id: randomUUID(), staffAccountId: staffId, staffEmail: email, scope: LUX_CONSENT_OPERATOR_SCOPE, explicitGrant: true,
+        emailVerifiedAt: verified.verifiedAt, grantedByAccountId: grantorId,
+        grantEvidenceSha256: sha256Hex({ kind: 'lux-staff-grant/v1', staff: sha256Hex(staffId), grantor: sha256Hex(grantorId), scope: LUX_CONSENT_OPERATOR_SCOPE, at: now.toISOString() }),
+        grantedAt: now,
+      }).returning({ id: luxStaffGrants.id });
+      return { grantId: row.id, replayed: false };
+    });
+  }
+
+  /** Operator view of ONE subject account: its READY looks and existing consents. No writes. */
+  async function operatorConsentContext({ operatorAccountId, onBehalfOfAccountId }) {
+    const operatorId = exactAccount(operatorAccountId);
+    const owner = exactAccount(onBehalfOfAccountId);
+    if (operatorId === owner) throw failure('LUXIFY_OPERATOR_SELF_SUBJECT', 'Use your own consent page for your own looks.', 403, 'OWNERSHIP');
+    return db().transaction(async (tx) => {
+      await requireConsentOperatorGrantTx(tx, operatorId);
+      const now = await dbNow(tx);
+      const identities = await tx.select({ id: userIdentities.id, displayName: userIdentities.displayName })
+        .from(userIdentities).where(and(
+          eq(userIdentities.accountId, owner), isNull(userIdentities.archivedAt),
+          eq(userIdentities.provider, 'heygen'), eq(userIdentities.avatarStatus, 'READY'),
+        )).orderBy(asc(userIdentities.createdAt)).limit(50);
+      const rows = await tx.select().from(luxifyCinematicConsents)
+        .where(eq(luxifyCinematicConsents.accountId, owner))
+        .orderBy(desc(luxifyCinematicConsents.acceptedAt)).limit(50);
+      return { identities, consents: rows.map(row => luxifyConsentDto(row, now)) };
+    });
+  }
+
+  /**
+   * Operator-recorded grant ON BEHALF OF the subject account. The consent row
+   * is owned by the subject account (account_id = on-behalf-of account), so
+   * eligibility, expiry, withdrawal and the source-consent cascade treat it
+   * exactly like a self grant. Identity binding is never relaxed: the subject
+   * account must own the READY identity, its active source identity consent,
+   * a verified HeyGen space, and the look as a provider resource in that
+   * space. The operator comes from the session (never the body) and must hold
+   * a consent_operator grant. Expiry is 12 months from the subject's attested
+   * consent (never later than 365 days after it).
+   */
+  async function grantConsentOnBehalf({
+    operatorAccountId, onBehalfOfAccountId, identityId, idempotencyKey, noticeSha256, challengeSha256,
+    cinematicGenerationAuthorization, providerProcessingAuthorization, subjectName, attestationMethod,
+    attestedAt, attestationEvidenceRef, attestationConfirmed, requestId = null, expiryDays,
+  }) {
+    const operatorId = exactAccount(operatorAccountId);
+    const owner = exactAccount(onBehalfOfAccountId);
+    const identityKey = exactUuid(identityId, 'identity');
+    const key = exactUuid(idempotencyKey, 'request key');
+    if (operatorId === owner) throw failure('LUXIFY_OPERATOR_SELF_SUBJECT', 'Use your own consent page for your own looks.', 403, 'OWNERSHIP');
+    if (!SHA256.test(String(challengeSha256 || ''))) throw failure('LUXIFY_CONSENT_CHALLENGE_INVALID', 'The consent notice expired or changed. Reload and try again.', 409);
+    if (cinematicGenerationAuthorization !== true || providerProcessingAuthorization !== true) {
+      throw failure('LUXIFY_CONSENT_AUTHORIZATION_REQUIRED', 'Both authorizations are required.', 400);
+    }
+    if (noticeSha256 !== LUXIFY_CONSENT_NOTICE_SHA256) throw failure('LUXIFY_CONSENT_CHALLENGE_INVALID', 'The consent notice changed. Reload and try again.', 409);
+    if (attestationConfirmed !== true) throw failure('LUXIFY_ATTESTATION_REQUIRED', 'Confirm that the subject personally gave consent.', 400, 'VALIDATION');
+    if (typeof attestationEvidenceRef !== 'string' || !LUXIFY_OPERATOR_EVIDENCE_REF.test(attestationEvidenceRef)
+      || !attestationEvidenceRef.startsWith(`video-os/consent-evidence/${sha256Hex(owner)}/`)) {
+      throw failure('LUXIFY_ATTESTATION_EVIDENCE_INVALID', 'Attestation evidence must be a private evidence path for this account.', 400, 'VALIDATION');
+    }
+    const attested = new Date(attestedAt);
+    const rendered = renderLuxifyOperatorAttestation({ subjectName, method: attestationMethod, attestedAt: attested, identityId: identityKey });
+    const attestationTextSha256 = luxifyOperatorAttestationSha256(rendered);
+    return db().transaction(async (tx) => {
+      const grant = await requireConsentOperatorGrantTx(tx, operatorId);
+      await lockAccount(tx, owner, 'grant');
+      const [replay] = await tx.select().from(luxifyCinematicConsents).where(and(
+        eq(luxifyCinematicConsents.accountId, owner), eq(luxifyCinematicConsents.idempotencyKey, key),
+      )).limit(1);
+      const now = await dbNow(tx);
+      if (replay) {
+        if (replay.identityId !== identityKey || replay.consentMode !== 'operator_on_behalf' || replay.operatorUserId !== operatorId
+          || replay.attestationTextSha256 !== attestationTextSha256) {
+          throw failure('LUXIFY_CONSENT_IDEMPOTENCY_CONFLICT', 'This request key was already used.', 409);
+        }
+        return { consent: luxifyConsentDto(replay, now), replayed: true };
+      }
+      const current = now.getTime();
+      if (attested.getTime() > current + LUXIFY_OPERATOR_ATTESTATION_MAX_SKEW_MS || attested.getTime() < current - LUXIFY_OPERATOR_ATTESTATION_MAX_AGE_MS) {
+        throw failure('LUXIFY_ATTESTATION_TIME_INVALID', 'The attested consent time must be within the last 7 days and not in the future.', 400, 'VALIDATION');
+      }
+      // Identity binding: the SUBJECT account (never the operator) must own
+      // the identity, the source consent, the space and the look resource.
+      const identity = await ownedIdentityTx(tx, owner, identityKey, { lock: true });
+      const source = await activeSourceConsentTx(tx, owner, identityKey);
+      const space = await loadActiveProviderSpaceTx(tx, owner);
+      const providerLookId = identity.providerRenderableAvatarId;
+      const [resource] = await tx.select({ id: providerResources.id }).from(providerResources).where(and(
+        eq(providerResources.applicationAccountId, owner), eq(providerResources.kind, 'avatar_look'),
+        eq(providerResources.providerResourceId, providerLookId), eq(providerResources.bindingId, space.bindingId),
+      )).limit(1);
+      if (!resource) throw failure('LUXIFY_LOOK_OWNERSHIP_UNPROVEN', 'This look is not recorded in the subject account\'s own HeyGen space.', 409, 'OWNERSHIP');
+      const [active] = await tx.select({ id: luxifyCinematicConsents.id, expiresAt: luxifyCinematicConsents.expiresAt })
+        .from(luxifyCinematicConsents).where(and(
+          eq(luxifyCinematicConsents.accountId, owner), eq(luxifyCinematicConsents.identityId, identityKey),
+          eq(luxifyCinematicConsents.providerLookId, providerLookId),
+          eq(luxifyCinematicConsents.providerSpaceFingerprint, space.providerSpaceFingerprint),
+          isNull(luxifyCinematicConsents.revokedAt),
+        )).limit(1).for('update');
+      if (active) {
+        if (new Date(active.expiresAt).getTime() > current) {
+          throw failure('LUXIFY_CONSENT_ALREADY_ACTIVE', 'An active LUXIFY consent already exists for this look. Withdraw it first to renew.', 409);
+        }
+        await tx.update(luxifyCinematicConsents).set({ revokedAt: now, terminalReason: 'revoked' })
+          .where(and(eq(luxifyCinematicConsents.id, active.id), isNull(luxifyCinematicConsents.revokedAt)));
+      }
+      const expiresAt = luxifyConsentExpiry(attested, { expiryDays });
+      if (expiresAt.getTime() <= current) throw failure('LUXIFY_CONSENT_EXPIRY_INVALID', 'This consent would already be expired.', 400, 'VALIDATION');
+      const consumed = await tx.insert(luxifyConsentChallengeUses).values({
+        challengeSha256, accountId: owner, identityId: identityKey, usedAt: now,
+      }).onConflictDoNothing().returning({ challengeSha256: luxifyConsentChallengeUses.challengeSha256 });
+      if (!Array.isArray(consumed) || consumed.length !== 1) {
+        throw failure('LUXIFY_CONSENT_CHALLENGE_USED', 'This consent notice was already used. Reload and try again.', 409);
+      }
+      const approvalEvidenceSha256 = sha256Hex({
+        kind: 'luxify-cinematic-consent-evidence/v1',
+        consentMode: 'operator_on_behalf',
+        noticeVersion: LUXIFY_CONSENT_NOTICE_VERSION,
+        noticeSha256: LUXIFY_CONSENT_NOTICE_SHA256,
+        accountSha256: sha256Hex(owner),
+        operatorSha256: sha256Hex(operatorId),
+        operatorStaffGrantId: grant.id,
+        identityId: identityKey,
+        sourceIdentityConsentId: source.id,
+        providerLookIdSha256: sha256Hex(providerLookId),
+        providerSpaceFingerprint: space.providerSpaceFingerprint,
+        attestationTextVersion: rendered.version,
+        attestationTextSha256,
+        attestationMethod,
+        attestationEvidenceRefSha256: sha256Hex(attestationEvidenceRef),
+        attestedAt: attested.toISOString(),
+        cinematicGenerationAuthorization: true,
+        providerProcessingAuthorization: true,
+        acceptedAt: now.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+        idempotencyKey: key,
+      });
+      const [row] = await tx.insert(luxifyCinematicConsents).values({
+        id: randomUUID(),
+        accountId: owner,
+        identityId: identityKey,
+        sourceIdentityConsentId: source.id,
+        idempotencyKey: key,
+        providerLookId,
+        providerSpaceFingerprint: space.providerSpaceFingerprint,
+        policyVersion: LUXIFY_CINEMATIC_CONSENT_POLICY_VERSION,
+        purpose: LUXIFY_CINEMATIC_CONSENT_PURPOSE,
+        cinematicGenerationAuthorization: true,
+        providerProcessingAuthorization: true,
+        approvalEvidenceSha256,
+        acceptedAt: now,
+        expiresAt,
+        consentMode: 'operator_on_behalf',
+        operatorUserId: operatorId,
+        operatorStaffGrantId: grant.id,
+        attestationTextVersion: rendered.version,
+        attestationTextSha256,
+        attestedAt: attested,
+        attestationMethod,
+        attestationEvidenceRef,
+      }).returning();
+      await insertConsentAuditTx(tx, {
+        consentId: row.id, accountId: owner, event: 'consent.granted_on_behalf', actorType: 'operator', actorAccountId: operatorId,
+        onBehalfOfAccountId: owner, staffGrantId: grant.id, attestationTextSha256, requestId, occurredAt: now,
+      });
+      return { consent: luxifyConsentDto(row, now), replayed: false };
+    });
+  }
+
+  /**
+   * Operator withdrawal of an ON-BEHALF grant (e.g. the subject asked the
+   * operator). Any active consent_operator may close any on-behalf grant;
+   * closing only removes authority. Self grants are not reachable here
+   * (staff 'revoke' and the subject's own 'withdraw' cover those).
+   */
+  async function operatorWithdrawConsent({ operatorAccountId, consentId, requestId = null }) {
+    const id = exactUuid(consentId, 'consent');
+    return db().transaction(async (tx) => {
+      const grant = await requireConsentOperatorGrantTx(tx, operatorAccountId);
+      const [target] = await tx.select({ accountId: luxifyCinematicConsents.accountId }).from(luxifyCinematicConsents).where(eq(luxifyCinematicConsents.id, id)).limit(1);
+      if (!target) throw failure('LUXIFY_CONSENT_NOT_FOUND', 'Consent not found.', 404, 'OWNERSHIP');
+      await lockAccount(tx, target.accountId, 'grant');
+      return closeConsentTx(tx, {
+        consentId: id, reason: 'withdrawn', requireOnBehalf: true,
+        actor: { type: 'operator', accountId: grant.staffAccountId, staffGrantId: grant.id, requestId },
+      });
+    });
+  }
+
   return Object.freeze({
     listConsents,
     grantConsent,
@@ -781,6 +1043,10 @@ export function createLuxifyConsentRepository({ executor } = {}) {
     lookupStaffTarget,
     prepareLookCapabilityCheck,
     recordCheckedLookCapability,
+    grantConsentOperator,
+    operatorConsentContext,
+    grantConsentOnBehalf,
+    operatorWithdrawConsent,
   });
 }
 
@@ -962,6 +1228,55 @@ export async function resolveLuxifyEligibilityTx(tx, { accountId, lookIdentityId
       lookCapabilities: capabilities.map(({ id, ...rest }) => rest),
     },
   }, { now: current.getTime() });
+}
+
+/**
+ * 0021 job <-> consent link. At enqueue (reservation, inside its lock) the
+ * open, unexpired consent for the job's primary look on the job's OWN account
+ * is resolved and stored on video_jobs.luxify_consent_id. Self and on-behalf
+ * grants are treated identically. Fails closed.
+ */
+export async function resolveLuxifyJobConsentIdTx(tx, { accountId, lookBinding, now }) {
+  const owner = exactAccount(accountId);
+  const identityId = exactUuid(lookBinding?.identityId, 'look identity');
+  const lookId = String(lookBinding?.providerLookId || '');
+  if (!PROVIDER_ID.test(lookId)) throw failure('LUXIFY_CONSENT_MISSING', 'LUXIFY cinematic consent is missing.', 409);
+  const current = timeOf(now ?? await dbNow(tx));
+  const rows = await tx.select({
+    id: luxifyCinematicConsents.id, accountId: luxifyCinematicConsents.accountId, identityId: luxifyCinematicConsents.identityId,
+    providerLookId: luxifyCinematicConsents.providerLookId, expiresAt: luxifyCinematicConsents.expiresAt, revokedAt: luxifyCinematicConsents.revokedAt,
+  }).from(luxifyCinematicConsents).where(and(
+    eq(luxifyCinematicConsents.accountId, owner), eq(luxifyCinematicConsents.identityId, identityId),
+    eq(luxifyCinematicConsents.providerLookId, lookId), isNull(luxifyCinematicConsents.revokedAt),
+  )).orderBy(desc(luxifyCinematicConsents.acceptedAt)).limit(1).for('share');
+  const consent = rows[0];
+  if (!consent || consent.accountId !== owner || consent.identityId !== identityId || consent.providerLookId !== lookId
+    || consent.revokedAt || !(new Date(consent.expiresAt).getTime() > current)) {
+    throw failure('LUXIFY_CONSENT_MISSING', 'LUXIFY cinematic consent is missing.', 409);
+  }
+  return consent.id;
+}
+
+/**
+ * Provider-submit check for a job that carries luxify_consent_id: the same
+ * consent must still be open and unexpired, on the job's account, for the
+ * job's primary look. FOR SHARE serializes with withdraw/revoke.
+ */
+export async function assertLuxifyJobConsentTx(tx, { job, now }) {
+  const consentId = exactUuid(job?.luxifyConsentId, 'consent');
+  const binding = job?.input?.lookBindings?.[0];
+  const current = timeOf(now ?? await dbNow(tx));
+  const [consent] = await tx.select({
+    id: luxifyCinematicConsents.id, accountId: luxifyCinematicConsents.accountId, identityId: luxifyCinematicConsents.identityId,
+    providerLookId: luxifyCinematicConsents.providerLookId, expiresAt: luxifyCinematicConsents.expiresAt, revokedAt: luxifyCinematicConsents.revokedAt,
+  }).from(luxifyCinematicConsents).where(and(
+    eq(luxifyCinematicConsents.id, consentId), eq(luxifyCinematicConsents.accountId, String(job.accountId || '')),
+  )).limit(1).for('share');
+  if (!consent || consent.accountId !== job.accountId || consent.identityId !== String(binding?.identityId || '').toLowerCase()
+    || consent.providerLookId !== String(binding?.providerLookId || '') || consent.revokedAt || !(new Date(consent.expiresAt).getTime() > current)) {
+    throw failure('LUXIFY_CONSENT_WITHDRAWN', 'The LUXIFY consent for this job is no longer active.', 409);
+  }
+  return true;
 }
 
 function unavailable(error) {
