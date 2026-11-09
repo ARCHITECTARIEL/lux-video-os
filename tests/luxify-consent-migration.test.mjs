@@ -51,5 +51,6 @@ test('0018 adds LUXIFY consent lifecycle tables, terminal reasons and close-only
   const entry = journal.entries[18];
   assert.deepEqual(entry, { idx: 18, version: '7', when: entry.when, tag: '0018_luxify_consent_lifecycle', breakpoints: true });
   assert.ok(entry.when > journal.entries[17].when);
-  assert.equal(JSON.parse(lockText).tableCount, 35, '0019 adds luxify_consent_challenge_uses');
+  // 0019 added luxify_consent_challenge_uses (35); migration 0021 adds luxify_consent_audit_events (36).
+  assert.equal(JSON.parse(lockText).tableCount, 36, '0021 adds luxify_consent_audit_events');
 });
