@@ -331,3 +331,21 @@ test('withdraw or expiry blocks enqueue, and a withdraw committed after enqueue 
   await db.query(`UPDATE lux_staff_grants SET revoked_at = now() WHERE id = '${GRANT}'`);
   await rejects(`INSERT INTO luxify_cinematic_consents (${consentColumns}, ${oboColumns}) VALUES (${selfValues(uuid())}, ${oboValues()})`, [], /consent_operator staff grant/);
 });
+
+// Runs last: it empties the disposable DB. Mirrors the reset in
+// tests/heygen-admission-race.pg.test.mjs (QA recheck N-L2).
+test('QA N-L2: TRUNCATE users CASCADE is refused by the audit trigger; the race-test reset (SET LOCAL replica) succeeds and leaves the trigger intact', { skip }, async () => {
+  assert.ok((await db.query('SELECT count(*)::int AS n FROM luxify_consent_audit_events')).rows[0].n > 0, 'audit rows exist to cascade into');
+  await rejects('TRUNCATE TABLE users CASCADE', [], /append-only/);
+  const triggers = async () => (await db.query(`SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'luxify_consent_audit_events'::regclass AND NOT tgisinternal ORDER BY tgname`)).rows;
+  const before = await triggers();
+  await db.exec(`BEGIN;
+    SET LOCAL session_replication_role = replica;
+    TRUNCATE TABLE users CASCADE;
+    COMMIT;`);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM luxify_consent_audit_events')).rows[0].n, 0);
+  assert.equal((await db.query("SELECT current_setting('session_replication_role') AS r")).rows[0].r, 'origin', 'SET LOCAL is restored at COMMIT');
+  assert.deepEqual(await triggers(), before, 'no trigger dropped or disabled');
+  assert.ok(before.length > 0 && before.every(row => row.tgenabled === 'O'));
+  await rejects('TRUNCATE TABLE luxify_consent_audit_events', [], /append-only/);
+});

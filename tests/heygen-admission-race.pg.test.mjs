@@ -113,7 +113,22 @@ async function runRaceChild() {
     });
     async function seed(accountCount, jobsPerAccount, { held = 0, otherActive = 0 } = {}) {
       // Each trial starts from the same migrated schema without re-running DDL.
-      await admin.query('TRUNCATE TABLE users CASCADE');
+      // The cascade reaches luxify_consent_audit_events, whose BEFORE TRUNCATE
+      // trigger is append-only. Replica role skips ordinary triggers for this
+      // disposable-DB reset only; it is transaction-local (SET LOCAL), so it is
+      // restored at COMMIT/ROLLBACK and no trigger is dropped or disabled.
+      const reset = await admin.connect();
+      try {
+        await reset.query('BEGIN');
+        await reset.query('SET LOCAL session_replication_role = replica');
+        await reset.query('TRUNCATE TABLE users CASCADE');
+        await reset.query('COMMIT');
+      } catch (error) {
+        await reset.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        reset.release();
+      }
       const pending = [];
       for (let account = 0; account < accountCount; account++) {
         const id = `race-account-${account}`;
