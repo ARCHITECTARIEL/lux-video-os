@@ -10,9 +10,15 @@ import {
   LUXIFY_OPERATOR_ATTESTATION_VERSION,
   issueLuxifyConsentChallenge,
   luxifyConsentChallengeDigest,
+  luxifyConsentOboEnabled,
   luxifyOperatorChallengeSubject,
   verifyLuxifyConsentChallenge,
 } from '../../lib/luxify-consent-policy.js';
+import {
+  LUXIFY_CONSENT_CONFIRMATION_PATH,
+  assertLuxifyConsentConfirmationEmailConfigured,
+  sendLuxifyConsentConfirmationEmail,
+} from '../../lib/video-os-notifications.js';
 import { handleOptions, readJson, send, sessionFromRequest } from '../../lib/video-os-account.js';
 import { logOpsEvent } from '../../lib/ops-log.js';
 import { deriveLuxifyLookCapability } from '../../lib/luxify-look-capability.js';
@@ -71,7 +77,25 @@ const schemas = {
     expiryDays: z.number().int().min(1).max(365).optional(),
   }).strict(),
   'operator-withdraw': z.object({ action: z.literal('operator-withdraw'), consentId: uuid }).strict(),
+  // H1(b): the SUBJECT (session account) confirms with the emailed token.
+  'confirm-on-behalf': z.object({ action: z.literal('confirm-on-behalf'), token: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict(),
 };
+
+// H1(a): actions that create or reveal on-behalf authority are refused unless
+// VIDEO_OS_LUXIFY_CONSENT_OBO_ENABLED=true (same 503 CONFIG_MISSING convention
+// as check-capability). operator-withdraw, withdraw and revoke stay available
+// so authority can always be removed.
+const OBO_GATED_ACTIONS = new Set(['grant-consent-operator', 'operator-context', 'grant-on-behalf', 'confirm-on-behalf']);
+
+const defaultMailer = Object.freeze({
+  assertConfigured: env => assertLuxifyConsentConfirmationEmailConfigured(env),
+  sendConfirmation: (message, { env }) => sendLuxifyConsentConfirmationEmail(message, { env }),
+});
+
+function confirmationUrl(environment, token) {
+  const origin = String(environment?.VIDEO_OS_PUBLIC_ORIGIN || '').replace(/\/+$/, '');
+  return `${origin}${LUXIFY_CONSENT_CONFIRMATION_PATH}#confirm=${encodeURIComponent(token)}`;
+}
 
 const REQUEST_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 /** Request id for the audit trail: the platform id when well-formed, else a fresh UUID. Never a token. */
@@ -188,6 +212,7 @@ export function createLuxifyConsentHandler({
   now = () => Date.now(),
   capabilityReader = defaultCapabilityReader,
   rateLimit = consumeRateLimit,
+  mailer = defaultMailer,
 } = {}) {
   return async function luxifyConsentHandler(req, res) {
     if (handleOptions(req, res)) return;
@@ -222,6 +247,9 @@ export function createLuxifyConsentHandler({
       const parsed = schema.safeParse(body);
       if (!parsed.success) throw routeError('invalid_request', 'Invalid consent request.');
       const input = parsed.data;
+      if (OBO_GATED_ACTIONS.has(input.action) && !luxifyConsentOboEnabled(environment)) {
+        throw routeError('luxify_consent_obo_unavailable', 'On-behalf LUXIFY consent is turned off.', 503, 'CONFIG_MISSING');
+      }
       let result;
       switch (input.action) {
         case 'grant':
@@ -306,6 +334,8 @@ export function createLuxifyConsentHandler({
         case 'grant-on-behalf': {
           const subject = luxifyOperatorChallengeSubject({ operatorAccountId: accountId, onBehalfOfAccountId: input.onBehalfOfAccountId });
           verifyLuxifyConsentChallenge(input.challenge, { accountId: subject, identityId: input.identityId, now: now(), env: environment });
+          // No pending row is created when the confirmation email cannot be sent.
+          mailer.assertConfigured(environment);
           result = await repository.grantConsentOnBehalf({
             operatorAccountId: accountId,
             onBehalfOfAccountId: input.onBehalfOfAccountId,
@@ -324,8 +354,40 @@ export function createLuxifyConsentHandler({
             ...(input.expiryDays ? { expiryDays: input.expiryDays } : {}),
           });
           // Ids only: no subject name, attestation text or evidence path in logs.
-          logOpsEvent({ level: 'info', event: 'luxify.consent.granted_on_behalf', accountId, status: 201, code: 'LUXIFY_CONSENT_GRANTED_ON_BEHALF', message: 'LUXIFY consent recorded on behalf of a subject.' });
-          return send(res, result.replayed ? 200 : 201, { ok: true, ...result });
+          logOpsEvent({ level: 'info', event: 'luxify.consent.granted_on_behalf', accountId, status: 201, code: 'LUXIFY_CONSENT_GRANTED_ON_BEHALF', message: 'LUXIFY consent recorded on behalf of a subject (pending subject confirmation).' });
+          // The raw token and subject email go only to the mailer, never to the
+          // response or the logs. Sent after the commit, so a rolled-back grant
+          // never emails anyone.
+          let confirmationEmail = 'not_sent';
+          if (result.confirmation) {
+            try {
+              await mailer.sendConfirmation({
+                email: result.confirmation.email,
+                url: confirmationUrl(environment, result.confirmation.token),
+                expiresAt: result.confirmation.expiresAt,
+              }, { env: environment });
+              confirmationEmail = 'sent';
+            } catch {
+              confirmationEmail = 'failed';
+              logOpsEvent({ level: 'warn', event: 'luxify.consent.confirmation_email_failed', accountId, status: 502, code: 'EMAIL_DELIVERY_UNVERIFIED', message: 'LUXIFY consent confirmation email was not confirmed; the consent stays pending.' });
+            }
+          }
+          return send(res, result.replayed ? 200 : 201, {
+            ok: true,
+            consent: result.consent,
+            replayed: result.replayed,
+            confirmationEmail,
+            ...(result.confirmation ? { confirmationExpiresAt: result.confirmation.expiresAt } : {}),
+          });
+        }
+        case 'confirm-on-behalf': {
+          result = await repository.confirmOnBehalfConsent({ accountId, token: input.token, requestId: requestIdFrom(req) });
+          if (result.outcome === 'expired') {
+            logOpsEvent({ level: 'warn', event: 'luxify.consent.confirmation_expired', accountId, status: 409, code: 'LUXIFY_CONFIRMATION_EXPIRED', message: 'LUXIFY on-behalf consent confirmation link expired; consent closed.' });
+            return send(res, 409, { ok: false, code: 'LUXIFY_CONFIRMATION_EXPIRED', error: 'This confirmation link expired. The pending consent was closed.', consent: result.consent });
+          }
+          logOpsEvent({ level: 'info', event: 'luxify.consent.subject_confirmed', accountId, status: 200, code: 'LUXIFY_CONSENT_CONFIRMED', message: 'LUXIFY on-behalf consent confirmed by the subject.' });
+          return send(res, 200, { ok: true, consent: result.consent });
         }
         case 'operator-withdraw':
           result = await repository.operatorWithdrawConsent({ operatorAccountId: accountId, consentId: input.consentId, requestId: requestIdFrom(req) });

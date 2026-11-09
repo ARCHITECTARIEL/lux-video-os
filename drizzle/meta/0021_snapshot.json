@@ -1,5 +1,5 @@
 {
-  "id": "8e7dd5fd-a86f-4ac2-9b7e-ab9628a525d8",
+  "id": "8d83da19-7d86-4e77-8fc3-464742b2f35d",
   "prevId": "b4426381-e252-4ef2-b11a-00c46ac81b82",
   "version": "7",
   "dialect": "postgresql",
@@ -1767,6 +1767,10 @@
           "name": "lux_staff_grants_no_self_operator_ck",
           "value": "\"lux_staff_grants\".\"scope\" <> 'consent_operator' or \"lux_staff_grants\".\"granted_by_account_id\" <> \"lux_staff_grants\".\"staff_account_id\""
         },
+        "lux_staff_grants_operator_no_alias_ck": {
+          "name": "lux_staff_grants_operator_no_alias_ck",
+          "value": "\"lux_staff_grants\".\"scope\" <> 'consent_operator' or strpos(\"lux_staff_grants\".\"staff_email\", '+') = 0"
+        },
         "lux_staff_grants_explicit_ck": {
           "name": "lux_staff_grants_explicit_ck",
           "value": "\"lux_staff_grants\".\"explicit_grant\""
@@ -2153,7 +2157,7 @@
         },
         "luxify_cinematic_consents_terminal_ck": {
           "name": "luxify_cinematic_consents_terminal_ck",
-          "value": "(\"luxify_cinematic_consents\".\"revoked_at\" is null and \"luxify_cinematic_consents\".\"terminal_reason\" is null) or (\"luxify_cinematic_consents\".\"revoked_at\" is not null and \"luxify_cinematic_consents\".\"terminal_reason\" is not null and \"luxify_cinematic_consents\".\"terminal_reason\" in ('withdrawn', 'revoked', 'source_revoked'))"
+          "value": "(\"luxify_cinematic_consents\".\"revoked_at\" is null and \"luxify_cinematic_consents\".\"terminal_reason\" is null) or (\"luxify_cinematic_consents\".\"revoked_at\" is not null and \"luxify_cinematic_consents\".\"terminal_reason\" is not null and \"luxify_cinematic_consents\".\"terminal_reason\" in ('withdrawn', 'revoked', 'source_revoked', 'confirmation_expired'))"
         },
         "luxify_cinematic_consents_mode_fields_ck": {
           "name": "luxify_cinematic_consents_mode_fields_ck",
@@ -2297,6 +2301,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "luxify_consent_audit_events_confirmed_uq": {
+          "name": "luxify_consent_audit_events_confirmed_uq",
+          "columns": [
+            {
+              "expression": "consent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"luxify_consent_audit_events\".\"event\" = 'consent.subject_confirmed'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2348,11 +2368,11 @@
       "checkConstraints": {
         "luxify_consent_audit_events_event_ck": {
           "name": "luxify_consent_audit_events_event_ck",
-          "value": "\"luxify_consent_audit_events\".\"event\" in ('consent.granted_on_behalf', 'consent.withdrawn', 'consent.revoked')"
+          "value": "\"luxify_consent_audit_events\".\"event\" in ('consent.granted_on_behalf', 'consent.subject_confirmed', 'consent.confirmation_expired', 'consent.withdrawn', 'consent.revoked', 'consent.superseded', 'consent.source_revoked')"
         },
         "luxify_consent_audit_events_actor_ck": {
           "name": "luxify_consent_audit_events_actor_ck",
-          "value": "\"luxify_consent_audit_events\".\"actor_type\" in ('subject', 'operator', 'staff')"
+          "value": "\"luxify_consent_audit_events\".\"actor_type\" in ('subject', 'operator', 'staff', 'system')"
         },
         "luxify_consent_audit_events_hash_ck": {
           "name": "luxify_consent_audit_events_hash_ck",

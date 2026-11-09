@@ -326,7 +326,7 @@ export const luxifyCinematicConsents = pgTable('luxify_cinematic_consents', {
   check('luxify_cinematic_consents_look_ck', sql`${table.providerLookId} ~ '^[A-Za-z0-9_.:-]{1,255}$'`),
   check('luxify_cinematic_consents_hash_ck', sql`${table.providerSpaceFingerprint} ~ '^[a-f0-9]{64}$' and ${table.approvalEvidenceSha256} ~ '^[a-f0-9]{64}$'`),
   check('luxify_cinematic_consents_window_ck', sql`${table.expiresAt} > ${table.acceptedAt} and ${table.expiresAt} <= ${table.acceptedAt} + interval '8760 hours' and (${table.revokedAt} is null or ${table.revokedAt} >= ${table.acceptedAt})`),
-  check('luxify_cinematic_consents_terminal_ck', sql`(${table.revokedAt} is null and ${table.terminalReason} is null) or (${table.revokedAt} is not null and ${table.terminalReason} is not null and ${table.terminalReason} in ('withdrawn', 'revoked', 'source_revoked'))`),
+  check('luxify_cinematic_consents_terminal_ck', sql`(${table.revokedAt} is null and ${table.terminalReason} is null) or (${table.revokedAt} is not null and ${table.terminalReason} is not null and ${table.terminalReason} in ('withdrawn', 'revoked', 'source_revoked', 'confirmation_expired'))`),
   // Explicit short names: generated FK names would exceed Postgres' 63-byte limit.
   foreignKey({ name: 'luxify_cinematic_consents_operator_fk', columns: [table.operatorUserId], foreignColumns: [users.id] }).onDelete('restrict'),
   foreignKey({ name: 'luxify_cinematic_consents_operator_grant_fk', columns: [table.operatorStaffGrantId], foreignColumns: [luxStaffGrants.id] }).onDelete('restrict'),
@@ -364,8 +364,11 @@ export const luxifyConsentAuditEvents = pgTable('luxify_consent_audit_events', {
   index('luxify_consent_audit_events_consent_idx').on(table.consentId, table.occurredAt),
   index('luxify_consent_audit_events_account_idx').on(table.accountId, table.occurredAt),
   uniqueIndex('luxify_consent_audit_events_grant_uq').on(table.consentId).where(sql`${table.event} = 'consent.granted_on_behalf'`),
-  check('luxify_consent_audit_events_event_ck', sql`${table.event} in ('consent.granted_on_behalf', 'consent.withdrawn', 'consent.revoked')`),
-  check('luxify_consent_audit_events_actor_ck', sql`${table.actorType} in ('subject', 'operator', 'staff')`),
+  // One subject confirmation per on-behalf consent (0021 fix, H1b). The
+  // confirmation row is the only thing that makes an on-behalf grant count.
+  uniqueIndex('luxify_consent_audit_events_confirmed_uq').on(table.consentId).where(sql`${table.event} = 'consent.subject_confirmed'`),
+  check('luxify_consent_audit_events_event_ck', sql`${table.event} in ('consent.granted_on_behalf', 'consent.subject_confirmed', 'consent.confirmation_expired', 'consent.withdrawn', 'consent.revoked', 'consent.superseded', 'consent.source_revoked')`),
+  check('luxify_consent_audit_events_actor_ck', sql`${table.actorType} in ('subject', 'operator', 'staff', 'system')`),
   check('luxify_consent_audit_events_hash_ck', sql`${table.attestationTextSha256} is null or ${table.attestationTextSha256} ~ '^[a-f0-9]{64}$'`),
   check('luxify_consent_audit_events_request_ck', sql`${table.requestId} is null or ${table.requestId} ~ '^[A-Za-z0-9_.:-]{1,128}$'`),
   check('luxify_consent_audit_events_on_behalf_ck', sql`${table.onBehalfOfAccountId} is null or ${table.onBehalfOfAccountId} = ${table.accountId}`),
@@ -389,6 +392,8 @@ export const luxStaffGrants = pgTable('lux_staff_grants', {
   // 0021 widens the scope to 'consent_operator'; that scope can never be self-granted.
   check('lux_staff_grants_scope_ck', sql`${table.scope} in ('creative_approval', 'consent_operator')`),
   check('lux_staff_grants_no_self_operator_ck', sql`${table.scope} <> 'consent_operator' or ${table.grantedByAccountId} <> ${table.staffAccountId}`),
+  // QA M1: no plus-addressed alias may hold consent_operator (one mailbox, one operator).
+  check('lux_staff_grants_operator_no_alias_ck', sql`${table.scope} <> 'consent_operator' or strpos(${table.staffEmail}, '+') = 0`),
   check('lux_staff_grants_explicit_ck', sql`${table.explicitGrant}`),
   check('lux_staff_grants_email_ck', sql`${table.staffEmail} ~ '^[a-z0-9._%+-]{1,64}@luxmarketingcompany[.]com$'`),
   check('lux_staff_grants_hash_ck', sql`${table.grantEvidenceSha256} ~ '^[a-f0-9]{64}$'`),
