@@ -10,6 +10,7 @@ import {
 import { createLuxifyConsentHandler } from '../routes/video-os-lite/luxify-consent.js';
 import {
   LUXIFY_CONSENT_NOTICE_SHA256,
+  luxifyConsentOboEnabled,
   issueLuxifyConsentChallenge,
   luxifyOboConfirmationTokenHash,
   luxifyOperatorAttestationSha256,
@@ -645,4 +646,23 @@ test('H1b mailer: the real sender refuses when Resend is unconfigured and posts 
   assert.deepEqual(await sendLuxifyConsentConfirmationEmail({ email: 'Subject@Example.test', url: `${ORIGIN}/luxify-consent#confirm=tok`, expiresAt: '2026-11-16T15:00:00.000Z' }, { env, fetchImpl }), { sent: true });
   assert.deepEqual(posted[0][1].to, ['subject@example.test']);
   assert.match(posted[0][1].text, /used once/);
+});
+
+test('H1a strict flag: only the exact lowercase string "true" enables on-behalf consent', async () => {
+  assert.equal(luxifyConsentOboEnabled({ VIDEO_OS_LUXIFY_CONSENT_OBO_ENABLED: 'true' }), true);
+  const off = [undefined, null, '', ' ', 'TRUE', 'True', ' true ', 'true ', ' true', 'true\n', '1', 'yes', 'on', 'enabled', 'false', '0', 'tru', 'true1', '"true"', true, 1];
+  for (const value of off) {
+    assert.equal(luxifyConsentOboEnabled({ VIDEO_OS_LUXIFY_CONSENT_OBO_ENABLED: value }), false, JSON.stringify(value));
+  }
+  assert.equal(luxifyConsentOboEnabled({}), false);
+  assert.equal(luxifyConsentOboEnabled(undefined), false);
+  // Route level: a near-miss value refuses every gated action before the repository.
+  for (const value of ['TRUE', ' true ', '1', 'yes']) {
+    const { handler, calls } = fixture({ environment: { ...ENV, VIDEO_OS_LUXIFY_CONSENT_OBO_ENABLED: value } });
+    const res = response();
+    await handler(request({ action: 'confirm-on-behalf', token: 'A'.repeat(43) }), res);
+    assert.equal(res.statusCode, 503, value);
+    assert.equal(res.body.code, 'luxify_consent_obo_unavailable');
+    assert.equal(calls.length, 0);
+  }
 });
