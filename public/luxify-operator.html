@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>LUXIFY consent operator | LUX Video OS</title>
+  <link rel="stylesheet" href="/provider-consent.css">
+  <style>
+    label { display: block; margin: 16px 0 6px; font-weight: 650; }
+    input[type="text"], input[type="email"], input[type="datetime-local"], select { width: 100%; min-height: 42px; padding: 8px 10px; border: 1px solid #d9e0ea; border-radius: 8px; font: inherit; background: #fff; }
+    button { margin-top: 12px; }
+    #obo-state { margin-bottom: 16px; padding: 14px; background: #f8efe2; border-radius: 8px; font-weight: 650; }
+    #attestation-text { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <main id="operator" data-state="checking">
+    <p class="eyebrow">LUX VIDEO OS</p>
+    <h1>LUXIFY consent operator</h1>
+    <p class="fine">Record that a subject personally gave LUXIFY cinematic consent. You are not consenting for them. Nothing is active until they confirm it from their own account.</p>
+    <p class="fine"><a href="/luxify-staff">Lux staff creative approval</a></p>
+    <p id="status" role="status" aria-live="polite">Checking whether on-behalf consent is available.</p>
+    <p id="obo-state" hidden>On-behalf LUXIFY consent is not enabled.</p>
+
+    <section id="lookup-panel" hidden aria-labelledby="lookup-heading">
+      <h2 id="lookup-heading">Subject</h2>
+      <form id="email-form" autocomplete="off">
+        <label for="subject-email">Subject email</label>
+        <input id="subject-email" type="email" autocomplete="off" maxlength="254" spellcheck="false">
+        <button id="find-subject" type="submit" disabled>Look up account</button>
+      </form>
+      <form id="account-form" autocomplete="off">
+        <label for="subject-account">Subject account id</label>
+        <input id="subject-account" type="text" autocomplete="off" maxlength="160" spellcheck="false">
+        <button id="load-context" type="submit" disabled>Load account</button>
+      </form>
+      <p id="subject-summary"></p>
+    </section>
+
+    <section id="context-panel" hidden aria-labelledby="context-heading">
+      <h2 id="context-heading">Subject context</h2>
+      <p id="context-summary"></p>
+      <p id="attestation-version"></p>
+      <div id="notice-body"></div>
+      <form id="grant-form" autocomplete="off">
+        <h2 id="attest-heading">Record the subject's consent</h2>
+        <label for="look">Look</label>
+        <select id="look"></select>
+        <label for="subject-name">Subject full name</label>
+        <input id="subject-name" type="text" autocomplete="off" maxlength="120">
+        <label for="method">Attestation method</label>
+        <select id="method">
+          <option value="written">Written</option>
+          <option value="recorded_verbal">Recorded verbal</option>
+        </select>
+        <label for="attested-at">Attested time</label>
+        <input id="attested-at" type="datetime-local" required>
+        <label for="evidence-ref">Evidence reference</label>
+        <input id="evidence-ref" type="text" autocomplete="off" maxlength="200" spellcheck="false" autocapitalize="off">
+        <p class="fine">Private path only, such as video-os/consent-evidence/…/….pdf, png, jpg, webm, mp4, or m4a. Not a web address.</p>
+        <p id="attestation-text"></p>
+        <label class="affirm"><input id="ack-generation" type="checkbox"><span id="ack-generation-text"></span></label>
+        <label class="affirm"><input id="ack-processing" type="checkbox"><span id="ack-processing-text"></span></label>
+        <label class="affirm"><input id="attestation-confirmed" type="checkbox"><span>I confirm this attestation. The subject personally gave this consent. I am recording it, not consenting for them.</span></label>
+        <button id="grant" type="submit" disabled>Record consent on behalf</button>
+      </form>
+      <h2 id="consents-heading">Consents</h2>
+      <ul id="consents"></ul>
+    </section>
+  </main>
+  <script type="module" src="/luxify-operator.js"></script>
+</body>
+</html>
