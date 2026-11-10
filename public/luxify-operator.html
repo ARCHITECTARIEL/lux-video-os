@@ -16,25 +16,25 @@
   </style>
 </head>
 <body>
-  <main id="operator" data-state="idle">
+  <main id="operator" data-state="checking">
     <p class="eyebrow">LUX VIDEO OS</p>
     <h1>LUXIFY consent operator</h1>
     <p class="fine">Record that a subject personally gave LUXIFY cinematic consent. You are not consenting for them. Nothing is active until they confirm it from their own account.</p>
     <p class="fine"><a href="/luxify-staff">Lux staff creative approval</a></p>
-    <p id="status" role="status" aria-live="polite">Look up the subject, or enter their account id.</p>
+    <p id="status" role="status" aria-live="polite">Checking whether on-behalf consent is available.</p>
     <p id="obo-state" hidden>On-behalf LUXIFY consent is not enabled.</p>
 
-    <section id="lookup-panel" aria-labelledby="lookup-heading">
+    <section id="lookup-panel" hidden aria-labelledby="lookup-heading">
       <h2 id="lookup-heading">Subject</h2>
       <form id="email-form" autocomplete="off">
         <label for="subject-email">Subject email</label>
-        <input id="subject-email" name="email" type="email" autocomplete="off" maxlength="254" spellcheck="false">
-        <button id="find-subject" type="submit">Look up account</button>
+        <input id="subject-email" type="email" autocomplete="off" maxlength="254" spellcheck="false">
+        <button id="find-subject" type="submit" disabled>Look up account</button>
       </form>
       <form id="account-form" autocomplete="off">
         <label for="subject-account">Subject account id</label>
-        <input id="subject-account" name="account" type="text" autocomplete="off" maxlength="160" spellcheck="false">
-        <button id="load-context" type="submit">Load account</button>
+        <input id="subject-account" type="text" autocomplete="off" maxlength="160" spellcheck="false">
+        <button id="load-context" type="submit" disabled>Load account</button>
       </form>
       <p id="subject-summary"></p>
     </section>

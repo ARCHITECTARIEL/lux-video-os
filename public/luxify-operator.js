@@ -2,6 +2,9 @@
 // The operator is the vos_session cookie. Never send an operator id, and never
 // write tokens, names, emails, evidence paths, or account ids to the console.
 const endpoint = '/api/video-os-lite/luxify-consent';
+// Schema-valid operator-context used only to learn whether the flag gate is open.
+// The response is never rendered: a real subject is loaded only after the operator asks.
+const FLAG_PROBE_ACCOUNT = 'luxify-obo-flag-check';
 const $ = id => document.getElementById(id);
 const page = { subjectAccountId: null, lookup: null, context: null, unavailable: false };
 let busy = false;
@@ -53,7 +56,6 @@ async function call(body) {
 
 function setUnavailable() {
   page.unavailable = true;
-  page.context = null;
   page.subjectAccountId = null;
   page.lookup = null;
   $('operator').dataset.state = 'unavailable';
@@ -66,8 +68,18 @@ function setUnavailable() {
   $('attestation-text').textContent = '';
   $('notice-body').replaceChildren();
   $('consents').replaceChildren();
+  $('find-subject').disabled = true;
+  $('load-context').disabled = true;
   $('grant').disabled = true;
   setStatus('On-behalf LUXIFY consent is not enabled.');
+}
+
+function showLookup() {
+  if (page.unavailable) return;
+  $('lookup-panel').hidden = false;
+  $('find-subject').disabled = false;
+  $('load-context').disabled = false;
+  if (!$('context-panel') || $('context-panel').hidden) $('operator').dataset.state = 'enabled';
 }
 
 async function guarded(work) {
@@ -105,7 +117,7 @@ function previewText() {
   const name = $('subject-name').value.trim().replace(/\s+/g, ' ');
   const method = $('method').value;
   const at = attestedDate($('attested-at').value);
-  if (!page.context || page.unavailable || !identity || !version || !/^[a-f0-9]{64}$/.test(String(noticeSha || ''))) return '';
+  if (!page.context || !identity || !version || !/^[a-f0-9]{64}$/.test(String(noticeSha || ''))) return '';
   if (!name || name.length > 120 || /[\u0000-\u001f]/.test(name)) return '';
   if (method !== 'written' && method !== 'recorded_verbal') return '';
   if (!at) return '';
@@ -117,7 +129,9 @@ function previewText() {
 
 function refreshGrant() {
   const preview = previewText();
-  $('attestation-text').textContent = preview;
+  // Keep the attestation off the page while the feature is unavailable, but leave
+  // preview itself intact so the unavailable flag is what keeps Grant disabled.
+  $('attestation-text').textContent = page.unavailable ? '' : preview;
   const ready = Boolean(preview)
     && $('evidence-ref').value.trim()
     && $('ack-generation').checked
@@ -185,7 +199,7 @@ function renderContext() {
       return item;
     }));
   }
-  $('lookup-panel').hidden = false;
+  showLookup();
   $('context-panel').hidden = false;
   $('obo-state').hidden = true;
   $('operator').dataset.state = 'ready';
@@ -206,6 +220,7 @@ async function loadContext() {
 }
 
 async function findSubject() {
+  if (page.unavailable) return;
   const email = $('subject-email').value.trim();
   if (!email) throw new ConsentRequestError('Enter the subject email.', 400, 'invalid_request');
   let target;
@@ -227,6 +242,7 @@ async function findSubject() {
 }
 
 async function loadByAccount() {
+  if (page.unavailable) return;
   const accountId = $('subject-account').value.trim();
   if (!accountId) throw new ConsentRequestError('Enter the subject account id.', 400, 'invalid_request');
   page.subjectAccountId = accountId;
@@ -297,6 +313,38 @@ for (const id of ['ack-generation', 'ack-processing', 'attestation-confirmed']) 
 $('email-form').addEventListener('submit', onSubmit(findSubject));
 $('account-form').addEventListener('submit', onSubmit(loadByAccount));
 $('grant-form').addEventListener('submit', onSubmit(grant));
+$('lookup-panel').hidden = true;
 $('context-panel').hidden = true;
 $('obo-state').hidden = true;
+$('find-subject').disabled = true;
+$('load-context').disabled = true;
 $('grant').disabled = true;
+$('operator').dataset.state = 'checking';
+
+async function checkFlag() {
+  let failure = null;
+  try {
+    await call({ action: 'operator-context', onBehalfOfAccountId: FLAG_PROBE_ACCOUNT });
+  } catch (error) {
+    failure = error;
+  }
+  if (failure?.code === 'luxify_consent_obo_unavailable') {
+    setUnavailable();
+    return;
+  }
+  if (failure?.status === 401) {
+    $('operator').dataset.state = 'signed-out';
+    setStatus(failure.message);
+    return;
+  }
+  // 200, or a later 403/404/409, means the flag gate let the request through.
+  if (!failure || [403, 404, 409].includes(failure.status)) {
+    showLookup();
+    setStatus(failure ? errorText(failure) : 'Look up the subject, or enter their account id.');
+    return;
+  }
+  $('operator').dataset.state = 'error';
+  setStatus(errorText(failure));
+}
+
+checkFlag();

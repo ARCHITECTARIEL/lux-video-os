@@ -100,7 +100,9 @@ function assertSecretsOffDom(elements, extra = []) {
   for (const secret of [...SECRETS, ...extra]) assert.equal(blob.includes(secret), false, secret);
 }
 
-async function boot(onPost, confirm = () => true) {
+const FLAG_PROBE = 'luxify-obo-flag-check';
+
+async function boot(onPost, { confirm = () => true, gate = null } = {}) {
   const elements = new Map();
   const events = [];
   const context = {
@@ -117,37 +119,82 @@ async function boot(onPost, confirm = () => true) {
     fetch: async (url, init) => {
       const body = init?.body ? JSON.parse(init.body) : null;
       events.push(['fetch', String(url), init?.method, init?.credentials, init?.headers, body]);
+      if (gate) await gate;
       const [status, payload] = await onPost(body);
       return { status, ok: status >= 200 && status < 300, json: async () => payload };
     },
   };
   runInNewContext(script, context);
-  const settle = async () => { for (let i = 0; i < 5; i += 1) await new Promise(resolve => setImmediate(resolve)); };
+  const settle = async () => { for (let i = 0; i < 8; i += 1) await new Promise(resolve => setImmediate(resolve)); };
   await settle();
   const el = id => context.document.getElementById(id);
   return { elements, events, settle, el };
 }
 
-test('flag off: operator-context 503 hides the forms and shows not enabled', async () => {
+function fillGrant(el, { attest = true } = {}) {
+  el('look').value = IDENTITY_B;
+  el('subject-name').value = NAME;
+  el('method').value = 'recorded_verbal';
+  el('attested-at').value = ATTESTED;
+  el('evidence-ref').value = EVIDENCE;
+  el('ack-generation').checked = true;
+  el('ack-processing').checked = true;
+  el('attestation-confirmed').checked = attest;
+}
+
+test('forms stay hidden until the flag check, then a 503 shows not enabled', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
   const seen = [];
-  const { elements, events, el } = await boot(body => {
+  const { events, el, settle } = await boot(body => {
     seen.push(body);
     return [503, { ok: false, code: 'luxify_consent_obo_unavailable', error: 'On-behalf LUXIFY consent is turned off.' }];
-  });
+  }, { gate });
+  assert.equal(el('operator').dataset.state, 'checking');
+  assert.equal(el('lookup-panel').hidden, true);
+  assert.equal(el('context-panel').hidden, true);
+  assert.equal(el('find-subject').disabled, true);
+  assert.equal(el('load-context').disabled, true);
+  assert.equal(el('grant').disabled, true);
+  assert.deepEqual(posts(events), [{ action: 'operator-context', onBehalfOfAccountId: FLAG_PROBE }]);
+  release();
+  await settle();
   el('subject-account').value = ACCOUNT;
+  el('subject-email').value = EMAIL;
   await el('account-form').submit();
-  assert.equal(el('account-form').defaultPrevented, true);
-  assert.deepEqual(seen, [{ action: 'operator-context', onBehalfOfAccountId: ACCOUNT }]);
+  await el('email-form').submit();
+  assert.deepEqual(seen, [{ action: 'operator-context', onBehalfOfAccountId: FLAG_PROBE }]);
   assertNoOperator(seen[0]);
   assert.equal(el('operator').dataset.state, 'unavailable');
   assert.equal(el('obo-state').hidden, false);
   assert.match(el('obo-state').textContent, /not enabled/i);
   assert.match(el('status').textContent, /not enabled/i);
   assert.equal(el('status').textContent.includes(ACCOUNT), false);
+  assert.equal(el('status').textContent.includes(EMAIL), false);
   assert.equal(el('lookup-panel').hidden, true);
   assert.equal(el('context-panel').hidden, true);
+  assert.equal(el('find-subject').disabled, true);
+  assert.equal(el('load-context').disabled, true);
   assert.equal(el('grant').disabled, true);
   assert.equal(events.some(event => event[0] === 'console'), false);
+});
+
+test('a passing flag check reveals only the lookup form', async () => {
+  const seen = [];
+  const { el } = await boot(body => {
+    seen.push(body);
+    return [200, { ok: true, notice: LUXIFY_CONSENT_NOTICE, noticeSha256: LUXIFY_CONSENT_NOTICE_SHA256, attestationVersion: LUXIFY_OPERATOR_ATTESTATION_VERSION, identities: [{ identityId: IDENTITY_A, displayName: 'Probe look', challenge: CHALLENGE_A }], consents: [pendingConsent] }];
+  });
+  assert.deepEqual(seen, [{ action: 'operator-context', onBehalfOfAccountId: FLAG_PROBE }]);
+  assert.equal(el('operator').dataset.state, 'enabled');
+  assert.equal(el('lookup-panel').hidden, false);
+  assert.equal(el('context-panel').hidden, true);
+  assert.equal(el('find-subject').disabled, false);
+  assert.equal(el('load-context').disabled, false);
+  assert.equal(el('grant').disabled, true);
+  assert.equal(el('consents').textContent.includes('waiting for the subject'), false);
+  assert.equal(el('status').textContent.includes(FLAG_PROBE), false);
+  assert.equal(el('status').textContent.includes(CHALLENGE_A), false);
 });
 
 test('grant-on-behalf sends the API shape with no operator id, and the attestation matches the server template', async () => {
@@ -212,9 +259,10 @@ test('grant-on-behalf sends the API shape with no operator id, and the attestati
   assert.equal(grant.challenge === CHALLENGE_A, false);
   assert.equal(grant.cinematicGenerationAuthorization, true);
   assert.equal(grant.attestationConfirmed, true);
-  assert.deepEqual(seen[0], { action: 'staff-lookup', email: EMAIL });
+  assert.deepEqual(seen[0], { action: 'operator-context', onBehalfOfAccountId: FLAG_PROBE });
+  assert.deepEqual(seen[1], { action: 'staff-lookup', email: EMAIL });
   for (const body of seen) assertNoOperator(body);
-  assert.deepEqual(seen.map(body => body.action), ['staff-lookup', 'operator-context', 'grant-on-behalf', 'operator-context']);
+  assert.deepEqual(seen.map(body => body.action), ['operator-context', 'staff-lookup', 'operator-context', 'grant-on-behalf', 'operator-context']);
   assert.equal(events.filter(event => event[0] === 'fetch').every(event => event[1] === '/api/video-os-lite/luxify-consent' && event[2] === 'POST' && event[3] === 'same-origin' && event[4]['content-type'] === 'application/json'), true);
   assert.match(el('status').textContent, /Confirmation email sent/);
   assert.equal(el('evidence-ref').value, '');
@@ -266,7 +314,7 @@ test('withdraw posts operator-withdraw only, and cancelling does not', async () 
       return [200, { ok: true, consent: { id: body.consentId, status: 'withdrawn' } }];
     }
     throw new Error(`unexpected ${body.action}`);
-  }, () => allow);
+  }, { confirm: () => allow });
   el('subject-account').value = ACCOUNT;
   await el('account-form').submit();
   const controls = buttons(el('consents'));
@@ -287,22 +335,69 @@ test('withdraw posts operator-withdraw only, and cancelling does not', async () 
   assertSecretsOffDom(elements, [CHALLENGE_A]);
 });
 
-test('staff lookup refusal does not call operator-context or echo the email', async () => {
+test('staff lookup refusal does not load a subject or echo the email', async () => {
   const seen = [];
   const { events, el } = await boot(body => {
     seen.push(body);
+    if (body.action === 'operator-context' && body.onBehalfOfAccountId === FLAG_PROBE) return [403, { ok: false, code: 'LUX_CONSENT_OPERATOR_REQUIRED', error: 'Only a Lux consent operator can record consent on behalf of a subject.' }];
     return [403, { ok: false, code: 'LUX_STAFF_PAGE_FORBIDDEN', error: 'This page is only for the Lux owner account and Lux staff.' }];
   });
   el('subject-email').value = EMAIL;
   await el('email-form').submit();
-  assert.deepEqual(seen.map(body => body.action), ['staff-lookup']);
-  assert.deepEqual(seen[0], { action: 'staff-lookup', email: EMAIL });
-  assertNoOperator(seen[0]);
+  assert.deepEqual(seen.map(body => body.action), ['operator-context', 'staff-lookup']);
+  assert.deepEqual(seen[1], { action: 'staff-lookup', email: EMAIL });
+  assert.equal(seen.some(body => body.onBehalfOfAccountId === ACCOUNT), false);
+  assertNoOperator(seen[1]);
   assert.match(el('status').textContent, /Lux owner account and Lux staff/);
   assert.match(el('status').textContent, /account id/i);
   assert.equal(el('status').textContent.includes(EMAIL), false);
   assert.equal(el('operator').dataset.state === 'unavailable', false);
   assert.equal(events.some(event => event[0] === 'console'), false);
+});
+
+test('M10: Grant stays disabled until the attestation is confirmed', async () => {
+  const seen = [];
+  const { el } = await boot(body => {
+    seen.push(body);
+    if (body.action === 'operator-context' && body.onBehalfOfAccountId === FLAG_PROBE) {
+      return [200, { ok: true, identities: [], consents: [] }];
+    }
+    if (body.action === 'operator-context') return [200, contextBody()];
+    throw new Error(`unexpected ${body.action}`);
+  });
+  el('subject-account').value = ACCOUNT;
+  await el('account-form').submit();
+  fillGrant(el, { attest: false });
+  await el('ack-generation').change();
+  assert.equal(el('grant').disabled, true);
+  await el('grant-form').submit();
+  assert.equal(seen.some(body => body.action === 'grant-on-behalf'), false);
+  el('attestation-confirmed').checked = true;
+  await el('attestation-confirmed').change();
+  assert.equal(el('grant').disabled, false);
+});
+
+test('M20: Grant stays disabled after the feature is turned off', async () => {
+  const { el } = await boot(body => {
+    if (body.action === 'grant-on-behalf') return [503, { ok: false, code: 'luxify_consent_obo_unavailable', error: 'On-behalf LUXIFY consent is turned off.' }];
+    if (body.action === 'operator-context') return [200, contextBody()];
+    throw new Error(`unexpected ${body.action}`);
+  });
+  el('subject-account').value = ACCOUNT;
+  await el('account-form').submit();
+  fillGrant(el, { attest: true });
+  await el('attestation-confirmed').change();
+  assert.equal(el('grant').disabled, false);
+  await el('grant-form').submit();
+  assert.equal(el('operator').dataset.state, 'unavailable');
+  assert.equal(el('lookup-panel').hidden, true);
+  assert.equal(el('context-panel').hidden, true);
+  assert.equal(el('grant').disabled, true);
+  await el('subject-name').input();
+  await el('attestation-confirmed').change();
+  assert.equal(el('grant').disabled, true);
+  assert.equal(el('attestation-text').textContent, '');
+  assert.match(el('status').textContent, /not enabled/i);
 });
 
 test('/luxify-operator is a no-store page and the script never logs or sends an operator id', () => {
@@ -320,6 +415,17 @@ test('/luxify-operator is a no-store page and the script never logs or sends an 
   for (const earlier of routes.slice(0, index)) assert.equal(new RegExp(`^${earlier.src}$`).test('/luxify-operator'), false);
   assert.match(html, /<meta name="robots" content="noindex,nofollow">/);
   assert.match(html, /<meta name="referrer" content="no-referrer">/);
+  const controls = [...html.matchAll(/<(?:input|select|textarea|button)\b[^>]*>/g)].map(match => match[0]);
+  assert.ok(controls.some(tag => tag.includes('id="subject-email"')));
+  assert.ok(controls.some(tag => tag.includes('id="subject-account"')));
+  for (const tag of controls) assert.doesNotMatch(tag, /\bname\s*=/, tag);
+  for (const id of ['find-subject', 'load-context', 'grant']) {
+    const tag = html.match(new RegExp(`<button id="${id}"[^>]*>`));
+    assert.ok(tag, id);
+    assert.match(tag[0], /\sdisabled(?:\s|>|=)/);
+  }
+  assert.match(html.match(/<section id="lookup-panel"[^>]*>/)[0], /\shidden(?:\s|>)/);
+  assert.match(html.match(/<section id="context-panel"[^>]*>/)[0], /\shidden(?:\s|>)/);
   assert.match(html, /<form id="grant-form"/);
   assert.match(html, /<option value="written">/);
   assert.match(html, /<option value="recorded_verbal">/);

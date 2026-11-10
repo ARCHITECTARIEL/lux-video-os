@@ -25,6 +25,7 @@ const CONSENT_ACTIVE = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const CONSENT_SELF = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 const NAME = 'Quincy Attestor';
 const ATTESTED = '2026-11-09T11:00';
+const FLAG_PROBE = 'luxify-obo-flag-check';
 const SECRETS = [CHALLENGE_A, CHALLENGE_B, COOKIE, 'operator-should-not-be-sent'];
 
 const IDENTITIES = [
@@ -87,17 +88,17 @@ function assertQuiet(calls, extra = []) {
 test('flag off hides the forms and shows not enabled', async ({ page }) => {
   const calls = await setup(page, () => [503, { ok: false, code: 'luxify_consent_obo_unavailable', error: 'On-behalf LUXIFY consent is turned off.' }]);
   await page.goto('/luxify-operator');
-  await page.locator('#subject-account').fill(ACCOUNT);
-  await page.locator('#load-context').click();
   await expect(page.locator('#operator')).toHaveAttribute('data-state', 'unavailable');
   await expect(page.locator('#obo-state')).toContainText('not enabled');
   await expect(page.locator('#status')).toContainText('not enabled');
-  await expect(page.locator('#status')).not.toContainText(ACCOUNT);
   await expect(page.locator('#lookup-panel')).toBeHidden();
   await expect(page.locator('#context-panel')).toBeHidden();
-  await expect(page.locator('#grant')).toBeHidden();
-  expect(calls.posts.map(post => post.body)).toEqual([{ action: 'operator-context', onBehalfOfAccountId: ACCOUNT }]);
-  assertQuiet(calls, [ACCOUNT, EMAIL]);
+  await expect(page.locator('#find-subject')).toBeDisabled();
+  await expect(page.locator('#load-context')).toBeDisabled();
+  await expect(page.locator('#grant')).toBeDisabled();
+  expect(await page.evaluate(() => location.search)).toBe('');
+  expect(calls.posts.map(post => post.body)).toEqual([{ action: 'operator-context', onBehalfOfAccountId: FLAG_PROBE }]);
+  assertQuiet(calls, [ACCOUNT, EMAIL, FLAG_PROBE]);
 });
 
 test('lookup then grant sends grant-on-behalf with no operator id', async ({ page }) => {
@@ -110,6 +111,11 @@ test('lookup then grant sends grant-on-behalf with no operator id', async ({ pag
     return [500, { ok: false, code: 'unexpected', error: 'Unexpected action.' }];
   });
   await page.goto('/luxify-operator');
+  await expect(page.locator('#operator')).toHaveAttribute('data-state', 'enabled');
+  await expect(page.locator('#lookup-panel')).toBeVisible();
+  await expect(page.locator('#context-panel')).toBeHidden();
+  await expect(page.locator('#find-subject')).toBeEnabled();
+  expect(calls.posts.map(post => post.body)).toEqual([{ action: 'operator-context', onBehalfOfAccountId: FLAG_PROBE }]);
   await page.locator('#subject-email').fill(EMAIL);
   await page.locator('#find-subject').click();
   await expect(page.locator('#operator')).toHaveAttribute('data-state', 'ready');
@@ -126,6 +132,7 @@ test('lookup then grant sends grant-on-behalf with no operator id', async ({ pag
   await page.locator('#evidence-ref').fill(EVIDENCE);
   await page.locator('#ack-generation').check();
   await page.locator('#ack-processing').check();
+  await expect(page.locator('#grant')).toBeDisabled();
   await page.locator('#attestation-confirmed').check();
   const expectedText = renderLuxifyOperatorAttestation({ subjectName: NAME, method: 'recorded_verbal', attestedAt: ATTESTED, identityId: IDENTITY_B }).text;
   await expect(page.locator('#attestation-text')).toHaveText(expectedText);
@@ -149,8 +156,9 @@ test('lookup then grant sends grant-on-behalf with no operator id', async ({ pag
     attestationConfirmed: true,
   });
   expect(grant.body.idempotencyKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-  expect(calls.posts.map(post => post.body.action)).toEqual(['staff-lookup', 'operator-context', 'grant-on-behalf', 'operator-context']);
-  expect(calls.posts[0].body).toEqual({ action: 'staff-lookup', email: EMAIL });
+  expect(calls.posts.map(post => post.body.action)).toEqual(['operator-context', 'staff-lookup', 'operator-context', 'grant-on-behalf', 'operator-context']);
+  expect(calls.posts[0].body).toEqual({ action: 'operator-context', onBehalfOfAccountId: FLAG_PROBE });
+  expect(calls.posts[1].body).toEqual({ action: 'staff-lookup', email: EMAIL });
   await expect(page.locator('#evidence-ref')).toHaveValue('');
   await expect(page.locator('#subject-name')).toHaveValue('');
   const rendered = await page.content();
