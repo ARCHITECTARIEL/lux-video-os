@@ -387,7 +387,7 @@ test('0020 adds the evidence source column with CHECK heygen_check and closes ol
   assert.ok(text.indexOf('ADD COLUMN "source"') < text.indexOf('UPDATE "luxify_look_capability_evidence"'));
   assert.doesNotMatch(text, /DROP |CREATE OR REPLACE|DELETE /);
   const journal = JSON.parse(journalText);
-  const entry = journal.entries.at(-1);
+  const entry = journal.entries[20];
   assert.equal(entry.tag, '0020_luxify_evidence_source');
   assert.equal(entry.idx, 20);
   assert.ok(entry.when > journal.entries[19].when);

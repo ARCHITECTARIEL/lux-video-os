@@ -146,7 +146,7 @@ function persistedJob(overrides = {}) {
   };
 }
 
-function databaseFixture({ grants = true, job = persistedJob(), activeCounts = [] } = {}) {
+function databaseFixture({ grants = true, job = persistedJob(), activeCounts = [], consent = null, space = null, confirmations = [] } = {}) {
   const events = [];
   const credit = { accountId: ACCOUNT, reserved: job.costCredits };
   const rowsFor = table => {
@@ -154,16 +154,25 @@ function databaseFixture({ grants = true, job = persistedJob(), activeCounts = [
     if (table === schema.entitlements) return grants ? [{ accountId: ACCOUNT, entitlementKey: 'liveRendering', enabled: true, sourceType: 'admin_tester_grant', sourceId: null }] : [];
     if (table === schema.users) return [{ id: ACCOUNT, email: 'owner@example.test' }];
     if (table === schema.creditAccounts) return [credit];
+    // 0021 job consent link (QA L5): only reached when job.luxifyConsentId is set.
+    if (table === schema.luxifyCinematicConsents) return consent ? [consent] : [];
+    if (table === schema.providerAccountBindings) return space ? [space] : [];
+    if (table === schema.luxifyConsentAuditEvents) return confirmations;
     return [];
   };
   const db = {
     transaction: async work => work(db),
-    execute: async () => ({ rows: activeCounts }),
+    // DB clock for the 0021 consent re-check (`select now() as now`); every
+    // other raw query here is the admission count.
+    execute: async query => (String(query?.queryChunks?.[0]?.value?.[0] || '').startsWith('select now()')
+      ? { rows: [{ now: new Date() }] } : { rows: activeCounts }),
     select() {
       let table;
       const query = {
         from(value) { table = value; return this; },
+        innerJoin() { return this; },
         where() { return this; },
+        orderBy() { return this; },
         for() { return this; },
         limit() { return this; },
         then(resolve, reject) { return Promise.resolve(rowsFor(table)).then(resolve, reject); },
@@ -305,6 +314,37 @@ test('authoritative LUXIFY claim rechecks look-only resources and creates a mode
   assert.equal(claimed.providerClaimProof.requestDigest, expectedDigest);
   assert.equal(state.events[0].details.renderMode, LUXIFY_RENDER_MODE);
   assert.equal(state.events[0].details.providerCapability, LUXIFY_PROVIDER_CAPABILITY);
+});
+
+test('QA L5 / mutant M9: the app re-checks the job consent link at provider claim (withdrawn, expired, other space or unconfirmed on-behalf -> refused before any provider operation)', async () => {
+  const CONSENT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const FINGERPRINT = 'd'.repeat(64);
+  const space = { bindingId: PROVIDER_BINDING.bindingId, originScopeKey: PROVIDER_BINDING.originScopeKey, verifiedAccountScopeId: '99999999-9999-4999-8999-999999999999', verifiedAt: new Date('2026-10-01T00:00:00.000Z'), providerSpaceFingerprint: FINGERPRINT };
+  const open = { id: CONSENT_ID, accountId: ACCOUNT, identityId: LOOK_A, providerLookId: 'look_a', providerSpaceFingerprint: FINGERPRINT, consentMode: 'self', expiresAt: new Date('2099-01-01T00:00:00.000Z'), revokedAt: null };
+  const claim = () => repository.transitionJob({
+    jobId: 'job-luxify-provider-claim', stageTo: 'provider_submitting', eventType: 'provider.submit_started', providerBinding: PROVIDER_BINDING,
+  }, trusted());
+  for (const [label, consent, confirmations, spaceRow] of [
+    ['withdrawn', { ...open, revokedAt: new Date('2026-10-20T00:00:00.000Z') }, [], space],
+    ['expired', { ...open, expiresAt: new Date('2000-01-01T00:00:00.000Z') }, [], space],
+    ['other space', { ...open, providerSpaceFingerprint: 'e'.repeat(64) }, [], space],
+    ['no active space', open, [], null],
+    ['pending on-behalf', { ...open, consentMode: 'operator_on_behalf' }, [], space],
+    ['missing row', null, [], space],
+  ]) {
+    const state = databaseFixture({ job: persistedJob({ luxifyConsentId: CONSENT_ID }), consent, confirmations, space: spaceRow });
+    await assert.rejects(claim(), { code: 'LUXIFY_CONSENT_WITHDRAWN', statusCode: 409 }, label);
+    assert.equal(state.job.status, 'workflow_started', label);
+    assert.equal(operationClaims.length, 0, label);
+    assert.equal(lookReferenceClaims.length, 0, label);
+  }
+  for (const [consent, confirmations] of [[open, []], [{ ...open, consentMode: 'operator_on_behalf' }, [{ id: 'confirmed' }]]]) {
+    const state = databaseFixture({ job: persistedJob({ luxifyConsentId: CONSENT_ID }), consent, confirmations, space });
+    const claimed = await claim();
+    assert.equal(claimed.status, 'provider_submitting');
+    assert.equal(operationClaims.length, 1);
+    assert.equal(state.job.luxifyConsentId, CONSENT_ID);
+  }
 });
 
 test('authority drift, Premium revocation, and malformed mode fail before provider claim', async () => {

@@ -31,7 +31,7 @@ import { acquireProviderLifecycleLock } from './provider-lifecycle-lock.js';
 import { assertHeygenProviderReceiptTx, withFreshHeygenSpaceBindingTransaction, withHeygenSpaceBindingReceiptTransaction } from './heygen-space-binding-repository.js';
 import { assertProviderIdentityReferencesActiveTx, assertProviderJobLookReferencesActiveTx, assertProviderJobReferencesActiveTx, attachProviderConsumerReferenceTx, attachProviderJobLookReferencesTx, getExactProviderResourceTx, markProviderResourceReadyTx, markProviderVideoReadyTx, providerOperationRequestDigest, recordProviderJobSubmissionUnknownTx, recordProviderJobDefinitiveRetryTx, recordProviderVideoResourceTx, releaseProviderVideoConsumerTx, reserveProviderOperationTx } from './provider-reconciliation-repository.js';
 import { authSessions, creditAccounts, creditTransactions, entitlements, globalCounters, identityConsents, identityEnrollmentEvents, identityVideoEnrollments, jobEvents, mediaAssets, projects, providerLifecycleEvents, rateLimits, stripeEvents, userIdentities, users, videoJobs } from './schema.js';
-import { resolvePersistedLuxifyAuthority } from './luxify-consent-repository.js';
+import { assertLuxifyJobConsentTx, resolveLuxifyJobConsentIdTx, resolvePersistedLuxifyAuthority } from './luxify-consent-repository.js';
 
 export const IDENTITY_COMPONENT_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING', 'PROCESSING', 'READY', 'FAILED']);
 export const IDENTITY_OVERALL_STATUSES = Object.freeze(['DRAFT', 'UPLOADING', 'CREATING_AVATAR', 'CLONING_VOICE', 'PROCESSING', 'READY', 'PARTIAL_FAILURE', 'FAILED', 'ARCHIVED']);
@@ -685,6 +685,7 @@ export async function reserveRender({ jobId, accountId, idempotencyKey, correlat
     let reservedInput = input;
     let quoteProof;
     let luxifyAuthority;
+    let luxifyConsentId = null;
     if (luxify) {
       const resolved = await resolveLuxifyAuthority({
         phase: 'reservation',
@@ -695,6 +696,12 @@ export async function reserveRender({ jobId, accountId, idempotencyKey, correlat
         intent: luxifyActivation.intent,
       });
       luxifyAuthority = exactLuxifyAuthority(resolved, luxifyActivation.intent.lookIdentityIds);
+      // 0021: link the job to the exact consent of its primary look on this
+      // account (self or on-behalf alike). Production authority only; the
+      // test-only injected authority has no persisted consent to link.
+      if (resolveLuxifyAuthority === persistedLuxifyAuthority) {
+        luxifyConsentId = await resolveLuxifyJobConsentIdTx(tx, { accountId, lookBinding: luxifyAuthority.lookBindings[0] });
+      }
       assertLuxifyActivation({ accountId, provider, tier, title, format, costCredits, input });
       reservedInput = {
         ...input,
@@ -762,7 +769,7 @@ export async function reserveRender({ jobId, accountId, idempotencyKey, correlat
     }
     if (account.balance - account.reserved < costCredits) throw Object.assign(new Error('Insufficient credits.'), { statusCode: 402, failureCategory: 'ENTITLEMENT' });
     await tx.update(creditAccounts).set({ reserved: account.reserved + costCredits, updatedAt: new Date() }).where(eq(creditAccounts.accountId, accountId));
-    const [job] = await tx.insert(videoJobs).values({ id: jobId, accountId, projectId: reservedInput.projectId, idempotencyKey, correlationId, provider, status: 'reserved', title, format, costCredits, input: { ...reservedInput, ...(quoteProof ? { quoteProof } : {}), renderAuthorization: { ...authorization, jobId } } }).returning();
+    const [job] = await tx.insert(videoJobs).values({ id: jobId, accountId, projectId: reservedInput.projectId, idempotencyKey, correlationId, provider, status: 'reserved', title, format, costCredits, ...(luxifyConsentId ? { luxifyConsentId } : {}), input: { ...reservedInput, ...(quoteProof ? { quoteProof } : {}), renderAuthorization: { ...authorization, jobId } } }).returning();
     if (luxify) {
       await attachProviderJobLookReferencesTx(tx, { accountId, jobId: job.id, lookBindings: luxifyAuthority.lookBindings });
     } else {
@@ -1044,6 +1051,10 @@ export async function transitionJob({ jobId, stageTo, eventType, providerJobId, 
         if (JSON.stringify(stableJson(currentAuthority)) !== JSON.stringify(stableJson(persistedLuxify.authority))) {
           throw luxifyFailure('LUXIFY_AUTHORITY_CHANGED', 'LUXIFY look authority changed before provider submission.', 409, 'CONSENT');
         }
+        // 0021: the consent the job was enqueued under must still be open,
+        // unexpired and on this account at provider submit (0021 trigger
+        // re-checks it on the provider_submitting transition).
+        if (current.luxifyConsentId) await assertLuxifyJobConsentTx(tx, { job: current });
         await assertProviderJobLookReferencesActiveTx(tx, {
           accountId: current.accountId,
           jobId: current.id,

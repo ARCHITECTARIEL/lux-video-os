@@ -148,6 +148,13 @@
       "when": 1793536034867,
       "tag": "0020_luxify_evidence_source",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794237940402,
+      "tag": "0021_luxify_consent_on_behalf",
+      "breakpoints": true
     }
   ]
 }

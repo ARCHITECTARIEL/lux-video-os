@@ -96,7 +96,18 @@ export const videoJobs = pgTable('video_jobs', {
   // unavailable regardless of `status` still saying 'ready'.
   reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
   videoDeletedAt: timestamp('video_deleted_at', { withTimezone: true }),
+  // 0021: the cinematic consent a LUXIFY job was reserved under (primary
+  // look). Nullable: non-LUXIFY and pre-0021 jobs keep NULL. The composite FK
+  // pins the consent to the job's own account; 0021 triggers check it is
+  // open, unexpired and for the job's look at enqueue and at provider submit.
+  luxifyConsentId: uuid('luxify_consent_id'),
 }, (table) => [
+  foreignKey({
+    name: 'video_jobs_luxify_consent_fk',
+    columns: [table.luxifyConsentId, table.accountId],
+    foreignColumns: [luxifyCinematicConsents.id, luxifyCinematicConsents.accountId],
+  }).onDelete('restrict'),
+  index('video_jobs_luxify_consent_idx').on(table.luxifyConsentId).where(sql`${table.luxifyConsentId} is not null`),
   uniqueIndex('video_jobs_account_idempotency_uq').on(table.accountId, table.idempotencyKey),
   index('video_jobs_account_updated_idx').on(table.accountId, table.updatedAt),
   index('video_jobs_status_updated_idx').on(table.status, table.updatedAt),
@@ -285,6 +296,16 @@ export const luxifyCinematicConsents = pgTable('luxify_cinematic_consents', {
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
   terminalReason: text('terminal_reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  // 0021 (ARCH-ONBEHALF-CONSENT-1109): an operator-recorded grant on behalf of
+  // the subject account. 'self' rows keep every operator/attestation column NULL.
+  consentMode: text('consent_mode').notNull().default('self'),
+  operatorUserId: text('operator_user_id'),
+  operatorStaffGrantId: uuid('operator_staff_grant_id'),
+  attestationTextVersion: text('attestation_text_version'),
+  attestationTextSha256: text('attestation_text_sha256'),
+  attestedAt: timestamp('attested_at', { withTimezone: true }),
+  attestationMethod: text('attestation_method'),
+  attestationEvidenceRef: text('attestation_evidence_ref'),
 }, (table) => [
   foreignKey({
     name: 'luxify_cinematic_consents_identity_owner_fk',
@@ -305,7 +326,52 @@ export const luxifyCinematicConsents = pgTable('luxify_cinematic_consents', {
   check('luxify_cinematic_consents_look_ck', sql`${table.providerLookId} ~ '^[A-Za-z0-9_.:-]{1,255}$'`),
   check('luxify_cinematic_consents_hash_ck', sql`${table.providerSpaceFingerprint} ~ '^[a-f0-9]{64}$' and ${table.approvalEvidenceSha256} ~ '^[a-f0-9]{64}$'`),
   check('luxify_cinematic_consents_window_ck', sql`${table.expiresAt} > ${table.acceptedAt} and ${table.expiresAt} <= ${table.acceptedAt} + interval '8760 hours' and (${table.revokedAt} is null or ${table.revokedAt} >= ${table.acceptedAt})`),
-  check('luxify_cinematic_consents_terminal_ck', sql`(${table.revokedAt} is null and ${table.terminalReason} is null) or (${table.revokedAt} is not null and ${table.terminalReason} is not null and ${table.terminalReason} in ('withdrawn', 'revoked', 'source_revoked'))`),
+  check('luxify_cinematic_consents_terminal_ck', sql`(${table.revokedAt} is null and ${table.terminalReason} is null) or (${table.revokedAt} is not null and ${table.terminalReason} is not null and ${table.terminalReason} in ('withdrawn', 'revoked', 'source_revoked', 'confirmation_expired'))`),
+  // Explicit short names: generated FK names would exceed Postgres' 63-byte limit.
+  foreignKey({ name: 'luxify_cinematic_consents_operator_fk', columns: [table.operatorUserId], foreignColumns: [users.id] }).onDelete('restrict'),
+  foreignKey({ name: 'luxify_cinematic_consents_operator_grant_fk', columns: [table.operatorStaffGrantId], foreignColumns: [luxStaffGrants.id] }).onDelete('restrict'),
+  uniqueIndex('luxify_cinematic_consents_id_account_uq').on(table.id, table.accountId),
+  index('luxify_cinematic_consents_operator_idx').on(table.operatorUserId).where(sql`${table.operatorUserId} is not null`),
+  check('luxify_cinematic_consents_mode_fields_ck', sql`(${table.consentMode} = 'self' and ${table.operatorUserId} is null and ${table.operatorStaffGrantId} is null and ${table.attestationTextVersion} is null and ${table.attestationTextSha256} is null and ${table.attestedAt} is null and ${table.attestationMethod} is null and ${table.attestationEvidenceRef} is null) or (${table.consentMode} = 'operator_on_behalf' and ${table.operatorUserId} is not null and ${table.operatorStaffGrantId} is not null and ${table.attestationTextVersion} is not null and ${table.attestationTextSha256} is not null and ${table.attestedAt} is not null and ${table.attestationMethod} is not null and ${table.attestationEvidenceRef} is not null and ${table.operatorUserId} <> ${table.accountId})`),
+  check('luxify_cinematic_consents_attestation_ck', sql`${table.consentMode} = 'self' or (${table.attestationTextVersion} = 'luxify-operator-attestation/v1' and ${table.attestationTextSha256} ~ '^[a-f0-9]{64}$' and ${table.attestationMethod} in ('written', 'recorded_verbal') and ${table.attestationEvidenceRef} ~ '^video-os/consent-evidence/[a-f0-9]{64}/[0-9a-f-]{36}[.](pdf|png|jpg|webm|mp4|m4a)$' and ${table.attestedAt} <= ${table.acceptedAt} + interval '5 minutes' and ${table.attestedAt} >= ${table.acceptedAt} - interval '7 days' and ${table.expiresAt} <= ${table.attestedAt} + interval '8760 hours')`),
+]);
+
+/**
+ * 0021 (CORE-CONSENT-OBO): append-only audit trail for operator-recorded
+ * grants and for every closure of an on-behalf grant. Insert-only: 0021
+ * triggers refuse UPDATE and DELETE. Stores the attestation hash, never text.
+ */
+export const luxifyConsentAuditEvents = pgTable('luxify_consent_audit_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  consentId: uuid('consent_id').notNull(),
+  accountId: text('account_id').notNull(),
+  event: text('event').notNull(),
+  actorType: text('actor_type').notNull(),
+  actorAccountId: text('actor_account_id').notNull(),
+  onBehalfOfAccountId: text('on_behalf_of_account_id'),
+  staffGrantId: uuid('staff_grant_id'),
+  attestationTextSha256: text('attestation_text_sha256'),
+  requestId: text('request_id'),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({
+    name: 'luxify_consent_audit_events_consent_fk',
+    columns: [table.consentId, table.accountId],
+    foreignColumns: [luxifyCinematicConsents.id, luxifyCinematicConsents.accountId],
+  }).onDelete('restrict'),
+  foreignKey({ name: 'luxify_consent_audit_events_actor_fk', columns: [table.actorAccountId], foreignColumns: [users.id] }).onDelete('restrict'),
+  foreignKey({ name: 'luxify_consent_audit_events_grant_fk', columns: [table.staffGrantId], foreignColumns: [luxStaffGrants.id] }).onDelete('restrict'),
+  index('luxify_consent_audit_events_consent_idx').on(table.consentId, table.occurredAt),
+  index('luxify_consent_audit_events_account_idx').on(table.accountId, table.occurredAt),
+  uniqueIndex('luxify_consent_audit_events_grant_uq').on(table.consentId).where(sql`${table.event} = 'consent.granted_on_behalf'`),
+  // One subject confirmation per on-behalf consent (0021 fix, H1b). The
+  // confirmation row is the only thing that makes an on-behalf grant count.
+  uniqueIndex('luxify_consent_audit_events_confirmed_uq').on(table.consentId).where(sql`${table.event} = 'consent.subject_confirmed'`),
+  check('luxify_consent_audit_events_event_ck', sql`${table.event} in ('consent.granted_on_behalf', 'consent.subject_confirmed', 'consent.confirmation_expired', 'consent.withdrawn', 'consent.revoked', 'consent.superseded', 'consent.source_revoked')`),
+  check('luxify_consent_audit_events_actor_ck', sql`${table.actorType} in ('subject', 'operator', 'staff', 'system')`),
+  check('luxify_consent_audit_events_hash_ck', sql`${table.attestationTextSha256} is null or ${table.attestationTextSha256} ~ '^[a-f0-9]{64}$'`),
+  check('luxify_consent_audit_events_request_ck', sql`${table.requestId} is null or ${table.requestId} ~ '^[A-Za-z0-9_.:-]{1,128}$'`),
+  check('luxify_consent_audit_events_on_behalf_ck', sql`${table.onBehalfOfAccountId} is null or ${table.onBehalfOfAccountId} = ${table.accountId}`),
 ]);
 
 // Explicit Lux staff grant (Oct 14 rule): a verified luxmarketingcompany.com
@@ -323,7 +389,11 @@ export const luxStaffGrants = pgTable('lux_staff_grants', {
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
 }, (table) => [
   uniqueIndex('lux_staff_grants_active_uq').on(table.staffAccountId, table.scope).where(sql`${table.revokedAt} is null`),
-  check('lux_staff_grants_scope_ck', sql`${table.scope} = 'creative_approval'`),
+  // 0021 widens the scope to 'consent_operator'; that scope can never be self-granted.
+  check('lux_staff_grants_scope_ck', sql`${table.scope} in ('creative_approval', 'consent_operator')`),
+  check('lux_staff_grants_no_self_operator_ck', sql`${table.scope} <> 'consent_operator' or ${table.grantedByAccountId} <> ${table.staffAccountId}`),
+  // QA M1: no plus-addressed alias may hold consent_operator (one mailbox, one operator).
+  check('lux_staff_grants_operator_no_alias_ck', sql`${table.scope} <> 'consent_operator' or strpos(${table.staffEmail}, '+') = 0`),
   check('lux_staff_grants_explicit_ck', sql`${table.explicitGrant}`),
   check('lux_staff_grants_email_ck', sql`${table.staffEmail} ~ '^[a-z0-9._%+-]{1,64}@luxmarketingcompany[.]com$'`),
   check('lux_staff_grants_hash_ck', sql`${table.grantEvidenceSha256} ~ '^[a-f0-9]{64}$'`),
