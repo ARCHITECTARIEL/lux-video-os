@@ -1,12 +1,25 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink } from 'node:fs/promises';
+import { extname, join, relative, resolve, sep } from 'node:path';
 import test from 'node:test';
 
 const root = resolve(import.meta.dirname, '..');
 const cli = join(root, 'node_modules', 'workflow', 'bin', 'run.js');
+const CREATIVE_FINISH_GATEWAY_MARKER = /creative[-_]finish|creative[-_]base|CREATIVE_BASE/i;
+const CREATIVE_FINISH_BUNDLE_MARKER = /creative-finish-(?:contract|quote|revision)|creative-base-capture|VIDEO_OS_CREATIVE_FINISH|video-os[\\/]+creative-base/i;
+const TEXT_BUNDLE_EXTENSIONS = new Set(['.cjs', '.js', '.json', '.map', '.mjs']);
+
+async function bundleTextFiles(directory) {
+  const files = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const pathname = join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await bundleTextFiles(pathname));
+    else if (entry.isFile() && TEXT_BUNDLE_EXTENSIONS.has(extname(entry.name))) files.push(pathname);
+  }
+  return files;
+}
 
 test('production workflow build step bundles offline into an isolated output directory', { skip: !existsSync(cli) && 'workflow CLI is not installed' }, async () => {
   const parent = join(root, '.omx', 'workflow-build-tests');
@@ -25,7 +38,17 @@ test('production workflow build step bundles offline into an isolated output dir
       windowsHide: true,
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.ok(existsSync(join(temp, '.vercel', 'output', 'diagnostics', 'workflows-manifest.json')));
+    const output = join(temp, '.vercel', 'output');
+    assert.ok(existsSync(join(output, 'diagnostics', 'workflows-manifest.json')));
+    assert.doesNotMatch(await readFile(join(root, 'lib', 'video-os-private-blob.js'), 'utf8'),
+      CREATIVE_FINISH_GATEWAY_MARKER, 'the shared runtime Blob gateway must remain Creative Finish free');
+    const leaked = [];
+    for (const pathname of await bundleTextFiles(output)) {
+      if (CREATIVE_FINISH_BUNDLE_MARKER.test(await readFile(pathname, 'utf8'))) {
+        leaked.push(relative(output, pathname));
+      }
+    }
+    assert.deepEqual(leaked, [], 'the production Workflow bundle must not contain held Creative Finish code or markers');
   } finally {
     assert.ok(resolve(temp).startsWith(resolve(parent) + sep));
     await rm(temp, { recursive: true, force: true });
