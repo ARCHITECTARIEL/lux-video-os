@@ -149,9 +149,21 @@
               <img id="photo-preview" alt="Selected portrait preview" hidden>
               <span id="photo-prompt"><strong>Choose a portrait</strong><small id="photo-requirements">JPEG or PNG &middot; 512-8192 px &middot; up to 3 MB</small></span>
             </label>
-            <div class="photo-capture-row">
+            <div class="photo-capture-row" id="photo-capture-row">
               <span aria-hidden="true">or</span>
-              <label class="button secondary file-button">Take a photo<input id="photo-capture-input" type="file" accept="image/jpeg,image/png" capture="user" aria-label="Take a portrait photo with your camera"></label>
+              <button id="photo-capture-button" class="button secondary" type="button">Take a photo</button>
+            </div>
+            <label class="visually-hidden" aria-hidden="true">Take a portrait photo with your camera<input id="photo-capture-input" type="file" accept="image/jpeg,image/png" capture="user" tabindex="-1" aria-label="Take a portrait photo with your camera"></label>
+            <div id="photo-camera" class="photo-camera" hidden>
+              <video id="photo-live" autoplay muted playsinline aria-label="Live portrait camera preview"></video>
+              <canvas id="photo-canvas" aria-label="Captured portrait" hidden></canvas>
+              <div class="photo-camera-actions">
+                <button id="photo-shutter" class="button primary" type="button" disabled>Capture</button>
+                <button id="photo-retake" class="button ghost" type="button" hidden>Retake</button>
+                <button id="photo-use" class="button primary" type="button" hidden>Use photo</button>
+                <button id="photo-camera-cancel" class="button ghost" type="button">Cancel</button>
+              </div>
+              <p id="photo-camera-status" class="visually-hidden" role="status" aria-live="polite"></p>
             </div>
           </div>
           <div class="guidance"><h3>A strong photo has</h3><ul><li>One front-facing adult</li><li>Even light and a neutral expression</li><li>Head and shoulders fully visible</li><li>No sunglasses, filters, or heavy blur</li></ul></div>

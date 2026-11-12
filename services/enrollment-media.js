@@ -349,6 +349,8 @@ function assertSourceContract(streams, container) {
 }
 
 function assertDecodedVideoBudget(progress, streams) {
+  // Duration is the decoded output timestamp (ffmpeg out_time_us), not the
+  // container Duration header. MediaRecorder WebM often omits that header.
   if (progress.durationMs < ENROLLMENT_MEDIA_LIMITS.minDurationMs) {
     fail('DURATION_MINIMUM', 'Enrollment source must be at least 5 seconds.');
   }

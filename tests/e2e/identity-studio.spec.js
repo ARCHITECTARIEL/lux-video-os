@@ -297,9 +297,107 @@ test('camera and microphone permission is requested only on Record and denial ex
   expect(await page.evaluate(() => window.__mediaCalls)).toBe(0);
   await page.getByRole('button', { name: 'Record video' }).click();
   await expect.poll(() => page.evaluate(() => window.__mediaCalls)).toBe(1);
-  await expect(page.locator('#video-error')).toContainText('not granted');
+  await expect(page.locator('#video-error')).toContainText('Camera or microphone access was denied');
   await expect(page.locator('#native-capture-label')).toBeVisible();
   await expect(page.getByText('Choose existing video')).toBeVisible();
+});
+
+test('desktop Take a photo opens the camera and a denied camera falls back to Choose a portrait', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => { throw new DOMException('Denied', 'NotAllowedError'); } },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await expect(page.locator('#photo-error')).toContainText('Camera access was denied. Choose a portrait instead.');
+  await expect(page.locator('#photo-drop')).toBeVisible();
+  await expect(page.getByText('Choose a portrait', { exact: true })).toBeVisible();
+  await expect(page.locator('#photo-camera')).toBeHidden();
+});
+
+test('Take a photo uses the phone file input when the browser has no camera API', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByRole('button', { name: 'Take a photo' }).click(),
+  ]);
+  expect(chooser.isMultiple()).toBe(false);
+  await chooser.setFiles({ name: 'camera.jpg', mimeType: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]) });
+  await expect(page.locator('#photo-preview')).toBeVisible();
+});
+
+test('an in-page portrait capture stops the camera after Use photo and after Cancel', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__photoStops = 0;
+    const makeStream = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1280;
+      canvas.height = 720;
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#336699';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      const stream = canvas.captureStream(5);
+      for (const track of stream.getVideoTracks()) {
+        const stop = track.stop.bind(track);
+        track.stop = () => { window.__photoStops += 1; stop(); };
+      }
+      return stream;
+    };
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => makeStream() },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await expect(page.locator('#photo-live')).toBeVisible();
+  const shutter = page.locator('#photo-shutter');
+  await expect(shutter).toBeEnabled();
+  await shutter.click();
+  await page.getByRole('button', { name: 'Use photo' }).click();
+  await expect(page.locator('#photo-preview')).toBeVisible();
+  await expect(page.locator('#photo-camera')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__photoStops)).toBeGreaterThan(0);
+
+  await page.evaluate(() => { window.__photoStops = 0; });
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await expect(page.locator('#photo-shutter')).toBeEnabled();
+  await page.locator('#photo-camera-cancel').click();
+  await expect(page.locator('#photo-camera')).toBeHidden();
+  await expect(page.locator('#photo-drop')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__photoStops)).toBeGreaterThan(0);
+});
+
+test('a late photo permission result after closing stops its tracks', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__photoStops = 0;
+    const track = { kind: 'video', readyState: 'live', stop() { window.__photoStops += 1; } };
+    let resolveMedia;
+    window.__resolvePhoto = () => resolveMedia({ getTracks: () => [track] });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: () => new Promise(resolve => { resolveMedia = resolve; }) },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await page.locator('#close-wizard').click();
+  await page.evaluate(() => window.__resolvePhoto());
+  await expect.poll(() => page.evaluate(() => window.__photoStops)).toBe(1);
+  await expect(page.locator('#wizard')).toBeHidden();
 });
 
 test('a late permission result after closing is discarded and its tracks stop', async ({ page }) => {
