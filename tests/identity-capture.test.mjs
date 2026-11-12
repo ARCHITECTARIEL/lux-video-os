@@ -5,15 +5,18 @@ import test from 'node:test';
 import {
   INSPECT_VIDEO_TIMEOUT_MS,
   PHOTO_CAPTURE_LIMITS,
+  PHOTO_DOWNSCALE_LIMITS,
   UNREADABLE_VIDEO_LENGTH_MESSAGE,
   cameraAccessMessage,
   formatDurationSeconds,
   inspectVideoFile,
   isUsableDuration,
+  planPhotoDownscale,
   portraitCameraConstraintAttempts,
   recordingWallClockSeconds,
   resolveVideoDuration,
   selectSnapshotEncoding,
+  signedOutNotice,
   snapshotLayout,
   validateVideoFile,
   videoLengthError,
@@ -172,6 +175,50 @@ test('JPEG quality steps down, then the frame shrinks, until the photo is 3 MB o
   assert.equal((await selectSnapshotEncoding({ sourceWidth: 1, sourceHeight: 400, measure: () => 1 })).reason, 'unreadable-frame');
 });
 
+test('phone photo downscale caps the long side, steps quality from 0.9 to 0.6, then shrinks without going under 512', async () => {
+  assert.deepEqual([...PHOTO_DOWNSCALE_LIMITS.jpegQualities], [0.9, 0.8, 0.7, 0.6]);
+  const phone = snapshotLayout(4032, 3024, PHOTO_DOWNSCALE_LIMITS);
+  assert.ok(Math.max(phone.canvasWidth, phone.canvasHeight) <= 2048);
+  assert.ok(Math.min(phone.canvasWidth, phone.canvasHeight) >= 512);
+
+  const qualities = [];
+  const stepped = await planPhotoDownscale({
+    sourceWidth: 4032,
+    sourceHeight: 3024,
+    measure: ({ quality, canvasWidth, canvasHeight }) => {
+      qualities.push(quality);
+      assert.ok(Math.max(canvasWidth, canvasHeight) <= 2048);
+      assert.ok(Math.min(canvasWidth, canvasHeight) >= 512);
+      return quality > 0.75 ? 4_000_000 : 900_000;
+    },
+  });
+  assert.equal(stepped.ok, true);
+  assert.deepEqual(qualities, [0.9, 0.8, 0.7]);
+  assert.equal(stepped.quality, 0.7);
+  assert.equal(stepped.bytes, 900_000);
+
+  const shrunk = await planPhotoDownscale({
+    sourceWidth: 4000,
+    sourceHeight: 4000,
+    measure: ({ canvasWidth, canvasHeight }) => canvasWidth * canvasHeight,
+  });
+  assert.equal(shrunk.ok, true);
+  assert.ok(shrunk.bytes > 0 && shrunk.bytes <= PHOTO_DOWNSCALE_LIMITS.maxBytes);
+  assert.ok(Math.min(shrunk.canvasWidth, shrunk.canvasHeight) >= 512);
+  assert.ok(Math.max(shrunk.canvasWidth, shrunk.canvasHeight) <= 2048);
+
+  const impossible = await planPhotoDownscale({ sourceWidth: 512, sourceHeight: 512, measure: () => 9_000_000 });
+  assert.equal(impossible.ok, false);
+  assert.equal(impossible.reason, 'too-large');
+});
+
+test('a signed-out session notice is the server error and nothing else', () => {
+  assert.equal(signedOutNotice({ ok: true, signedIn: false, error: 'Your session expired. Sign in again.' }), 'Your session expired. Sign in again.');
+  assert.equal(signedOutNotice({ ok: true, signedIn: false, error: 'Account not found.' }), 'Account not found.');
+  assert.equal(signedOutNotice({ ok: true, signedIn: false }), '');
+  assert.equal(signedOutNotice({ ok: true, signedIn: true, error: 'Your session expired. Sign in again.' }), '');
+});
+
 test('inspectVideoFile reads a finite metadata duration without seeking', async () => {
   const video = controllableVideo(1280, 720);
   const options = inspectionDouble(video);
@@ -302,6 +349,10 @@ test('the identity wizard keeps the camera fallback, duration helper, and previo
   assert.match(html, />Capture</);
   assert.match(html, />Use photo</);
   assert.match(client, /from '\.\/identity-capture\.js'/);
+  assert.match(client, /createImageBitmap\(file, \{ imageOrientation: 'from-image' \}\)/);
+  assert.match(client, /planPhotoDownscale\(/);
+  assert.match(client, /signedOutNotice\(session\)/);
+  assert.match(html, /id="signed-out-reason"/);
   assert.match(client, /stopPhotoCamera\(\)/);
   assert.match(client, /portraitCameraConstraintAttempts\(\)/);
   assert.match(client, /wallClockDurationSeconds/);

@@ -13,6 +13,15 @@ export const PHOTO_CAPTURE_LIMITS = Object.freeze({
   jpegQualities: Object.freeze([0.92, 0.84, 0.76, 0.68, 0.6, 0.5, 0.4]),
 });
 
+// Phone portraits are often far above 3 MB. Cap the long side near 2048,
+// keep the short side at least 512, then step JPEG quality before shrinking.
+export const PHOTO_DOWNSCALE_LIMITS = Object.freeze({
+  minSide: 512,
+  maxSide: 2048,
+  maxBytes: 3_000_000,
+  jpegQualities: Object.freeze([0.9, 0.8, 0.7, 0.6]),
+});
+
 const SEEK_TO_END_SECONDS = 1e101;
 
 export function isUsableDuration(duration) {
@@ -161,6 +170,15 @@ export function nextSnapshotLayout(layout, bytes, limits = PHOTO_CAPTURE_LIMITS)
   const ratio = Number.isFinite(bytes) && bytes > 0 ? limits.maxBytes / bytes : 0.85 ** 2;
   const factor = Math.min(0.9, Math.max(0.5, Math.sqrt(Math.max(ratio, 0.01)) * 0.9));
   return shrinkSnapshotLayout(layout, limits, factor);
+}
+
+export function planPhotoDownscale({ sourceWidth, sourceHeight, measure, limits = PHOTO_DOWNSCALE_LIMITS } = {}) {
+  return selectSnapshotEncoding({ sourceWidth, sourceHeight, measure, limits });
+}
+
+export function signedOutNotice(session) {
+  if (!session || session.signedIn !== false) return '';
+  return String(session.error || '').trim();
 }
 
 export async function selectSnapshotEncoding({ sourceWidth, sourceHeight, measure, limits = PHOTO_CAPTURE_LIMITS } = {}) {

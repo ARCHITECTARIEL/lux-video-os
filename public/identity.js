@@ -12,9 +12,11 @@ import {
 import {
   cameraAccessMessage,
   PHOTO_CAPTURE_LIMITS,
+  planPhotoDownscale,
   portraitCameraConstraintAttempts,
   recordingWallClockSeconds,
   selectSnapshotEncoding,
+  signedOutNotice,
   snapshotLayout,
   validateVideoFile,
   VIDEO_TYPES,
@@ -49,6 +51,7 @@ const state = {
   captureRequestToken: 0,
   photoCamera: null,
   photoCaptureToken: 0,
+  photoPrepareToken: 0,
   photoFrozenFrame: null,
   identities: [],
   providerSubmissionEnabled: false,
@@ -1928,8 +1931,8 @@ async function useCapturedPhoto() {
   button.disabled = true;
   try {
     const file = await fileFromFrozenFrame(frozen);
-    handlePhotoFile(file, button);
-    if (state.photoFile === file) stopPhotoCamera();
+    const saved = await handlePhotoFile(file, button);
+    if (saved) stopPhotoCamera();
   } catch (error) {
     showFieldError(button, $('#photo-error'), `${error.message} Your previous valid photo was kept.`);
   } finally {
@@ -1937,25 +1940,93 @@ async function useCapturedPhoto() {
   }
 }
 
-function handlePhotoFile(file, control = $('#photo-input')) {
-  clearFieldError(control, $('#photo-error'));
-  if (!file) return;
-  try { validPhotoFile(file); }
-  catch (error) {
-    control.value = '';
-    showFieldError(control, $('#photo-error'), `${error.message} Your previous valid photo was kept.`);
-    return;
+async function orientedPhotoSource(file) {
+  if (typeof createImageBitmap === 'function') {
+    try { return { source: await createImageBitmap(file, { imageOrientation: 'from-image' }), release() {} }; }
+    catch {
+      try { return { source: await createImageBitmap(file), release() {} }; }
+      catch { /* use the image element fallback */ }
+    }
   }
-  state.photoFile = file;
-  state.photoAssetId = null;
-  revokeObjectUrl('photoUrl');
-  state.photoUrl = URL.createObjectURL(file);
-  setLocalPreviewSource($('#photo-preview'), state.photoUrl);
-  $('#photo-preview').hidden = false;
-  $('#photo-prompt').hidden = true;
-  clearConsentChecks();
-  notice('');
-  wizardStatus(`${file.name} selected.`);
+  const url = URL.createObjectURL(file);
+  const image = new Image();
+  try {
+    await new Promise((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('The selected photo could not be read.'));
+      image.src = url;
+    });
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
+  return { source: image, release() { URL.revokeObjectURL(url); } };
+}
+
+function sourcePixelSize(source) {
+  return {
+    width: source.videoWidth || source.width || source.naturalWidth || 0,
+    height: source.videoHeight || source.height || source.naturalHeight || 0,
+  };
+}
+
+async function downscalePortraitFile(file) {
+  if (!['image/jpeg', 'image/png'].includes(file?.type)) throw new Error('Choose a supported photo file.');
+  if (!file.size) throw new Error('The photo file is empty.');
+  const oriented = await orientedPhotoSource(file);
+  try {
+    const { width, height } = sourcePixelSize(oriented.source);
+    let chosenBlob = null;
+    const encoded = await planPhotoDownscale({
+      sourceWidth: width,
+      sourceHeight: height,
+      measure: async candidate => {
+        const blob = await canvasToJpegBlob(renderSnapshot(oriented.source, candidate), candidate.quality);
+        if (blob.size > 0 && blob.size <= PHOTO_CAPTURE_LIMITS.maxBytes && !chosenBlob) chosenBlob = blob;
+        return blob.size;
+      },
+    });
+    if (!encoded.ok || !chosenBlob) {
+      throw new Error(encoded.reason === 'unreadable-frame' ? 'The selected photo could not be read.' : 'The photo must be 3 MB or smaller.');
+    }
+    const base = String(file.name || 'portrait').replace(/\.[^.]+$/, '') || 'portrait';
+    return new File([chosenBlob], `${base}.jpg`, { type: 'image/jpeg', lastModified: Date.now() });
+  } finally {
+    oriented.source.close?.();
+    oriented.release();
+  }
+}
+
+async function handlePhotoFile(file, control = $('#photo-input')) {
+  clearFieldError(control, $('#photo-error'));
+  if (!file) return null;
+  const requestToken = ++state.photoPrepareToken;
+  const nextButton = $('#next-button');
+  nextButton.disabled = true;
+  try {
+    wizardStatus('Preparing your photo.');
+    const prepared = await downscalePortraitFile(file);
+    if (requestToken !== state.photoPrepareToken) return null;
+    validPhotoFile(prepared);
+    state.photoFile = prepared;
+    state.photoAssetId = null;
+    revokeObjectUrl('photoUrl');
+    state.photoUrl = URL.createObjectURL(prepared);
+    setLocalPreviewSource($('#photo-preview'), state.photoUrl);
+    $('#photo-preview').hidden = false;
+    $('#photo-prompt').hidden = true;
+    clearConsentChecks();
+    notice('');
+    wizardStatus(`${prepared.name} selected.`);
+    return prepared;
+  } catch (error) {
+    if (requestToken !== state.photoPrepareToken) return null;
+    if ('value' in control) control.value = '';
+    showFieldError(control, $('#photo-error'), `${error.message} Your previous valid photo was kept.`);
+    return null;
+  } finally {
+    if (requestToken === state.photoPrepareToken) nextButton.disabled = state.submitting || Boolean(state.uncertainCommit);
+  }
 }
 
 async function init() {
@@ -1966,6 +2037,15 @@ async function init() {
   updateSessionLabels('Checking session...');
   try {
     const session = await api('/api/video-os-lite/session');
+    const signedOutReason = signedOutNotice(session);
+    if (session.signedIn === false) {
+      updateSessionLabels('Signed out');
+      $('#signed-out').hidden = false;
+      const reason = $('#signed-out-reason');
+      reason.textContent = signedOutReason;
+      reason.hidden = !signedOutReason;
+      return;
+    }
     state.accountId = session.account?.accountId || session.accountId || null;
     updateSessionLabels(session.email || session.account?.name || 'Private account');
     await Promise.all([loadIdentities(), loadEnrollments()]);
@@ -1999,8 +2079,8 @@ $('#ready-create-provider').addEventListener('click', () => {
   void submitIdentity(state.activeIdentityId);
 });
 $('#ready-done').addEventListener('click', () => closeWizard(true));
-$('#photo-input').addEventListener('change', event => handlePhotoFile(event.target.files[0] || null, event.target));
-$('#photo-capture-input').addEventListener('change', event => handlePhotoFile(event.target.files[0] || null, event.target));
+$('#photo-input').addEventListener('change', event => { void handlePhotoFile(event.target.files[0] || null, event.target); });
+$('#photo-capture-input').addEventListener('change', event => { void handlePhotoFile(event.target.files[0] || null, event.target); });
 $('#photo-capture-button').addEventListener('click', () => { void startPhotoCapture(); });
 $('#photo-shutter').addEventListener('click', capturePhotoFrame);
 $('#photo-retake').addEventListener('click', retakePhotoFrame);

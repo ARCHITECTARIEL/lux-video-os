@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Sign in again | LUX Video OS</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/sign-in-link.css">
+</head>
+<body>
+  <main class="panel">
+    <a class="wordmark" href="/">LUX <span>VIDEO OS</span></a>
+    <p class="eyebrow">SIGN IN</p>
+    <h1 id="reason-expired" hidden>This sign-in link expired.</h1>
+    <h1 id="reason-used" hidden>This sign-in link was already used.</h1>
+    <h1 id="reason-invalid" hidden>This sign-in link isn't valid.</h1>
+    <h1 id="reason-google" hidden>Google sign-in was cancelled or isn't available.</h1>
+    <p>Enter your email and we’ll send a fresh sign-in link. The old link cannot be reused.</p>
+    <form id="resend-form">
+      <label for="resend-email">Email</label>
+      <input id="resend-email" name="email" type="email" autocomplete="email" inputmode="email" required>
+      <button class="button" type="submit">Send me a new link</button>
+      <p id="resend-status" role="status" hidden></p>
+    </form>
+    <p class="back"><a href="/?signin=1">Back to the studio</a></p>
+  </main>
+  <script type="module" src="/sign-in-link.js"></script>
+</body>
+</html>
