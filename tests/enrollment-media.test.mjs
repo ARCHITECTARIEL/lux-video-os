@@ -35,6 +35,8 @@ let excessiveFrameRate;
 let excessivePixelArea;
 let excessivePixelRate;
 let longCompressedAudio;
+let durationlessWebm;
+let durationlessShortWebm;
 
 function runFfmpeg(args, timeout = 90_000) {
   const result = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-nostdin', ...args], {
@@ -122,6 +124,8 @@ before(async () => {
   excessivePixelArea = path.join(workdir, 'excessive-pixel-area.mp4');
   excessivePixelRate = path.join(workdir, 'excessive-pixel-rate.mp4');
   longCompressedAudio = path.join(workdir, 'long-compressed-audio.webm');
+  durationlessWebm = path.join(workdir, 'durationless.webm');
+  durationlessShortWebm = path.join(workdir, 'durationless-short.webm');
 
   makeMp4(baseMp4);
   runFfmpeg(['-display_rotation', '90', '-i', baseMp4, '-map', '0', '-c', 'copy', '-f', 'mp4', validPayload]);
@@ -166,7 +170,27 @@ before(async () => {
     '-cpu-used', '8', '-b:v', '80k', '-c:a', 'libopus', '-b:a', '12k',
     '-live', '1', '-f', 'webm', longCompressedAudio,
   ]);
+  runFfmpeg([
+    '-f', 'lavfi', '-i', 'testsrc2=size=64x64:rate=10:duration=5.2',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=5.2',
+    '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libvpx', '-deadline', 'realtime',
+    '-cpu-used', '8', '-b:v', '40k', '-c:a', 'libopus', '-shortest', '-live', '1',
+    '-f', 'webm', durationlessWebm,
+  ]);
+  runFfmpeg([
+    '-f', 'lavfi', '-i', 'testsrc2=size=64x64:rate=10:duration=4',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=4',
+    '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libvpx', '-deadline', 'realtime',
+    '-cpu-used', '8', '-b:v', '40k', '-c:a', 'libopus', '-shortest', '-live', '1',
+    '-f', 'webm', durationlessShortWebm,
+  ]);
 });
+
+function webmHeaderDeclaresDuration(buffer) {
+  const cluster = buffer.indexOf(Buffer.from([0x1f, 0x43, 0xb6, 0x75]));
+  const header = cluster > 0 ? buffer.subarray(0, cluster) : buffer.subarray(0, Math.min(buffer.length, 4096));
+  return header.includes(Buffer.from([0x44, 0x89]));
+}
 
 after(async () => {
   await rm(workdir, { recursive: true, force: true });
@@ -199,6 +223,26 @@ test('real MP4 bytes with an unrelated extension produce compatible bounded enro
   assert.equal(identityUpload.codec, 'pcm-16');
   assert.equal(identityUpload.channels, 1);
   assert.equal(identityUpload.sampleRate, 16_000);
+  assert.deepEqual(await readdir(extractionRoot), []);
+});
+
+test('a WebM without a container Duration element is timed from decoded timestamps', async () => {
+  const bytes = await readFile(durationlessWebm);
+  assert.equal(webmHeaderDeclaresDuration(bytes), false);
+  const result = await prepareEnrollmentMedia(request(durationlessWebm));
+  assert.equal(result.source.container, 'webm');
+  assert.equal(result.source.mimeType, 'video/webm');
+  assert.equal(result.source.videoCodec, 'vp8');
+  assert.equal(result.source.audioCodec, 'opus');
+  assert.ok(result.source.videoDurationMs >= ENROLLMENT_MEDIA_LIMITS.minDurationMs);
+  assert.ok(result.source.videoDurationMs <= ENROLLMENT_MEDIA_LIMITS.maxDurationMs);
+  assert.ok(result.durationMs >= 5_000 && result.durationMs <= 6_000);
+  assert.deepEqual(await readdir(extractionRoot), []);
+});
+
+test('a short WebM without a container Duration element still fails the 5 second minimum', async () => {
+  assert.equal(webmHeaderDeclaresDuration(await readFile(durationlessShortWebm)), false);
+  await rejectsWithCode(prepareEnrollmentMedia(request(durationlessShortWebm)), 'DURATION_MINIMUM');
   assert.deepEqual(await readdir(extractionRoot), []);
 });
 

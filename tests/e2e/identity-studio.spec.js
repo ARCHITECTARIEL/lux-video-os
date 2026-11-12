@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { deflateSync } from 'node:zlib';
 import { expect, test } from '@playwright/test';
 
 const account = { ok: true, signedIn: true, email: 'owner@example.com', account: { accountId: 'owner-a', name: 'Owner' } };
@@ -14,7 +15,41 @@ const HASH_B = 'b'.repeat(64);
 const PHOTO_HASH = 'c'.repeat(64);
 const VOICE_HASH = 'd'.repeat(64);
 const phoneVideo = await readFile(new URL('../../public/assets/showcase/example-faq.mp4', import.meta.url));
-const photo = { name: 'portrait.png', mimeType: 'image/png', buffer: Buffer.from([137, 80, 78, 71, 1]) };
+const photo = { name: 'portrait.png', mimeType: 'image/png', buffer: tinyPng(640, 640) };
+
+function tinyPng(width, height) {
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3, 0x66)]);
+  const raw = Buffer.concat(Array.from({ length: height }, () => row));
+  const chunk = (tag, data) => {
+    const body = Buffer.concat([Buffer.from(tag), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 2;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
 const video = { name: 'phone-video.mp4', mimeType: 'video/mp4', buffer: phoneVideo };
 const voiceSample = (() => {
   const samples = 1_600;
@@ -245,6 +280,7 @@ async function openToVideo(page) {
   await page.goto('/identity.html');
   await page.locator('#empty-create-button').click();
   await page.locator('#photo-input').setInputFiles(photo);
+  await expect(page.locator('#photo-preview')).toBeVisible();
   await page.locator('#next-button').click();
   await expect(page.locator('[data-panel="2"]')).toBeVisible();
   await expect(page.locator('[data-panel="2"] legend')).toHaveText('Your Phone Video');
@@ -266,6 +302,16 @@ async function openToConsent(page) {
 async function checkAllConsents(page) {
   for (const id of ['consent-face', 'consent-extraction', 'consent-voice', 'consent-process', 'consent-archive', 'consent-provider-exposure']) await page.locator(`#${id}`).check();
 }
+
+test('a signed-out session with an error explains that the session expired', async ({ page }) => {
+  await page.route('**/api/video-os-lite/session', route => route.fulfill({
+    json: { ok: true, signedIn: false, error: 'Your session expired. Sign in again.' },
+  }));
+  await page.goto('/identity.html');
+  await expect(page.getByRole('heading', { name: 'Sign in to open your Identity Studio.' })).toBeVisible();
+  await expect(page.locator('#signed-out-reason')).toHaveText('Your session expired. Sign in again.');
+  await expect(page.locator('#studio')).toBeHidden();
+});
 
 test('Identity Studio requires the existing authenticated workspace session', async ({ page }) => {
   await page.route('**/api/video-os-lite/session', route => route.fulfill({ status: 401, json: { ok: false, error: 'Sign in to render videos.' } }));
@@ -297,9 +343,135 @@ test('camera and microphone permission is requested only on Record and denial ex
   expect(await page.evaluate(() => window.__mediaCalls)).toBe(0);
   await page.getByRole('button', { name: 'Record video' }).click();
   await expect.poll(() => page.evaluate(() => window.__mediaCalls)).toBe(1);
-  await expect(page.locator('#video-error')).toContainText('not granted');
+  await expect(page.locator('#video-error')).toContainText('Camera or microphone access was denied');
   await expect(page.locator('#native-capture-label')).toBeVisible();
   await expect(page.getByText('Choose existing video')).toBeVisible();
+});
+
+test('desktop Take a photo opens the camera and a denied camera falls back to Choose a portrait', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => { throw new DOMException('Denied', 'NotAllowedError'); } },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await expect(page.locator('#photo-error')).toContainText('Camera access was denied. Choose a portrait instead.');
+  await expect(page.locator('#photo-drop')).toBeVisible();
+  await expect(page.getByText('Choose a portrait', { exact: true })).toBeVisible();
+  await expect(page.locator('#photo-camera')).toBeHidden();
+});
+
+test('Take a photo uses the phone file input when the browser has no camera API', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByRole('button', { name: 'Take a photo' }).click(),
+  ]);
+  expect(chooser.isMultiple()).toBe(false);
+  await chooser.setFiles(photo);
+  await expect(page.locator('#photo-preview')).toBeVisible();
+});
+
+test('a phone Take a photo opens the native camera input instead of the in-page webcam', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__mediaCalls = 0;
+    const original = window.matchMedia.bind(window);
+    window.matchMedia = query => {
+      if (String(query).includes('pointer') && String(query).includes('coarse')) {
+        return { matches: true, media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } };
+      }
+      return original(query);
+    };
+    Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { mobile: true, brands: [] } });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => { window.__mediaCalls += 1; throw new Error('desktop camera'); } },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByRole('button', { name: 'Take a photo' }).click(),
+  ]);
+  expect(chooser.isMultiple()).toBe(false);
+  expect(await page.evaluate(() => window.__mediaCalls)).toBe(0);
+  await expect(page.locator('#photo-camera')).toBeHidden();
+});
+
+test('an in-page portrait capture stops the camera after Use photo and after Cancel', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__photoStops = 0;
+    const makeStream = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1280;
+      canvas.height = 720;
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#336699';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      const stream = canvas.captureStream(5);
+      for (const track of stream.getVideoTracks()) {
+        const stop = track.stop.bind(track);
+        track.stop = () => { window.__photoStops += 1; stop(); };
+      }
+      return stream;
+    };
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => makeStream() },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await expect(page.locator('#photo-live')).toBeVisible();
+  const shutter = page.locator('#photo-shutter');
+  await expect(shutter).toBeEnabled();
+  await shutter.click();
+  await page.getByRole('button', { name: 'Use photo' }).click();
+  await expect(page.locator('#photo-preview')).toBeVisible();
+  await expect(page.locator('#photo-camera')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__photoStops)).toBeGreaterThan(0);
+
+  await page.evaluate(() => { window.__photoStops = 0; });
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await expect(page.locator('#photo-shutter')).toBeEnabled();
+  await page.locator('#photo-camera-cancel').click();
+  await expect(page.locator('#photo-camera')).toBeHidden();
+  await expect(page.locator('#photo-drop')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__photoStops)).toBeGreaterThan(0);
+});
+
+test('a late photo permission result after closing stops its tracks', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__photoStops = 0;
+    const track = { kind: 'video', readyState: 'live', stop() { window.__photoStops += 1; } };
+    let resolveMedia;
+    window.__resolvePhoto = () => resolveMedia({ getTracks: () => [track] });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: () => new Promise(resolve => { resolveMedia = resolve; }) },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await page.locator('#close-wizard').click();
+  await page.evaluate(() => window.__resolvePhoto());
+  await expect.poll(() => page.evaluate(() => window.__photoStops)).toBe(1);
+  await expect(page.locator('#wizard')).toBeHidden();
 });
 
 test('a late permission result after closing is discarded and its tracks stop', async ({ page }) => {
