@@ -1,4 +1,4 @@
-const REASONS = ['expired', 'used', 'invalid', 'google'];
+const REASONS = ['expired', 'used', 'invalid', 'google', 'unavailable'];
 
 function showReason() {
   const params = new URLSearchParams(location.search);

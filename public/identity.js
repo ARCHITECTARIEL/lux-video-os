@@ -12,12 +12,14 @@ import {
 import {
   cameraAccessMessage,
   PHOTO_CAPTURE_LIMITS,
+  PHOTO_TOO_SMALL_MESSAGE,
   planPhotoDownscale,
   portraitCameraConstraintAttempts,
+  portraitCropLayout,
+  prefersNativePhotoCapture,
   recordingWallClockSeconds,
   selectSnapshotEncoding,
   signedOutNotice,
-  snapshotLayout,
   validateVideoFile,
   VIDEO_TYPES,
 } from './identity-capture.js';
@@ -1804,14 +1806,18 @@ function renderSnapshot(source, layout) {
 }
 
 function paintPhotoPreview(frozen) {
-  const layout = snapshotLayout(frozen.width, frozen.height);
   const canvas = $('#photo-canvas');
-  if (!layout || !canvas) return;
-  const rendered = renderSnapshot(frozen, layout);
-  canvas.width = rendered.width;
-  canvas.height = rendered.height;
-  canvas.getContext('2d', { alpha: false }).drawImage(rendered, 0, 0);
+  if (!canvas) return;
+  canvas.width = frozen.width;
+  canvas.height = frozen.height;
+  canvas.getContext('2d', { alpha: false }).drawImage(frozen, 0, 0);
   canvas.hidden = false;
+}
+
+function photoEncodeError(reason) {
+  if (reason === 'too-small') return PHOTO_TOO_SMALL_MESSAGE;
+  if (reason === 'unreadable-frame') return 'The selected photo could not be read.';
+  return 'The photo must be 3 MB or smaller.';
 }
 
 async function fileFromFrozenFrame(frozen) {
@@ -1825,7 +1831,7 @@ async function fileFromFrozenFrame(frozen) {
       return blob.size;
     },
   });
-  if (!encoded.ok || !chosenBlob) throw new Error('The photo must be 3 MB or smaller.');
+  if (!encoded.ok || !chosenBlob) throw new Error(photoEncodeError(encoded.reason));
   return new File([chosenBlob], 'portrait.jpg', { type: 'image/jpeg', lastModified: Date.now() });
 }
 
@@ -1835,10 +1841,18 @@ function setPhotoCameraActions(mode) {
   $('#photo-use').hidden = mode !== 'review';
 }
 
+function nativePhotoCapturePreferred() {
+  let coarsePointer = null;
+  if (typeof window.matchMedia === 'function') coarsePointer = window.matchMedia('(pointer: coarse)').matches;
+  const data = navigator.userAgentData;
+  const mobileUserAgentData = data && typeof data.mobile === 'boolean' ? data.mobile : null;
+  return prefersNativePhotoCapture({ coarsePointer, mobileUserAgentData, userAgent: navigator.userAgent || '' });
+}
+
 async function startPhotoCapture() {
   clearFieldError($('#photo-input'), $('#photo-error'));
   clearFieldError($('#photo-capture-button'), $('#photo-error'));
-  if (!navigator.mediaDevices?.getUserMedia) {
+  if (nativePhotoCapturePreferred() || !navigator.mediaDevices?.getUserMedia) {
     $('#photo-capture-input').click();
     return;
   }
@@ -1896,15 +1910,25 @@ async function startPhotoCapture() {
 
 function capturePhotoFrame() {
   const live = $('#photo-live');
-  const layout = snapshotLayout(live?.videoWidth, live?.videoHeight);
-  if (!layout) {
-    showFieldError($('#photo-shutter'), $('#photo-error'), 'The camera frame could not be read. Try again.');
+  const crop = portraitCropLayout(live?.videoWidth, live?.videoHeight);
+  if (!crop.ok) {
+    showFieldError($('#photo-shutter'), $('#photo-error'), crop.reason === 'too-small' ? PHOTO_TOO_SMALL_MESSAGE : 'The camera frame could not be read. Try again.');
     return;
   }
   const frozen = document.createElement('canvas');
-  frozen.width = live.videoWidth;
-  frozen.height = live.videoHeight;
-  frozen.getContext('2d', { alpha: false }).drawImage(live, 0, 0);
+  frozen.width = crop.canvasWidth;
+  frozen.height = crop.canvasHeight;
+  frozen.getContext('2d', { alpha: false }).drawImage(
+    live,
+    crop.sourceX,
+    crop.sourceY,
+    crop.sourceSize,
+    crop.sourceSize,
+    0,
+    0,
+    crop.canvasWidth,
+    crop.canvasHeight,
+  );
   state.photoFrozenFrame = frozen;
   paintPhotoPreview(frozen);
   live.hidden = true;
@@ -1986,9 +2010,7 @@ async function downscalePortraitFile(file) {
         return blob.size;
       },
     });
-    if (!encoded.ok || !chosenBlob) {
-      throw new Error(encoded.reason === 'unreadable-frame' ? 'The selected photo could not be read.' : 'The photo must be 3 MB or smaller.');
-    }
+    if (!encoded.ok || !chosenBlob) throw new Error(photoEncodeError(encoded.reason));
     const base = String(file.name || 'portrait').replace(/\.[^.]+$/, '') || 'portrait';
     return new File([chosenBlob], `${base}.jpg`, { type: 'image/jpeg', lastModified: Date.now() });
   } finally {

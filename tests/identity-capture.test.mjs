@@ -6,6 +6,7 @@ import {
   INSPECT_VIDEO_TIMEOUT_MS,
   PHOTO_CAPTURE_LIMITS,
   PHOTO_DOWNSCALE_LIMITS,
+  PHOTO_TOO_SMALL_MESSAGE,
   UNREADABLE_VIDEO_LENGTH_MESSAGE,
   cameraAccessMessage,
   formatDurationSeconds,
@@ -13,6 +14,8 @@ import {
   isUsableDuration,
   planPhotoDownscale,
   portraitCameraConstraintAttempts,
+  portraitCropLayout,
+  prefersNativePhotoCapture,
   recordingWallClockSeconds,
   resolveVideoDuration,
   selectSnapshotEncoding,
@@ -117,17 +120,17 @@ test('portrait snapshot layout stays inside 512 to 8192 pixels and the camera re
   const hd = snapshotLayout(1280, 720);
   assert.equal(hd.canvasWidth, 1280);
   assert.equal(hd.canvasHeight, 720);
-  const small = snapshotLayout(320, 240);
-  assert.ok(Math.min(small.canvasWidth, small.canvasHeight) >= PHOTO_CAPTURE_LIMITS.minSide);
-  assert.ok(Math.max(small.canvasWidth, small.canvasHeight) <= PHOTO_CAPTURE_LIMITS.maxSide);
+  assert.equal(snapshotLayout(320, 240), null);
+  assert.equal(snapshotLayout(20_000, 100), null);
+  assert.equal(snapshotLayout(0, 720), null);
   const large = snapshotLayout(9000, 6000);
   assert.ok(large.canvasWidth <= PHOTO_CAPTURE_LIMITS.maxSide);
   assert.ok(large.canvasHeight <= PHOTO_CAPTURE_LIMITS.maxSide);
   assert.ok(Math.min(large.canvasWidth, large.canvasHeight) >= PHOTO_CAPTURE_LIMITS.minSide);
-  const extreme = snapshotLayout(20_000, 100);
-  assert.ok(extreme.canvasWidth >= PHOTO_CAPTURE_LIMITS.minSide && extreme.canvasWidth <= PHOTO_CAPTURE_LIMITS.maxSide);
-  assert.ok(extreme.canvasHeight >= PHOTO_CAPTURE_LIMITS.minSide && extreme.canvasHeight <= PHOTO_CAPTURE_LIMITS.maxSide);
-  assert.equal(snapshotLayout(0, 720), null);
+  assert.equal(large.offsetX, 0);
+  assert.equal(large.offsetY, 0);
+  assert.equal(large.canvasWidth, large.drawWidth);
+  assert.equal(large.canvasHeight, large.drawHeight);
   for (const attempt of portraitCameraConstraintAttempts()) {
     assert.equal(attempt.audio, false);
     assert.deepEqual(attempt.video.facingMode, { ideal: 'user' });
@@ -175,6 +178,29 @@ test('JPEG quality steps down, then the frame shrinks, until the photo is 3 MB o
   assert.equal((await selectSnapshotEncoding({ sourceWidth: 1, sourceHeight: 400, measure: () => 1 })).reason, 'unreadable-frame');
 });
 
+test('Take a photo uses the native camera on a phone and the in-page camera on a desktop', () => {
+  assert.equal(prefersNativePhotoCapture({ coarsePointer: true, mobileUserAgentData: false, userAgent: 'Mozilla/5.0' }), true);
+  assert.equal(prefersNativePhotoCapture({ coarsePointer: false, mobileUserAgentData: true, userAgent: 'Mozilla/5.0' }), true);
+  assert.equal(prefersNativePhotoCapture({ coarsePointer: false, mobileUserAgentData: false, userAgent: 'Mozilla/5.0 (Linux; Android 14)' }), false);
+  assert.equal(prefersNativePhotoCapture({ coarsePointer: null, mobileUserAgentData: null, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)' }), true);
+  assert.equal(prefersNativePhotoCapture({ coarsePointer: null, mobileUserAgentData: null, userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel)' }), true);
+  assert.equal(prefersNativePhotoCapture({ coarsePointer: null, mobileUserAgentData: null, userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }), false);
+});
+
+test('a webcam frame is center-cropped to a square and a short side under 512 is rejected', () => {
+  const landscape = portraitCropLayout(1920, 1080);
+  assert.equal(landscape.ok, true);
+  assert.equal(landscape.canvasWidth, 1080);
+  assert.equal(landscape.canvasHeight, 1080);
+  assert.equal(landscape.sourceX, 420);
+  assert.equal(landscape.sourceY, 0);
+  assert.equal(landscape.sourceSize, 1080);
+  const portrait = portraitCropLayout(1080, 1920);
+  assert.equal(portrait.sourceX, 0);
+  assert.equal(portrait.sourceY, 420);
+  assert.equal(portraitCropLayout(640, 480).reason, 'too-small');
+});
+
 test('phone photo downscale caps the long side, steps quality from 0.9 to 0.6, then shrinks without going under 512', async () => {
   assert.deepEqual([...PHOTO_DOWNSCALE_LIMITS.jpegQualities], [0.9, 0.8, 0.7, 0.6]);
   const phone = snapshotLayout(4032, 3024, PHOTO_DOWNSCALE_LIMITS);
@@ -210,6 +236,11 @@ test('phone photo downscale caps the long side, steps quality from 0.9 to 0.6, t
   const impossible = await planPhotoDownscale({ sourceWidth: 512, sourceHeight: 512, measure: () => 9_000_000 });
   assert.equal(impossible.ok, false);
   assert.equal(impossible.reason, 'too-large');
+  const undersized = await planPhotoDownscale({ sourceWidth: 320, sourceHeight: 240, measure: () => 1_000 });
+  assert.equal(undersized.ok, false);
+  assert.equal(undersized.reason, 'too-small');
+  assert.equal(undersized.attempts.length, 0);
+  assert.equal(PHOTO_TOO_SMALL_MESSAGE, 'Use a portrait at least 512 × 512 pixels.');
 });
 
 test('a signed-out session notice is the server error and nothing else', () => {
@@ -351,6 +382,8 @@ test('the identity wizard keeps the camera fallback, duration helper, and previo
   assert.match(client, /from '\.\/identity-capture\.js'/);
   assert.match(client, /createImageBitmap\(file, \{ imageOrientation: 'from-image' \}\)/);
   assert.match(client, /planPhotoDownscale\(/);
+  assert.match(client, /prefersNativePhotoCapture\(/);
+  assert.match(client, /portraitCropLayout\(/);
   assert.match(client, /signedOutNotice\(session\)/);
   assert.match(html, /id="signed-out-reason"/);
   assert.match(client, /stopPhotoCamera\(\)/);

@@ -5,6 +5,7 @@ const reasons = [
   ['used', 'This sign-in link was already used.'],
   ['invalid', "This sign-in link isn't valid."],
   ['google', "Google sign-in was cancelled or isn't available."],
+  ['unavailable', 'Something went wrong, try again.'],
 ];
 
 for (const [reason, heading] of reasons) {

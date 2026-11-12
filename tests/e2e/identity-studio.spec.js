@@ -15,7 +15,7 @@ const HASH_B = 'b'.repeat(64);
 const PHOTO_HASH = 'c'.repeat(64);
 const VOICE_HASH = 'd'.repeat(64);
 const phoneVideo = await readFile(new URL('../../public/assets/showcase/example-faq.mp4', import.meta.url));
-const photo = { name: 'portrait.png', mimeType: 'image/png', buffer: tinyPng(64, 48) };
+const photo = { name: 'portrait.png', mimeType: 'image/png', buffer: tinyPng(640, 640) };
 
 function tinyPng(width, height) {
   const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3, 0x66)]);
@@ -379,6 +379,34 @@ test('Take a photo uses the phone file input when the browser has no camera API'
   expect(chooser.isMultiple()).toBe(false);
   await chooser.setFiles(photo);
   await expect(page.locator('#photo-preview')).toBeVisible();
+});
+
+test('a phone Take a photo opens the native camera input instead of the in-page webcam', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__mediaCalls = 0;
+    const original = window.matchMedia.bind(window);
+    window.matchMedia = query => {
+      if (String(query).includes('pointer') && String(query).includes('coarse')) {
+        return { matches: true, media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } };
+      }
+      return original(query);
+    };
+    Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { mobile: true, brands: [] } });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => { window.__mediaCalls += 1; throw new Error('desktop camera'); } },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByRole('button', { name: 'Take a photo' }).click(),
+  ]);
+  expect(chooser.isMultiple()).toBe(false);
+  expect(await page.evaluate(() => window.__mediaCalls)).toBe(0);
+  await expect(page.locator('#photo-camera')).toBeHidden();
 });
 
 test('an in-page portrait capture stops the camera after Use photo and after Cancel', async ({ page }) => {

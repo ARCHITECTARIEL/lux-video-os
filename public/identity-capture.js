@@ -21,6 +21,7 @@ export const PHOTO_DOWNSCALE_LIMITS = Object.freeze({
   maxBytes: 3_000_000,
   jpegQualities: Object.freeze([0.9, 0.8, 0.7, 0.6]),
 });
+export const PHOTO_TOO_SMALL_MESSAGE = 'Use a portrait at least 512 × 512 pixels.';
 
 const SEEK_TO_END_SECONDS = 1e101;
 
@@ -86,6 +87,16 @@ export function cameraAccessMessage(error, medium = 'video') {
   return 'Camera or microphone access was not granted. Use your phone camera or choose an existing video.';
 }
 
+export function prefersNativePhotoCapture({
+  coarsePointer = null,
+  mobileUserAgentData = null,
+  userAgent = '',
+} = {}) {
+  if (coarsePointer === true || mobileUserAgentData === true) return true;
+  if (coarsePointer !== null || mobileUserAgentData !== null) return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(String(userAgent));
+}
+
 export function portraitCameraConstraintAttempts(limits = PHOTO_CAPTURE_LIMITS) {
   return [
     {
@@ -112,57 +123,65 @@ function finiteSide(value) {
   return Number.isFinite(side) ? side : null;
 }
 
-export function snapshotLayout(sourceWidth, sourceHeight, limits = PHOTO_CAPTURE_LIMITS) {
+export function photoFrameProblem(sourceWidth, sourceHeight, limits = PHOTO_CAPTURE_LIMITS) {
   const sw = finiteSide(sourceWidth);
   const sh = finiteSide(sourceHeight);
-  if (sw == null || sh == null || sw < 2 || sh < 2) return null;
-  const { minSide, maxSide } = limits;
-  let scale = 1;
-  if (Math.min(sw, sh) < minSide) scale = minSide / Math.min(sw, sh);
-  if (Math.max(sw, sh) * scale > maxSide) scale = maxSide / Math.max(sw, sh);
-  let drawWidth = Math.min(maxSide, Math.max(1, Math.round(sw * scale)));
-  let drawHeight = Math.min(maxSide, Math.max(1, Math.round(sh * scale)));
-  let canvasWidth = drawWidth;
-  let canvasHeight = drawHeight;
-  if (canvasWidth < minSide || canvasHeight < minSide) {
-    canvasWidth = Math.min(maxSide, Math.max(drawWidth, minSide));
-    canvasHeight = Math.min(maxSide, Math.max(drawHeight, minSide));
-  }
-  drawWidth = Math.min(drawWidth, canvasWidth);
-  drawHeight = Math.min(drawHeight, canvasHeight);
+  if (sw == null || sh == null || sw < 2 || sh < 2) return 'unreadable-frame';
+  if (sw < limits.minSide || sh < limits.minSide) return 'too-small';
+  return null;
+}
+
+export function snapshotLayout(sourceWidth, sourceHeight, limits = PHOTO_CAPTURE_LIMITS) {
+  if (photoFrameProblem(sourceWidth, sourceHeight, limits)) return null;
+  const sw = finiteSide(sourceWidth);
+  const sh = finiteSide(sourceHeight);
+  const longSide = Math.max(sw, sh);
+  const scale = longSide > limits.maxSide ? limits.maxSide / longSide : 1;
+  const drawWidth = Math.min(limits.maxSide, Math.max(1, Math.round(sw * scale)));
+  const drawHeight = Math.min(limits.maxSide, Math.max(1, Math.round(sh * scale)));
+  if (drawWidth < limits.minSide || drawHeight < limits.minSide) return null;
   return {
-    canvasWidth,
-    canvasHeight,
+    canvasWidth: drawWidth,
+    canvasHeight: drawHeight,
     drawWidth,
     drawHeight,
-    offsetX: Math.max(0, Math.floor((canvasWidth - drawWidth) / 2)),
-    offsetY: Math.max(0, Math.floor((canvasHeight - drawHeight) / 2)),
+    offsetX: 0,
+    offsetY: 0,
     scale,
+  };
+}
+
+export function portraitCropLayout(sourceWidth, sourceHeight, limits = PHOTO_CAPTURE_LIMITS) {
+  const sw = finiteSide(sourceWidth);
+  const sh = finiteSide(sourceHeight);
+  if (sw == null || sh == null || sw < 2 || sh < 2) return { ok: false, reason: 'unreadable-frame' };
+  const sourceSize = Math.min(sw, sh);
+  if (sourceSize < limits.minSide) return { ok: false, reason: 'too-small' };
+  const output = Math.min(sourceSize, limits.maxSide);
+  return {
+    ok: true,
+    sourceX: Math.floor((sw - sourceSize) / 2),
+    sourceY: Math.floor((sh - sourceSize) / 2),
+    sourceSize,
+    canvasWidth: output,
+    canvasHeight: output,
   };
 }
 
 export function shrinkSnapshotLayout(layout, limits = PHOTO_CAPTURE_LIMITS, factor = 0.85) {
   if (!layout || !Number.isFinite(factor) || factor <= 0 || factor >= 1) return null;
-  const canvasWidth = Math.max(limits.minSide, Math.round(layout.canvasWidth * factor));
-  const canvasHeight = Math.max(limits.minSide, Math.round(layout.canvasHeight * factor));
+  const canvasWidth = Math.round(layout.canvasWidth * factor);
+  const canvasHeight = Math.round(layout.canvasHeight * factor);
+  if (canvasWidth < limits.minSide || canvasHeight < limits.minSide) return null;
   if (canvasWidth === layout.canvasWidth && canvasHeight === layout.canvasHeight) return null;
-  const aspect = layout.drawWidth / layout.drawHeight;
-  let drawWidth = canvasWidth;
-  let drawHeight = Math.max(1, Math.round(drawWidth / aspect));
-  if (drawHeight > canvasHeight) {
-    drawHeight = canvasHeight;
-    drawWidth = Math.max(1, Math.round(drawHeight * aspect));
-  }
-  drawWidth = Math.min(canvasWidth, drawWidth);
-  drawHeight = Math.min(canvasHeight, drawHeight);
   return {
     canvasWidth,
     canvasHeight,
-    drawWidth,
-    drawHeight,
-    offsetX: Math.max(0, Math.floor((canvasWidth - drawWidth) / 2)),
-    offsetY: Math.max(0, Math.floor((canvasHeight - drawHeight) / 2)),
-    scale: layout.scale * (drawWidth / layout.drawWidth),
+    drawWidth: canvasWidth,
+    drawHeight: canvasHeight,
+    offsetX: 0,
+    offsetY: 0,
+    scale: layout.scale * factor,
   };
 }
 
@@ -182,8 +201,10 @@ export function signedOutNotice(session) {
 }
 
 export async function selectSnapshotEncoding({ sourceWidth, sourceHeight, measure, limits = PHOTO_CAPTURE_LIMITS } = {}) {
+  const problem = photoFrameProblem(sourceWidth, sourceHeight, limits);
+  if (problem) return { ok: false, reason: problem, attempts: [] };
   let layout = snapshotLayout(sourceWidth, sourceHeight, limits);
-  if (!layout) return { ok: false, reason: 'unreadable-frame', attempts: [] };
+  if (!layout) return { ok: false, reason: 'too-small', attempts: [] };
   const attempts = [];
   for (let pass = 0; pass < 24; pass += 1) {
     let smallestBytes = Infinity;

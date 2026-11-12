@@ -45,7 +45,11 @@ test('browser Accept prefers HTML only when text/html is at least as wanted as J
   assert.equal(signInFailureReason(new Error('This sign-in link was already used.'), 'auth-verify'), 'used');
   assert.equal(signInFailureReason(new Error('This sign-in link is invalid.'), 'auth-verify'), 'invalid');
   assert.equal(signInFailureReason(new Error('Google sign-in was cancelled.'), 'google-callback'), 'google');
+  assert.equal(signInFailureReason(Object.assign(new Error('Sign-in storage is temporarily unavailable. Please try again shortly.'), { statusCode: 503 }), 'auth-verify'), 'unavailable');
+  assert.equal(signInFailureReason(Object.assign(new Error('The sign-in token could not be consumed safely.'), { statusCode: 503 }), 'auth-verify'), 'unavailable');
+  assert.equal(signInFailureReason(Object.assign(new Error('Google sign-in was cancelled.'), { statusCode: 503 }), 'google-callback'), 'unavailable');
   assert.equal(signInLinkRedirect('google'), '/sign-in-link?reason=google');
+  assert.equal(signInLinkRedirect('unavailable'), '/sign-in-link?reason=unavailable');
   assert.equal(signInLinkRedirect('nope'), '/sign-in-link?reason=invalid');
 });
 
@@ -81,6 +85,39 @@ test('browser sign-in failures redirect to a token-free page and API clients kee
     assert.equal(payload.error, message);
     assert.equal(json.body.includes(TOKEN), false);
   }
+});
+
+test('a browser storage failure gets its own try-again page', async () => {
+  const html = response();
+  await handleAuthRequest(request({
+    url: `/api/video-os-lite/auth-verify?token=${TOKEN}`,
+    accept: HTML,
+  }), html, {
+    env: {},
+    magicLink: {
+      validate: async () => {
+        throw Object.assign(new Error('Sign-in storage is temporarily unavailable. Please try again shortly.'), { statusCode: 503 });
+      },
+    },
+  });
+  assert.equal(html.statusCode, 303);
+  assert.equal(html.headers.Location, '/sign-in-link?reason=unavailable');
+  assert.equal(html.headers.Location.includes(TOKEN), false);
+
+  const json = response();
+  await handleAuthRequest(request({
+    url: `/api/video-os-lite/auth-verify?token=${TOKEN}`,
+    accept: 'application/json',
+  }), json, {
+    env: {},
+    magicLink: {
+      validate: async () => {
+        throw Object.assign(new Error('Sign-in storage is temporarily unavailable. Please try again shortly.'), { statusCode: 503 });
+      },
+    },
+  });
+  assert.equal(json.statusCode, 503);
+  assert.match(JSON.parse(json.body).error, /storage is temporarily unavailable/);
 });
 
 test('a browser Google callback failure explains that sign-in was cancelled or is unavailable', async () => {
@@ -119,6 +156,7 @@ test('the sign-in page names each reason and posts a new link to the existing en
   assert.match(html, /This sign-in link was already used\./);
   assert.match(html, /This sign-in link isn't valid\./);
   assert.match(html, /Google sign-in was cancelled or isn't available\./);
+  assert.match(html, /Something went wrong, try again\./);
   assert.match(html, /Send me a new link/);
   assert.match(html, /id="resend-email"/);
   assert.match(client, /\/api\/video-os-lite\/auth-request/);
