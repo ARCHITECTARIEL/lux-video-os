@@ -19,6 +19,10 @@ const accounts = [
   { accountId: 'account-proof-1', email: 'proof@example.test', role: 'customer', createdAt: '2026-09-18T12:00:00.000Z', balance: 200, reserved: 0 },
 ];
 
+const testers = [
+  { accountId: 'tester-proof-1', email: 'pilot@luxmarketingcompany.com', name: 'Pilot Tester', role: 'tester', createdAt: '2026-10-19T12:00:00.000Z', balance: 120, spent: 60 },
+];
+
 const creditLedger = [
   { accountId: 'account-proof-1', sourceType: 'admin_grant', amount: 180, balanceAfter: 380, metadata: { note: 'backfilling a pre-fix trial grant' }, createdAt: '2026-09-23T17:00:00.000Z' },
   { accountId: 'account-proof-1', sourceType: 'render', amount: -90, balanceAfter: 290, metadata: {}, createdAt: '2026-09-23T16:00:00.000Z' },
@@ -51,6 +55,7 @@ async function stubAdminApi(page, { authorized = true } = {}) {
     if (operation === 'jobs') return route.fulfill({ json: { ok: true, summary: { total: recentJobs.length, rendering: 0, ready: 1, failed: 1 }, jobs: recentJobs } });
     if (operation === 'attention') return route.fulfill({ json: { ok: true, jobs: attentionJobs } });
     if (operation === 'accounts') return route.fulfill({ json: { ok: true, accounts } });
+    if (operation === 'testers' && method === 'GET') return route.fulfill({ json: { ok: true, testers } });
     if (operation === 'activity') return route.fulfill({ json: { ok: true, events: activityEvents, page: { limit: 50, offset: 0, total: 2, hasMore: false } } });
     if (operation === 'activity-summary') return route.fulfill({ json: { ok: true, windowHours: 24, codes: [{ code: 'UPSTREAM_TIMEOUT', count: 3, latestAt: '2026-10-14T12:00:00.000Z' }] } });
     if (operation === 'entity-timeline') return route.fulfill({ json: { ok: true, entity: { type: 'job', id: url.searchParams.get('entityId') }, events: entityTimeline, page: { limit: 100, offset: 0, total: 3, hasMore: false } } });
@@ -61,6 +66,7 @@ async function stubAdminApi(page, { authorized = true } = {}) {
     if (method === 'POST' && operation === 'approve-job') return route.fulfill({ json: { ok: true, job: { ...readyJob, reviewedAt: '2026-09-19T20:10:00.000Z' } } });
     if (method === 'POST' && operation === 'delete-video') return route.fulfill({ json: { ok: true, job: { ...readyJob, videoDeletedAt: '2026-09-19T20:11:00.000Z' } } });
     if (method === 'POST' && operation === 'retry-job') return route.fulfill({ json: { ok: true, job: { id: 'job-proof-retry', accountId: 'account-proof-1', provider: 'heygen', status: 'workflow_started', updatedAt: '2026-09-19T20:12:00.000Z', reviewedAt: null, videoDeletedAt: null } } });
+    if (method === 'POST' && operation === 'register-tester') return route.fulfill({ json: { ok: true, tester: { account: { id: 'tester-proof-1' } } } });
     return route.fulfill({ status: 400, json: { ok: false, error: `Unknown admin operation: ${operation}` } });
   });
 }
@@ -94,6 +100,63 @@ test('authorized owner sees real overview stats and can switch tabs', async ({ p
   await page.locator('[data-admin-tab="accounts"]').click();
   await expect(page.locator('#panel-accounts')).toBeVisible();
   await expect(page.locator('#accounts-table')).toContainText('proof@example.test');
+});
+
+test('tester registration warns that its bounded grant must precede first sign-in', async ({ page }) => {
+  const registerRequests = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('operation=register-tester')) registerRequests.push(request);
+  });
+  await stubAdminApi(page);
+  await page.goto('/admin-console.html');
+  await page.locator('[data-admin-tab="testers"]').click();
+
+  const panel = page.locator('#panel-testers');
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText('Register approved pilot testers before their first sign-in');
+  await expect(panel).toContainText('can establish a 5,000-credit balance on first sign-in');
+  await expect(panel).toContainText('cannot retroactively cap an account that has already signed in');
+  await expect(panel).toContainText('the 180-credit limit applies only to this registration control');
+  await expect(panel).toContainText('Domain membership alone does not authorize Premium rendering');
+  await expect(panel).toContainText('does not guarantee Premium provider access');
+  await expect(panel).not.toContainText('automatically receive full Standard & Premium rendering access');
+  const testerActions = page.locator('#testers-table tbody tr', { hasText: 'pilot@luxmarketingcompany.com' }).locator('td').last();
+  await expect(testerActions).toHaveText('—');
+  await expect(testerActions.getByRole('button')).toHaveCount(0);
+  await expect(panel).not.toContainText('Top up');
+
+  const credits = page.locator('#tester-credits');
+  await expect(credits).toHaveValue('');
+  await expect(credits).toHaveAttribute('required', '');
+  await expect(credits).toHaveAttribute('min', '100');
+  await expect(credits).toHaveAttribute('max', '180');
+  await expect(credits).toHaveAttribute('step', '1');
+
+  await page.locator('#tester-email').fill('pilot@luxmarketingcompany.com');
+  await credits.fill('181');
+  await page.locator('#register-tester-form').evaluate((form) => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  await expect(page.locator('#register-tester-status')).toHaveText('Enter an approved whole-number grant from 100 to 180 credits.');
+  expect(registerRequests).toHaveLength(0);
+
+  await credits.fill('180');
+  await page.locator('#tester-name').fill('Pilot Tester');
+  await page.locator('#tester-note').fill('Approved internal pilot');
+  await page.locator('#register-tester-submit').click();
+  await expect.poll(() => registerRequests.length).toBe(1);
+  expect(registerRequests[0].postDataJSON()).toEqual({
+    email: 'pilot@luxmarketingcompany.com',
+    name: 'Pilot Tester',
+    credits: 180,
+    note: 'Approved internal pilot',
+  });
+  await expect(page.locator('#register-tester-status')).toContainText('registered with an approved credit floor of 180');
+  await expect(page.locator('#register-tester-status')).toContainText('Existing higher balances are unchanged');
+  await expect(page.locator('#register-tester-status')).toContainText('Premium access still requires separate account and provider eligibility');
+  await expect(credits).toHaveValue('');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const viewport = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
+  expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth);
 });
 
 test('the billing ledger shows a credit grant\'s note, and a real dash for a transaction with none', async ({ page }) => {
