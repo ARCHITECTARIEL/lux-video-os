@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import { readFile, rename, mkdir, stat } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { lstat, mkdir, readFile, readdir, realpath, rename, stat } from 'node:fs/promises';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureSourceIdentity } from './release-build-manifest.mjs';
 import { fingerprint, outputInventory } from './authorize-release.mjs';
-import { PREVIEW_DEPLOY_COMMAND, previewUploadLimitWarning } from './preview-upload-limit.mjs';
+import { PREVIEW_DEPLOY_COMMAND, previewUploadLimitWarning, targetFlagValues } from './preview-upload-limit.mjs';
 import {
   identityEnrollmentCleanupWorkflowMetadata,
   identityEnrollmentExpiryWorkflowMetadata,
@@ -29,11 +30,53 @@ const ENROLLMENT_WORKFLOWS = Object.freeze({
   identityEnrollmentExpiryWorkflow: identityEnrollmentExpiryWorkflowMetadata,
 });
 
+export const PREVIEW_OVERLAY_PATHS = Object.freeze([
+  'package.json',
+  'tools/authorize-preview.mjs',
+  'tools/authorize-release.mjs',
+  'tools/build-production.mjs',
+  'tools/preview-upload-limit.mjs',
+].sort());
+
 export function requestedTarget(argv = []) {
-  const attached = argv.find(arg => typeof arg === 'string' && arg.startsWith('--target='));
-  if (attached) return attached.slice('--target='.length);
-  const index = argv.indexOf('--target');
-  return index >= 0 ? argv[index + 1] : undefined;
+  const values = targetFlagValues(argv);
+  if (values.length > 1) throw new Error('Refusing repeated --target.');
+  return values.length === 0 ? undefined : values[0];
+}
+
+export function parseGitStatusPaths(stdout) {
+  const paths = [];
+  const records = String(stdout ?? '').split('\0');
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (!record) continue;
+    if (record.length < 4 || record[2] !== ' ') throw new Error('Unreadable git status entry. Refusing to restore.');
+    const code = record.slice(0, 2);
+    if (code.includes('R') || code.includes('C')) {
+      const renamed = records[index + 1];
+      if (!renamed) throw new Error('Unreadable git status rename. Refusing to restore.');
+      index += 1;
+      paths.push(renamed);
+    } else paths.push(record.slice(3));
+  }
+  return [...new Set(paths)].sort();
+}
+
+export function readChangedPaths(root, spawn = spawnSync) {
+  const run = spawn('git', ['status', '--porcelain=v1', '-z'], { cwd: root, encoding: 'utf8' });
+  if (run.error || run.status !== 0) throw new Error('Git status is unavailable. Refusing to restore.');
+  return parseGitStatusPaths(run.stdout);
+}
+
+export function previewOverlayDecision(paths) {
+  const changed = [...new Set(paths)].sort();
+  const exactOverlay = changed.length === PREVIEW_OVERLAY_PATHS.length
+    && changed.every((path, index) => path === PREVIEW_OVERLAY_PATHS[index]);
+  return { changed, allowed: changed.length === 0 || exactOverlay };
+}
+
+export function formatChangedPaths(paths) {
+  return paths.length ? paths.map(path => `- ${path}`).join('\n') : '(none)';
 }
 
 function argument(argv, name) {
@@ -41,13 +84,51 @@ function argument(argv, name) {
   return index < 0 ? undefined : argv[index + 1];
 }
 
-function assertQuarantinedUnderVercel(root, location) {
-  const vercelDir = resolve(root, '.vercel');
-  const resolved = resolve(location);
-  const rel = relative(vercelDir, resolved);
-  if (rel === '' || rel.startsWith('..') || rel.split(/[/\\]/).includes('..')) {
-    throw new Error(`Quarantined preview output must stay inside ${vercelDir}. Refusing to restore.`);
+function isInside(parentReal, childReal) {
+  const rel = relative(parentReal, childReal);
+  return rel !== '' && !isAbsolute(rel) && !rel.startsWith('..') && !rel.split(/[/\\]/).includes('..');
+}
+
+async function assertEntriesInside(directory, vercelReal, seen) {
+  const here = await realpath(directory);
+  if (seen.has(here)) return;
+  seen.add(here);
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    let real;
+    try {
+      real = await realpath(path);
+    } catch {
+      throw new Error(`Preview output entry ${path} does not resolve inside .vercel. Refusing to restore.`);
+    }
+    if (!isInside(vercelReal, real)) {
+      throw new Error(`Preview output entry ${path} resolves outside .vercel (${real}). Refusing to restore.`);
+    }
+    const info = await lstat(path);
+    if (info.isDirectory()) await assertEntriesInside(info.isSymbolicLink() ? real : path, vercelReal, seen);
   }
+}
+
+export async function assertPreviewOutputContained(root, location) {
+  const vercelPath = resolve(root, '.vercel');
+  const lexical = resolve(location);
+  const lexicalRel = relative(vercelPath, lexical);
+  if (lexicalRel === '' || lexicalRel.startsWith('..') || lexicalRel.split(/[/\\]/).includes('..')) {
+    throw new Error(`Quarantined preview output must stay inside ${vercelPath}. Refusing to restore.`);
+  }
+  let vercelReal;
+  let locationReal;
+  try {
+    vercelReal = await realpath(vercelPath);
+    locationReal = await realpath(location);
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw new Error(`Quarantined preview output is missing at ${location}.`);
+    throw error;
+  }
+  if (!isInside(vercelReal, locationReal)) {
+    throw new Error(`Quarantined preview output resolves outside ${vercelReal}. Refusing to restore.`);
+  }
+  await assertEntriesInside(location, vercelReal, new Set());
 }
 
 function enrollmentWorkflowsRegistered(manifest) {
@@ -122,6 +203,7 @@ export async function authorizePreview({ argv = process.argv, root = fileURLToPa
     captureSource = captureSourceIdentity,
     inventory = outputInventory,
     fingerprintRecords = fingerprint,
+    listChangedPaths = readChangedPaths,
     restoreOutput = rename,
     log = message => console.log(message),
     logError = message => console.error(message),
@@ -161,7 +243,7 @@ export async function authorizePreview({ argv = process.argv, root = fileURLToPa
   }
 
   const location = manifest.output.location;
-  assertQuarantinedUnderVercel(root, location);
+  await assertPreviewOutputContained(root, location);
   let receipt;
   try {
     receipt = JSON.parse(await readFile(`${location}.packaging-success.json`, 'utf8'));
@@ -172,7 +254,7 @@ export async function authorizePreview({ argv = process.argv, root = fileURLToPa
     throw error;
   }
   const manifestSha256 = createHash('sha256').update(manifestBytes).digest('hex');
-  if (receipt.packagingComplete !== true || receipt.releaseAuthorized !== false || receipt.manifestSha256 !== manifestSha256 || receipt.outputSha256 !== manifest.output.sha256) {
+  if (receipt.packagingComplete !== true || receipt.releaseAuthorized !== false || receipt.manifestSha256 !== manifestSha256 || receipt.outputSha256 !== manifest.output.sha256 || receipt.sourceSha256 !== manifest.source?.sha256) {
     throw new Error('Preview release manifest does not match its packaging receipt. Refusing a tampered manifest.');
   }
   let sibling;
@@ -186,17 +268,21 @@ export async function authorizePreview({ argv = process.argv, root = fileURLToPa
     throw new Error('Preview release manifest does not match the quarantined copy. Refusing a tampered manifest.');
   }
 
-  await stat(location).catch(error => {
-    if (error?.code === 'ENOENT') throw new Error(`Quarantined preview output is missing at ${location}.`);
-    throw error;
-  });
   const liveInventory = await inventory(location);
   const liveOutputSha256 = fingerprintRecords(liveInventory);
   if (liveOutputSha256 !== manifest.output.sha256) {
     throw new Error('Quarantined preview output does not match the release manifest hash. Refusing a tampered manifest.');
   }
 
-  assertPreviewSource(manifest, await captureSource(root));
+  const currentSource = await captureSource(root);
+  const changedPaths = await listChangedPaths(root);
+  const dirty = previewOverlayDecision(changedPaths);
+  const changedListing = `Changed paths:\n${formatChangedPaths(dirty.changed)}`;
+  logError(changedListing);
+  assertPreviewSource(manifest, currentSource);
+  if (!dirty.allowed) {
+    throw new Error(`Preview restore refuses this dirty checkout.\n${changedListing}\nThe only dirty checkout that can be restored is one whose changed paths are exactly: ${PREVIEW_OVERLAY_PATHS.join(', ')}.`);
+  }
   await assertPreviewWorkflowArtifact(location);
 
   const warning = previewUploadLimitWarning(liveInventory.length);
@@ -219,6 +305,7 @@ export async function authorizePreview({ argv = process.argv, root = fileURLToPa
     outputSha256: liveOutputSha256,
     fileCount: liveInventory.length,
     uploadLimitWarning: warning,
+    changedPaths: dirty.changed,
     restoredTo: destination,
     deployCommand: PREVIEW_DEPLOY_COMMAND,
     note: 'previewDeployAuthorized restores this quarantined preview artifact for a non-production deploy. It is not production authorization. This tool does not deploy.',

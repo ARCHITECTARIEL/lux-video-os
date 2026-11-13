@@ -32,6 +32,55 @@ Preview restore is `npm run release:authorize-preview` (`node tools/authorize-pr
 
 A plain git deployment, `vercel deploy`, or `vercel redeploy` of this project builds only `api/**` as configured in `vercel.json`. Those deploys do not create `.well-known/workflow/v1` flow and step functions, so enrollment workflows do not run on Preview. Use `npm run build:preview` and the preview restore above.
 
+The preview restore prints the checkout's changed paths. A clean checkout is accepted. A dirty checkout is accepted only when the changed paths are exactly these five tooling files: `tools/authorize-preview.mjs`, `tools/preview-upload-limit.mjs`, `tools/authorize-release.mjs`, `tools/build-production.mjs`, and `package.json`. Any other dirty path, including an uncommitted `lib/` edit on top of that overlay, refuses the restore.
+
+## Preview of an unmerged branch
+
+This is the sanctioned way to deploy a Preview that contains workflow `flow.func` and `step.func`. It does not merge the branch, and it does not touch production. Example below: PR #139, commit `d647c7467e384501c1d2f571acb7a5ad4b13f7ef`, plus the preview-restore tooling. Do the overlay before `npm run build:preview`, and do not edit the tree again before `npm run release:authorize-preview`. The restore checks that the source hash still matches the manifest.
+
+```bash
+git fetch origin cursor/desktop-capture-duration-3ccc cursor/preview-restore-path-38b7
+git worktree add --detach /tmp/lux-pr-139-preview d647c7467e384501c1d2f571acb7a5ad4b13f7ef
+cd /tmp/lux-pr-139-preview
+for f in tools/authorize-preview.mjs tools/preview-upload-limit.mjs tools/authorize-release.mjs tools/build-production.mjs package.json; do
+  git show "origin/cursor/preview-restore-path-38b7:$f" > "$f"
+done
+```
+
+A fresh worktree has no `.vercel/project.json`. Packaging then fails with ENOENT. Link this worktree to the real project `lux-video-os`. Do not link PR previews to `lux-video-os-rebuild`.
+
+```bash
+vercel link --yes --project lux-video-os --scope lux-3035s-projects
+vercel pull --environment=preview
+```
+
+`vercel pull --environment=preview` writes non-sensitive environment values into the gitignored `.vercel/` directory, including `.vercel/.env.preview.local`. Delete those env files after the deploy. Do not copy them into another checkout.
+
+`npm ci` when `node_modules` is absent. `npm run build:preview` downloads a Linux ffmpeg binary when its cache is empty, so that step needs network access. Then restore and deploy. The restore needs no production `DATABASE_URL`. Run the command it prints. That command is `vercel deploy --prebuilt --archive=tgz`. Do not add `--prod`. `--archive=tgz` is required because the output is over the 15,000-file upload limit.
+
+```bash
+npm ci
+npm run build:preview
+npm run release:authorize-preview
+vercel deploy --prebuilt --archive=tgz
+test -f .vercel/output/functions/.well-known/workflow/v1/flow.func/.vc-config.json
+test -f .vercel/output/functions/.well-known/workflow/v1/flow.func/index.js
+test -f .vercel/output/functions/.well-known/workflow/v1/step.func/.vc-config.json
+test -f .vercel/output/functions/.well-known/workflow/v1/step.func/index.js
+```
+
+The URL printed by `vercel deploy` is a Preview on `lux-video-os`. The two `test` commands confirm the uploaded output still contains the workflow flow and step functions. A plain git or CLI redeploy does not.
+
+Moving that deployment onto the production alias is a separate step and needs its own explicit approval. This recipe does not alias the preview.
+
+Cleanup, from the worktree and then from the main checkout:
+
+```bash
+rm -f .vercel/.env.preview.local .vercel/.env.development.local .vercel/.env.production.local
+cd -
+git worktree remove --force /tmp/lux-pr-139-preview
+```
+
 `.vercel/release-build-manifest.json` records source file hashes, HEAD/dirty status, project-link hash, output file hashes, database evidence, Workflow boundary, rollback metadata and unresolved gates. For the selected HeyGen managed API, a worker image is inapplicable, while runtime scope/account/pricing/privacy/deletion/canary evidence remains unverified. Self-hosted selections still require an immutable image digest. This is a review manifest, never an approved P0 receipt. The old P0 verifier now exits 2 for every verification request; historical approved-looking receipts are not trusted.
 
 ## Rollback preparation
