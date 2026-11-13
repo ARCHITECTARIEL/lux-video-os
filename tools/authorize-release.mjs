@@ -287,9 +287,21 @@ function argument(argv, name) {
   return i < 0 ? undefined : argv[i + 1];
 }
 
+export function explicitPreviewTarget(argv = []) {
+  const attached = argv.find(arg => typeof arg === 'string' && arg.startsWith('--target='));
+  if (attached) return attached.slice('--target='.length) === 'preview';
+  const index = argv.indexOf('--target');
+  return index >= 0 && argv[index + 1] === 'preview';
+}
+
 // deps exist so tests can drive main() end to end without git, a database,
 // the network, or moving real files. Production callers pass nothing.
 export async function main({ argv = process.argv, root = fileURLToPath(new URL('../', import.meta.url)), deps = {} } = {}) {
+  // Preview restore is a different tool. Production gates below stay as they are.
+  if (explicitPreviewTarget(argv)) {
+    const { authorizePreview } = await import('./authorize-preview.mjs');
+    return authorizePreview({ argv, root, deps });
+  }
   const {
     captureSource = captureSourceIdentity,
     inventory = outputInventory,
