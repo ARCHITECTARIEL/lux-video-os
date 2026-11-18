@@ -252,10 +252,19 @@
       <fieldset data-panel="4" tabindex="-1" hidden>
         <legend>Creating</legend>
         <div class="processing-orbit" aria-hidden="true"><span></span></div>
-        <h3 class="center">Preparing your reusable identity</h3>
+        <h3 id="creating-heading" class="center">Preparing your reusable identity</h3>
         <div id="component-progress" class="component-progress" aria-live="polite"></div>
         <p id="creating-detail" class="fine-print center">Your saved setup can resume when you return. Preparing the reusable voice does not start final presenter creation.</p>
-        <div id="enrollment-recovery" class="uncertain-recovery center" hidden><p id="enrollment-recovery-message" class="field-error" role="alert"></p><div class="uncertain-actions centered-actions"><button id="retry-enrollment" class="button secondary" type="button">Retry this stage</button><button id="check-enrollment" class="button ghost" type="button">Check status</button></div></div>
+        <div id="enrollment-recovery" class="uncertain-recovery center" hidden>
+          <h3 id="enrollment-failure-heading" class="center" hidden>Setup could not finish</h3>
+          <p id="enrollment-recovery-message" class="field-error" role="alert"></p>
+          <div class="uncertain-actions centered-actions">
+            <button id="retry-enrollment" class="button secondary" type="button">Retry</button>
+            <button id="check-enrollment" class="button ghost" type="button">Check status</button>
+            <button id="cancel-enrollment-setup" class="button ghost" type="button" hidden>Cancel setup</button>
+            <button id="restart-enrollment" class="button secondary" type="button" hidden>Start over</button>
+          </div>
+        </div>
       </fieldset>
 
       <fieldset data-panel="5" tabindex="-1" hidden>

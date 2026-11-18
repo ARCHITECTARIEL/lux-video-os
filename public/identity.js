@@ -32,6 +32,32 @@ const DEFAULT_VIDEO_LIMITS = Object.freeze({
   allowedContentTypes: [...VIDEO_TYPES],
 });
 const ENROLLMENT_ACTIVE_STATES = new Set(['AWAITING_UPLOAD', 'SOURCE_HASHING', 'AWAITING_EXTRACTION_CONSENT', 'EXTRACTION_QUEUED', 'EXTRACTING']);
+const ENROLLMENT_TERMINAL_STATES = new Set(['FAILED', 'REVOKED', 'EXPIRED', 'CANCELLED', 'CANCELED']);
+const ENROLLMENT_FAILURE_PLAIN = Object.freeze({
+  FRAME_RATE_UNAVAILABLE: 'This recording needs a frame rate we can verify. Record it again, or upload a phone video with a steady frame rate.',
+  FRAME_RATE_LIMIT: 'This video is faster than 120 frames per second. Record it again, or upload a slower phone video.',
+  PIXEL_RATE_LIMIT: 'This video is too large and too fast to prepare. Use a smaller or slower recording.',
+  PIXEL_AREA_LIMIT: 'This video is too large to prepare. Use a smaller recording.',
+  DIMENSION_LIMIT: 'This video is wider or taller than 4096 pixels. Use a smaller recording.',
+  DIMENSIONS_UNAVAILABLE: 'This video size could not be read. Record it again, or upload an MP4, MOV, or WebM file.',
+  DURATION_MINIMUM: 'The phone video needs to be at least 5 seconds.',
+  DURATION_LIMIT: 'The phone video needs to be 60 seconds or shorter.',
+  FRAME_COUNT_LIMIT: 'This video has too many frames to prepare. Use a shorter or slower recording.',
+  VIDEO_FRAMES_REQUIRED: 'This video has no picture frames to prepare. Record it again.',
+  VIDEO_CODEC_UNSUPPORTED: 'This video codec is not supported. Use an MP4, MOV, or WebM recording.',
+  AUDIO_CODEC_UNSUPPORTED: 'This WebM recording needs Opus audio. Record it again, or upload an MP4.',
+  CONTAINER_UNSUPPORTED: 'Use an MP4, MOV, or WebM video.',
+  VIDEO_STREAM_REQUIRED: 'This file needs a video track. Record it again, or choose a phone video.',
+  AUDIO_STREAM_REQUIRED: 'This file needs an audio track. Record it again with the microphone on.',
+  STREAM_COUNT_UNSUPPORTED: 'Use a video with one picture track and one audio track.',
+  AUDIO_NEAR_SILENT: 'This recording is too quiet to prepare a voice. Record it again somewhere quieter.',
+  EMPTY_MEDIA: 'This video file is empty. Choose the recording again.',
+  SOURCE_BYTE_LIMIT: 'This video is larger than 100 MB. Use a shorter recording.',
+  MEDIA_INSPECTION_FAILED: 'This video could not be read. Record it again, or upload an MP4, MOV, or WebM file.',
+  VIDEO_DECODE_FAILED: 'This video could not be played back for setup. Record it again, or upload an MP4.',
+  FFMPEG_TIMEOUT: 'Preparing this video took too long. Record a shorter video and try again.',
+  FFMPEG_UNAVAILABLE: 'Video preparation is unavailable right now. Try again in a little while.',
+});
 const CONSENT_IDS = ['consent-face', 'consent-extraction', 'consent-voice', 'consent-process', 'consent-archive', 'consent-provider-exposure'];
 const REQUEST_TIMEOUT_MS = 30_000;
 const ENROLLMENT_POLL_MS = 2_000;
@@ -548,6 +574,37 @@ function activeResumeEnrollment() {
     || null;
 }
 
+function enrollmentFailureMessage(failure) {
+  const code = String(failure?.code || '');
+  if (Object.hasOwn(ENROLLMENT_FAILURE_PLAIN, code)) return ENROLLMENT_FAILURE_PLAIN[code];
+  const message = String(failure?.message || '').trim();
+  if (message && !/^[A-Z0-9_-]+$/.test(message)) return message;
+  return 'Setup could not finish. Start over with a new photo and phone video.';
+}
+
+function terminalEnrollmentCopy(enrollment) {
+  const status = String(enrollment?.status || '');
+  if (['REVOKED', 'CANCELLED', 'CANCELED'].includes(status)) {
+    return {
+      heading: 'Setup was cancelled',
+      message: 'This setup was cancelled. Start over when you want to create an identity.',
+    };
+  }
+  if (status === 'EXPIRED') {
+    const failure = enrollment?.failure;
+    return {
+      heading: 'This setup expired',
+      message: failure?.code || failure?.message
+        ? enrollmentFailureMessage(failure)
+        : 'This setup expired before it finished. Start over with a new photo and phone video.',
+    };
+  }
+  return {
+    heading: 'Setup could not finish',
+    message: enrollmentFailureMessage(enrollment?.failure),
+  };
+}
+
 function enrollmentSummary(enrollment) {
   const detail = {
     AWAITING_UPLOAD: 'Waiting for the original phone video upload.',
@@ -555,7 +612,11 @@ function enrollmentSummary(enrollment) {
     AWAITING_EXTRACTION_CONSENT: 'Waiting for explicit extraction and voice permissions.',
     EXTRACTION_QUEUED: 'Voice-sample extraction is queued.',
     EXTRACTING: 'Preparing the authorized reusable voice sample.',
-    FAILED: enrollment?.failure?.message || 'Enrollment needs attention.',
+    FAILED: enrollmentFailureMessage(enrollment?.failure),
+    REVOKED: 'This setup was cancelled.',
+    CANCELLED: 'This setup was cancelled.',
+    CANCELED: 'This setup was cancelled.',
+    EXPIRED: 'This setup expired before it finished.',
   }[enrollment?.status];
   return detail ? `${statusLabel(enrollment?.status)}: ${detail}` : statusLabel(enrollment?.status);
 }
@@ -664,6 +725,7 @@ function setStep(step) {
 }
 
 function beginNewEnrollment() {
+  clearCreatingTerminal();
   setProviderReconsentMode(false);
   state.activeEnrollment = null;
   state.activeIdentityId = null;
@@ -754,6 +816,7 @@ function resetWizard() {
   clearValidation();
   clearConsentChecks();
   wizardStatus();
+  clearCreatingTerminal();
   if (!state.activeEnrollment?.id) clearResumeMetadata();
   if ($('#notice').dataset.origin === 'wizard') notice('');
 }
@@ -1123,6 +1186,7 @@ async function advanceEnrollment(enrollment) {
     return;
   }
   if (['SOURCE_HASHING', 'EXTRACTION_QUEUED', 'EXTRACTING'].includes(enrollment.status)) {
+    clearCreatingTerminal();
     setStep(4);
     scheduleEnrollmentPolling();
     return;
@@ -1136,15 +1200,10 @@ async function advanceEnrollment(enrollment) {
     setStep(5);
     return;
   }
-  if (enrollment.status === 'FAILED') {
-    setStep(4);
-    showEnrollmentRecovery(enrollment.failure?.message || 'Enrollment could not complete.', enrollment.retry?.allowed === true);
+  if (ENROLLMENT_TERMINAL_STATES.has(enrollment.status)) {
+    if (enrollment.status !== 'FAILED') clearResumeMetadata();
+    showTerminalEnrollment(enrollment);
     return;
-  }
-  if (['REVOKED', 'EXPIRED'].includes(enrollment.status)) {
-    clearResumeMetadata();
-    stopEnrollmentPolling();
-    throw new Error(`This enrollment is ${enrollment.status.toLowerCase()} and cannot continue.`);
   }
 }
 
@@ -1153,6 +1212,7 @@ async function createOrResumeEnrollment() {
   if (state.activeEnrollment?.id) return advanceEnrollment(state.activeEnrollment);
   if (!state.photoFile || !state.videoFile) throw new Error('The photo and phone video are required before enrollment.');
   const resume = ensureResumeMetadata();
+  clearCreatingTerminal();
   setStep(4);
   $('#creating-detail').textContent = 'Storing the authorized photo before creating the private video upload.';
   if (!state.photoAssetId) {
@@ -1307,10 +1367,54 @@ function updateProgress() {
   if ($('#wizard').open && state.step === 4 && !showingEnrollment && identity?.ready) setStep(5);
 }
 
+function clearCreatingTerminal() {
+  const panel = document.querySelector('[data-panel="4"]');
+  if (panel) delete panel.dataset.terminal;
+  const creatingHeading = $('#creating-heading');
+  if (creatingHeading) creatingHeading.hidden = false;
+  const creatingDetail = $('#creating-detail');
+  if (creatingDetail) creatingDetail.hidden = false;
+  const failureHeading = $('#enrollment-failure-heading');
+  if (failureHeading) {
+    failureHeading.hidden = true;
+    failureHeading.textContent = '';
+  }
+  const cancel = $('#cancel-enrollment-setup');
+  const restart = $('#restart-enrollment');
+  const check = $('#check-enrollment');
+  if (cancel) cancel.hidden = true;
+  if (restart) restart.hidden = true;
+  if (check) check.hidden = false;
+}
+
 function showEnrollmentRecovery(message, retryAllowed) {
+  clearCreatingTerminal();
   $('#enrollment-recovery').hidden = false;
   $('#enrollment-recovery-message').textContent = message;
   $('#retry-enrollment').hidden = !retryAllowed;
+  $('#check-enrollment').hidden = false;
+  $('#cancel-enrollment-setup').hidden = true;
+  $('#restart-enrollment').hidden = true;
+}
+
+function showTerminalEnrollment(enrollment) {
+  stopEnrollmentPolling();
+  setStep(4);
+  const copy = terminalEnrollmentCopy(enrollment);
+  const retryAllowed = enrollment?.status === 'FAILED' && enrollment.retry?.allowed === true;
+  const panel = document.querySelector('[data-panel="4"]');
+  panel.dataset.terminal = 'true';
+  $('#creating-heading').hidden = true;
+  $('#creating-detail').hidden = true;
+  $('#enrollment-failure-heading').hidden = false;
+  $('#enrollment-failure-heading').textContent = copy.heading;
+  $('#enrollment-recovery').hidden = false;
+  $('#enrollment-recovery-message').textContent = copy.message;
+  $('#retry-enrollment').hidden = !retryAllowed;
+  $('#check-enrollment').hidden = true;
+  $('#cancel-enrollment-setup').hidden = retryAllowed;
+  $('#restart-enrollment').hidden = retryAllowed;
+  wizardStatus(copy.message, 'error');
 }
 
 function hideEnrollmentRecovery() {
@@ -1326,6 +1430,8 @@ function stopEnrollmentPolling() {
 
 function scheduleEnrollmentPolling() {
   if (state.enrollmentPollTimer || state.enrollmentPollCount >= ENROLLMENT_POLL_LIMIT || !state.activeEnrollment?.id) return;
+  if (ENROLLMENT_TERMINAL_STATES.has(state.activeEnrollment.status)) return;
+  clearCreatingTerminal();
   state.enrollmentPollTimer = setTimeout(pollEnrollment, ENROLLMENT_POLL_MS);
 }
 
@@ -1347,6 +1453,7 @@ async function retryEnrollment() {
   if (!state.activeEnrollment) return;
   $('#retry-enrollment').disabled = true;
   hideEnrollmentRecovery();
+  clearCreatingTerminal();
   try {
     updateResumeMetadata({ retryIdempotencyKey: createIdempotencyKey() });
     const data = await requestEnrollmentRetry(state.activeEnrollment);
@@ -1372,8 +1479,8 @@ async function checkActiveEnrollment() {
 }
 
 async function revokeActiveEnrollment() {
-  const enrollment = activeResumeEnrollment();
-  if (!enrollment || !window.confirm('Cancel this enrollment? Its saved consent and processing state will be revoked.')) return;
+  const enrollment = activeResumeEnrollment() || state.activeEnrollment;
+  if (!enrollment || !window.confirm('Cancel this enrollment? Its saved consent and processing state will be revoked.')) return false;
   try {
     const key = state.resume?.revokeIdempotencyKey || createIdempotencyKey();
     updateResumeMetadata({ revokeIdempotencyKey: key, enrollmentId: enrollment.id });
@@ -1382,7 +1489,45 @@ async function revokeActiveEnrollment() {
     state.activeEnrollment = null;
     await loadEnrollments();
     notice('Enrollment cancelled.', 'success');
-  } catch (error) { notice(error.message, 'error'); }
+    return true;
+  } catch (error) {
+    notice(error.message, 'error');
+    return false;
+  }
+}
+
+async function cancelEnrollmentSetup() {
+  const cancelled = await revokeActiveEnrollment();
+  if (cancelled) closeWizard(true);
+}
+
+async function restartEnrollment() {
+  const enrollment = state.activeEnrollment;
+  if (!enrollment?.id) {
+    beginNewEnrollment();
+    hideEnrollmentRecovery();
+    setStep(1);
+    return;
+  }
+  $('#restart-enrollment').disabled = true;
+  try {
+    const key = state.resume?.revokeIdempotencyKey || createIdempotencyKey();
+    updateResumeMetadata({ revokeIdempotencyKey: key, enrollmentId: enrollment.id });
+    await api('/api/video-os-lite/enrollments', { method: 'POST', body: JSON.stringify(enrollmentBody('revoke', enrollment, key)) });
+    clearResumeMetadata();
+    state.activeEnrollment = null;
+    await loadEnrollments();
+    beginNewEnrollment();
+    hideEnrollmentRecovery();
+    setStep(1);
+    wizardStatus('Starting a new identity setup.');
+  } catch (error) {
+    showTerminalEnrollment(state.activeEnrollment || enrollment);
+    $('#enrollment-recovery-message').textContent = error.message;
+    wizardStatus(error.message, 'error');
+  } finally {
+    $('#restart-enrollment').disabled = false;
+  }
 }
 
 async function openEnrollmentResume() {
@@ -1404,11 +1549,14 @@ async function openEnrollmentResume() {
   } else if (enrollment.status === 'IDENTITY_READY') {
     updateProgress();
     setStep(5);
+  } else if (ENROLLMENT_TERMINAL_STATES.has(enrollment.status)) {
+    setStep(4);
+    updateProgress();
+    showTerminalEnrollment(enrollment);
   } else {
     setStep(4);
     updateProgress();
-    if (enrollment.status === 'FAILED') showEnrollmentRecovery(enrollment.failure?.message || 'Enrollment needs attention.', enrollment.retry?.allowed === true);
-    else scheduleEnrollmentPolling();
+    scheduleEnrollmentPolling();
   }
 }
 
@@ -2096,6 +2244,8 @@ $('#commit-retry-anyway').addEventListener('click', retryCommitSameRequest);
 $('#resume-polling').addEventListener('click', resumeIdentityPolling);
 $('#retry-enrollment').addEventListener('click', retryEnrollment);
 $('#check-enrollment').addEventListener('click', checkActiveEnrollment);
+$('#cancel-enrollment-setup').addEventListener('click', cancelEnrollmentSetup);
+$('#restart-enrollment').addEventListener('click', () => { void restartEnrollment(); });
 $('#ready-create-provider').addEventListener('click', () => {
   if (!state.activeIdentityId) return notice('Reload this identity before starting provider creation.', 'error');
   void submitIdentity(state.activeIdentityId);

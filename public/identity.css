@@ -631,6 +631,8 @@ legend { margin: 0 0 22px; padding: 0; font-size: 23px; font-weight: 650; letter
 .uncertain-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 [aria-invalid="true"] { border-color: var(--danger) !important; }
 .processing-orbit { width: 92px; height: 92px; position: relative; margin: 8px auto 20px; border: 1px solid var(--border); border-radius: 50%; animation: spin 2.6s linear infinite; }
+[data-panel="4"][data-terminal="true"] .processing-orbit { display: none; animation: none; }
+#enrollment-failure-heading { margin: 4px 0 8px; color: var(--danger); }
 .processing-orbit span { width: 14px; height: 14px; position: absolute; top: -7px; left: 38px; border-radius: 50%; background: var(--primary); }
 .component-progress { max-width: 760px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 24px auto; }
 .progress-card { padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-muted); }

@@ -854,6 +854,47 @@ test('partial provider failure retries only the failed component and archive rem
   await expect(page.getByRole('heading', { name: 'Owner Studio' })).toHaveCount(0);
 });
 
+test('a failed enrollment with no retry stops the spinner and shows recovery actions', async ({ page }) => {
+  await page.clock.install();
+  const failed = enrollment('FAILED', {
+    failure: {
+      code: 'FRAME_RATE_UNAVAILABLE',
+      message: 'Enrollment source frame rate could not be verified.',
+      retryable: false,
+    },
+    retry: null,
+  });
+  let detailReads = 0;
+  page.on('request', request => {
+    const url = request.url();
+    if (request.method() === 'GET' && url.includes('/api/video-os-lite/enrollments') && url.includes('enrollmentId=')) detailReads += 1;
+  });
+  await mockApp(page, { initialEnrollment: failed });
+  await page.goto('/identity.html');
+  await page.getByRole('button', { name: 'Continue setup' }).click();
+
+  const recovery = page.locator('#enrollment-recovery');
+  await expect(page.locator('[data-panel="4"]')).toHaveAttribute('data-terminal', 'true');
+  await expect(page.getByRole('heading', { name: 'Setup could not finish' })).toBeVisible();
+  await expect(recovery).toContainText('frame rate we can verify');
+  await expect(recovery).not.toContainText('FRAME_RATE_UNAVAILABLE');
+  await expect(page.locator('#creating-heading')).toBeHidden();
+  await expect(recovery.getByRole('button', { name: 'Cancel setup' })).toBeVisible();
+  await expect(recovery.getByRole('button', { name: 'Start over' })).toBeVisible();
+  await expect(recovery.getByRole('button', { name: 'Retry', exact: true })).toBeHidden();
+  await expect(recovery.getByRole('button', { name: 'Check status' })).toBeHidden();
+  const spinner = await page.locator('[data-panel="4"] .processing-orbit').evaluate(element => {
+    const style = getComputedStyle(element);
+    return { animationName: style.animationName, display: style.display };
+  });
+  expect(spinner.display).toBe('none');
+  expect(spinner.animationName).toBe('none');
+
+  const readsAfterPaint = detailReads;
+  await page.clock.fastForward(12_000);
+  expect(detailReads).toBe(readsAfterPaint);
+});
+
 test('wizard remains keyboard-contained and restores focus', async ({ page }) => {
   await mockApp(page);
   await page.goto('/identity.html');
