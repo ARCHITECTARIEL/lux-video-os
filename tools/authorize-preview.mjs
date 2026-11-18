@@ -44,28 +44,78 @@ export function requestedTarget(argv = []) {
   return values.length === 0 ? undefined : values[0];
 }
 
+const TOOLING_SHA = /^[0-9a-f]{7,64}$/i;
+
+function statusPath(record, headerCount) {
+  const parts = record.split(' ');
+  if (parts.length <= headerCount) throw new Error('Unreadable git status entry. Refusing to restore.');
+  return parts.slice(headerCount).join(' ');
+}
+
+// porcelain v2 -z. A rename/copy is `2 ... <new>\0<orig>\0`. Both paths count:
+// keeping only the original lets `git mv` an allowlisted file to api/x.js,
+// then recreating the original, slip past the name check.
 export function parseGitStatusPaths(stdout) {
   const paths = [];
   const records = String(stdout ?? '').split('\0');
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index];
     if (!record) continue;
-    if (record.length < 4 || record[2] !== ' ') throw new Error('Unreadable git status entry. Refusing to restore.');
-    const code = record.slice(0, 2);
-    if (code.includes('R') || code.includes('C')) {
-      const renamed = records[index + 1];
-      if (!renamed) throw new Error('Unreadable git status rename. Refusing to restore.');
+    if (record.startsWith('1 ')) paths.push(statusPath(record, 8));
+    else if (record.startsWith('u ')) paths.push(statusPath(record, 10));
+    else if (record.startsWith('2 ')) {
+      const destination = statusPath(record, 9);
+      const original = records[index + 1];
+      if (!original) throw new Error('Unreadable git status rename. Refusing to restore.');
       index += 1;
-      paths.push(renamed);
-    } else paths.push(record.slice(3));
+      paths.push(destination, original);
+    } else if (record.startsWith('? ') || record.startsWith('! ')) paths.push(record.slice(2));
+    else throw new Error('Unreadable git status entry. Refusing to restore.');
   }
   return [...new Set(paths)].sort();
 }
 
 export function readChangedPaths(root, spawn = spawnSync) {
-  const run = spawn('git', ['status', '--porcelain=v1', '-z'], { cwd: root, encoding: 'utf8' });
+  const run = spawn('git', ['status', '--porcelain=v2', '-z'], { cwd: root, encoding: 'utf8' });
   if (run.error || run.status !== 0) throw new Error('Git status is unavailable. Refusing to restore.');
   return parseGitStatusPaths(run.stdout);
+}
+
+export function toolingShaArgument(argv = []) {
+  const values = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (typeof arg !== 'string') continue;
+    if (arg === '--tooling-sha') {
+      values.push(argv[index + 1]);
+      index += 1;
+    } else if (arg.startsWith('--tooling-sha=')) values.push(arg.slice('--tooling-sha='.length));
+  }
+  if (values.length > 1) throw new Error('Refusing repeated --tooling-sha.');
+  return values[0];
+}
+
+export async function compareOverlayBytes({ root, paths, sha, spawn = spawnSync, readFileImpl = readFile }) {
+  if (!sha) throw new Error('Dirty preview overlay requires --tooling-sha=<reviewed-commit>. Refusing to restore.');
+  if (!TOOLING_SHA.test(sha)) throw new Error(`Tooling SHA ${sha} is not a commit id. Refusing to restore.`);
+  const verify = spawn('git', ['rev-parse', '--verify', '--quiet', `${sha}^{commit}`], { cwd: root, encoding: 'utf8' });
+  if (verify.error || verify.status !== 0) throw new Error(`Tooling SHA ${sha} is unreachable. Refusing to restore.`);
+  const lines = [];
+  let ok = true;
+  for (const path of paths) {
+    const shown = spawn('git', ['show', `${sha}:${path}`], { cwd: root });
+    let actual = null;
+    try { actual = await readFileImpl(join(root, path)); } catch { actual = null; }
+    if (shown.error || shown.status !== 0 || !Buffer.isBuffer(shown.stdout) || !Buffer.isBuffer(actual)) {
+      lines.push(`${path}: unreachable at ${sha}`);
+      ok = false;
+      continue;
+    }
+    const match = actual.equals(shown.stdout);
+    lines.push(`${path}: ${match ? 'match' : 'mismatch'} against ${sha}`);
+    if (!match) ok = false;
+  }
+  return { ok, lines };
 }
 
 export function previewOverlayDecision(paths) {
@@ -283,6 +333,15 @@ export async function authorizePreview({ argv = process.argv, root = fileURLToPa
   if (!dirty.allowed) {
     throw new Error(`Preview restore refuses this dirty checkout.\n${changedListing}\nThe only dirty checkout that can be restored is one whose changed paths are exactly: ${PREVIEW_OVERLAY_PATHS.join(', ')}.`);
   }
+  let toolingSha = null;
+  if (dirty.changed.length > 0) {
+    toolingSha = toolingShaArgument(argv);
+    const comparison = await compareOverlayBytes({ root, paths: dirty.changed, sha: toolingSha });
+    logError(comparison.lines.join('\n'));
+    if (!comparison.ok) {
+      throw new Error(`Overlay files are not byte-identical to the tooling commit.\n${comparison.lines.join('\n')}`);
+    }
+  }
   await assertPreviewWorkflowArtifact(location);
 
   const warning = previewUploadLimitWarning(liveInventory.length);
@@ -306,6 +365,7 @@ export async function authorizePreview({ argv = process.argv, root = fileURLToPa
     fileCount: liveInventory.length,
     uploadLimitWarning: warning,
     changedPaths: dirty.changed,
+    toolingSha,
     restoredTo: destination,
     deployCommand: PREVIEW_DEPLOY_COMMAND,
     note: 'previewDeployAuthorized restores this quarantined preview artifact for a non-production deploy. It is not production authorization. This tool does not deploy.',

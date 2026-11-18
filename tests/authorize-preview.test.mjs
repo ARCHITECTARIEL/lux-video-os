@@ -401,7 +401,7 @@ test('preview tooling does not reference database env or a production deploy', a
   assert.doesNotMatch(source, /DATABASE_URL/);
   assert.doesNotMatch(source, /check-migrations/);
   assert.doesNotMatch(source, /vercel deploy --prebuilt --prod/);
-  assert.match(source, /git', \['status', '--porcelain=v1', '-z'\]/);
+  assert.match(source, /git', \['status', '--porcelain=v2', '-z'\]/);
   assert.match(source, /PREVIEW_DEPLOY_COMMAND/);
   assert.match(limit, /export const PREVIEW_DEPLOY_COMMAND = 'vercel deploy --prebuilt --archive=tgz'/);
   assert.doesNotMatch(limit, /--prod/);
@@ -421,14 +421,20 @@ test('dirty paths are allowed only for the exact tooling overlay', () => {
   assert.equal(previewOverlayDecision(PREVIEW_OVERLAY_PATHS).allowed, true);
   assert.equal(previewOverlayDecision([...PREVIEW_OVERLAY_PATHS, 'lib/extra.js']).allowed, false);
   assert.equal(previewOverlayDecision(PREVIEW_OVERLAY_PATHS.slice(1)).allowed, false);
+  const prefixed = PREVIEW_OVERLAY_PATHS.map(path => path === 'package.json' ? 'package.json.evil' : path);
+  const shortened = PREVIEW_OVERLAY_PATHS.map(path => path === 'package.json' ? 'package.jso' : path);
+  assert.equal(previewOverlayDecision(prefixed).allowed, false);
+  assert.equal(previewOverlayDecision(shortened).allowed, false);
   assert.equal(formatChangedPaths([]), '(none)');
   assert.equal(formatChangedPaths(['lib/extra.js']), '- lib/extra.js');
-  assert.deepEqual(parseGitStatusPaths(' M package.json\0?? tools/authorize-preview.mjs\0R  old.js\0lib/renamed.js\0'), ['lib/renamed.js', 'package.json', 'tools/authorize-preview.mjs']);
+  const rename = '2 R. N... 100644 100644 100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb R100 api/x.js\0tools/build-production.mjs\0? tools/build-production.mjs\0';
+  assert.deepEqual(parseGitStatusPaths(rename), ['api/x.js', 'tools/build-production.mjs']);
 });
 
 function git(cwd, args) {
   const run = spawnSync('git', args, { cwd, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr || run.stdout || args.join(' '));
+  return (run.stdout || '').trim();
 }
 
 async function overlayCheckout({ withLibChange }) {
@@ -513,15 +519,24 @@ test('an overlay plus an uncommitted lib change is refused and the changed paths
   }
 });
 
+async function pinReviewedOverlay(dir) {
+  git(dir, ['add', '--', ...PREVIEW_OVERLAY_PATHS]);
+  git(dir, ['commit', '-m', 'reviewed tooling']);
+  const sha = git(dir, ['rev-parse', 'HEAD']);
+  git(dir, ['reset', '--mixed', 'HEAD~1']);
+  return sha;
+}
+
 test('the exact tooling overlay is restored and its changed paths are printed', async () => {
   const dir = await overlayCheckout({ withLibChange: false });
   try {
+    const toolingSha = await pinReviewedOverlay(dir);
     const source = await captureSourceIdentity(dir);
     const artifact = await sealPreviewOutput(dir, source);
     const errors = [];
     const restored = [];
     const result = await authorizePreview({
-      argv: argv(artifact.manifestPath),
+      argv: argv(artifact.manifestPath, [`--tooling-sha=${toolingSha}`]),
       root: dir,
       deps: {
         restoreOutput: async (from, to) => { restored.push([from, to]); },
@@ -531,12 +546,92 @@ test('the exact tooling overlay is restored and its changed paths are printed', 
     });
     assert.equal(result.previewDeployAuthorized, true);
     assert.equal(result.releaseAuthorized, false);
+    assert.equal(result.toolingSha, toolingSha);
     assert.deepEqual(result.changedPaths, [...PREVIEW_OVERLAY_PATHS]);
     const listing = errors.find(message => message.startsWith('Changed paths:'));
     for (const path of PREVIEW_OVERLAY_PATHS) assert.match(listing, new RegExp(path.replaceAll('.', '\\.')));
+    assert.ok(errors.some(message => PREVIEW_OVERLAY_PATHS.every(item => message.includes(`${item}: match against ${toolingSha}`))));
     assert.equal(restored.length, 1);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('renaming an allowlisted file to api/x.js and recreating the original is refused', async () => {
+  const dir = await overlayCheckout({ withLibChange: false });
+  try {
+    await mkdir(join(dir, 'api'), { recursive: true });
+    const reviewed = await readFile(join(dir, 'tools/build-production.mjs'));
+    git(dir, ['mv', 'tools/build-production.mjs', 'api/x.js']);
+    await writeFile(join(dir, 'tools/build-production.mjs'), reviewed);
+    const source = await captureSourceIdentity(dir);
+    const artifact = await sealPreviewOutput(dir, source);
+    const errors = [];
+    await assert.rejects(() => authorizePreview({
+      argv: argv(artifact.manifestPath),
+      root: dir,
+      deps: { restoreOutput: async () => { throw new Error('restored'); }, log() {}, logError: message => errors.push(message) },
+    }), /api\/x\.js/);
+    assert.ok(errors.some(message => message.includes('api/x.js') && message.startsWith('Changed paths:')));
+    await stat(artifact.output);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('edited overlay bytes, an extra package.json script, and a wrong or missing tooling SHA are refused', async () => {
+  const dir = await overlayCheckout({ withLibChange: false });
+  const editedBuild = await overlayCheckout({ withLibChange: false });
+  const scripted = await overlayCheckout({ withLibChange: false });
+  try {
+    const baseSha = git(dir, ['rev-parse', 'HEAD']);
+    await pinReviewedOverlay(dir);
+    const editedSha = await pinReviewedOverlay(editedBuild);
+    await writeFile(join(editedBuild, 'tools/build-production.mjs'), 'export const tampered = true;\n', { flag: 'a' });
+    const editedSource = await captureSourceIdentity(editedBuild);
+    const editedArtifact = await sealPreviewOutput(editedBuild, editedSource);
+    const buildErrors = [];
+    await assert.rejects(() => authorizePreview({
+      argv: argv(editedArtifact.manifestPath, [`--tooling-sha=${editedSha}`]),
+      root: editedBuild,
+      deps: { restoreOutput: async () => { throw new Error('restored'); }, log() {}, logError: message => buildErrors.push(message) },
+    }), /tools\/build-production\.mjs: mismatch/);
+    assert.ok(buildErrors.some(message => message.includes('tools/build-production.mjs: mismatch')));
+
+    const scriptSha = await pinReviewedOverlay(scripted);
+    const packageJson = JSON.parse(await readFile(join(scripted, 'package.json'), 'utf8'));
+    packageJson.scripts = { ...(packageJson.scripts || {}), extra: 'echo nope' };
+    await writeFile(join(scripted, 'package.json'), `${JSON.stringify(packageJson)}\n`);
+    const scriptSource = await captureSourceIdentity(scripted);
+    const scriptArtifact = await sealPreviewOutput(scripted, scriptSource);
+    await assert.rejects(() => authorizePreview({
+      argv: argv(scriptArtifact.manifestPath, [`--tooling-sha=${scriptSha}`]),
+      root: scripted,
+      deps: { restoreOutput: async () => { throw new Error('restored'); }, log() {}, logError() {} },
+    }), /package\.json: mismatch/);
+
+    const source = await captureSourceIdentity(dir);
+    const artifact = await sealPreviewOutput(dir, source);
+    await assert.rejects(() => authorizePreview({
+      argv: argv(artifact.manifestPath),
+      root: dir,
+      deps: { restoreOutput: async () => { throw new Error('restored'); }, log() {}, logError() {} },
+    }), /requires --tooling-sha/);
+    await assert.rejects(() => authorizePreview({
+      argv: argv(artifact.manifestPath, [`--tooling-sha=${'a'.repeat(40)}`]),
+      root: dir,
+      deps: { restoreOutput: async () => { throw new Error('restored'); }, log() {}, logError() {} },
+    }), /unreachable/);
+    await assert.rejects(() => authorizePreview({
+      argv: argv(artifact.manifestPath, [`--tooling-sha=${baseSha}`]),
+      root: dir,
+      deps: { restoreOutput: async () => { throw new Error('restored'); }, log() {}, logError() {} },
+    }), /mismatch|unreachable/);
+    await stat(artifact.output);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(editedBuild, { recursive: true, force: true });
+    await rm(scripted, { recursive: true, force: true });
   }
 });
 
