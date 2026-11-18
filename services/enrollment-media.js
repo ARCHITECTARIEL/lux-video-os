@@ -237,6 +237,9 @@ function inputStreamMetadata(stderr) {
   const inputFormat = /^Input #0,\s*(.+?),\s*from\s/m.exec(inputSection)?.[1]?.toLowerCase();
   const rotationMatch = /rotation of\s+(-?\d+(?:\.\d+)?)\s+degrees/i.exec(inputSection)
     || /\brotate\s*:\s*(-?\d+(?:\.\d+)?)/i.exec(inputSection);
+  // Only an explicit numeric "N fps" token is a frame rate. Chrome's
+  // variable-frame-rate WebM prints "1k tbr, 1k tbn" and no fps token.
+  // "1k", "tbr", and "tbn" are time-base labels, never a frame rate.
   const frameRateMatch = /(?:^|[,\s])(\d+(?:\.\d+)?)\s+fps(?:[,\s]|$)/i.exec(videos[0] || '');
   const durationMatch = /\bDuration:\s*(\d{1,3}):(\d{2}):(\d{2}(?:\.\d+)?)/i.exec(inputSection);
   const declaredDurationMs = durationMatch
@@ -328,15 +331,9 @@ function assertSourceContract(streams, container) {
   if (!Number.isSafeInteger(pixelArea) || pixelArea > ENROLLMENT_MEDIA_LIMITS.maxPixelArea) {
     fail('PIXEL_AREA_LIMIT', 'Enrollment source decoded pixel area is unsupported.');
   }
-  if (!Number.isFinite(streams.frameRate) || streams.frameRate <= 0) {
-    fail('FRAME_RATE_UNAVAILABLE', 'Enrollment source frame rate could not be verified.');
-  }
-  if (streams.frameRate > ENROLLMENT_MEDIA_LIMITS.maxFrameRate) {
-    fail('FRAME_RATE_LIMIT', 'Enrollment source frame rate is unsupported.');
-  }
-  if (pixelArea * streams.frameRate > ENROLLMENT_MEDIA_LIMITS.maxPixelRate) {
-    fail('PIXEL_RATE_LIMIT', 'Enrollment source decoded pixel rate is unsupported.');
-  }
+  // A missing fps token is filled in from the decode pass. A present token
+  // that is not a positive rate still cannot be verified.
+  if (streams.frameRate !== undefined) assertFrameRateBudget(streams.frameRate, streams.width, streams.height);
   if (Number.isFinite(streams.declaredDurationMs) && streams.declaredDurationMs > ENROLLMENT_MEDIA_LIMITS.maxDurationMs) {
     fail('DURATION_LIMIT', 'Enrollment source exceeds 60 seconds.');
   }
@@ -348,7 +345,22 @@ function assertSourceContract(streams, container) {
   }
 }
 
+function assertFrameRateBudget(frameRate, width, height) {
+  if (!Number.isFinite(frameRate) || frameRate <= 0) {
+    fail('FRAME_RATE_UNAVAILABLE', 'Enrollment source frame rate could not be verified.');
+  }
+  if (frameRate > ENROLLMENT_MEDIA_LIMITS.maxFrameRate) {
+    fail('FRAME_RATE_LIMIT', 'Enrollment source frame rate is unsupported.');
+  }
+  const pixelRate = width * height * frameRate;
+  if (!Number.isFinite(pixelRate) || pixelRate > ENROLLMENT_MEDIA_LIMITS.maxPixelRate) {
+    fail('PIXEL_RATE_LIMIT', 'Enrollment source decoded pixel rate is unsupported.');
+  }
+}
+
 function assertDecodedVideoBudget(progress, streams) {
+  // Duration is the decoded output timestamp (ffmpeg out_time_us), not the
+  // container Duration header. MediaRecorder WebM often omits that header.
   if (progress.durationMs < ENROLLMENT_MEDIA_LIMITS.minDurationMs) {
     fail('DURATION_MINIMUM', 'Enrollment source must be at least 5 seconds.');
   }
@@ -447,8 +459,18 @@ export async function prepareEnrollmentMedia({ filePath, expectedSha256, consent
   const videoDecode = await runFfmpeg(ffmpegPath, [
     ...commonInputArgs(pathname), '-map', '0:v:0', '-an', '-threads', '1', '-f', 'null', '-',
   ], remainingTimeout(deadlineAt));
+  if (videoDecode.timedOut) fail('FFMPEG_TIMEOUT', 'Video decode timed out.');
+  if (videoDecode.diagnosticsExceeded) fail('FFMPEG_DIAGNOSTIC_LIMIT', 'Video decode diagnostics exceeded the safe limit.');
+  if (videoDecode.code !== 0) fail('VIDEO_DECODE_FAILED', 'Video decode did not complete.');
+  const decodedPreview = progressMetadata(videoDecode.stdout);
+  if (streams.frameRate === undefined && (!decodedPreview.frames || !(decodedPreview.durationMs > 0))) {
+    fail('FRAME_RATE_UNAVAILABLE', 'Enrollment source frame rate could not be verified.');
+  }
   const videoProgress = assertProcess(videoDecode, 'Video decode');
   if (!videoProgress.frames) fail('VIDEO_FRAMES_REQUIRED', 'Enrollment source contains no decoded video frames.');
+  if (streams.frameRate === undefined) {
+    assertFrameRateBudget(videoProgress.frames / (videoProgress.durationMs / 1_000), streams.width, streams.height);
+  }
   assertDecodedVideoBudget(videoProgress, streams);
 
   let temporaryDirectory;

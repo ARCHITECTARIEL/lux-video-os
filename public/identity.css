@@ -513,6 +513,17 @@ legend { margin: 0 0 22px; padding: 0; font-size: 23px; font-weight: 650; letter
 .dropzone small { font-size: 12px; }
 .photo-picker { display: grid; gap: 12px; }
 .photo-capture-row { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.photo-camera { display: grid; gap: 12px; }
+.photo-camera video,
+.photo-camera canvas {
+  width: 100%;
+  max-height: 360px;
+  display: block;
+  border-radius: 10px;
+  background: #0f1722;
+  object-fit: contain;
+}
+.photo-camera-actions { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; }
 .guidance { padding: 24px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-muted); }
 .guidance ul { margin: 15px 0 0; padding-left: 20px; color: var(--muted); }
 .guidance li + li { margin-top: 10px; }
@@ -620,6 +631,8 @@ legend { margin: 0 0 22px; padding: 0; font-size: 23px; font-weight: 650; letter
 .uncertain-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 [aria-invalid="true"] { border-color: var(--danger) !important; }
 .processing-orbit { width: 92px; height: 92px; position: relative; margin: 8px auto 20px; border: 1px solid var(--border); border-radius: 50%; animation: spin 2.6s linear infinite; }
+[data-panel="4"][data-terminal="true"] .processing-orbit { display: none; animation: none; }
+#enrollment-failure-heading { margin: 4px 0 8px; color: var(--danger); }
 .processing-orbit span { width: 14px; height: 14px; position: absolute; top: -7px; left: 38px; border-radius: 50%; background: var(--primary); }
 .component-progress { max-width: 760px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 24px auto; }
 .progress-card { padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-muted); }
@@ -737,6 +750,9 @@ legend { margin: 0 0 22px; padding: 0; font-size: 23px; font-weight: 650; letter
   .permission-explainer { grid-template-columns: 1fr; }
   .permission-mark { width: 38px; height: 38px; }
   .video-stage, .video-placeholder { min-height: min(56dvh, 390px); }
+  .photo-capture-row { align-items: stretch; flex-direction: column; }
+  .photo-capture-row .button, .photo-camera-actions .button { width: 100%; min-height: 48px; }
+  .photo-camera-actions { align-items: stretch; flex-direction: column; }
   .video-actions { align-items: stretch; flex-direction: column; }
   .video-actions > span { text-align: center; }
   .video-actions .button { width: 100%; min-height: 48px; }

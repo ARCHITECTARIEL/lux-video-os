@@ -159,6 +159,14 @@
             }
         },
         {
+            "src": "/sign-in-link",
+            "dest": "/sign-in-link.html",
+            "headers": {
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer"
+            }
+        },
+        {
             "src": "/provider-consent",
             "dest": "/provider-consent.html",
             "headers": {

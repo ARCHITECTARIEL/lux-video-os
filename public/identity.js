@@ -9,8 +9,21 @@ import {
   uploadEnrollmentVideo,
   writeEnrollmentResume,
 } from './enrollment-client.js';
+import {
+  cameraAccessMessage,
+  PHOTO_CAPTURE_LIMITS,
+  PHOTO_TOO_SMALL_MESSAGE,
+  planPhotoDownscale,
+  portraitCameraConstraintAttempts,
+  portraitCropLayout,
+  prefersNativePhotoCapture,
+  recordingWallClockSeconds,
+  selectSnapshotEncoding,
+  signedOutNotice,
+  validateVideoFile,
+  VIDEO_TYPES,
+} from './identity-capture.js';
 
-const VIDEO_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/webm']);
 const DEFAULT_VIDEO_LIMITS = Object.freeze({
   maximumSizeInBytes: 100 * 1024 * 1024,
   minimumDurationSeconds: 5,
@@ -19,6 +32,32 @@ const DEFAULT_VIDEO_LIMITS = Object.freeze({
   allowedContentTypes: [...VIDEO_TYPES],
 });
 const ENROLLMENT_ACTIVE_STATES = new Set(['AWAITING_UPLOAD', 'SOURCE_HASHING', 'AWAITING_EXTRACTION_CONSENT', 'EXTRACTION_QUEUED', 'EXTRACTING']);
+const ENROLLMENT_TERMINAL_STATES = new Set(['FAILED', 'REVOKED', 'EXPIRED', 'CANCELLED', 'CANCELED']);
+const ENROLLMENT_FAILURE_PLAIN = Object.freeze({
+  FRAME_RATE_UNAVAILABLE: 'This recording needs a frame rate we can verify. Record it again, or upload a phone video with a steady frame rate.',
+  FRAME_RATE_LIMIT: 'This video is faster than 120 frames per second. Record it again, or upload a slower phone video.',
+  PIXEL_RATE_LIMIT: 'This video is too large and too fast to prepare. Use a smaller or slower recording.',
+  PIXEL_AREA_LIMIT: 'This video is too large to prepare. Use a smaller recording.',
+  DIMENSION_LIMIT: 'This video is wider or taller than 4096 pixels. Use a smaller recording.',
+  DIMENSIONS_UNAVAILABLE: 'This video size could not be read. Record it again, or upload an MP4, MOV, or WebM file.',
+  DURATION_MINIMUM: 'The phone video needs to be at least 5 seconds.',
+  DURATION_LIMIT: 'The phone video needs to be 60 seconds or shorter.',
+  FRAME_COUNT_LIMIT: 'This video has too many frames to prepare. Use a shorter or slower recording.',
+  VIDEO_FRAMES_REQUIRED: 'This video has no picture frames to prepare. Record it again.',
+  VIDEO_CODEC_UNSUPPORTED: 'This video codec is not supported. Use an MP4, MOV, or WebM recording.',
+  AUDIO_CODEC_UNSUPPORTED: 'This WebM recording needs Opus audio. Record it again, or upload an MP4.',
+  CONTAINER_UNSUPPORTED: 'Use an MP4, MOV, or WebM video.',
+  VIDEO_STREAM_REQUIRED: 'This file needs a video track. Record it again, or choose a phone video.',
+  AUDIO_STREAM_REQUIRED: 'This file needs an audio track. Record it again with the microphone on.',
+  STREAM_COUNT_UNSUPPORTED: 'Use a video with one picture track and one audio track.',
+  AUDIO_NEAR_SILENT: 'This recording is too quiet to prepare a voice. Record it again somewhere quieter.',
+  EMPTY_MEDIA: 'This video file is empty. Choose the recording again.',
+  SOURCE_BYTE_LIMIT: 'This video is larger than 100 MB. Use a shorter recording.',
+  MEDIA_INSPECTION_FAILED: 'This video could not be read. Record it again, or upload an MP4, MOV, or WebM file.',
+  VIDEO_DECODE_FAILED: 'This video could not be played back for setup. Record it again, or upload an MP4.',
+  FFMPEG_TIMEOUT: 'Preparing this video took too long. Record a shorter video and try again.',
+  FFMPEG_UNAVAILABLE: 'Video preparation is unavailable right now. Try again in a little while.',
+});
 const CONSENT_IDS = ['consent-face', 'consent-extraction', 'consent-voice', 'consent-process', 'consent-archive', 'consent-provider-exposure'];
 const REQUEST_TIMEOUT_MS = 30_000;
 const ENROLLMENT_POLL_MS = 2_000;
@@ -38,6 +77,10 @@ const state = {
   recorder: null,
   recordingTimer: null,
   captureRequestToken: 0,
+  photoCamera: null,
+  photoCaptureToken: 0,
+  photoPrepareToken: 0,
+  photoFrozenFrame: null,
   identities: [],
   providerSubmissionEnabled: false,
   hostedConsentByIdentity: new Map(),
@@ -531,6 +574,37 @@ function activeResumeEnrollment() {
     || null;
 }
 
+function enrollmentFailureMessage(failure) {
+  const code = String(failure?.code || '');
+  if (Object.hasOwn(ENROLLMENT_FAILURE_PLAIN, code)) return ENROLLMENT_FAILURE_PLAIN[code];
+  const message = String(failure?.message || '').trim();
+  if (message && !/^[A-Z0-9_-]+$/.test(message)) return message;
+  return 'Setup could not finish. Start over with a new photo and phone video.';
+}
+
+function terminalEnrollmentCopy(enrollment) {
+  const status = String(enrollment?.status || '');
+  if (['REVOKED', 'CANCELLED', 'CANCELED'].includes(status)) {
+    return {
+      heading: 'Setup was cancelled',
+      message: 'This setup was cancelled. Start over when you want to create an identity.',
+    };
+  }
+  if (status === 'EXPIRED') {
+    const failure = enrollment?.failure;
+    return {
+      heading: 'This setup expired',
+      message: failure?.code || failure?.message
+        ? enrollmentFailureMessage(failure)
+        : 'This setup expired before it finished. Start over with a new photo and phone video.',
+    };
+  }
+  return {
+    heading: 'Setup could not finish',
+    message: enrollmentFailureMessage(enrollment?.failure),
+  };
+}
+
 function enrollmentSummary(enrollment) {
   const detail = {
     AWAITING_UPLOAD: 'Waiting for the original phone video upload.',
@@ -538,7 +612,11 @@ function enrollmentSummary(enrollment) {
     AWAITING_EXTRACTION_CONSENT: 'Waiting for explicit extraction and voice permissions.',
     EXTRACTION_QUEUED: 'Voice-sample extraction is queued.',
     EXTRACTING: 'Preparing the authorized reusable voice sample.',
-    FAILED: enrollment?.failure?.message || 'Enrollment needs attention.',
+    FAILED: enrollmentFailureMessage(enrollment?.failure),
+    REVOKED: 'This setup was cancelled.',
+    CANCELLED: 'This setup was cancelled.',
+    CANCELED: 'This setup was cancelled.',
+    EXPIRED: 'This setup expired before it finished.',
   }[enrollment?.status];
   return detail ? `${statusLabel(enrollment?.status)}: ${detail}` : statusLabel(enrollment?.status);
 }
@@ -608,6 +686,7 @@ function setProviderReconsentMode(enabled) {
 }
 
 function setStep(step) {
+  if (step !== 1) stopPhotoCamera();
   state.step = step;
   if (step === 3) syncConsentMediaReview();
   document.querySelectorAll('[data-panel]').forEach(panel => { panel.hidden = Number(panel.dataset.panel) !== step; });
@@ -646,6 +725,7 @@ function setStep(step) {
 }
 
 function beginNewEnrollment() {
+  clearCreatingTerminal();
   setProviderReconsentMode(false);
   state.activeEnrollment = null;
   state.activeIdentityId = null;
@@ -736,6 +816,7 @@ function resetWizard() {
   clearValidation();
   clearConsentChecks();
   wizardStatus();
+  clearCreatingTerminal();
   if (!state.activeEnrollment?.id) clearResumeMetadata();
   if ($('#notice').dataset.origin === 'wizard') notice('');
 }
@@ -1105,6 +1186,7 @@ async function advanceEnrollment(enrollment) {
     return;
   }
   if (['SOURCE_HASHING', 'EXTRACTION_QUEUED', 'EXTRACTING'].includes(enrollment.status)) {
+    clearCreatingTerminal();
     setStep(4);
     scheduleEnrollmentPolling();
     return;
@@ -1118,15 +1200,10 @@ async function advanceEnrollment(enrollment) {
     setStep(5);
     return;
   }
-  if (enrollment.status === 'FAILED') {
-    setStep(4);
-    showEnrollmentRecovery(enrollment.failure?.message || 'Enrollment could not complete.', enrollment.retry?.allowed === true);
+  if (ENROLLMENT_TERMINAL_STATES.has(enrollment.status)) {
+    if (enrollment.status !== 'FAILED') clearResumeMetadata();
+    showTerminalEnrollment(enrollment);
     return;
-  }
-  if (['REVOKED', 'EXPIRED'].includes(enrollment.status)) {
-    clearResumeMetadata();
-    stopEnrollmentPolling();
-    throw new Error(`This enrollment is ${enrollment.status.toLowerCase()} and cannot continue.`);
   }
 }
 
@@ -1135,6 +1212,7 @@ async function createOrResumeEnrollment() {
   if (state.activeEnrollment?.id) return advanceEnrollment(state.activeEnrollment);
   if (!state.photoFile || !state.videoFile) throw new Error('The photo and phone video are required before enrollment.');
   const resume = ensureResumeMetadata();
+  clearCreatingTerminal();
   setStep(4);
   $('#creating-detail').textContent = 'Storing the authorized photo before creating the private video upload.';
   if (!state.photoAssetId) {
@@ -1289,10 +1367,54 @@ function updateProgress() {
   if ($('#wizard').open && state.step === 4 && !showingEnrollment && identity?.ready) setStep(5);
 }
 
+function clearCreatingTerminal() {
+  const panel = document.querySelector('[data-panel="4"]');
+  if (panel) delete panel.dataset.terminal;
+  const creatingHeading = $('#creating-heading');
+  if (creatingHeading) creatingHeading.hidden = false;
+  const creatingDetail = $('#creating-detail');
+  if (creatingDetail) creatingDetail.hidden = false;
+  const failureHeading = $('#enrollment-failure-heading');
+  if (failureHeading) {
+    failureHeading.hidden = true;
+    failureHeading.textContent = '';
+  }
+  const cancel = $('#cancel-enrollment-setup');
+  const restart = $('#restart-enrollment');
+  const check = $('#check-enrollment');
+  if (cancel) cancel.hidden = true;
+  if (restart) restart.hidden = true;
+  if (check) check.hidden = false;
+}
+
 function showEnrollmentRecovery(message, retryAllowed) {
+  clearCreatingTerminal();
   $('#enrollment-recovery').hidden = false;
   $('#enrollment-recovery-message').textContent = message;
   $('#retry-enrollment').hidden = !retryAllowed;
+  $('#check-enrollment').hidden = false;
+  $('#cancel-enrollment-setup').hidden = true;
+  $('#restart-enrollment').hidden = true;
+}
+
+function showTerminalEnrollment(enrollment) {
+  stopEnrollmentPolling();
+  setStep(4);
+  const copy = terminalEnrollmentCopy(enrollment);
+  const retryAllowed = enrollment?.status === 'FAILED' && enrollment.retry?.allowed === true;
+  const panel = document.querySelector('[data-panel="4"]');
+  panel.dataset.terminal = 'true';
+  $('#creating-heading').hidden = true;
+  $('#creating-detail').hidden = true;
+  $('#enrollment-failure-heading').hidden = false;
+  $('#enrollment-failure-heading').textContent = copy.heading;
+  $('#enrollment-recovery').hidden = false;
+  $('#enrollment-recovery-message').textContent = copy.message;
+  $('#retry-enrollment').hidden = !retryAllowed;
+  $('#check-enrollment').hidden = true;
+  $('#cancel-enrollment-setup').hidden = retryAllowed;
+  $('#restart-enrollment').hidden = retryAllowed;
+  wizardStatus(copy.message, 'error');
 }
 
 function hideEnrollmentRecovery() {
@@ -1308,6 +1430,8 @@ function stopEnrollmentPolling() {
 
 function scheduleEnrollmentPolling() {
   if (state.enrollmentPollTimer || state.enrollmentPollCount >= ENROLLMENT_POLL_LIMIT || !state.activeEnrollment?.id) return;
+  if (ENROLLMENT_TERMINAL_STATES.has(state.activeEnrollment.status)) return;
+  clearCreatingTerminal();
   state.enrollmentPollTimer = setTimeout(pollEnrollment, ENROLLMENT_POLL_MS);
 }
 
@@ -1329,6 +1453,7 @@ async function retryEnrollment() {
   if (!state.activeEnrollment) return;
   $('#retry-enrollment').disabled = true;
   hideEnrollmentRecovery();
+  clearCreatingTerminal();
   try {
     updateResumeMetadata({ retryIdempotencyKey: createIdempotencyKey() });
     const data = await requestEnrollmentRetry(state.activeEnrollment);
@@ -1354,8 +1479,8 @@ async function checkActiveEnrollment() {
 }
 
 async function revokeActiveEnrollment() {
-  const enrollment = activeResumeEnrollment();
-  if (!enrollment || !window.confirm('Cancel this enrollment? Its saved consent and processing state will be revoked.')) return;
+  const enrollment = activeResumeEnrollment() || state.activeEnrollment;
+  if (!enrollment || !window.confirm('Cancel this enrollment? Its saved consent and processing state will be revoked.')) return false;
   try {
     const key = state.resume?.revokeIdempotencyKey || createIdempotencyKey();
     updateResumeMetadata({ revokeIdempotencyKey: key, enrollmentId: enrollment.id });
@@ -1364,7 +1489,45 @@ async function revokeActiveEnrollment() {
     state.activeEnrollment = null;
     await loadEnrollments();
     notice('Enrollment cancelled.', 'success');
-  } catch (error) { notice(error.message, 'error'); }
+    return true;
+  } catch (error) {
+    notice(error.message, 'error');
+    return false;
+  }
+}
+
+async function cancelEnrollmentSetup() {
+  const cancelled = await revokeActiveEnrollment();
+  if (cancelled) closeWizard(true);
+}
+
+async function restartEnrollment() {
+  const enrollment = state.activeEnrollment;
+  if (!enrollment?.id) {
+    beginNewEnrollment();
+    hideEnrollmentRecovery();
+    setStep(1);
+    return;
+  }
+  $('#restart-enrollment').disabled = true;
+  try {
+    const key = state.resume?.revokeIdempotencyKey || createIdempotencyKey();
+    updateResumeMetadata({ revokeIdempotencyKey: key, enrollmentId: enrollment.id });
+    await api('/api/video-os-lite/enrollments', { method: 'POST', body: JSON.stringify(enrollmentBody('revoke', enrollment, key)) });
+    clearResumeMetadata();
+    state.activeEnrollment = null;
+    await loadEnrollments();
+    beginNewEnrollment();
+    hideEnrollmentRecovery();
+    setStep(1);
+    wizardStatus('Starting a new identity setup.');
+  } catch (error) {
+    showTerminalEnrollment(state.activeEnrollment || enrollment);
+    $('#enrollment-recovery-message').textContent = error.message;
+    wizardStatus(error.message, 'error');
+  } finally {
+    $('#restart-enrollment').disabled = false;
+  }
 }
 
 async function openEnrollmentResume() {
@@ -1386,11 +1549,14 @@ async function openEnrollmentResume() {
   } else if (enrollment.status === 'IDENTITY_READY') {
     updateProgress();
     setStep(5);
+  } else if (ENROLLMENT_TERMINAL_STATES.has(enrollment.status)) {
+    setStep(4);
+    updateProgress();
+    showTerminalEnrollment(enrollment);
   } else {
     setStep(4);
     updateProgress();
-    if (enrollment.status === 'FAILED') showEnrollmentRecovery(enrollment.failure?.message || 'Enrollment needs attention.', enrollment.retry?.allowed === true);
-    else scheduleEnrollmentPolling();
+    scheduleEnrollmentPolling();
   }
 }
 
@@ -1534,6 +1700,7 @@ function resetVideoPresentation() {
 }
 
 function cleanupCapture({ invalidate = false } = {}) {
+  stopPhotoCamera();
   if (invalidate) state.captureRequestToken += 1;
   clearInterval(state.recordingTimer);
   state.recordingTimer = null;
@@ -1558,46 +1725,14 @@ function chooseRecorderMimeType() {
   return '';
 }
 
-function inspectVideoFile(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const video = document.createElement('video');
-    video.preload = 'metadata';
-    const finish = (error, value) => {
-      clearTimeout(timer);
-      video.removeAttribute('src');
-      video.load?.();
-      URL.revokeObjectURL(url);
-      if (error) reject(error); else resolve(value);
-    };
-    const timer = setTimeout(() => finish(new Error('The video took too long to read. Try a shorter MP4 or WebM file.')), 12_000);
-    video.onloadedmetadata = () => finish(null, { duration: video.duration, width: video.videoWidth, height: video.videoHeight });
-    video.onerror = () => finish(new Error('This browser could not read the video metadata. Try MP4, MOV, or WebM.'));
-    video.src = url;
-    video.load?.();
-  });
-}
-
-async function validateVideoFile(file) {
-  if (!file) throw new Error('Record or choose your phone video first.');
-  if (!state.videoLimits.allowedContentTypes.includes(String(file.type || '').toLowerCase()) || !VIDEO_TYPES.has(String(file.type || '').toLowerCase())) throw new Error('Use an MP4, MOV, or WebM phone video.');
-  if (!file.size) throw new Error('The selected video is empty.');
-  if (file.size > Math.min(DEFAULT_VIDEO_LIMITS.maximumSizeInBytes, state.videoLimits.maximumSizeInBytes)) throw new Error('The phone video must be 100 MiB or smaller.');
-  const metadata = await inspectVideoFile(file);
-  if (!Number.isFinite(metadata.duration) || metadata.duration < state.videoLimits.minimumDurationSeconds || metadata.duration > state.videoLimits.maximumDurationSeconds) {
-    throw new Error(`Use a video between ${state.videoLimits.minimumDurationSeconds} and ${state.videoLimits.maximumDurationSeconds} seconds.`);
-  }
-  if (!metadata.width || !metadata.height || metadata.width > state.videoLimits.maximumDimensionPx || metadata.height > state.videoLimits.maximumDimensionPx) {
-    throw new Error(`Use a video no larger than ${state.videoLimits.maximumDimensionPx} pixels on either side.`);
-  }
-  return metadata;
-}
-
-async function handleVideoFile(file, control = $('#video-input')) {
+async function handleVideoFile(file, control = $('#video-input'), { wallClockDurationSeconds = null } = {}) {
   clearFieldError(control, $('#video-error'));
   if (!file) return;
   try {
-    const metadata = await validateVideoFile(file);
+    const metadata = await validateVideoFile(file, state.videoLimits, {
+      wallClockDurationSeconds,
+      absoluteMaximumSizeInBytes: DEFAULT_VIDEO_LIMITS.maximumSizeInBytes,
+    });
     revokeObjectUrl('videoUrl');
     state.videoFile = file;
     state.videoMetadata = metadata;
@@ -1637,8 +1772,17 @@ async function startRecording() {
     const mimeType = chooseRecorderMimeType();
     const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
     const chunks = [];
-    const startedAt = Date.now();
-    state.recorder = { stream, mediaRecorder: recorder, chunks, startedAt, mimeType: recorder.mimeType || mimeType || 'video/webm' };
+    const recorderState = {
+      stream,
+      mediaRecorder: recorder,
+      chunks,
+      startedAt: Date.now(),
+      stoppedAt: null,
+      pausedMs: 0,
+      pauseStartedAt: null,
+      mimeType: recorder.mimeType || mimeType || 'video/webm',
+    };
+    state.recorder = recorderState;
     const live = $('#video-live');
     live.srcObject = stream;
     live.hidden = false;
@@ -1648,6 +1792,14 @@ async function startRecording() {
     $('#video-recording-status').textContent = 'Recording started.';
     await live.play().catch(() => {});
     recorder.ondataavailable = event => { if (event.data?.size) chunks.push(event.data); };
+    recorder.onpause = () => {
+      if (state.recorder === recorderState && recorderState.pauseStartedAt == null) recorderState.pauseStartedAt = Date.now();
+    };
+    recorder.onresume = () => {
+      if (state.recorder !== recorderState || recorderState.pauseStartedAt == null) return;
+      recorderState.pausedMs += Math.max(0, Date.now() - recorderState.pauseStartedAt);
+      recorderState.pauseStartedAt = null;
+    };
     recorder.onstop = async () => {
       const snapshot = state.recorder;
       stream.getTracks().forEach(track => track.stop());
@@ -1662,26 +1814,46 @@ async function startRecording() {
       const type = snapshot?.mimeType?.split(';')[0] || 'video/webm';
       const extension = type === 'video/mp4' ? 'mp4' : 'webm';
       const file = new File(chunks, `identity-video.${extension}`, { type, lastModified: Date.now() });
+      const stoppedAt = snapshot?.stoppedAt || Date.now();
+      let pausedMs = snapshot?.pausedMs || 0;
+      if (snapshot?.pauseStartedAt != null) pausedMs += Math.max(0, stoppedAt - snapshot.pauseStartedAt);
+      const wallClockDurationSeconds = recordingWallClockSeconds({
+        startedAt: snapshot?.startedAt,
+        stoppedAt,
+        pausedMs,
+      });
       $('#video-recording-status').textContent = 'Recording stopped. Validating the preview.';
-      await handleVideoFile(file, $('#record-button'));
+      await handleVideoFile(file, $('#record-button'), { wallClockDurationSeconds });
     };
+    recorderState.startedAt = Date.now();
     recorder.start(1_000);
     state.recordingTimer = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - startedAt) / 1_000);
+      const active = state.recorder;
+      if (!active) return;
+      const now = Date.now();
+      let pausedMs = active.pausedMs || 0;
+      if (active.pauseStartedAt != null) pausedMs += Math.max(0, now - active.pauseStartedAt);
+      const elapsed = Math.floor(recordingWallClockSeconds({ startedAt: active.startedAt, stoppedAt: now, pausedMs }) || 0);
       $('#recording-time').textContent = `Recording ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
       if (elapsed >= state.videoLimits.maximumDurationSeconds) stopRecording();
     }, 1_000);
-  } catch {
+  } catch (error) {
     if (requestToken !== state.captureRequestToken) return;
     $('#record-button').disabled = false;
     $('#native-capture-label').hidden = false;
-    showFieldError($('#record-button'), $('#video-error'), 'Camera or microphone access was not granted. Use your phone camera or choose an existing video.');
+    showFieldError($('#record-button'), $('#video-error'), cameraAccessMessage(error, 'video'));
   }
 }
 
 function stopRecording() {
-  const recorder = state.recorder?.mediaRecorder;
-  if (!recorder || recorder.state === 'inactive') return;
+  const active = state.recorder;
+  const recorder = active?.mediaRecorder;
+  if (!recorder || recorder.state === 'inactive' || active.stoppedAt != null) return;
+  active.stoppedAt = Date.now();
+  if (active.pauseStartedAt != null) {
+    active.pausedMs += Math.max(0, active.stoppedAt - active.pauseStartedAt);
+    active.pauseStartedAt = null;
+  }
   $('#video-recording-status').textContent = 'Stopping recording.';
   recorder.stop();
 }
@@ -1708,25 +1880,323 @@ function retakeVideo() {
   $('#record-button').focus();
 }
 
-function handlePhotoFile(file, control = $('#photo-input')) {
-  clearFieldError(control, $('#photo-error'));
-  if (!file) return;
-  try { validPhotoFile(file); }
-  catch (error) {
-    control.value = '';
-    showFieldError(control, $('#photo-error'), `${error.message} Your previous valid photo was kept.`);
+function resetPhotoCameraUi() {
+  const live = $('#photo-live');
+  if (live) {
+    live.pause?.();
+    live.srcObject = null;
+    live.hidden = true;
+    live.onloadedmetadata = null;
+  }
+  const canvas = $('#photo-canvas');
+  if (canvas) canvas.hidden = true;
+  const panel = $('#photo-camera');
+  if (panel) panel.hidden = true;
+  for (const id of ['#photo-shutter', '#photo-retake', '#photo-use']) {
+    const button = $(id);
+    if (!button) continue;
+    button.hidden = id !== '#photo-shutter';
+    button.disabled = false;
+  }
+  const shutter = $('#photo-shutter');
+  if (shutter) shutter.disabled = true;
+  const drop = $('#photo-drop');
+  const row = $('#photo-capture-row');
+  if (drop) drop.hidden = false;
+  if (row) row.hidden = false;
+  const status = $('#photo-camera-status');
+  if (status) status.textContent = '';
+}
+
+function releasePhotoStream() {
+  const stream = state.photoCamera?.stream;
+  state.photoCamera = null;
+  for (const track of stream?.getTracks?.() || []) {
+    try { track.stop(); } catch { /* the track may already be ended */ }
+  }
+}
+
+function stopPhotoCamera() {
+  state.photoCaptureToken += 1;
+  state.photoFrozenFrame = null;
+  releasePhotoStream();
+  resetPhotoCameraUi();
+}
+
+function showPhotoCameraError(error) {
+  const button = $('#photo-capture-button');
+  if (button) button.disabled = false;
+  showFieldError($('#photo-input'), $('#photo-error'), cameraAccessMessage(error, 'photo'));
+}
+
+function canvasToJpegBlob(canvas, quality) {
+  return new Promise((resolve, reject) => {
+    if (typeof canvas.toBlob !== 'function') {
+      reject(new Error('This browser could not save the photo. Choose a portrait instead.'));
+      return;
+    }
+    canvas.toBlob(blob => {
+      if (!blob) reject(new Error('The photo could not be saved. Try again.'));
+      else resolve(blob);
+    }, 'image/jpeg', quality);
+  });
+}
+
+function renderSnapshot(source, layout) {
+  const canvas = document.createElement('canvas');
+  canvas.width = layout.canvasWidth;
+  canvas.height = layout.canvasHeight;
+  const context = canvas.getContext('2d', { alpha: false });
+  context.fillStyle = '#111111';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(source, layout.offsetX, layout.offsetY, layout.drawWidth, layout.drawHeight);
+  return canvas;
+}
+
+function paintPhotoPreview(frozen) {
+  const canvas = $('#photo-canvas');
+  if (!canvas) return;
+  canvas.width = frozen.width;
+  canvas.height = frozen.height;
+  canvas.getContext('2d', { alpha: false }).drawImage(frozen, 0, 0);
+  canvas.hidden = false;
+}
+
+function photoEncodeError(reason) {
+  if (reason === 'too-small') return PHOTO_TOO_SMALL_MESSAGE;
+  if (reason === 'unreadable-frame') return 'The selected photo could not be read.';
+  return 'The photo must be 3 MB or smaller.';
+}
+
+async function fileFromFrozenFrame(frozen) {
+  let chosenBlob = null;
+  const encoded = await selectSnapshotEncoding({
+    sourceWidth: frozen.width,
+    sourceHeight: frozen.height,
+    measure: async candidate => {
+      const blob = await canvasToJpegBlob(renderSnapshot(frozen, candidate), candidate.quality);
+      if (blob.size > 0 && blob.size <= PHOTO_CAPTURE_LIMITS.maxBytes && !chosenBlob) chosenBlob = blob;
+      return blob.size;
+    },
+  });
+  if (!encoded.ok || !chosenBlob) throw new Error(photoEncodeError(encoded.reason));
+  return new File([chosenBlob], 'portrait.jpg', { type: 'image/jpeg', lastModified: Date.now() });
+}
+
+function setPhotoCameraActions(mode) {
+  $('#photo-shutter').hidden = mode !== 'live';
+  $('#photo-retake').hidden = mode !== 'review';
+  $('#photo-use').hidden = mode !== 'review';
+}
+
+function nativePhotoCapturePreferred() {
+  let coarsePointer = null;
+  if (typeof window.matchMedia === 'function') coarsePointer = window.matchMedia('(pointer: coarse)').matches;
+  const data = navigator.userAgentData;
+  const mobileUserAgentData = data && typeof data.mobile === 'boolean' ? data.mobile : null;
+  return prefersNativePhotoCapture({ coarsePointer, mobileUserAgentData, userAgent: navigator.userAgent || '' });
+}
+
+async function startPhotoCapture() {
+  clearFieldError($('#photo-input'), $('#photo-error'));
+  clearFieldError($('#photo-capture-button'), $('#photo-error'));
+  if (nativePhotoCapturePreferred() || !navigator.mediaDevices?.getUserMedia) {
+    $('#photo-capture-input').click();
     return;
   }
-  state.photoFile = file;
-  state.photoAssetId = null;
-  revokeObjectUrl('photoUrl');
-  state.photoUrl = URL.createObjectURL(file);
-  setLocalPreviewSource($('#photo-preview'), state.photoUrl);
-  $('#photo-preview').hidden = false;
-  $('#photo-prompt').hidden = true;
-  clearConsentChecks();
-  notice('');
-  wizardStatus(`${file.name} selected.`);
+  releasePhotoStream();
+  const requestToken = ++state.photoCaptureToken;
+  state.photoFrozenFrame = null;
+  const button = $('#photo-capture-button');
+  button.disabled = true;
+  $('#photo-camera-status').textContent = 'Requesting camera access.';
+  const attempts = portraitCameraConstraintAttempts();
+  let stream = null;
+  let lastError = null;
+  for (const constraints of attempts) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      break;
+    } catch (error) {
+      lastError = error;
+      const name = String(error?.name || '');
+      if (name !== 'OverconstrainedError') break;
+    }
+  }
+  if (requestToken !== state.photoCaptureToken || !$('#wizard').open || state.step !== 1) {
+    stream?.getTracks?.().forEach(track => { try { track.stop(); } catch { /* already ended */ } });
+    button.disabled = false;
+    return;
+  }
+  if (!stream) {
+    button.disabled = false;
+    showPhotoCameraError(lastError);
+    return;
+  }
+  state.photoCamera = { stream, token: requestToken };
+  const live = $('#photo-live');
+  live.muted = true;
+  live.srcObject = stream;
+  live.hidden = false;
+  $('#photo-canvas').hidden = true;
+  $('#photo-camera').hidden = false;
+  $('#photo-drop').hidden = true;
+  $('#photo-capture-row').hidden = true;
+  setPhotoCameraActions('live');
+  $('#photo-shutter').disabled = true;
+  const enableShutter = () => {
+    if (requestToken !== state.photoCaptureToken) return;
+    $('#photo-shutter').disabled = !(live.videoWidth >= 2 && live.videoHeight >= 2);
+  };
+  live.onloadedmetadata = enableShutter;
+  $('#photo-camera-status').textContent = 'Camera preview started.';
+  await live.play().catch(() => {});
+  enableShutter();
+  button.disabled = false;
+  $('#photo-shutter').focus();
+}
+
+function capturePhotoFrame() {
+  const live = $('#photo-live');
+  const crop = portraitCropLayout(live?.videoWidth, live?.videoHeight);
+  if (!crop.ok) {
+    showFieldError($('#photo-shutter'), $('#photo-error'), crop.reason === 'too-small' ? PHOTO_TOO_SMALL_MESSAGE : 'The camera frame could not be read. Try again.');
+    return;
+  }
+  const frozen = document.createElement('canvas');
+  frozen.width = crop.canvasWidth;
+  frozen.height = crop.canvasHeight;
+  frozen.getContext('2d', { alpha: false }).drawImage(
+    live,
+    crop.sourceX,
+    crop.sourceY,
+    crop.sourceSize,
+    crop.sourceSize,
+    0,
+    0,
+    crop.canvasWidth,
+    crop.canvasHeight,
+  );
+  state.photoFrozenFrame = frozen;
+  paintPhotoPreview(frozen);
+  live.hidden = true;
+  setPhotoCameraActions('review');
+  $('#photo-camera-status').textContent = 'Photo captured. Use this photo or retake it.';
+  $('#photo-use').focus();
+}
+
+function retakePhotoFrame() {
+  state.photoFrozenFrame = null;
+  $('#photo-canvas').hidden = true;
+  const live = $('#photo-live');
+  live.hidden = false;
+  setPhotoCameraActions('live');
+  $('#photo-shutter').disabled = !(live.videoWidth >= 2 && live.videoHeight >= 2);
+  $('#photo-camera-status').textContent = 'Camera preview started.';
+  $('#photo-shutter').focus();
+}
+
+async function useCapturedPhoto() {
+  const frozen = state.photoFrozenFrame;
+  if (!frozen) return;
+  const button = $('#photo-use');
+  button.disabled = true;
+  try {
+    const file = await fileFromFrozenFrame(frozen);
+    const saved = await handlePhotoFile(file, button);
+    if (saved) stopPhotoCamera();
+  } catch (error) {
+    showFieldError(button, $('#photo-error'), `${error.message} Your previous valid photo was kept.`);
+  } finally {
+    if (button.isConnected) button.disabled = false;
+  }
+}
+
+async function orientedPhotoSource(file) {
+  if (typeof createImageBitmap === 'function') {
+    try { return { source: await createImageBitmap(file, { imageOrientation: 'from-image' }), release() {} }; }
+    catch {
+      try { return { source: await createImageBitmap(file), release() {} }; }
+      catch { /* use the image element fallback */ }
+    }
+  }
+  const url = URL.createObjectURL(file);
+  const image = new Image();
+  try {
+    await new Promise((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('The selected photo could not be read.'));
+      image.src = url;
+    });
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
+  return { source: image, release() { URL.revokeObjectURL(url); } };
+}
+
+function sourcePixelSize(source) {
+  return {
+    width: source.videoWidth || source.width || source.naturalWidth || 0,
+    height: source.videoHeight || source.height || source.naturalHeight || 0,
+  };
+}
+
+async function downscalePortraitFile(file) {
+  if (!['image/jpeg', 'image/png'].includes(file?.type)) throw new Error('Choose a supported photo file.');
+  if (!file.size) throw new Error('The photo file is empty.');
+  const oriented = await orientedPhotoSource(file);
+  try {
+    const { width, height } = sourcePixelSize(oriented.source);
+    let chosenBlob = null;
+    const encoded = await planPhotoDownscale({
+      sourceWidth: width,
+      sourceHeight: height,
+      measure: async candidate => {
+        const blob = await canvasToJpegBlob(renderSnapshot(oriented.source, candidate), candidate.quality);
+        if (blob.size > 0 && blob.size <= PHOTO_CAPTURE_LIMITS.maxBytes && !chosenBlob) chosenBlob = blob;
+        return blob.size;
+      },
+    });
+    if (!encoded.ok || !chosenBlob) throw new Error(photoEncodeError(encoded.reason));
+    const base = String(file.name || 'portrait').replace(/\.[^.]+$/, '') || 'portrait';
+    return new File([chosenBlob], `${base}.jpg`, { type: 'image/jpeg', lastModified: Date.now() });
+  } finally {
+    oriented.source.close?.();
+    oriented.release();
+  }
+}
+
+async function handlePhotoFile(file, control = $('#photo-input')) {
+  clearFieldError(control, $('#photo-error'));
+  if (!file) return null;
+  const requestToken = ++state.photoPrepareToken;
+  const nextButton = $('#next-button');
+  nextButton.disabled = true;
+  try {
+    wizardStatus('Preparing your photo.');
+    const prepared = await downscalePortraitFile(file);
+    if (requestToken !== state.photoPrepareToken) return null;
+    validPhotoFile(prepared);
+    state.photoFile = prepared;
+    state.photoAssetId = null;
+    revokeObjectUrl('photoUrl');
+    state.photoUrl = URL.createObjectURL(prepared);
+    setLocalPreviewSource($('#photo-preview'), state.photoUrl);
+    $('#photo-preview').hidden = false;
+    $('#photo-prompt').hidden = true;
+    clearConsentChecks();
+    notice('');
+    wizardStatus(`${prepared.name} selected.`);
+    return prepared;
+  } catch (error) {
+    if (requestToken !== state.photoPrepareToken) return null;
+    if ('value' in control) control.value = '';
+    showFieldError(control, $('#photo-error'), `${error.message} Your previous valid photo was kept.`);
+    return null;
+  } finally {
+    if (requestToken === state.photoPrepareToken) nextButton.disabled = state.submitting || Boolean(state.uncertainCommit);
+  }
 }
 
 async function init() {
@@ -1737,6 +2207,15 @@ async function init() {
   updateSessionLabels('Checking session...');
   try {
     const session = await api('/api/video-os-lite/session');
+    const signedOutReason = signedOutNotice(session);
+    if (session.signedIn === false) {
+      updateSessionLabels('Signed out');
+      $('#signed-out').hidden = false;
+      const reason = $('#signed-out-reason');
+      reason.textContent = signedOutReason;
+      reason.hidden = !signedOutReason;
+      return;
+    }
     state.accountId = session.account?.accountId || session.accountId || null;
     updateSessionLabels(session.email || session.account?.name || 'Private account');
     await Promise.all([loadIdentities(), loadEnrollments()]);
@@ -1765,13 +2244,23 @@ $('#commit-retry-anyway').addEventListener('click', retryCommitSameRequest);
 $('#resume-polling').addEventListener('click', resumeIdentityPolling);
 $('#retry-enrollment').addEventListener('click', retryEnrollment);
 $('#check-enrollment').addEventListener('click', checkActiveEnrollment);
+$('#cancel-enrollment-setup').addEventListener('click', cancelEnrollmentSetup);
+$('#restart-enrollment').addEventListener('click', () => { void restartEnrollment(); });
 $('#ready-create-provider').addEventListener('click', () => {
   if (!state.activeIdentityId) return notice('Reload this identity before starting provider creation.', 'error');
   void submitIdentity(state.activeIdentityId);
 });
 $('#ready-done').addEventListener('click', () => closeWizard(true));
-$('#photo-input').addEventListener('change', event => handlePhotoFile(event.target.files[0] || null, event.target));
-$('#photo-capture-input').addEventListener('change', event => handlePhotoFile(event.target.files[0] || null, event.target));
+$('#photo-input').addEventListener('change', event => { void handlePhotoFile(event.target.files[0] || null, event.target); });
+$('#photo-capture-input').addEventListener('change', event => { void handlePhotoFile(event.target.files[0] || null, event.target); });
+$('#photo-capture-button').addEventListener('click', () => { void startPhotoCapture(); });
+$('#photo-shutter').addEventListener('click', capturePhotoFrame);
+$('#photo-retake').addEventListener('click', retakePhotoFrame);
+$('#photo-use').addEventListener('click', () => { void useCapturedPhoto(); });
+$('#photo-camera-cancel').addEventListener('click', () => {
+  stopPhotoCamera();
+  $('#photo-capture-button').focus();
+});
 $('#video-input').addEventListener('change', event => handleVideoFile(event.target.files[0] || null, event.target));
 $('#video-capture-input').addEventListener('change', event => handleVideoFile(event.target.files[0] || null, event.target));
 $('#use-video').addEventListener('click', acceptVideo);
@@ -1836,5 +2325,6 @@ window.addEventListener('beforeunload', () => {
   stopEnrollmentPolling();
   stopIdentityPolling();
 });
+window.addEventListener('pagehide', () => cleanupCapture({ invalidate: true }));
 
 void init();
