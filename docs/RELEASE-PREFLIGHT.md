@@ -16,13 +16,80 @@ Drizzle's journal timestamps and SHA-256 of actual migration SQL must match ever
 
 ## Packaging
 
-`npm run build:preview` performs diagnostic packaging with snapshot-only database status. CI uses this command and therefore does not establish production readiness.
+`npm run build:preview` performs diagnostic packaging with snapshot-only database status. CI uses this command. A successful preview package is not production readiness.
 
 `npm run build:production` requires exact live production verification before and after packaging, unchanged source/project identity, and a passing Workflow boundary check. It never pulls environment secrets or applies migrations automatically.
 
 The HeyGen MVP now makes optional HyperFrames explicitly unavailable and removes its Sandbox SDK import graph. A fresh review build verified no known Sandbox class leakage. The scanner remains mandatory: a disabled feature flag alone does not eliminate emitted classes. Missing or malformed class metadata also fails; the scan covers all manifest keys and values, including SDK step entries. See [the investigation](execution-notes/20260930-prompt4-sandbox.md); an import-only workaround was not safe.
 
-Read-only `--preflight-only` rejects an existing default prebuilt output; run full preparation to quarantine it. All completed packaging remains review-only. Outputs are moved to `.vercel/review-output-<timestamp>-<pid>`; rejected and previous outputs are preserved in analogous sibling directories. `.vercel/output` is absent afterward. The success marker outside the output directory says `releaseAuthorized:false`. Do not move an artifact back or run `vercel deploy --prebuilt` to bypass these gates. A future authorized release must refresh production/alias/storage/P0 checks and bind the final exact artifact.
+Read-only `--preflight-only` rejects an existing default prebuilt output; run full preparation to quarantine it. Completed packaging stays review-only until a sanctioned restore. Outputs are moved to `.vercel/review-output-<timestamp>-<pid>`; rejected and previous outputs are preserved in analogous sibling directories. `.vercel/output` is absent afterward. The success marker outside the output directory says `releaseAuthorized:false`.
+
+Production restore is `node tools/authorize-release.mjs --owner-authorized`. It re-checks the quarantined production manifest hash, source identity, a fresh production database verification, the workflow boundary, current-candidate CI, and space authority. It restores `.vercel/output` only when every one of those gates passes and `--owner-authorized` was passed. Moving a production artifact back by hand, or running `vercel deploy --prebuilt --prod`, bypasses those gates. A future authorized production release must still refresh production/alias/storage/P0 checks and bind the final exact artifact. Preview authorization does not clear them. `releaseAuthorized` stays false.
+
+Preview restore is `npm run release:authorize-preview` (`node tools/authorize-preview.mjs --target=preview`, also reached by `node tools/authorize-release.mjs --target=preview`). It accepts only a quarantined `npm run build:preview` artifact. It re-checks the manifest bytes against the packaging receipt and re-hashes the output with the same inventory fingerprint the production tool uses. A production artifact, a production target, a missing manifest, or a manifest whose bytes or output hash do not match the receipt is refused. This path reads no production database credentials and opens no database connection. Before restoring, it requires `functions/.well-known/workflow/v1/flow.func`, `functions/.well-known/workflow/v1/step.func`, the three enrollment workspace routes (`/api/video-os-lite/enrollments`, `enrollment-upload`, `scripted-photo`), and the four identity-enrollment workflow ids in `diagnostics/workflows-manifest.json`. A missing piece fails the restore and leaves the artifact quarantined. On success it prints `vercel deploy --prebuilt --archive=tgz` and does not execute it. That command has no `--prod` flag.
+
+`--archive=tgz` is required. Vercel rejects a prebuilt upload above 15,000 files, and this project's output is over that limit (about 15,071 files). `build:preview` and the preview restore warn when the inventoried file count is over 15,000. The archive flag is how that upload gets through the limit.
+
+A plain git deployment, `vercel deploy`, or `vercel redeploy` of this project builds only `api/**` as configured in `vercel.json`. Those deploys do not create `.well-known/workflow/v1` flow and step functions, so enrollment workflows do not run on Preview. Use `npm run build:preview` and the preview restore above.
+
+The preview restore prints the checkout's changed paths. A clean checkout is accepted. A dirty checkout is accepted only when the changed paths are exactly these five tooling files: `tools/authorize-preview.mjs`, `tools/preview-upload-limit.mjs`, `tools/authorize-release.mjs`, `tools/build-production.mjs`, and `package.json`. A rename is counted on both its old and new paths, so moving an allowlisted file to `api/x.js` and recreating the original is refused. Any other dirty path, including an uncommitted `lib/` edit on top of that overlay, refuses the restore. When those five files are dirty, pass `--tooling-sha=<reviewed-commit>`. Each dirty file must be byte-identical to `git show <sha>:<path>`. The tool prints match or mismatch for every file and refuses a missing SHA, an unreachable SHA, or any byte difference.
+
+## Preview of an unmerged branch
+
+This is the sanctioned way to deploy a Preview that contains workflow `flow.func` and `step.func`. It does not merge the branch, and it does not touch production. Example below: PR #139, commit `d647c7467e384501c1d2f571acb7a5ad4b13f7ef`, plus the reviewed tooling commit. Copy from that commit id. Do not copy from the moving branch `cursor/preview-restore-path-38b7`. Do the overlay before `npm run build:preview`, and do not edit the tree again before `npm run release:authorize-preview`. The restore checks that the source hash still matches the manifest, and that each overlay file matches the tooling commit.
+
+`TOOLING_SHA` is the reviewed tooling commit. The pull request body names the current pin. It is a commit id, not a branch name.
+
+```bash
+TOOLING_SHA=<reviewed-tooling-commit>
+git fetch origin "$TOOLING_SHA"
+# If the host rejects a raw commit fetch, fetch the pull request ref instead.
+# Still copy with git show "$TOOLING_SHA:$f". Do not copy the branch tip.
+git fetch origin cursor/desktop-capture-duration-3ccc
+git worktree add --detach /tmp/lux-pr-139-preview d647c7467e384501c1d2f571acb7a5ad4b13f7ef
+cd /tmp/lux-pr-139-preview
+for f in tools/authorize-preview.mjs tools/preview-upload-limit.mjs tools/authorize-release.mjs tools/build-production.mjs package.json; do
+  git show "$TOOLING_SHA:$f" > "$f"
+done
+```
+
+A fresh worktree has no `.vercel/project.json`. Packaging then fails with ENOENT. Link this worktree to the real project `lux-video-os`. Do not link PR previews to `lux-video-os-rebuild`.
+
+```bash
+vercel link --yes --project lux-video-os --scope lux-3035s-projects
+vercel pull --environment=preview
+```
+
+`vercel pull --environment=preview` writes decrypted Preview environment values, including secrets, into the gitignored `.vercel/` directory (`.vercel/.env.preview.local` and the rest of that folder). Delete the `.vercel/` folder after the deploy. Do not copy it into another checkout.
+
+`npm ci` when `node_modules` is absent. `npm run build:preview` downloads a Linux ffmpeg binary when its cache is empty, so that step needs network access. Then restore and deploy. The restore needs no production `DATABASE_URL`. Pass the same `TOOLING_SHA`. Run the command it prints. That command is `vercel deploy --prebuilt --archive=tgz`. Do not add `--prod`. `--archive=tgz` is required because the output is over the 15,000-file upload limit.
+
+```bash
+npm ci
+npm run build:preview
+npm run release:authorize-preview -- --tooling-sha="$TOOLING_SHA"
+DEPLOY_URL=$(vercel deploy --prebuilt --archive=tgz)
+vercel inspect "$DEPLOY_URL"
+```
+
+`DEPLOY_URL` is a Preview on `lux-video-os`. Inspect that deployment's function list, not the local `.vercel/output` tree. Confirm all four of these are in the deployment:
+
+- `functions/.well-known/workflow/v1/flow.func/.vc-config.json`
+- `functions/.well-known/workflow/v1/flow.func/index.js`
+- `functions/.well-known/workflow/v1/step.func/.vc-config.json`
+- `functions/.well-known/workflow/v1/step.func/index.js`
+
+A plain git or CLI redeploy does not create those functions.
+
+Moving that deployment onto the production alias is a separate step and needs its own explicit approval. This recipe does not alias the preview.
+
+Cleanup, after the deployment check. This removes the decrypted Preview secrets from the worktree, then removes the worktree:
+
+```bash
+rm -rf .vercel
+cd -
+git worktree remove --force /tmp/lux-pr-139-preview
+```
 
 `.vercel/release-build-manifest.json` records source file hashes, HEAD/dirty status, project-link hash, output file hashes, database evidence, Workflow boundary, rollback metadata and unresolved gates. For the selected HeyGen managed API, a worker image is inapplicable, while runtime scope/account/pricing/privacy/deletion/canary evidence remains unverified. Self-hosted selections still require an immutable image digest. This is a review manifest, never an approved P0 receipt. The old P0 verifier now exits 2 for every verification request; historical approved-looking receipts are not trusted.
 

@@ -12,6 +12,7 @@ import { identityEnrollmentHashWorkflowMetadata, identityEnrollmentExtractionWor
 import { writeReleaseBuildManifest, assertProductionWorkflowBoundary, captureSourceIdentity, assertStableDatabase, assertUnchangedBuildSource, quarantineBuildOutput, assertNoDefaultBuildOutput } from './release-build-manifest.mjs';
 import { assertDiagnosticBuildInputs, diagnosticChangedPaths, diagnosticDatabaseEvidence } from './db-binding-diagnostic-build-policy.mjs';
 import { stampWorkspaceGitIdentity } from './release-git-identity.mjs';
+import { previewUploadLimitWarning } from './preview-upload-limit.mjs';
 
 const root = new URL('../', import.meta.url);
 const output = new URL('../.vercel/output/', import.meta.url);
@@ -162,6 +163,10 @@ const manifestSha256 = createHash('sha256').update(manifestBytes).digest('hex');
 await writeFile(receiptPath, manifestBytes);
 await writeFile(`${releaseManifest.output.location}.release-build-manifest.json`, manifestBytes);
 await writeFile(`${releaseManifest.output.location}.packaging-success.json`, JSON.stringify({ packagingComplete: true, releaseAuthorized: false, manifestSha256, sourceSha256: releaseManifest.source.sha256, outputSha256: releaseManifest.output.sha256 }) + '\n');
+if (target === 'preview') {
+  const fileLimitWarning = previewUploadLimitWarning(releaseManifest.output.files?.length ?? 0);
+  if (fileLimitWarning) console.warn(fileLimitWarning);
+}
 console.log(`${target} packaging complete: ${routes.length} routes. Review-only manifest written; no deployment authorization or P0 approval is implied.`);
 if (!releaseManifest.workflowBoundary.verified) console.warn('Known Sandbox workflow boundary remains unverified; this diagnostic build cannot clear release.');
 }
