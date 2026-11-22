@@ -1862,6 +1862,23 @@ function releaseCaptureMedia() {
   if (guide) guide.hidden = true;
   resetTeleprompter();
   setCapturing(false);
+  restoreIdleVideoControls();
+}
+
+function restoreIdleVideoControls() {
+  const timer = $('#recording-time');
+  if (timer) timer.textContent = 'Recording 0:00';
+  if (state.videoFile) return;
+  const actions = $('#video-actions');
+  if (actions) actions.hidden = false;
+  const placeholder = $('#video-placeholder');
+  if (placeholder) placeholder.hidden = false;
+  const review = $('#video-review-actions');
+  if (review) review.hidden = true;
+  const preview = $('#video-preview');
+  if (preview) preview.hidden = true;
+  const record = $('#record-button');
+  if (record) record.disabled = false;
 }
 
 function cancelActiveCapture() {

@@ -666,6 +666,69 @@ test('Given a paused script, When Retake or Back cancels the take, Then the next
   await expectFreshTeleprompter(page);
 });
 
+test('Given a recording in progress, When Back is tapped, Then Record and Choose existing video return', async ({ page }) => {
+  await page.clock.install();
+  await page.addInitScript(() => {
+    window.__streams = [];
+    window.__liveTracks = () => window.__streams.flatMap(stream => stream.getTracks()).filter(track => track.readyState === 'live').length;
+    const canvas = document.createElement('canvas');
+    canvas.width = 16;
+    canvas.height = 16;
+    canvas.getContext('2d').fillRect(0, 0, 16, 16);
+    class FakeRecorder {
+      constructor(_stream, options = {}) {
+        this.mimeType = options.mimeType || 'video/webm';
+        this.state = 'inactive';
+        this.ondataavailable = null;
+        this.onstop = null;
+      }
+      start() { this.state = 'recording'; }
+      stop() {
+        if (this.state === 'inactive') return;
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob([Uint8Array.from([1, 2, 3, 4])], { type: 'video/webm' }) });
+        this.onstop?.();
+      }
+      static isTypeSupported() { return true; }
+    }
+    window.MediaRecorder = FakeRecorder;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          const base = canvas.captureStream(5);
+          const stream = new MediaStream([base.getVideoTracks()[0], base.getVideoTracks()[0].clone()]);
+          window.__streams.push(stream);
+          return stream;
+        },
+      },
+    });
+  });
+  await mockApp(page);
+  await openToVideo(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await page.clock.fastForward(3_000);
+  await expect(page.locator('#video-recording-state')).toBeVisible();
+  await expect(page.locator('#video-actions')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(2);
+  await page.clock.fastForward(3_500);
+  await page.clock.fastForward(2_000);
+  await expect(page.locator('#recording-time')).not.toHaveText('Recording 0:00');
+  await soilTeleprompter(page);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(0);
+  await expectFreshTeleprompter(page);
+  await expect(page.locator('#recording-time')).toHaveText('Recording 0:00');
+  await page.locator('#next-button').click();
+  await expect(page.locator('[data-panel="2"]')).toBeVisible();
+  await expect(page.locator('#video-actions')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record video' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record video' })).toBeEnabled();
+  await expect(page.getByText('Choose existing video')).toBeVisible();
+  await expect(page.locator('#video-recording-state')).toBeHidden();
+  await expect(page.locator('#video-placeholder')).toBeVisible();
+});
+
 test('Given a live camera during the countdown, When Back or Close is used, Then no tracks stay live', async ({ page }) => {
   await page.clock.install();
   await page.addInitScript(() => {
