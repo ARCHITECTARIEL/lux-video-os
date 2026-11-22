@@ -373,8 +373,6 @@ test('camera and microphone permission is requested only on Record and denial ex
   await expect(page.getByText('Choose existing video')).toBeVisible();
 });
 
-const ENROLLMENT_SCRIPT = 'Welcome to my Video OS. I’m recording this sample in my natural speaking voice, with clear pacing and steady volume.';
-
 async function installRecorder(page, { infiniteDuration = false } = {}) {
   await page.addInitScript(({ infiniteDuration }) => {
     window.__record = { started: 0, stopped: 0 };
@@ -438,9 +436,9 @@ test('Given a recording, When Record is pressed, Then a countdown runs, Stop wai
   await installRecorder(page, { infiniteDuration: true });
   await mockApp(page);
   await openToVideo(page);
-  await expect(page.locator('#teleprompter-script')).toContainText(ENROLLMENT_SCRIPT);
   await page.getByRole('button', { name: 'Record video' }).click();
   await expect(page.locator('#countdown')).toHaveText('3');
+  await expect(page.locator('#teleprompter-script')).toContainText('Welcome to my Video OS.');
   await expect(page.locator('#video-live')).toBeVisible();
   const mirror = await page.locator('#video-live').evaluate(element => getComputedStyle(element).transform);
   expect(mirror).toContain('matrix');
@@ -448,41 +446,146 @@ test('Given a recording, When Record is pressed, Then a countdown runs, Stop wai
   await page.clock.fastForward(3_000);
   await expect(page.locator('#video-recording-state')).toBeVisible();
   await expect(page.locator('#stop-recording')).toBeDisabled();
+  await expect(page.locator('#stop-hint')).toHaveText('Keep going, at least 5 seconds.');
   await expect(page.locator('#recording-time')).toBeVisible();
   await page.clock.fastForward(3_500);
   await expect(page.locator('#stop-recording')).toBeDisabled();
   await page.clock.fastForward(2_000);
   await expect(page.locator('#stop-recording')).toBeEnabled();
+  await expect(page.locator('#stop-hint')).toBeHidden();
   await page.clock.fastForward(56_000);
   await expect.poll(() => page.evaluate(() => window.__record.stopped)).toBe(1);
   await expect(page.locator('#video-preview')).toBeVisible();
   await expect(page.locator('#video-check-status')).toBeHidden();
 });
 
-test('Given phone and desktop viewports, When a recording is in progress, Then the teleprompter is readable in both places', async ({ page }) => {
+function boxesOverlap(a, b) {
+  return a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+}
+
+async function bandLayout(page) {
+  return page.evaluate(() => {
+    const stage = document.querySelector('#video-stage').getBoundingClientRect();
+    const band = document.querySelector('#teleprompter').getBoundingClientRect();
+    const face = document.querySelector('#face-guide').getBoundingClientRect();
+    const stop = document.querySelector('#stop-recording').getBoundingClientRect();
+    const scriptStyle = getComputedStyle(document.querySelector('#teleprompter-script'));
+    const bandStyle = getComputedStyle(document.querySelector('#teleprompter'));
+    return {
+      stage: { top: stage.top, right: stage.right, bottom: stage.bottom, left: stage.left, width: stage.width, height: stage.height },
+      band: { top: band.top, right: band.right, bottom: band.bottom, left: band.left, height: band.height },
+      face: { top: face.top, right: face.right, bottom: face.bottom, left: face.left },
+      stop: { top: stop.top, right: stop.right, bottom: stop.bottom, left: stop.left, width: stop.width, height: stop.height },
+      color: scriptStyle.color,
+      background: bandStyle.backgroundColor,
+      position: bandStyle.position,
+      transition: scriptStyle.transitionDuration,
+      motion: document.querySelector('#teleprompter-script').dataset.motion,
+      text: document.querySelector('#teleprompter-script').textContent,
+    };
+  });
+}
+
+test('Given the camera is open, When the script band is showing, Then it stays inside the stage and off the face', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.clock.install();
   await installRecorder(page, { infiniteDuration: true });
   await mockApp(page);
-  await page.setViewportSize({ width: 1280, height: 900 });
   await openToVideo(page);
   await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
   await page.clock.fastForward(3_000);
   await expect(page.locator('#teleprompter')).toBeVisible();
-  const desktop = await page.evaluate(() => {
-    const stage = document.querySelector('#video-stage').getBoundingClientRect();
-    const script = document.querySelector('#teleprompter').getBoundingClientRect();
-    return { stageBottom: stage.bottom, scriptTop: script.top, scriptWidth: script.width };
+  await expect(page.locator('#face-guide')).toBeVisible();
+  const before = await page.locator('#teleprompter-script').textContent();
+  await page.clock.fastForward(3_500);
+  await page.clock.fastForward(2_000);
+  await page.clock.fastForward(4_000);
+  const stepped = await bandLayout(page);
+  const timer = await page.locator('#recording-time').textContent();
+  expect(stepped.transition === '0s' || stepped.transition.startsWith('0s')).toBe(true);
+  expect(stepped.motion).toBe('instant');
+  expect(stepped.text).toContain('natural speaking voice');
+  expect(stepped.text).not.toBe(before);
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 375, height: 667 },
+    { width: 1280, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const layout = await bandLayout(page);
+    expect(layout.position).toBe('absolute');
+    expect(layout.band.top).toBeGreaterThanOrEqual(layout.stage.top - 1);
+    expect(layout.band.left).toBeGreaterThanOrEqual(layout.stage.left - 1);
+    expect(layout.band.right).toBeLessThanOrEqual(layout.stage.right + 1);
+    expect(layout.band.bottom).toBeLessThanOrEqual(layout.stage.top + (layout.stage.height * 0.25) + 2);
+    expect(boxesOverlap(layout.band, layout.face)).toBe(false);
+    expect(boxesOverlap(layout.band, layout.stop)).toBe(false);
+    const contrast = await page.evaluate(({ color, background }) => {
+      const parse = value => value.match(/[\d.]+/g).map(Number);
+      const channel = value => {
+        const scaled = value / 255;
+        return scaled <= 0.04045 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+      };
+      const lum = ([r, g, b]) => (0.2126 * channel(r)) + (0.7152 * channel(g)) + (0.0722 * channel(b));
+      const ink = parse(color);
+      const scrim = parse(background);
+      const alpha = scrim[3] === undefined ? 1 : scrim[3];
+      const over = light => scrim.slice(0, 3).map((part, index) => (part * alpha) + (light[index] * (1 - alpha)));
+      const ratio = backgroundColor => {
+        const hi = Math.max(lum(ink), lum(backgroundColor));
+        const lo = Math.min(lum(ink), lum(backgroundColor));
+        return (hi + 0.05) / (lo + 0.05);
+      };
+      return Math.min(ratio(over([255, 255, 255])), ratio(over([0, 0, 0])));
+    }, { color: layout.color, background: layout.background });
+    expect(contrast).toBeGreaterThanOrEqual(4.5);
+  }
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.clock.fastForward(80);
+  await expect(page.locator('#teleprompter')).toBeHidden();
+  await expect(page.locator('#video-preview')).toBeVisible();
+});
+
+test('Given a live camera during the countdown, When Back or Close is used, Then no tracks stay live', async ({ page }) => {
+  await page.clock.install();
+  await page.addInitScript(() => {
+    window.__streams = [];
+    window.__liveTracks = () => window.__streams.flatMap(stream => stream.getTracks()).filter(track => track.readyState === 'live').length;
+    const track = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 16;
+      canvas.height = 16;
+      canvas.getContext('2d').fillRect(0, 0, 16, 16);
+      return canvas.captureStream(5).getVideoTracks()[0];
+    };
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          const stream = new MediaStream([track(), track()]);
+          window.__streams.push(stream);
+          return stream;
+        },
+      },
+    });
   });
-  expect(desktop.scriptTop).toBeGreaterThanOrEqual(desktop.stageBottom - 2);
-  expect(desktop.scriptWidth).toBeGreaterThan(200);
-  await page.setViewportSize({ width: 390, height: 844 });
-  const phone = await page.evaluate(() => {
-    const script = document.querySelector('#teleprompter').getBoundingClientRect();
-    const stage = document.querySelector('#video-stage').getBoundingClientRect();
-    return { scriptTop: script.top, stageTop: stage.top, position: getComputedStyle(document.querySelector('#teleprompter')).position };
-  });
-  expect(phone.position).toBe('fixed');
-  expect(phone.scriptTop).toBeLessThan(phone.stageTop);
+  await mockApp(page);
+  await openToVideo(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(2);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(0);
+  await page.locator('#next-button').click();
+  await expect(page.locator('[data-panel="2"]')).toBeVisible();
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(2);
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#close-wizard').click();
+  await expect(page.locator('#wizard')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(0);
 });
 
 test('Given a stopped recording, When the preview is ready, Then Retake restores the shutter and Use this video opens consent', async ({ page }) => {
@@ -602,7 +705,7 @@ test('Identity capture stays readable in light, dark, and reduced motion without
   const pulse = await page.locator('.record-dot').evaluate(element => getComputedStyle(element).animationName);
   expect(pulse).toBe('none');
   const scriptSize = await page.locator('#teleprompter-script').evaluate(element => parseFloat(getComputedStyle(element).fontSize));
-  expect(scriptSize).toBeGreaterThanOrEqual(22);
+  expect(scriptSize).toBeGreaterThanOrEqual(15);
 });
 
 test('desktop Take a photo opens the camera and a denied camera falls back to Choose a portrait', async ({ page }) => {

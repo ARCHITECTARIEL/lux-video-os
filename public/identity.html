@@ -187,16 +187,18 @@
               <video id="video-live" class="mirrored-preview" muted playsinline aria-label="Live camera preview" hidden></video>
               <video id="video-preview" controls playsinline preload="metadata" aria-label="Selected enrollment video preview" hidden></video>
               <div id="video-placeholder" class="video-placeholder"><span aria-hidden="true">L</span><strong>Record or choose your phone video</strong><small>MP4, MOV, or WebM &middot; 5-60 seconds &middot; up to 100 MiB</small></div>
-            </div>
-            <div id="teleprompter" class="teleprompter">
-              <p class="eyebrow">SAY THIS NATURALLY</p>
-              <p id="teleprompter-script">“Welcome to my Video OS. I’m recording this sample in my natural speaking voice, with clear pacing and steady volume.”</p>
-              <small>You will review separate extraction and voice permissions before upload.</small>
+              <div id="face-guide" class="face-guide" hidden aria-hidden="true"></div>
+              <div id="teleprompter" class="teleprompter" hidden>
+                <p id="teleprompter-script" aria-live="polite">Welcome to my Video OS.
+I’m recording this sample</p>
+                <button id="pause-script" class="script-pause" type="button" aria-pressed="false">Pause script</button>
+              </div>
             </div>
             <div id="video-recording-state" class="recording-state" hidden>
               <span class="record-dot" aria-hidden="true"></span>
               <strong id="recording-time" tabindex="-1" role="timer" aria-live="polite" aria-atomic="true">Recording 0:00</strong>
               <span id="video-recording-status" class="visually-hidden" role="status" aria-live="polite"></span>
+              <p id="stop-hint" class="stop-hint">Keep going, at least 5 seconds.</p>
               <button id="stop-recording" class="button danger" type="button" disabled>Stop</button>
             </div>
             <p id="video-check-status" class="video-check-status" role="status" aria-live="polite" aria-atomic="true" hidden>Checking your recording…</p>

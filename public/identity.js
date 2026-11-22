@@ -1772,6 +1772,9 @@ function resetVideoPresentation() {
   $('#video-metadata').textContent = '';
   $('#countdown').hidden = true;
   $('#countdown').textContent = '';
+  $('#teleprompter').hidden = true;
+  $('#face-guide').hidden = true;
+  $('#stop-hint').hidden = true;
   setVideoChecking(false);
   const panel = document.querySelector('[data-panel="2"]');
   if (panel) delete panel.dataset.capturing;
@@ -1805,10 +1808,35 @@ function setVideoChecking(checking) {
   if (choose) choose.setAttribute('aria-disabled', String(checking));
 }
 
-function cancelActiveCapture() {
-  state.captureRequestToken += 1;
-  clearTimeout(state.countdownTimer);
-  state.countdownTimer = null;
+function stopStreamTracks(stream) {
+  for (const track of stream?.getTracks?.() || []) {
+    try { track.stop(); } catch { /* the track already ended */ }
+  }
+}
+
+function releaseLiveStream() {
+  const live = $('#video-live');
+  const attached = live?.srcObject;
+  stopStreamTracks(state.liveStream);
+  if (attached && attached !== state.liveStream) stopStreamTracks(attached);
+  stopStreamTracks(state.recorder?.stream);
+  state.liveStream = null;
+  if (live) {
+    live.srcObject = null;
+    live.hidden = true;
+  }
+}
+
+function settleCountdownWait() {
+  const pending = state.countdownWait;
+  state.countdownWait = null;
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pending.settle();
+}
+
+function releaseCaptureMedia() {
+  settleCountdownWait();
   clearInterval(state.recordingTimer);
   state.recordingTimer = null;
   const countdown = $('#countdown');
@@ -1822,16 +1850,22 @@ function cancelActiveCapture() {
     active.mediaRecorder.onstop = null;
     try { active.mediaRecorder.stop(); } catch { /* already stopping */ }
   }
-  for (const track of active?.stream?.getTracks?.() || []) track.stop();
+  releaseLiveStream();
   state.recorder = null;
   const recording = $('#video-recording-state');
   if (recording) recording.hidden = true;
-  const live = $('#video-live');
-  if (live) {
-    live.srcObject = null;
-    live.hidden = true;
-  }
+  const hint = $('#stop-hint');
+  if (hint) hint.hidden = true;
+  const script = $('#teleprompter');
+  const guide = $('#face-guide');
+  if (script) script.hidden = true;
+  if (guide) guide.hidden = true;
   setCapturing(false);
+}
+
+function cancelActiveCapture() {
+  state.captureRequestToken += 1;
+  releaseCaptureMedia();
   const record = $('#record-button');
   if (record && !state.videoFile) record.disabled = false;
 }
@@ -1839,32 +1873,24 @@ function cancelActiveCapture() {
 function cleanupCapture({ invalidate = false } = {}) {
   stopPhotoCamera();
   if (invalidate) state.captureRequestToken += 1;
-  clearTimeout(state.countdownTimer);
-  state.countdownTimer = null;
-  clearInterval(state.recordingTimer);
-  state.recordingTimer = null;
-  const active = state.recorder;
-  if (active?.mediaRecorder && active.mediaRecorder.state !== 'inactive') {
-    active.mediaRecorder.ondataavailable = null;
-    active.mediaRecorder.onstop = null;
-    try { active.mediaRecorder.stop(); } catch { /* already stopping */ }
-  }
-  for (const track of active?.stream?.getTracks?.() || []) track.stop();
-  state.recorder = null;
-  $('#video-recording-state').hidden = true;
-  $('#countdown').hidden = true;
-  $('#record-button').disabled = false;
-  $('#video-live').srcObject = null;
-  $('#video-live').hidden = true;
-  setCapturing(false);
+  releaseCaptureMedia();
+  const record = $('#record-button');
+  if (record) record.disabled = false;
+  const countdown = $('#countdown');
+  if (countdown) countdown.hidden = true;
 }
 
 function waitForCapture(ms) {
+  settleCountdownWait();
   return new Promise(resolve => {
-    state.countdownTimer = setTimeout(() => {
-      state.countdownTimer = null;
-      resolve();
-    }, ms);
+    const pending = {
+      settle: () => {
+        if (state.countdownWait === pending) state.countdownWait = null;
+        resolve();
+      },
+    };
+    pending.timer = setTimeout(pending.settle, ms);
+    state.countdownWait = pending;
   });
 }
 
@@ -1873,6 +1899,35 @@ function chooseRecorderMimeType() {
     if (MediaRecorder.isTypeSupported?.(type)) return type;
   }
   return '';
+}
+
+const SCRIPT_LINES = Object.freeze([
+  'Welcome to my Video OS.',
+  'I’m recording this sample',
+  'in my natural speaking voice,',
+  'with clear pacing',
+  'and steady volume.',
+]);
+
+function renderTeleprompter(elapsedSeconds = state.scriptElapsed || 0) {
+  const script = $('#teleprompter-script');
+  if (!script || state.scriptPaused) return;
+  state.scriptElapsed = Number(elapsedSeconds) || 0;
+  const start = Math.min(SCRIPT_LINES.length - 2, Math.max(0, Math.floor(state.scriptElapsed / 4)));
+  const next = SCRIPT_LINES.slice(start, start + 2).join('\n');
+  const reduced = getComputedStyle(script).transitionDuration === '0s';
+  script.dataset.motion = reduced ? 'instant' : 'step';
+  if (script.dataset.line === String(start) && script.textContent === next) return;
+  script.dataset.line = String(start);
+  script.textContent = next;
+}
+
+function toggleScriptPause() {
+  state.scriptPaused = !state.scriptPaused;
+  const button = $('#pause-script');
+  if (!button) return;
+  button.textContent = state.scriptPaused ? 'Resume script' : 'Pause script';
+  button.setAttribute('aria-pressed', String(state.scriptPaused));
 }
 
 function recordingElapsedSeconds(active, now = Date.now()) {
@@ -1890,6 +1945,9 @@ function paintRecordingTimer() {
   const minimum = Number(state.videoLimits.minimumDurationSeconds) || 5;
   const maximum = Number(state.videoLimits.maximumDurationSeconds) || 60;
   $('#stop-recording').disabled = elapsed < minimum;
+  const hint = $('#stop-hint');
+  if (hint) hint.hidden = elapsed >= minimum;
+  renderTeleprompter(elapsed);
   if (elapsed >= maximum && active.stoppedAt == null && active.mediaRecorder?.state !== 'inactive') {
     let pausedMs = active.pausedMs || 0;
     if (active.pauseStartedAt != null) pausedMs += Math.max(0, Date.now() - active.pauseStartedAt);
@@ -1919,6 +1977,8 @@ async function handleVideoFile(file, control = $('#video-input'), { wallClockDur
     setLocalPreviewSource(preview, state.videoUrl);
     preview.hidden = false;
     $('#video-live').hidden = true;
+    $('#teleprompter').hidden = true;
+    $('#face-guide').hidden = true;
     $('#video-placeholder').hidden = true;
     $('#video-actions').hidden = true;
     $('#video-review-actions').hidden = false;
@@ -1934,14 +1994,17 @@ async function handleVideoFile(file, control = $('#video-input'), { wallClockDur
   }
 }
 
-async function showLivePreview(stream) {
+function showLivePreview(stream) {
   const live = $('#video-live');
+  state.liveStream = stream;
   live.srcObject = stream;
   live.hidden = false;
   $('#video-preview').hidden = true;
   $('#video-placeholder').hidden = true;
-  setCapturing(true);
   $('#teleprompter').hidden = false;
+  $('#face-guide').hidden = false;
+  renderTeleprompter(0);
+  setCapturing(true);
   live.play?.().catch(() => {});
 }
 
@@ -1957,17 +2020,18 @@ async function startRecording() {
   $('#video-recording-status').textContent = 'Requesting camera and microphone access.';
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1920 } }, audio: { echoCancellation: true, noiseSuppression: true } });
+    state.liveStream = stream;
     if (requestToken !== state.captureRequestToken || !$('#wizard').open || state.step !== 2) {
-      stream.getTracks().forEach(track => track.stop());
+      releaseLiveStream();
       return;
     }
-    await showLivePreview(stream);
+    showLivePreview(stream);
     const countdown = $('#countdown');
     countdown.hidden = false;
     countdown.focus();
     for (const step of [3, 2, 1]) {
       if (requestToken !== state.captureRequestToken || !$('#wizard').open || state.step !== 2) {
-        stream.getTracks().forEach(track => track.stop());
+        releaseLiveStream();
         countdown.hidden = true;
         setCapturing(false);
         $('#record-button').disabled = false;
@@ -1980,7 +2044,7 @@ async function startRecording() {
     countdown.hidden = true;
     countdown.textContent = '';
     if (requestToken !== state.captureRequestToken || !$('#wizard').open || state.step !== 2) {
-      stream.getTracks().forEach(track => track.stop());
+      releaseLiveStream();
       setCapturing(false);
       $('#record-button').disabled = false;
       return;
@@ -2002,6 +2066,7 @@ async function startRecording() {
     $('#video-actions').hidden = true;
     $('#video-recording-state').hidden = false;
     $('#stop-recording').disabled = true;
+    $('#stop-hint').hidden = false;
     $('#video-recording-status').textContent = 'Recording started.';
     $('#recording-time').textContent = 'Recording 0:00';
     $('#recording-time').focus();
@@ -2016,7 +2081,8 @@ async function startRecording() {
     };
     recorder.onstop = async () => {
       const snapshot = state.recorder === recorderState ? state.recorder : recorderState;
-      stream.getTracks().forEach(track => track.stop());
+      releaseLiveStream();
+      stopStreamTracks(stream);
       clearInterval(state.recordingTimer);
       state.recordingTimer = null;
       if (state.recorder === recorderState) state.recorder = null;
@@ -2024,6 +2090,9 @@ async function startRecording() {
       $('#record-button').disabled = false;
       $('#video-live').srcObject = null;
       $('#video-live').hidden = true;
+      $('#teleprompter').hidden = true;
+      $('#face-guide').hidden = true;
+      $('#stop-hint').hidden = true;
       setCapturing(false);
       if (requestToken !== state.captureRequestToken) return;
       const type = snapshot?.mimeType?.split(';')[0] || 'video/webm';
@@ -2501,6 +2570,8 @@ for (const input of consentInputs()) input.addEventListener('change', () => {
   if (consentInputs().every(item => item.checked)) clearConsentError();
 });
 $('#record-button').addEventListener('click', startRecording);
+$('#pause-script').addEventListener('click', toggleScriptPause);
+window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change', () => renderTeleprompter());
 $('#stop-recording').addEventListener('click', stopRecording);
 $('#retry-load').addEventListener('click', () => { notice(''); void init(); });
 
