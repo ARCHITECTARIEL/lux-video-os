@@ -72,19 +72,36 @@ export function recordingWallClockSeconds({ startedAt, stoppedAt, pausedMs = 0 }
   return elapsed / 1000;
 }
 
-export function cameraAccessMessage(error, medium = 'video') {
+export function browserPermissionHelp(userAgent = '') {
+  const agent = String(userAgent);
+  if (/Edg\//.test(agent)) return 'In Edge, select the lock icon in the address bar, allow Camera and Microphone, then reload this page.';
+  if (/Firefox\//.test(agent)) return 'In Firefox, select the lock icon, remove the blocked camera and microphone permissions, then reload this page.';
+  if (/Chrome|Chromium/.test(agent)) return 'In Chrome, select the lock icon in the address bar, allow Camera and Microphone, then reload this page.';
+  if (/Safari\//.test(agent)) return 'In Safari, open Settings, then Websites, then Camera and Microphone, and allow this site.';
+  return 'Allow the camera and microphone for this site in the browser settings, then reload this page.';
+}
+
+export function cameraAccessMessage(error, medium = 'video', userAgent = '') {
   const name = String(error?.name || '');
   const denied = name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError';
   const missing = name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError';
+  const busy = name === 'NotReadableError' || name === 'TrackStartError';
   if (medium === 'photo') {
     if (denied) return 'Camera access was denied. Choose a portrait instead.';
     if (missing) return 'No camera was found. Choose a portrait instead.';
     return 'The camera could not be started. Choose a portrait instead.';
   }
-  if (denied) return 'Camera or microphone access was denied. Use your phone camera or choose an existing video.';
-  if (missing) return 'No camera or microphone was found. Use your phone camera or choose an existing video.';
-  if (name === 'NotReadableError') return 'The camera or microphone could not be started. Use your phone camera or choose an existing video.';
-  return 'Camera or microphone access was not granted. Use your phone camera or choose an existing video.';
+  if (denied) return `Camera or microphone access was denied. ${browserPermissionHelp(userAgent)} You can also choose an existing video.`;
+  if (missing) return 'No camera or microphone was found. Choose an existing video, or record with your phone camera.';
+  if (busy) return 'The camera is in use by another app. Close that app, or choose an existing video.';
+  return 'Camera or microphone access was not granted. Choose an existing video, or record with your phone camera.';
+}
+
+export function plainMediaError(error, fallback = 'This video could not be prepared. Try again.') {
+  const message = String(error?.message || '').trim();
+  const name = String(error?.name || '');
+  if (!message || message === name || /^[A-Za-z]*Error$/.test(message)) return fallback;
+  return message;
 }
 
 export function prefersNativePhotoCapture({
@@ -320,6 +337,13 @@ export function inspectVideoFile(file, {
         succeed(duration, 'metadata');
         return;
       }
+      // Chrome MediaRecorder reports Infinity. A known wall clock is the length;
+      // do not seek to 1e101 or wait out the 12 second metadata timeout.
+      const fallback = resolveVideoDuration({ metadataDuration: duration, wallClockDuration: wallClockDurationSeconds });
+      if (fallback.source === 'wall-clock' && video.videoWidth && video.videoHeight) {
+        succeed(fallback.duration, fallback.source);
+        return;
+      }
       phase = 'seeking';
       video.ondurationchange = onSeekSignal;
       video.ontimeupdate = onSeekSignal;
@@ -327,7 +351,6 @@ export function inspectVideoFile(file, {
       try {
         video.currentTime = SEEK_TO_END_SECONDS;
       } catch {
-        const fallback = resolveVideoDuration({ wallClockDuration: wallClockDurationSeconds });
         if (fallback.duration != null && video.videoWidth && video.videoHeight) succeed(fallback.duration, fallback.source);
       }
     };

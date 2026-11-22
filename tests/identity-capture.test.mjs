@@ -8,6 +8,7 @@ import {
   PHOTO_DOWNSCALE_LIMITS,
   PHOTO_TOO_SMALL_MESSAGE,
   UNREADABLE_VIDEO_LENGTH_MESSAGE,
+  browserPermissionHelp,
   cameraAccessMessage,
   formatDurationSeconds,
   inspectVideoFile,
@@ -111,9 +112,16 @@ test('camera denial and a missing camera use different plain messages', () => {
   assert.equal(cameraAccessMessage({ name: 'NotFoundError' }, 'photo'), 'No camera was found. Choose a portrait instead.');
   assert.equal(cameraAccessMessage({ name: 'NotReadableError' }, 'photo'), 'The camera could not be started. Choose a portrait instead.');
   assert.match(cameraAccessMessage({ name: 'NotAllowedError' }, 'video'), /Camera or microphone access was denied/);
+  assert.match(cameraAccessMessage({ name: 'NotAllowedError' }, 'video', 'Mozilla/5.0 Chrome/120.0'), /In Chrome, select the lock icon/);
+  assert.match(cameraAccessMessage({ name: 'NotAllowedError' }, 'video', 'Mozilla/5.0 Edg/120.0'), /In Edge/);
+  assert.match(cameraAccessMessage({ name: 'NotAllowedError' }, 'video', 'Mozilla/5.0 Firefox/121.0'), /In Firefox/);
+  assert.match(cameraAccessMessage({ name: 'NotAllowedError' }, 'video', 'Mozilla/5.0 (Macintosh) Safari/17.0'), /In Safari/);
   assert.match(cameraAccessMessage({ name: 'NotFoundError' }, 'video'), /No camera or microphone was found/);
+  assert.match(cameraAccessMessage({ name: 'NotReadableError' }, 'video'), /camera is in use/);
   assert.match(cameraAccessMessage({ name: 'SecurityError' }, 'video'), /was denied/);
   assert.match(cameraAccessMessage({ name: 'AbortError' }, 'video'), /was not granted/);
+  assert.equal(browserPermissionHelp('Mozilla/5.0 Chrome/120.0 Safari/537.36'), browserPermissionHelp('Chrome'));
+  assert.doesNotMatch(cameraAccessMessage({ name: 'NotAllowedError' }, 'video'), /NotAllowedError/);
 });
 
 test('portrait snapshot layout stays inside 512 to 8192 pixels and the camera request is video only', () => {
@@ -266,10 +274,10 @@ test('inspectVideoFile reads a finite metadata duration without seeking', async 
   assert.equal(options.revoked(), 1);
 });
 
-test('inspectVideoFile seeks when metadata duration is Infinity, NaN, or zero', async () => {
+test('an uploaded file with no wall clock still seeks when duration is Infinity, NaN, or zero', async () => {
   for (const initial of [Number.POSITIVE_INFINITY, Number.NaN, 0]) {
     const video = controllableVideo();
-    const options = inspectionDouble(video, { wallClockDurationSeconds: 40 });
+    const options = inspectionDouble(video);
     const pending = inspectVideoFile(videoFile(), options);
     video.duration = initial;
     video.onloadedmetadata();
@@ -285,16 +293,46 @@ test('inspectVideoFile seeks when metadata duration is Infinity, NaN, or zero', 
   }
 });
 
+test('Given a Chrome WebM with duration Infinity and a wall clock, When metadata loads, Then the length is used immediately', async () => {
+  for (const initial of [Number.POSITIVE_INFINITY, Number.NaN, 0]) {
+    const video = controllableVideo();
+    const options = inspectionDouble(video, { wallClockDurationSeconds: 8.2 });
+    const started = Date.now();
+    const pending = inspectVideoFile(videoFile({ type: 'video/webm' }), options);
+    video.duration = initial;
+    video.onloadedmetadata();
+    const result = await pending;
+    assert.equal(result.duration, 8.2);
+    assert.equal(result.durationSource, 'wall-clock');
+    assert.equal(video.currentTime, 0);
+    assert.ok(Date.now() - started < INSPECT_VIDEO_TIMEOUT_MS);
+    assert.equal(options.revoked(), 1);
+  }
+});
+
+test('Given a Safari MP4 with a finite duration, When a wall clock is also known, Then metadata wins', async () => {
+  const video = controllableVideo(1920, 1080);
+  const options = inspectionDouble(video, { wallClockDurationSeconds: 4 });
+  const pending = inspectVideoFile(videoFile({ type: 'video/mp4', name: 'clip.mp4' }), options);
+  video.duration = 11.4;
+  video.onloadedmetadata();
+  const result = await pending;
+  assert.equal(result.duration, 11.4);
+  assert.equal(result.durationSource, 'metadata');
+  assert.equal(result.width, 1920);
+  assert.equal(video.currentTime, 0);
+});
+
 test('inspectVideoFile uses the recording wall clock when the seek never yields a finite duration', async () => {
   const video = controllableVideo();
   const options = inspectionDouble(video, { wallClockDurationSeconds: 9.25 });
   const pending = inspectVideoFile(videoFile(), options);
   video.duration = Number.POSITIVE_INFINITY;
   video.onloadedmetadata();
-  options.expire();
   const result = await pending;
   assert.equal(result.duration, 9.25);
   assert.equal(result.durationSource, 'wall-clock');
+  assert.equal(video.currentTime, 0);
 });
 
 test('inspectVideoFile distinguishes an unreadable length from a file that never loads', async () => {
