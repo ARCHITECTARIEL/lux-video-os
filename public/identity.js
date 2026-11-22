@@ -1860,6 +1860,7 @@ function releaseCaptureMedia() {
   const guide = $('#face-guide');
   if (script) script.hidden = true;
   if (guide) guide.hidden = true;
+  resetTeleprompter();
   setCapturing(false);
 }
 
@@ -1908,6 +1909,29 @@ const SCRIPT_LINES = Object.freeze([
   'with clear pacing',
   'and steady volume.',
 ]);
+
+function resetTeleprompter() {
+  state.scriptPaused = false;
+  state.scriptElapsed = 0;
+  const button = $('#pause-script');
+  if (button) {
+    button.textContent = 'Pause script';
+    button.setAttribute('aria-pressed', 'false');
+  }
+  const band = $('#teleprompter');
+  const script = $('#teleprompter-script');
+  const bandHidden = band?.hidden;
+  if (band) band.hidden = false;
+  if (script) {
+    script.dataset.line = '0';
+    script.textContent = SCRIPT_LINES.slice(0, 2).join('\n');
+    script.scrollTop = 0;
+  }
+  if (band) {
+    band.scrollTop = 0;
+    band.hidden = Boolean(bandHidden);
+  }
+}
 
 function renderTeleprompter(elapsedSeconds = state.scriptElapsed || 0) {
   const script = $('#teleprompter-script');
@@ -2001,6 +2025,7 @@ function showLivePreview(stream) {
   live.hidden = false;
   $('#video-preview').hidden = true;
   $('#video-placeholder').hidden = true;
+  resetTeleprompter();
   $('#teleprompter').hidden = false;
   $('#face-guide').hidden = false;
   renderTeleprompter(0);

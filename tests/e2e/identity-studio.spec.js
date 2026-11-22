@@ -469,7 +469,8 @@ async function bandLayout(page) {
     const band = document.querySelector('#teleprompter').getBoundingClientRect();
     const face = document.querySelector('#face-guide').getBoundingClientRect();
     const stop = document.querySelector('#stop-recording').getBoundingClientRect();
-    const scriptStyle = getComputedStyle(document.querySelector('#teleprompter-script'));
+    const script = document.querySelector('#teleprompter-script');
+    const scriptStyle = getComputedStyle(script);
     const bandStyle = getComputedStyle(document.querySelector('#teleprompter'));
     return {
       stage: { top: stage.top, right: stage.right, bottom: stage.bottom, left: stage.left, width: stage.width, height: stage.height },
@@ -478,12 +479,20 @@ async function bandLayout(page) {
       stop: { top: stop.top, right: stop.right, bottom: stop.bottom, left: stop.left, width: stop.width, height: stop.height },
       color: scriptStyle.color,
       background: bandStyle.backgroundColor,
+      backgroundImage: bandStyle.backgroundImage,
+      textShadow: scriptStyle.textShadow,
+      backdrop: bandStyle.backdropFilter || bandStyle.webkitBackdropFilter,
       position: bandStyle.position,
       transition: scriptStyle.transitionDuration,
-      motion: document.querySelector('#teleprompter-script').dataset.motion,
-      text: document.querySelector('#teleprompter-script').textContent,
+      motion: script.dataset.motion,
+      text: script.textContent,
     };
   });
+}
+
+function gradientStops(backgroundImage) {
+  const stops = [...backgroundImage.matchAll(/rgba?\(([^)]+)\)/g)].map(match => match[1].split(',').map(part => Number(part.trim())));
+  return stops.filter(stop => stop.length >= 3 && stop.every(Number.isFinite));
 }
 
 test('Given the camera is open, When the script band is showing, Then it stays inside the stage and off the face', async ({ page }) => {
@@ -518,10 +527,23 @@ test('Given the camera is open, When the script band is showing, Then it stays i
     expect(layout.band.top).toBeGreaterThanOrEqual(layout.stage.top - 1);
     expect(layout.band.left).toBeGreaterThanOrEqual(layout.stage.left - 1);
     expect(layout.band.right).toBeLessThanOrEqual(layout.stage.right + 1);
-    expect(layout.band.bottom).toBeLessThanOrEqual(layout.stage.top + (layout.stage.height * 0.25) + 2);
+    expect(layout.band.bottom).toBeLessThanOrEqual(layout.stage.top + (layout.stage.height * 0.13) + 2);
+    expect(layout.band.bottom).toBeLessThanOrEqual(layout.face.top + 0.5);
     expect(boxesOverlap(layout.band, layout.face)).toBe(false);
     expect(boxesOverlap(layout.band, layout.stop)).toBe(false);
-    const contrast = await page.evaluate(({ color, background }) => {
+    const scrim = gradientStops(layout.backgroundImage);
+    expect(layout.backgroundImage).toMatch(/linear-gradient/i);
+    expect(layout.background).not.toMatch(/rgba?\(\s*8\s*,\s*12\s*,\s*20/i);
+    expect(layout.backgroundImage).not.toMatch(/rgba?\(\s*8\s*,\s*12\s*,\s*20/i);
+    const solidAlpha = layout.background.match(/[\d.]+/g)?.map(Number).at(-1);
+    expect(solidAlpha === undefined ? 0 : solidAlpha).toBeLessThan(0.2);
+    expect(scrim.length).toBeGreaterThanOrEqual(2);
+    expect(scrim[0][3] ?? 1).toBeGreaterThan(0.4);
+    expect(scrim[0][3] ?? 1).toBeLessThan(0.7);
+    expect(scrim.at(-1)[3] ?? 1).toBeLessThan(0.05);
+    expect(layout.textShadow).not.toBe('none');
+    expect(layout.backdrop).toMatch(/blur/i);
+    const contrast = await page.evaluate(({ color, stop }) => {
       const parse = value => value.match(/[\d.]+/g).map(Number);
       const channel = value => {
         const scaled = value / 255;
@@ -529,22 +551,119 @@ test('Given the camera is open, When the script band is showing, Then it stays i
       };
       const lum = ([r, g, b]) => (0.2126 * channel(r)) + (0.7152 * channel(g)) + (0.0722 * channel(b));
       const ink = parse(color);
-      const scrim = parse(background);
-      const alpha = scrim[3] === undefined ? 1 : scrim[3];
-      const over = light => scrim.slice(0, 3).map((part, index) => (part * alpha) + (light[index] * (1 - alpha)));
+      const alpha = stop[3] === undefined ? 1 : stop[3];
+      const over = light => stop.slice(0, 3).map((part, index) => (part * alpha) + (light[index] * (1 - alpha)));
       const ratio = backgroundColor => {
         const hi = Math.max(lum(ink), lum(backgroundColor));
         const lo = Math.min(lum(ink), lum(backgroundColor));
         return (hi + 0.05) / (lo + 0.05);
       };
       return Math.min(ratio(over([255, 255, 255])), ratio(over([0, 0, 0])));
-    }, { color: layout.color, background: layout.background });
+    }, { color: layout.color, stop: scrim[0] });
     expect(contrast).toBeGreaterThanOrEqual(4.5);
   }
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+  const dark = await bandLayout(page);
+  const darkStops = gradientStops(dark.backgroundImage);
+  expect(dark.color).toBe('rgb(255, 255, 255)');
+  expect(darkStops.at(-1)[3] ?? 1).toBeLessThan(0.05);
+  expect(dark.band.bottom).toBeLessThanOrEqual(dark.face.top + 0.5);
+  const safeArea = await page.evaluate(() => {
+    const found = [];
+    const visit = rules => {
+      for (const rule of rules) {
+        if (rule.selectorText?.split(',').map(part => part.trim()).includes('.teleprompter')) {
+          found.push({ media: rule.parentRule?.conditionText || '', padding: rule.style.padding, paddingTop: rule.style.paddingTop });
+        }
+        if (rule.cssRules) visit([...rule.cssRules]);
+      }
+    };
+    for (const sheet of document.styleSheets) {
+      try { visit([...sheet.cssRules]); } catch { /* a cross-origin sheet has no readable rules */ }
+    }
+    return found;
+  });
+  const baseBand = safeArea.find(rule => rule.padding && !rule.media.includes('719'));
+  const bleedBand = safeArea.find(rule => rule.media.includes('719') && rule.paddingTop.includes('safe-area-inset-top'));
+  expect(baseBand?.padding || '').not.toContain('safe-area');
+  expect(bleedBand?.paddingTop || '').toContain('safe-area-inset-top');
   await page.getByRole('button', { name: 'Stop' }).click();
   await page.clock.fastForward(80);
   await expect(page.locator('#teleprompter')).toBeHidden();
   await expect(page.locator('#video-preview')).toBeVisible();
+});
+
+async function soilTeleprompter(page) {
+  await page.getByRole('button', { name: 'Pause script' }).click();
+  await expect(page.getByRole('button', { name: 'Resume script' })).toHaveAttribute('aria-pressed', 'true');
+  await page.evaluate(() => {
+    const band = document.querySelector('#teleprompter');
+    const script = document.querySelector('#teleprompter-script');
+    band.style.overflow = 'auto';
+    script.style.overflow = 'auto';
+    script.style.maxHeight = '8px';
+    script.textContent = 'with clear pacing\nand steady volume.';
+    script.dataset.line = '3';
+    band.scrollTop = 24;
+    script.scrollTop = 18;
+  });
+}
+
+async function expectFreshTeleprompter(page) {
+  const fresh = await page.evaluate(() => {
+    const script = document.querySelector('#teleprompter-script');
+    return {
+      text: script.textContent,
+      line: script.dataset.line,
+      bandScroll: document.querySelector('#teleprompter').scrollTop,
+      scriptScroll: script.scrollTop,
+      pressed: document.querySelector('#pause-script').getAttribute('aria-pressed'),
+      label: document.querySelector('#pause-script').textContent,
+    };
+  });
+  expect(fresh.text).toContain('Welcome to my Video OS.');
+  expect(fresh.text).not.toContain('steady volume');
+  expect(fresh.line).toBe('0');
+  expect(fresh.bandScroll).toBe(0);
+  expect(fresh.scriptScroll).toBe(0);
+  expect(fresh.pressed).toBe('false');
+  expect(fresh.label).toBe('Pause script');
+}
+
+test('Given a paused script, When Retake or Back cancels the take, Then the next clip starts at the beginning', async ({ page }) => {
+  await page.clock.install();
+  await installRecorder(page, { infiniteDuration: true });
+  await mockApp(page);
+  await openToVideo(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
+  await soilTeleprompter(page);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expectFreshTeleprompter(page);
+  await page.locator('#next-button').click();
+  await expect(page.locator('[data-panel="2"]')).toBeVisible();
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await page.clock.fastForward(3_000);
+  await page.clock.fastForward(3_500);
+  await page.clock.fastForward(2_000);
+  await page.clock.fastForward(4_000);
+  await expect(page.locator('#teleprompter-script')).toContainText('natural speaking voice');
+  await expect(page.locator('#recording-time')).toHaveText(/Recording 0:0\d/);
+  await soilTeleprompter(page);
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.clock.fastForward(80);
+  await expect(page.locator('#video-preview')).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Retake' }).click();
+  await expectFreshTeleprompter(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
+  await expectFreshTeleprompter(page);
+  await page.clock.fastForward(3_000);
+  await expect(page.locator('#recording-time')).toHaveText(/Recording 0:0[0-1]/);
+  await soilTeleprompter(page);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expectFreshTeleprompter(page);
 });
 
 test('Given a live camera during the countdown, When Back or Close is used, Then no tracks stay live', async ({ page }) => {
