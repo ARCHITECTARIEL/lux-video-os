@@ -11,6 +11,7 @@ import {
 } from './enrollment-client.js';
 import {
   cameraAccessMessage,
+  plainMediaError,
   PHOTO_CAPTURE_LIMITS,
   PHOTO_TOO_SMALL_MESSAGE,
   planPhotoDownscale,
@@ -136,7 +137,8 @@ const api = async (url, options = {}) => {
         : 'The request took too long, so its final status is unknown. Reload this page to check before trying again.';
       throw Object.assign(new Error(message), { code: 'REQUEST_TIMEOUT' });
     }
-    throw error;
+    if (error?.name === 'TypeError') throw Object.assign(new Error('The connection was interrupted. Check your network and try again.'), { code: 'NETWORK' });
+    throw plainMediaError(error) === error?.message ? error : Object.assign(new Error(plainMediaError(error)), { code: error?.code, status: error?.status });
   } finally {
     clearTimeout(timeout);
   }
@@ -686,6 +688,7 @@ function setProviderReconsentMode(enabled) {
 }
 
 function setStep(step) {
+  if (state.step === 2 && step !== 2) cancelActiveCapture();
   if (step !== 1) stopPhotoCamera();
   state.step = step;
   if (step === 3) syncConsentMediaReview();
@@ -707,7 +710,8 @@ function setStep(step) {
   $('#back-button').hidden = state.providerReconsentMode;
   $('#back-button').disabled = state.submitting || state.providerReconsentMode || step === 1 || step >= 4;
   $('#next-button').disabled = state.submitting || Boolean(state.uncertainCommit);
-  $('#next-button').hidden = step >= 4;
+  $('#next-button').hidden = step === 2 || step >= 4;
+  if (step === 2) syncNativeCaptureOffer();
   $('#next-button').textContent = state.providerReconsentMode && step === 3 ? 'Save updated consent' : 'Continue';
   $('#wizard-actions').hidden = step === 5;
   if (step === 4) updateProgress();
@@ -817,6 +821,7 @@ function resetWizard() {
   clearConsentChecks();
   wizardStatus();
   clearCreatingTerminal();
+  hideUploadStatus();
   if (!state.activeEnrollment?.id) clearResumeMetadata();
   if ($('#notice').dataset.origin === 'wizard') notice('');
 }
@@ -1118,13 +1123,56 @@ async function submitProviderReconsent() {
   }
 }
 
-function uploadProgressMessage(progress) {
+function uploadPercent(progress) {
   const percentage = Number(progress?.percentage);
-  if (Number.isFinite(percentage)) return `Uploading the phone video: ${Math.max(0, Math.min(100, Math.round(percentage)))}%.`;
+  if (Number.isFinite(percentage)) return Math.max(0, Math.min(100, Math.round(percentage)));
   const loaded = Number(progress?.loaded || progress?.loadedBytes);
   const total = Number(progress?.total || progress?.totalBytes);
-  if (Number.isFinite(loaded) && Number.isFinite(total) && total > 0) return `Uploading the phone video: ${Math.round(loaded / total * 100)}%.`;
-  return 'Uploading the phone video securely.';
+  if (Number.isFinite(loaded) && Number.isFinite(total) && total > 0) return Math.max(0, Math.min(100, Math.round(loaded / total * 100)));
+  return 0;
+}
+
+function showUploadProgress(percent) {
+  $('#upload-status').hidden = false;
+  $('#upload-success').hidden = true;
+  $('#cancel-upload').hidden = false;
+  $('#retry-upload').hidden = true;
+  $('#upload-meter').hidden = false;
+  $('#upload-meter').value = percent;
+  const label = `Uploading the phone video: ${percent}%.`;
+  $('#upload-progress-label').textContent = label;
+  $('#creating-detail').textContent = label;
+}
+
+function showUploadSaved() {
+  $('#upload-meter').hidden = true;
+  $('#cancel-upload').hidden = true;
+  $('#retry-upload').hidden = true;
+  $('#upload-success').hidden = false;
+  $('#upload-success').textContent = 'The phone video is saved.';
+  $('#upload-progress-label').textContent = 'The phone video is saved.';
+  $('#creating-detail').textContent = 'Checking the saved video before voice preparation.';
+}
+
+function showUploadRetry(message) {
+  $('#upload-status').hidden = false;
+  $('#upload-meter').hidden = true;
+  $('#cancel-upload').hidden = true;
+  $('#retry-upload').hidden = false;
+  $('#upload-success').hidden = true;
+  $('#upload-progress-label').textContent = message;
+  $('#creating-detail').textContent = message;
+}
+
+function hideUploadStatus() {
+  const panel = $('#upload-status');
+  if (!panel) return;
+  panel.hidden = true;
+  $('#upload-success').hidden = true;
+  $('#retry-upload').hidden = true;
+  $('#cancel-upload').hidden = false;
+  $('#upload-meter').hidden = false;
+  $('#upload-meter').value = 0;
 }
 
 async function uploadAndReconcile(enrollment, instruction) {
@@ -1132,14 +1180,35 @@ async function uploadAndReconcile(enrollment, instruction) {
     setStep(2);
     throw new Error('Choose the original phone video again to resume its private upload. The file was not stored in this browser.');
   }
+  state.pendingUpload = { enrollment, instruction };
   state.uploadController?.abort();
   state.uploadController = new AbortController();
-  $('#creating-detail').textContent = 'Uploading the phone video securely. Progress shown here is transfer progress only.';
-  await uploadEnrollmentVideo(instruction, state.videoFile, {
-    abortSignal: state.uploadController.signal,
-    onUploadProgress: progress => { $('#creating-detail').textContent = uploadProgressMessage(progress); },
-  });
+  const controller = state.uploadController;
+  showUploadProgress(0);
+  try {
+    await uploadEnrollmentVideo(instruction, state.videoFile, {
+      abortSignal: controller.signal,
+      onUploadProgress: progress => showUploadProgress(uploadPercent(progress)),
+    });
+  } catch (error) {
+    const cancelled = controller.signal.aborted || error?.name === 'AbortError';
+    const raw = String(error?.message || '');
+    const interrupted = error?.name === 'TypeError' || /fetch|network|connection/i.test(raw);
+    const message = cancelled
+      ? 'The upload was cancelled. Your video is still on this device.'
+      : interrupted
+        ? 'The upload was interrupted. Check your connection and retry. Your video is still on this device.'
+        : plainMediaError(error, 'The upload was interrupted. Check your connection and retry. Your video is still on this device.');
+    showUploadRetry(message);
+    throw Object.assign(new Error(message), { code: cancelled ? 'UPLOAD_CANCELLED' : 'UPLOAD_INTERRUPTED' });
+  }
+  if (controller.signal.aborted) {
+    const message = 'The upload was cancelled. Your video is still on this device.';
+    showUploadRetry(message);
+    throw Object.assign(new Error(message), { code: 'UPLOAD_CANCELLED' });
+  }
   state.uploadController = null;
+  showUploadSaved();
   let current = enrollment;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -1244,10 +1313,14 @@ async function commitEnrollment() {
       if (state.step !== 3) setStep(3);
       wizardStatus('The connection was lost before the saved enrollment state was confirmed.', 'error');
       notice('Enrollment outcome is unknown. Check the saved enrollment before retrying.', 'error', 'wizard');
+    } else if (error.code === 'UPLOAD_CANCELLED' || error.code === 'UPLOAD_INTERRUPTED') {
+      if (state.step !== 2) setStep(4);
+      wizardStatus(error.message, 'error');
+      notice(error.message, 'error', 'wizard');
     } else {
       if (state.step !== 2) setStep(4);
-      showEnrollmentRecovery(error.message, true);
-      notice(error.message, 'error', 'wizard');
+      showEnrollmentRecovery(plainMediaError(error), true);
+      notice(plainMediaError(error), 'error', 'wizard');
     }
   } finally {
     setWizardBusy(false);
@@ -1695,27 +1768,104 @@ function resetVideoPresentation() {
   $('#video-placeholder').hidden = false;
   $('#video-recording-state').hidden = true;
   $('#video-review-actions').hidden = true;
+  $('#video-actions').hidden = false;
   $('#video-metadata').textContent = '';
-  $('#native-capture-label').hidden = true;
+  $('#countdown').hidden = true;
+  $('#countdown').textContent = '';
+  setVideoChecking(false);
+  const panel = document.querySelector('[data-panel="2"]');
+  if (panel) delete panel.dataset.capturing;
+  syncNativeCaptureOffer();
+}
+
+function syncNativeCaptureOffer() {
+  const label = $('#native-capture-label');
+  if (!label) return;
+  const missing = !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder !== 'function';
+  if (missing) label.hidden = false;
+}
+
+function setCapturing(active) {
+  const panel = document.querySelector('[data-panel="2"]');
+  if (!panel) return;
+  if (active) panel.dataset.capturing = 'true';
+  else delete panel.dataset.capturing;
+}
+
+function setVideoChecking(checking) {
+  const status = $('#video-check-status');
+  if (!status) return;
+  status.hidden = !checking;
+  status.textContent = checking ? 'Checking your recording…' : '';
+  for (const id of ['#use-video', '#retake-video', '#record-button', '#video-input', '#video-capture-input']) {
+    const control = $(id);
+    if (control) control.disabled = checking;
+  }
+  const choose = $('#choose-video');
+  if (choose) choose.setAttribute('aria-disabled', String(checking));
+}
+
+function cancelActiveCapture() {
+  state.captureRequestToken += 1;
+  clearTimeout(state.countdownTimer);
+  state.countdownTimer = null;
+  clearInterval(state.recordingTimer);
+  state.recordingTimer = null;
+  const countdown = $('#countdown');
+  if (countdown) {
+    countdown.hidden = true;
+    countdown.textContent = '';
+  }
+  const active = state.recorder;
+  if (active?.mediaRecorder && active.mediaRecorder.state !== 'inactive') {
+    active.mediaRecorder.ondataavailable = null;
+    active.mediaRecorder.onstop = null;
+    try { active.mediaRecorder.stop(); } catch { /* already stopping */ }
+  }
+  for (const track of active?.stream?.getTracks?.() || []) track.stop();
+  state.recorder = null;
+  const recording = $('#video-recording-state');
+  if (recording) recording.hidden = true;
+  const live = $('#video-live');
+  if (live) {
+    live.srcObject = null;
+    live.hidden = true;
+  }
+  setCapturing(false);
+  const record = $('#record-button');
+  if (record && !state.videoFile) record.disabled = false;
 }
 
 function cleanupCapture({ invalidate = false } = {}) {
   stopPhotoCamera();
   if (invalidate) state.captureRequestToken += 1;
+  clearTimeout(state.countdownTimer);
+  state.countdownTimer = null;
   clearInterval(state.recordingTimer);
   state.recordingTimer = null;
   const active = state.recorder;
   if (active?.mediaRecorder && active.mediaRecorder.state !== 'inactive') {
     active.mediaRecorder.ondataavailable = null;
     active.mediaRecorder.onstop = null;
-    try { active.mediaRecorder.stop(); } catch {}
+    try { active.mediaRecorder.stop(); } catch { /* already stopping */ }
   }
   for (const track of active?.stream?.getTracks?.() || []) track.stop();
   state.recorder = null;
   $('#video-recording-state').hidden = true;
+  $('#countdown').hidden = true;
   $('#record-button').disabled = false;
   $('#video-live').srcObject = null;
   $('#video-live').hidden = true;
+  setCapturing(false);
+}
+
+function waitForCapture(ms) {
+  return new Promise(resolve => {
+    state.countdownTimer = setTimeout(() => {
+      state.countdownTimer = null;
+      resolve();
+    }, ms);
+  });
 }
 
 function chooseRecorderMimeType() {
@@ -1725,9 +1875,36 @@ function chooseRecorderMimeType() {
   return '';
 }
 
+function recordingElapsedSeconds(active, now = Date.now()) {
+  let pausedMs = active?.pausedMs || 0;
+  if (active?.pauseStartedAt != null) pausedMs += Math.max(0, now - active.pauseStartedAt);
+  return recordingWallClockSeconds({ startedAt: active?.startedAt, stoppedAt: now, pausedMs }) || 0;
+}
+
+function paintRecordingTimer() {
+  const active = state.recorder;
+  if (!active) return;
+  const elapsed = recordingElapsedSeconds(active);
+  const whole = Math.max(0, Math.floor(elapsed));
+  $('#recording-time').textContent = `Recording ${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+  const minimum = Number(state.videoLimits.minimumDurationSeconds) || 5;
+  const maximum = Number(state.videoLimits.maximumDurationSeconds) || 60;
+  $('#stop-recording').disabled = elapsed < minimum;
+  if (elapsed >= maximum && active.stoppedAt == null && active.mediaRecorder?.state !== 'inactive') {
+    let pausedMs = active.pausedMs || 0;
+    if (active.pauseStartedAt != null) pausedMs += Math.max(0, Date.now() - active.pauseStartedAt);
+    active.pauseStartedAt = null;
+    active.stoppedAt = active.startedAt + pausedMs + (maximum * 1_000);
+    $('#video-recording-status').textContent = 'Stopping recording.';
+    active.mediaRecorder.stop();
+  }
+}
+
 async function handleVideoFile(file, control = $('#video-input'), { wallClockDurationSeconds = null } = {}) {
   clearFieldError(control, $('#video-error'));
   if (!file) return;
+  setVideoChecking(true);
+  await new Promise(resolve => setTimeout(resolve, 40));
   try {
     const metadata = await validateVideoFile(file, state.videoLimits, {
       wallClockDurationSeconds,
@@ -1743,20 +1920,35 @@ async function handleVideoFile(file, control = $('#video-input'), { wallClockDur
     preview.hidden = false;
     $('#video-live').hidden = true;
     $('#video-placeholder').hidden = true;
+    $('#video-actions').hidden = true;
     $('#video-review-actions').hidden = false;
     $('#video-metadata').textContent = `${metadata.duration.toFixed(metadata.duration < 10 ? 1 : 0)} seconds · ${metadata.width} × ${metadata.height} · ${(file.size / 1024 / 1024).toFixed(1)} MiB`;
     clearConsentChecks('Preview the video, then choose Use this video.');
     notice('');
+    setVideoChecking(false);
+    $('#use-video').focus();
   } catch (error) {
-    control.value = '';
-    showFieldError(control, $('#video-error'), `${error.message} Your previous valid video was kept.`);
+    setVideoChecking(false);
+    if ('value' in control) control.value = '';
+    showFieldError(control, $('#video-error'), `${plainMediaError(error)} Your previous valid video was kept.`);
   }
+}
+
+async function showLivePreview(stream) {
+  const live = $('#video-live');
+  live.srcObject = stream;
+  live.hidden = false;
+  $('#video-preview').hidden = true;
+  $('#video-placeholder').hidden = true;
+  setCapturing(true);
+  $('#teleprompter').hidden = false;
+  live.play?.().catch(() => {});
 }
 
 async function startRecording() {
   clearFieldError($('#record-button'), $('#video-error'));
-  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-    $('#native-capture-label').hidden = false;
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder !== 'function') {
+    syncNativeCaptureOffer();
     showFieldError($('#record-button'), $('#video-error'), 'In-browser recording is unavailable. Use your phone camera or choose an existing video.');
     return;
   }
@@ -1767,6 +1959,30 @@ async function startRecording() {
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1920 } }, audio: { echoCancellation: true, noiseSuppression: true } });
     if (requestToken !== state.captureRequestToken || !$('#wizard').open || state.step !== 2) {
       stream.getTracks().forEach(track => track.stop());
+      return;
+    }
+    await showLivePreview(stream);
+    const countdown = $('#countdown');
+    countdown.hidden = false;
+    countdown.focus();
+    for (const step of [3, 2, 1]) {
+      if (requestToken !== state.captureRequestToken || !$('#wizard').open || state.step !== 2) {
+        stream.getTracks().forEach(track => track.stop());
+        countdown.hidden = true;
+        setCapturing(false);
+        $('#record-button').disabled = false;
+        return;
+      }
+      countdown.textContent = String(step);
+      $('#video-recording-status').textContent = `Recording starts in ${step}.`;
+      await waitForCapture(1_000);
+    }
+    countdown.hidden = true;
+    countdown.textContent = '';
+    if (requestToken !== state.captureRequestToken || !$('#wizard').open || state.step !== 2) {
+      stream.getTracks().forEach(track => track.stop());
+      setCapturing(false);
+      $('#record-button').disabled = false;
       return;
     }
     const mimeType = chooseRecorderMimeType();
@@ -1783,14 +1999,12 @@ async function startRecording() {
       mimeType: recorder.mimeType || mimeType || 'video/webm',
     };
     state.recorder = recorderState;
-    const live = $('#video-live');
-    live.srcObject = stream;
-    live.hidden = false;
-    $('#video-preview').hidden = true;
-    $('#video-placeholder').hidden = true;
+    $('#video-actions').hidden = true;
     $('#video-recording-state').hidden = false;
+    $('#stop-recording').disabled = true;
     $('#video-recording-status').textContent = 'Recording started.';
-    await live.play().catch(() => {});
+    $('#recording-time').textContent = 'Recording 0:00';
+    $('#recording-time').focus();
     recorder.ondataavailable = event => { if (event.data?.size) chunks.push(event.data); };
     recorder.onpause = () => {
       if (state.recorder === recorderState && recorderState.pauseStartedAt == null) recorderState.pauseStartedAt = Date.now();
@@ -1801,15 +2015,16 @@ async function startRecording() {
       recorderState.pauseStartedAt = null;
     };
     recorder.onstop = async () => {
-      const snapshot = state.recorder;
+      const snapshot = state.recorder === recorderState ? state.recorder : recorderState;
       stream.getTracks().forEach(track => track.stop());
       clearInterval(state.recordingTimer);
       state.recordingTimer = null;
-      state.recorder = null;
+      if (state.recorder === recorderState) state.recorder = null;
       $('#video-recording-state').hidden = true;
       $('#record-button').disabled = false;
-      live.srcObject = null;
-      live.hidden = true;
+      $('#video-live').srcObject = null;
+      $('#video-live').hidden = true;
+      setCapturing(false);
       if (requestToken !== state.captureRequestToken) return;
       const type = snapshot?.mimeType?.split(';')[0] || 'video/webm';
       const extension = type === 'video/mp4' ? 'mp4' : 'webm';
@@ -1822,26 +2037,20 @@ async function startRecording() {
         stoppedAt,
         pausedMs,
       });
-      $('#video-recording-status').textContent = 'Recording stopped. Validating the preview.';
+      $('#video-recording-status').textContent = 'Recording stopped. Checking your recording.';
       await handleVideoFile(file, $('#record-button'), { wallClockDurationSeconds });
     };
     recorderState.startedAt = Date.now();
     recorder.start(1_000);
-    state.recordingTimer = setInterval(() => {
-      const active = state.recorder;
-      if (!active) return;
-      const now = Date.now();
-      let pausedMs = active.pausedMs || 0;
-      if (active.pauseStartedAt != null) pausedMs += Math.max(0, now - active.pauseStartedAt);
-      const elapsed = Math.floor(recordingWallClockSeconds({ startedAt: active.startedAt, stoppedAt: now, pausedMs }) || 0);
-      $('#recording-time').textContent = `Recording ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
-      if (elapsed >= state.videoLimits.maximumDurationSeconds) stopRecording();
-    }, 1_000);
+    paintRecordingTimer();
+    state.recordingTimer = setInterval(paintRecordingTimer, 200);
   } catch (error) {
     if (requestToken !== state.captureRequestToken) return;
     $('#record-button').disabled = false;
+    $('#countdown').hidden = true;
+    setCapturing(false);
     $('#native-capture-label').hidden = false;
-    showFieldError($('#record-button'), $('#video-error'), cameraAccessMessage(error, 'video'));
+    showFieldError($('#record-button'), $('#video-error'), cameraAccessMessage(error, 'video', navigator.userAgent));
   }
 }
 
@@ -1849,6 +2058,7 @@ function stopRecording() {
   const active = state.recorder;
   const recorder = active?.mediaRecorder;
   if (!recorder || recorder.state === 'inactive' || active.stoppedAt != null) return;
+  if ($('#stop-recording').disabled) return;
   active.stoppedAt = Date.now();
   if (active.pauseStartedAt != null) {
     active.pausedMs += Math.max(0, active.stoppedAt - active.pauseStartedAt);
@@ -1859,11 +2069,11 @@ function stopRecording() {
 }
 
 function acceptVideo() {
-  if (!state.videoFile || !state.videoMetadata) return;
+  if (!state.videoFile || !state.videoMetadata || $('#use-video').disabled) return;
   state.videoAccepted = true;
   clearFieldError($('#video-input'), $('#video-error'));
-  wizardStatus('Video accepted for this enrollment. Continue to review permissions.');
-  $('#next-button').focus();
+  wizardStatus('Video accepted. Review the six permissions before anything is uploaded.');
+  setStep(3);
 }
 
 function retakeVideo() {
@@ -2242,7 +2452,24 @@ $('#back-button').addEventListener('click', () => setStep(Math.max(1, state.step
 $('#check-my-identities').addEventListener('click', checkEnrollment);
 $('#commit-retry-anyway').addEventListener('click', retryCommitSameRequest);
 $('#resume-polling').addEventListener('click', resumeIdentityPolling);
+async function retryUpload() {
+  const pending = state.pendingUpload;
+  if (!pending?.enrollment || !pending.instruction || !state.videoFile) return;
+  $('#retry-upload').disabled = true;
+  try {
+    await uploadAndReconcile(pending.enrollment, pending.instruction);
+    await advanceEnrollment(state.activeEnrollment || pending.enrollment);
+  } catch (error) {
+    wizardStatus(error.message, 'error');
+    notice(error.message, 'error', 'wizard');
+  } finally {
+    $('#retry-upload').disabled = false;
+  }
+}
+
 $('#retry-enrollment').addEventListener('click', retryEnrollment);
+$('#cancel-upload').addEventListener('click', () => state.uploadController?.abort());
+$('#retry-upload').addEventListener('click', () => { void retryUpload(); });
 $('#check-enrollment').addEventListener('click', checkActiveEnrollment);
 $('#cancel-enrollment-setup').addEventListener('click', cancelEnrollmentSetup);
 $('#restart-enrollment').addEventListener('click', () => { void restartEnrollment(); });

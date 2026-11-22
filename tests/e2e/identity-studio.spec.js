@@ -155,6 +155,23 @@ async function mockApp(page, {
     body: `export async function upload(pathname, file, options) {
       window.__blobUploadCalls.push({ pathname, size: file.size, access: options.access, multipart: options.multipart, handleUploadUrl: options.handleUploadUrl, clientPayload: options.clientPayload });
       options.onUploadProgress?.({ percentage: 35 });
+      if (window.__uploadMode === 'hang') {
+        window.__uploadMode = 'succeed';
+        await new Promise((resolve, reject) => {
+          const fail = () => reject(Object.assign(new Error('The upload was cancelled.'), { name: 'AbortError' }));
+          if (options.abortSignal?.aborted) return fail();
+          options.abortSignal?.addEventListener('abort', fail, { once: true });
+          window.__releaseUpload = () => {
+            options.onUploadProgress?.({ percentage: 100 });
+            resolve();
+          };
+        });
+        return { pathname };
+      }
+      if (window.__uploadMode === 'fail-once') {
+        window.__uploadMode = 'succeed';
+        throw Object.assign(new Error('Failed to fetch'), { name: 'TypeError' });
+      }
       if (window.__failEnrollmentUploadOnce && sessionStorage.getItem('enrollment-upload-failed') !== '1') {
         sessionStorage.setItem('enrollment-upload-failed', '1');
         throw Object.assign(new Error('Private upload interrupted.'), { code: 'network_unavailable' });
@@ -286,17 +303,25 @@ async function openToVideo(page) {
   await expect(page.locator('[data-panel="2"] legend')).toHaveText('Your Phone Video');
 }
 
-async function chooseVideo(page) {
+async function stageVideo(page) {
   await page.locator('#video-input').setInputFiles(video);
   await expect(page.locator('#video-metadata')).toContainText('seconds');
+  await expect(page.locator('#video-check-status')).toBeHidden();
+  await expect(page.locator('#video-actions')).toBeHidden();
+  await expect(page.locator('#next-button')).toBeHidden();
+}
+
+async function chooseVideo(page) {
+  await stageVideo(page);
   await page.getByRole('button', { name: 'Use this video' }).click();
+  await expect(page.locator('[data-panel="3"]')).toBeVisible();
 }
 
 async function openToConsent(page) {
   await openToVideo(page);
   await chooseVideo(page);
-  await page.locator('#next-button').click();
   await expect(page.locator('[data-panel="3"]')).toBeVisible();
+  await expect(page.locator('#next-button')).toBeVisible();
 }
 
 async function checkAllConsents(page) {
@@ -346,6 +371,238 @@ test('camera and microphone permission is requested only on Record and denial ex
   await expect(page.locator('#video-error')).toContainText('Camera or microphone access was denied');
   await expect(page.locator('#native-capture-label')).toBeVisible();
   await expect(page.getByText('Choose existing video')).toBeVisible();
+});
+
+const ENROLLMENT_SCRIPT = 'Welcome to my Video OS. I’m recording this sample in my natural speaking voice, with clear pacing and steady volume.';
+
+async function installRecorder(page, { infiniteDuration = false } = {}) {
+  await page.addInitScript(({ infiniteDuration }) => {
+    window.__record = { started: 0, stopped: 0 };
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    canvas.getContext('2d').fillRect(0, 0, 32, 32);
+    const stream = canvas.captureStream(10);
+    const track = stream.getVideoTracks()[0];
+    const originalStop = track.stop.bind(track);
+    track.stop = () => { window.__record.trackStopped = true; originalStop(); };
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      writable: true,
+      value: { getUserMedia: async () => stream },
+    });
+    class FakeRecorder {
+      constructor(_stream, options = {}) {
+        this.mimeType = options.mimeType || 'video/webm';
+        this.state = 'inactive';
+        this.ondataavailable = null;
+        this.onstop = null;
+        this.onpause = null;
+        this.onresume = null;
+      }
+      start() {
+        this.state = 'recording';
+        window.__record.started += 1;
+      }
+      stop() {
+        if (this.state === 'inactive') return;
+        this.state = 'inactive';
+        window.__record.stopped += 1;
+        const blob = new Blob([Uint8Array.from([1, 2, 3, 4])], { type: this.mimeType.split(';')[0] });
+        this.ondataavailable?.({ data: blob });
+        this.onstop?.();
+      }
+      static isTypeSupported() { return true; }
+    }
+    window.MediaRecorder = FakeRecorder;
+    if (!infiniteDuration) return;
+    const src = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+    Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+      configurable: true,
+      get() { return src.get.call(this); },
+      set(value) {
+        src.set.call(this, value);
+        if (String(value).startsWith('blob:')) {
+          Object.defineProperty(this, 'duration', { configurable: true, get: () => Number.POSITIVE_INFINITY });
+          Object.defineProperty(this, 'videoWidth', { configurable: true, get: () => 720 });
+          Object.defineProperty(this, 'videoHeight', { configurable: true, get: () => 1280 });
+          queueMicrotask(() => this.onloadedmetadata?.());
+        }
+      },
+    });
+  }, { infiniteDuration });
+}
+
+test('Given a recording, When Record is pressed, Then a countdown runs, Stop waits 5 seconds, and 60 seconds stops it', async ({ page }) => {
+  await page.clock.install();
+  await installRecorder(page, { infiniteDuration: true });
+  await mockApp(page);
+  await openToVideo(page);
+  await expect(page.locator('#teleprompter-script')).toContainText(ENROLLMENT_SCRIPT);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
+  await expect(page.locator('#video-live')).toBeVisible();
+  const mirror = await page.locator('#video-live').evaluate(element => getComputedStyle(element).transform);
+  expect(mirror).toContain('matrix');
+  expect(mirror).not.toBe('none');
+  await page.clock.fastForward(3_000);
+  await expect(page.locator('#video-recording-state')).toBeVisible();
+  await expect(page.locator('#stop-recording')).toBeDisabled();
+  await expect(page.locator('#recording-time')).toBeVisible();
+  await page.clock.fastForward(3_500);
+  await expect(page.locator('#stop-recording')).toBeDisabled();
+  await page.clock.fastForward(2_000);
+  await expect(page.locator('#stop-recording')).toBeEnabled();
+  await page.clock.fastForward(56_000);
+  await expect.poll(() => page.evaluate(() => window.__record.stopped)).toBe(1);
+  await expect(page.locator('#video-preview')).toBeVisible();
+  await expect(page.locator('#video-check-status')).toBeHidden();
+});
+
+test('Given phone and desktop viewports, When a recording is in progress, Then the teleprompter is readable in both places', async ({ page }) => {
+  await page.clock.install();
+  await installRecorder(page, { infiniteDuration: true });
+  await mockApp(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openToVideo(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await page.clock.fastForward(3_000);
+  await expect(page.locator('#teleprompter')).toBeVisible();
+  const desktop = await page.evaluate(() => {
+    const stage = document.querySelector('#video-stage').getBoundingClientRect();
+    const script = document.querySelector('#teleprompter').getBoundingClientRect();
+    return { stageBottom: stage.bottom, scriptTop: script.top, scriptWidth: script.width };
+  });
+  expect(desktop.scriptTop).toBeGreaterThanOrEqual(desktop.stageBottom - 2);
+  expect(desktop.scriptWidth).toBeGreaterThan(200);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const phone = await page.evaluate(() => {
+    const script = document.querySelector('#teleprompter').getBoundingClientRect();
+    const stage = document.querySelector('#video-stage').getBoundingClientRect();
+    return { scriptTop: script.top, stageTop: stage.top, position: getComputedStyle(document.querySelector('#teleprompter')).position };
+  });
+  expect(phone.position).toBe('fixed');
+  expect(phone.scriptTop).toBeLessThan(phone.stageTop);
+});
+
+test('Given a stopped recording, When the preview is ready, Then Retake restores the shutter and Use this video opens consent', async ({ page }) => {
+  await page.clock.install();
+  await installRecorder(page, { infiniteDuration: true });
+  await mockApp(page);
+  await openToVideo(page);
+  await expect(page.locator('#next-button')).toBeHidden();
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await page.clock.fastForward(3_000);
+  await page.clock.fastForward(5_200);
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.clock.fastForward(80);
+  await expect(page.locator('#video-check-status')).toBeHidden();
+  await expect(page.locator('#use-video')).toBeEnabled();
+  await expect(page.locator('#video-actions')).toBeHidden();
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.getByRole('button', { name: 'Retake' }).click();
+  await expect(page.locator('#video-preview')).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Retake' }).click();
+  await expect(page.locator('#record-button')).toBeVisible();
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await page.clock.fastForward(3_000);
+  await page.clock.fastForward(5_200);
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.clock.fastForward(80);
+  await expect(page.locator('#video-preview')).toBeVisible();
+  await page.getByRole('button', { name: 'Use this video' }).click();
+  await expect(page.locator('[data-panel="3"]')).toBeVisible();
+  await expect(page.locator('#next-button')).toBeVisible();
+  await expect(page.locator('#consent-face')).toBeVisible();
+});
+
+test('Given an uploaded file, When it is checked, Then the checking status is visible and actions are disabled until the preview appears', async ({ page }) => {
+  await mockApp(page);
+  await openToVideo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByText('Choose existing video')).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await Promise.all([
+    page.waitForFunction(() => {
+      const status = document.querySelector('#video-check-status');
+      const record = document.querySelector('#record-button');
+      const input = document.querySelector('#video-input');
+      return Boolean(status && !status.hidden && status.textContent.includes('Checking') && record?.disabled && input?.disabled);
+    }),
+    page.locator('#video-input').setInputFiles(video),
+  ]);
+  await expect(page.locator('#video-preview')).toBeVisible();
+  await expect(page.locator('#use-video')).toBeEnabled();
+  await expect(page.locator('#video-actions')).toBeHidden();
+  await expect(page.locator('#next-button')).toBeHidden();
+});
+
+test('Given no MediaRecorder, When the video step opens, Then the phone camera input is offered and follows the review path', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
+    window.MediaRecorder = undefined;
+  });
+  await mockApp(page);
+  await openToVideo(page);
+  await expect(page.locator('#native-capture-label')).toBeVisible();
+  await page.locator('#video-capture-input').setInputFiles(video);
+  await expect(page.locator('#video-preview')).toBeVisible();
+  await expect(page.locator('#use-video')).toBeEnabled();
+  await page.getByRole('button', { name: 'Use this video' }).click();
+  await expect(page.locator('[data-panel="3"]')).toBeVisible();
+});
+
+test('Given consent is complete, When the upload is in progress, Then percent, Cancel, and Retry are available and the file stays local', async ({ page }) => {
+  await page.addInitScript(() => { window.__uploadMode = 'hang'; });
+  await mockApp(page, { autoAdvance: true });
+  await openToConsent(page);
+  await page.locator('#identity-name').fill('Upload Owner');
+  for (const id of ['consent-face', 'consent-extraction', 'consent-voice', 'consent-process', 'consent-archive']) await page.locator(`#${id}`).check();
+  await page.locator('#next-button').click();
+  await expect(page.locator('#consent-error')).toContainText('All six authorizations are required.');
+  expect(await page.evaluate(() => window.__blobUploadCalls.length)).toBe(0);
+  await page.locator('#consent-provider-exposure').check();
+  await page.locator('#next-button').click();
+  await expect(page.locator('#upload-progress-label')).toContainText('35%');
+  await expect(page.locator('#upload-meter')).toHaveAttribute('value', '35');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('#upload-progress-label')).toContainText('still on this device');
+  await expect(page.locator('#retry-upload')).toBeVisible();
+  await page.evaluate(() => { window.__releaseUpload = null; });
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Enrollment is ready.' })).toBeVisible({ timeout: 12_000 });
+});
+
+test('Given a denied camera, When the browser is named, Then the message explains how to allow it without an exception name', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => { throw new DOMException('Denied', 'NotAllowedError'); } },
+    });
+  });
+  await mockApp(page);
+  await openToVideo(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#video-error')).toContainText('Camera or microphone access was denied');
+  await expect(page.locator('#video-error')).not.toContainText('NotAllowedError');
+  await expect(page.locator('#video-error')).toContainText(/Chrome|Safari|Firefox|Edge|browser settings/);
+});
+
+test('Identity capture stays readable in light, dark, and reduced motion without recoloring the button', async ({ page }) => {
+  await mockApp(page);
+  await openToVideo(page);
+  for (const scheme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme: scheme, reducedMotion: 'reduce' });
+    const color = await page.locator('#record-button').evaluate(element => getComputedStyle(element).backgroundColor);
+    expect(color).toBe('rgb(36, 88, 211)');
+    const target = await page.locator('#record-button').evaluate(element => element.getBoundingClientRect().height);
+    expect(target).toBeGreaterThanOrEqual(44);
+  }
+  const pulse = await page.locator('.record-dot').evaluate(element => getComputedStyle(element).animationName);
+  expect(pulse).toBe('none');
+  const scriptSize = await page.locator('#teleprompter-script').evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+  expect(scriptSize).toBeGreaterThanOrEqual(22);
 });
 
 test('desktop Take a photo opens the camera and a denied camera falls back to Choose a portrait', async ({ page }) => {
@@ -498,7 +755,7 @@ test('a late permission result after closing is discarded and its tracks stop', 
 test('invalid replacement and dismissed Retake preserve the valid video', async ({ page }) => {
   await mockApp(page);
   await openToVideo(page);
-  await chooseVideo(page);
+  await stageVideo(page);
   const originalMetadata = await page.locator('#video-metadata').textContent();
   await page.locator('#video-input').setInputFiles({ name: 'broken.mp4', mimeType: 'video/mp4', buffer: Buffer.from('not-video') });
   await expect(page.locator('#video-error')).toContainText('previous valid video was kept');
@@ -637,7 +894,8 @@ test('failed direct upload persists only resume metadata and resumes after reloa
   await page.locator('#identity-name').fill('Resume Owner');
   await checkAllConsents(page);
   await page.locator('#next-button').click();
-  await expect(page.locator('#enrollment-recovery-message')).toContainText('Private upload interrupted');
+  await expect(page.locator('#upload-progress-label')).toContainText('Private upload interrupted');
+  await expect(page.locator('#retry-upload')).toBeVisible();
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('luxVideoOsEnrollmentResumeV1:owner-a')));
   expect(Object.keys(stored).sort()).toEqual(['consentIdempotencyKey', 'createIdempotencyKey', 'enrollmentId', 'retryIdempotencyKey', 'revokeIdempotencyKey'].sort());
   expect(JSON.stringify(stored)).not.toContain('opaque-test-context');

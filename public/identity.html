@@ -181,19 +181,28 @@
           <div><h3 id="permission-title">Camera and microphone access happens only when you tap Record</h3><p>Your photo controls how you look. With your separate permission in the next step, audio from this video can create a reusable voice for future scripts.</p></div>
         </div>
         <div class="split video-split">
-          <div>
+          <div class="video-capture">
             <div id="video-stage" class="video-stage">
-              <video id="video-live" muted playsinline aria-label="Live camera preview" hidden></video>
+              <p id="countdown" class="countdown" tabindex="-1" hidden aria-live="assertive" aria-atomic="true"></p>
+              <video id="video-live" class="mirrored-preview" muted playsinline aria-label="Live camera preview" hidden></video>
               <video id="video-preview" controls playsinline preload="metadata" aria-label="Selected enrollment video preview" hidden></video>
               <div id="video-placeholder" class="video-placeholder"><span aria-hidden="true">L</span><strong>Record or choose your phone video</strong><small>MP4, MOV, or WebM &middot; 5-60 seconds &middot; up to 100 MiB</small></div>
             </div>
-            <div id="video-recording-state" class="recording-state" hidden>
-              <span class="record-dot" aria-hidden="true"></span><strong id="recording-time" aria-hidden="true">Recording 0:00</strong><span id="video-recording-status" class="visually-hidden" role="status" aria-live="polite"></span><button id="stop-recording" class="button danger" type="button">Stop recording</button>
+            <div id="teleprompter" class="teleprompter">
+              <p class="eyebrow">SAY THIS NATURALLY</p>
+              <p id="teleprompter-script">“Welcome to my Video OS. I’m recording this sample in my natural speaking voice, with clear pacing and steady volume.”</p>
+              <small>You will review separate extraction and voice permissions before upload.</small>
             </div>
+            <div id="video-recording-state" class="recording-state" hidden>
+              <span class="record-dot" aria-hidden="true"></span>
+              <strong id="recording-time" tabindex="-1" role="timer" aria-live="polite" aria-atomic="true">Recording 0:00</strong>
+              <span id="video-recording-status" class="visually-hidden" role="status" aria-live="polite"></span>
+              <button id="stop-recording" class="button danger" type="button" disabled>Stop</button>
+            </div>
+            <p id="video-check-status" class="video-check-status" role="status" aria-live="polite" aria-atomic="true" hidden>Checking your recording…</p>
             <div id="video-actions" class="video-actions">
-              <button id="record-button" class="button primary capture-action" type="button" aria-describedby="permission-title video-requirements video-error">Record video</button>
-              <span aria-hidden="true">or</span>
-              <label class="button secondary file-button capture-action">Choose existing video<input id="video-input" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" aria-label="Choose an existing phone video" aria-describedby="video-requirements video-error"></label>
+              <button id="record-button" class="button primary capture-action shutter" type="button" aria-label="Record video" aria-describedby="permission-title video-requirements video-error">Record</button>
+              <label id="choose-video" class="text-link file-button">Choose existing video<input id="video-input" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" aria-label="Choose an existing phone video" aria-describedby="video-requirements video-error"></label>
               <label id="native-capture-label" class="button secondary file-button capture-action" hidden>Use phone camera<input id="video-capture-input" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" capture="user" aria-label="Record a video with the phone camera" aria-describedby="video-requirements video-error"></label>
             </div>
             <div id="video-review-actions" class="video-review-actions" hidden><button id="use-video" class="button primary" type="button">Use this video</button><button id="retake-video" class="button ghost" type="button">Retake</button></div>
@@ -201,7 +210,7 @@
             <p id="video-metadata" class="video-metadata" aria-live="polite"></p>
             <p id="video-error" class="field-error" role="alert" hidden></p>
           </div>
-          <div class="guidance video-guidance"><h3>A strong enrollment video has</h3><ul><li>One authorized adult, facing the camera</li><li>Clear speech in a quiet room</li><li>Steady light with the full face visible</li><li>Between 5 and 60 seconds</li></ul><div class="read-card"><p class="eyebrow">SAY THIS NATURALLY</p><p>“Welcome to my Video OS. I’m recording this sample in my natural speaking voice, with clear pacing and steady volume.”</p><small>You will review separate extraction and voice permissions before upload.</small></div></div>
+          <div class="guidance video-guidance"><h3>A strong enrollment video has</h3><ul><li>One authorized adult, facing the camera</li><li>Clear speech in a quiet room</li><li>Steady light with the full face visible</li><li>Between 5 and 60 seconds</li></ul></div>
         </div>
       </fieldset>
 
@@ -255,6 +264,15 @@
         <h3 id="creating-heading" class="center">Preparing your reusable identity</h3>
         <div id="component-progress" class="component-progress" aria-live="polite"></div>
         <p id="creating-detail" class="fine-print center">Your saved setup can resume when you return. Preparing the reusable voice does not start final presenter creation.</p>
+        <div id="upload-status" class="upload-status" hidden>
+          <p id="upload-progress-label" role="status" aria-live="polite" aria-atomic="true">Uploading the phone video: 0%.</p>
+          <progress id="upload-meter" max="100" value="0" aria-label="Upload progress"></progress>
+          <p id="upload-success" class="upload-success" role="status" hidden>The phone video is saved.</p>
+          <div class="uncertain-actions centered-actions">
+            <button id="cancel-upload" class="button ghost" type="button">Cancel</button>
+            <button id="retry-upload" class="button secondary" type="button" hidden>Retry</button>
+          </div>
+        </div>
         <div id="enrollment-recovery" class="uncertain-recovery center" hidden>
           <h3 id="enrollment-failure-heading" class="center" hidden>Setup could not finish</h3>
           <p id="enrollment-recovery-message" class="field-error" role="alert"></p>

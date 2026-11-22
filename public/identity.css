@@ -533,8 +533,48 @@ legend { margin: 0 0 22px; padding: 0; font-size: 23px; font-weight: 650; letter
 .permission-mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 9px; background: var(--surface); color: var(--primary-strong); }
 .permission-mark svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .video-split { grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); }
+.video-capture { display: flex; flex-direction: column; min-width: 0; }
 .video-stage { min-height: 330px; position: relative; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: #0f1722; }
 .video-stage video { width: 100%; height: 100%; max-height: 420px; display: block; object-fit: contain; background: #0f1722; }
+#video-live.mirrored-preview { transform: scaleX(-1); }
+.countdown {
+  position: absolute;
+  z-index: 2;
+  margin: 0;
+  color: #fff;
+  font-size: clamp(64px, 12vw, 96px);
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, .45);
+}
+.teleprompter {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border-left: 3px solid var(--primary);
+  border-radius: 0 10px 10px 0;
+  background: var(--surface-muted);
+}
+.teleprompter .eyebrow { margin-bottom: 6px; }
+#teleprompter-script { color: var(--text); font-size: clamp(22px, 2.4vw, 32px); font-weight: 650; line-height: 1.35; }
+.teleprompter small { display: block; margin-top: 8px; }
+.video-check-status { margin: 12px 0 0; color: var(--text); font-size: 15px; font-weight: 650; }
+.text-link {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 4px;
+  color: var(--primary);
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.text-link input { width: 1px; height: 1px; position: absolute; overflow: hidden; opacity: 0; }
+.upload-status { max-width: 560px; display: grid; gap: 10px; margin: 8px auto 0; }
+.upload-status progress { width: 100%; height: 10px; accent-color: var(--primary); }
+.upload-success { margin: 0; color: var(--success); font-weight: 650; }
+.shutter { min-width: 148px; min-height: 48px; }
 .video-placeholder { min-height: 330px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 24px; color: #d9e0ea; text-align: center; }
 .video-placeholder span { width: 58px; height: 58px; display: grid; place-items: center; margin-bottom: 5px; border-radius: 50%; background: var(--surface); color: var(--primary-strong); font-size: 22px; font-weight: 760; }
 .video-placeholder strong { color: #fff; font-size: 15px; }
@@ -787,7 +827,51 @@ legend { margin: 0 0 22px; padding: 0; font-size: 23px; font-weight: 650; letter
   .wizard.reconsent-mode #next-button { grid-column: 1; }
 }
 
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --background: #0e141d;
+    --surface: #151c27;
+    --surface-muted: #1c2633;
+    --text: #f3f6fb;
+    --muted: #b7c3d4;
+    --border: #2c394b;
+    --border-strong: #4c6078;
+    --primary: #2458d3;
+    --primary-strong: #173b95;
+    --primary-soft: #1a2744;
+    --success: #8ddebe;
+    --success-soft: #123228;
+    --warning: #f0c36a;
+    --warning-soft: #3a2c10;
+    --danger: #ffb4ab;
+    --danger-soft: #3b1614;
+    --shadow: 0 12px 32px rgba(0, 0, 0, .35);
+    --focus: 0 0 0 3px rgba(36, 88, 211, .45);
+  }
+  .button.primary { color: #fff; }
+  .button.danger { background: transparent; }
+  .dropzone, .voice-actions { background: var(--surface-muted); }
+  .permission-explainer, .provider-exposure-disclosure, .provider-reconsent-note { border-color: #2d4578; }
+  .consent-list .provider-exposure-consent { background: #18243a; border-color: #2d4578; }
+}
+
+@media (max-width: 719px) {
+  [data-panel="2"][data-capturing="true"] .teleprompter {
+    position: fixed;
+    top: 72px;
+    left: 12px;
+    right: 12px;
+    z-index: 30;
+    margin: 0;
+    max-height: 42vh;
+    overflow: auto;
+    box-shadow: var(--shadow);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  .record-dot, .processing-orbit, .countdown { animation: none !important; }
 }
