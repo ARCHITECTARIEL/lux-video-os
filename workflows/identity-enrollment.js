@@ -1,6 +1,6 @@
 import { FatalError, sleep } from 'workflow';
 import crypto from 'node:crypto';
-import { access, open, mkdtemp, rm } from 'node:fs/promises';
+import { open, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -83,11 +83,6 @@ async function verifiedPrivateBuffer(pathname, expected) {
   return { bytes, etag: stored.blob?.etag || null };
 }
 
-async function stagedFfmpegPath() {
-  const candidate = join(process.cwd(), 'ffmpeg');
-  try { await access(candidate); return candidate; } catch { return undefined; }
-}
-
 export async function hashEnrollmentSource(enrollmentId, operationKey) {
   'use step';
   assertEnrollmentCapability();
@@ -115,12 +110,11 @@ export async function extractEnrollmentIdentity(enrollmentId, operationKey) {
   try {
     const source = await privateSourceToFile(enrollment, directory);
     if (source.sha256 !== enrollment.sourceSha256) throw Object.assign(new Error('Enrollment source changed after consent.'), { code: 'CONSENT_SOURCE_MISMATCH' });
-    const ffmpegPath = await stagedFfmpegPath();
     const result = await prepareEnrollmentMedia({
       filePath: source.filePath,
       expectedSha256: enrollment.sourceSha256,
       consent: { granted: true, sourceSha256: enrollment.consentedSourceSha256, purpose: ENROLLMENT_MEDIA_CONSENT_PURPOSE },
-      ...(ffmpegPath ? { ffmpegPath } : {}),
+      ffmpegModuleUrl: import.meta.url,
     });
     const derivedPathname = `video-os/enrollment-sources/${accountHash(enrollment.accountId)}/${enrollment.id}/derived-${result.audioSha256}.wav`;
     try {

@@ -1,5 +1,6 @@
 import defaultFfmpegPath from 'ffmpeg-static';
 import { spawn } from 'node:child_process';
+import { logEnrollmentFfmpegSpawnFailure, resolveEnrollmentFfmpeg } from './enrollment-ffmpeg.js';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, mkdtemp, open, readFile, rm } from 'node:fs/promises';
@@ -125,6 +126,7 @@ function remainingTimeout(deadlineAt) {
 function runFfmpeg(binary, args, timeoutMs) {
   return new Promise((resolveProcess, rejectProcess) => {
     if (!binary) {
+      logEnrollmentFfmpegSpawnFailure(binary, { code: 'ENOENT' });
       rejectProcess(new EnrollmentMediaError('FFMPEG_UNAVAILABLE', 'Enrollment media processing is unavailable.'));
       return;
     }
@@ -163,10 +165,11 @@ function runFfmpeg(binary, args, timeoutMs) {
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', chunk => append('stdout', chunk));
     child.stderr.on('data', chunk => append('stderr', chunk));
-    child.once('error', () => {
+    child.once('error', error => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      logEnrollmentFfmpegSpawnFailure(binary, error);
       rejectProcess(new EnrollmentMediaError('FFMPEG_UNAVAILABLE', 'Enrollment media processing is unavailable.'));
     });
     child.once('close', (code, signal) => {
@@ -438,7 +441,8 @@ function publicConnectionlessVersion() {
  * Pure local media derivation. ffmpegPath/tempRoot/timeoutMs are trusted server
  * injection points for tests and runtime packaging, never request fields.
  */
-export async function prepareEnrollmentMedia({ filePath, expectedSha256, consent, ffmpegPath = defaultFfmpegPath, tempRoot = tmpdir(), timeoutMs } = {}) {
+export async function prepareEnrollmentMedia({ filePath, expectedSha256, consent, ffmpegPath, ffmpegModuleUrl, tempRoot = tmpdir(), timeoutMs } = {}) {
+  const binary = ffmpegPath || await resolveEnrollmentFfmpeg({ moduleUrl: ffmpegModuleUrl, staticPath: defaultFfmpegPath });
   const pathname = localFilePath(filePath);
   const expected = normalizeExpectedSha256(expectedSha256);
   assertConsent(consent, expected);
@@ -448,7 +452,7 @@ export async function prepareEnrollmentMedia({ filePath, expectedSha256, consent
   const initialSha256 = await hashFile(pathname);
   if (initialSha256 !== expected) fail('SOURCE_HASH_MISMATCH', 'Enrollment source does not match its expected SHA-256.');
 
-  const inspection = await runFfmpeg(ffmpegPath, [
+  const inspection = await runFfmpeg(binary, [
     ...commonInputArgs(pathname), '-map', '0:v:0', '-frames:v', '0', '-an', '-f', 'null', '-',
   ], remainingTimeout(deadlineAt));
   assertInspectionProcess(inspection);
@@ -456,7 +460,7 @@ export async function prepareEnrollmentMedia({ filePath, expectedSha256, consent
   const container = detectContainer(await prefixBytes(pathname), streams.inputFormat);
   assertSourceContract(streams, container.container);
 
-  const videoDecode = await runFfmpeg(ffmpegPath, [
+  const videoDecode = await runFfmpeg(binary, [
     ...commonInputArgs(pathname), '-map', '0:v:0', '-an', '-threads', '1', '-f', 'null', '-',
   ], remainingTimeout(deadlineAt));
   if (videoDecode.timedOut) fail('FFMPEG_TIMEOUT', 'Video decode timed out.');
@@ -481,7 +485,7 @@ export async function prepareEnrollmentMedia({ filePath, expectedSha256, consent
   let audioProgress;
   try {
     const audioPath = join(temporaryDirectory, 'voice.wav');
-    const extraction = await runFfmpeg(ffmpegPath, [
+    const extraction = await runFfmpeg(binary, [
       ...commonInputArgs(pathname), '-map', '0:a:0', '-vn', '-threads', '1',
       '-t', String(ENROLLMENT_MEDIA_LIMITS.maxAudioWriteDurationMs / 1_000),
       '-ac', String(ENROLLMENT_MEDIA_LIMITS.audioChannels),
