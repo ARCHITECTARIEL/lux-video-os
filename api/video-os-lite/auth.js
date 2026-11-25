@@ -8,6 +8,7 @@ import { containedRenderingEntitlementKeys, isTesterAccountId, isTesterEmailDoma
 import { blockForDiagnosticMaintenance } from '../../lib/diagnostic-maintenance-gate.js';
 import { deferAdminResponse } from '../../lib/admin-request-audit.js';
 import { recordMagicLinkEmailProof } from '../../db/auth-email-proof.js';
+import { prefersHtmlResponse, signInFailureReason, signInLinkRedirect } from '../../lib/sign-in-link.js';
 
 function route(req) {
   const url = new URL(req.url, 'https://lux-video-os.vercel.app');
@@ -134,6 +135,21 @@ function publicAuthError(error) {
     return { status: 502, payload: { ok: false, code: 'email_delivery_failed', error: 'We could not send the sign-in email. Check the address and try again.' } };
   }
   return { status: error?.statusCode || 400, payload: { ok: false, error: raw } };
+}
+
+function requestAccept(req) {
+  return req?.headers?.accept || req?.headers?.Accept || '';
+}
+
+function sendSignInLinkPage(req, res, error, action) {
+  const failure = publicAuthError(error);
+  const browserNavigation = (action === 'auth-verify' || action === 'google-callback') && prefersHtmlResponse(requestAccept(req));
+  if (!browserNavigation) return send(res, failure.status, failure.payload);
+  res.statusCode = 303;
+  res.setHeader('Location', signInLinkRedirect(signInFailureReason(error, action)));
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  return res.end('');
 }
 
 async function loadCeoAccount() {
@@ -339,8 +355,7 @@ export async function handleAuthRequest(req, res, deps = {}) {
       providerStatus: error?.providerStatus || null,
       providerCode: error?.providerCode || null,
     });
-    const failure = publicAuthError(error);
-    return send(res, failure.status, failure.payload);
+    return sendSignInLinkPage(req, res, error, action);
   } finally {
     if (deferred) await deferred.wait();
   }

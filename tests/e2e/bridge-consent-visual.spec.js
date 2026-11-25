@@ -88,7 +88,6 @@ async function openFreshConsent(page) {
   await page.locator('#video-input').setInputFiles({ name: 'phone-video.mp4', mimeType: 'video/mp4', buffer: videoBytes });
   await expect(page.locator('#video-metadata')).toContainText('seconds');
   await page.getByRole('button', { name: 'Use this video' }).click();
-  await page.locator('#next-button').click();
   await expect(page.locator('[data-panel="3"]')).toBeVisible();
   await page.locator('#identity-name').fill('My studio presenter');
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readdir, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readdir, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
@@ -35,6 +35,8 @@ let excessiveFrameRate;
 let excessivePixelArea;
 let excessivePixelRate;
 let longCompressedAudio;
+let durationlessWebm;
+let durationlessShortWebm;
 
 function runFfmpeg(args, timeout = 90_000) {
   const result = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-nostdin', ...args], {
@@ -122,6 +124,8 @@ before(async () => {
   excessivePixelArea = path.join(workdir, 'excessive-pixel-area.mp4');
   excessivePixelRate = path.join(workdir, 'excessive-pixel-rate.mp4');
   longCompressedAudio = path.join(workdir, 'long-compressed-audio.webm');
+  durationlessWebm = path.join(workdir, 'durationless.webm');
+  durationlessShortWebm = path.join(workdir, 'durationless-short.webm');
 
   makeMp4(baseMp4);
   runFfmpeg(['-display_rotation', '90', '-i', baseMp4, '-map', '0', '-c', 'copy', '-f', 'mp4', validPayload]);
@@ -166,7 +170,27 @@ before(async () => {
     '-cpu-used', '8', '-b:v', '80k', '-c:a', 'libopus', '-b:a', '12k',
     '-live', '1', '-f', 'webm', longCompressedAudio,
   ]);
+  runFfmpeg([
+    '-f', 'lavfi', '-i', 'testsrc2=size=64x64:rate=10:duration=5.2',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=5.2',
+    '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libvpx', '-deadline', 'realtime',
+    '-cpu-used', '8', '-b:v', '40k', '-c:a', 'libopus', '-shortest', '-live', '1',
+    '-f', 'webm', durationlessWebm,
+  ]);
+  runFfmpeg([
+    '-f', 'lavfi', '-i', 'testsrc2=size=64x64:rate=10:duration=4',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=4',
+    '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libvpx', '-deadline', 'realtime',
+    '-cpu-used', '8', '-b:v', '40k', '-c:a', 'libopus', '-shortest', '-live', '1',
+    '-f', 'webm', durationlessShortWebm,
+  ]);
 });
+
+function webmHeaderDeclaresDuration(buffer) {
+  const cluster = buffer.indexOf(Buffer.from([0x1f, 0x43, 0xb6, 0x75]));
+  const header = cluster > 0 ? buffer.subarray(0, cluster) : buffer.subarray(0, Math.min(buffer.length, 4096));
+  return header.includes(Buffer.from([0x44, 0x89]));
+}
 
 after(async () => {
   await rm(workdir, { recursive: true, force: true });
@@ -199,6 +223,26 @@ test('real MP4 bytes with an unrelated extension produce compatible bounded enro
   assert.equal(identityUpload.codec, 'pcm-16');
   assert.equal(identityUpload.channels, 1);
   assert.equal(identityUpload.sampleRate, 16_000);
+  assert.deepEqual(await readdir(extractionRoot), []);
+});
+
+test('a WebM without a container Duration element is timed from decoded timestamps', async () => {
+  const bytes = await readFile(durationlessWebm);
+  assert.equal(webmHeaderDeclaresDuration(bytes), false);
+  const result = await prepareEnrollmentMedia(request(durationlessWebm));
+  assert.equal(result.source.container, 'webm');
+  assert.equal(result.source.mimeType, 'video/webm');
+  assert.equal(result.source.videoCodec, 'vp8');
+  assert.equal(result.source.audioCodec, 'opus');
+  assert.ok(result.source.videoDurationMs >= ENROLLMENT_MEDIA_LIMITS.minDurationMs);
+  assert.ok(result.source.videoDurationMs <= ENROLLMENT_MEDIA_LIMITS.maxDurationMs);
+  assert.ok(result.durationMs >= 5_000 && result.durationMs <= 6_000);
+  assert.deepEqual(await readdir(extractionRoot), []);
+});
+
+test('a short WebM without a container Duration element still fails the 5 second minimum', async () => {
+  assert.equal(webmHeaderDeclaresDuration(await readFile(durationlessShortWebm)), false);
+  await rejectsWithCode(prepareEnrollmentMedia(request(durationlessShortWebm)), 'DURATION_MINIMUM');
   assert.deepEqual(await readdir(extractionRoot), []);
 });
 
@@ -306,6 +350,126 @@ test('one overall processing deadline bounds all FFmpeg passes', async () => {
 test('unsupported codecs and mismatched stream durations are never normalized into valid enrollment sources', async () => {
   await rejectsWithCode(prepareEnrollmentMedia(request(unsupportedCodec)), 'VIDEO_CODEC_UNSUPPORTED');
   await rejectsWithCode(prepareEnrollmentMedia(request(streamDurationMismatch)), 'STREAM_DURATION_MISMATCH');
+  assert.deepEqual(await readdir(extractionRoot), []);
+});
+
+function withoutDefaultDuration(bytes) {
+  const source = Buffer.from(bytes);
+  const at = source.indexOf(Buffer.from([0x23, 0xe3, 0x83]));
+  // Variable timestamps can already omit DefaultDuration. A constant rate
+  // still writes it, and that element is what makes ffmpeg print an fps token.
+  if (at < 0) return source;
+  const sizeByte = source[at + 3];
+  assert.equal(sizeByte & 0xc0, 0x80);
+  const total = 3 + 1 + (sizeByte & 0x7f);
+  const replacement = Buffer.alloc(total);
+  replacement[0] = 0xec;
+  replacement[1] = 0x80 | (total - 2);
+  replacement.copy(source, at);
+  return source;
+}
+
+function videoProbeLine(pathname) {
+  const result = spawnSync(ffmpegPath, [
+    '-hide_banner', '-nostdin', '-nostats', '-i', pathname,
+    '-map', '0:v:0', '-frames:v', '0', '-an', '-f', 'null', '-',
+  ], { encoding: 'utf8', timeout: 30_000, windowsHide: true, shell: false });
+  const input = String(result.stderr || '').split('Stream mapping:')[0];
+  const line = input.split(/\r?\n/).find(item => /:\s*Video:\s*/.test(item));
+  assert.ok(line, result.stderr || 'inspection produced no video stream line');
+  return line;
+}
+
+function assertChromeStyleProbe(line) {
+  assert.match(line, /1k tbr/i);
+  assert.match(line, /1k tbn/i);
+  assert.doesNotMatch(line, /\bfps\b/i);
+  assert.doesNotMatch(line, /\d+(?:\.\d+)?\s+fps/i);
+}
+
+async function makeVariableTimestampWebm(output) {
+  // Millisecond timestamps that do not sit on a 24/25/30 fps grid. ffmpeg
+  // then has no numeric fps token and prints Chrome's "1k tbr, 1k tbn".
+  const timestampsMs = [0, 137, 409, 580, 1003, 1411, 1907, 2333, 3011, 3449, 4103, 4700, 5309, 5900];
+  const select = timestampsMs.map(stamp => `eq(n\\,${stamp})`).join('+');
+  runFfmpeg([
+    '-f', 'lavfi', '-i', 'color=c=0x224466:s=160x120:r=1000:d=6.2',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=6.05',
+    '-filter_complex', `[0:v]select='${select}',setpts=PTS-STARTPTS[v]`,
+    '-map', '[v]', '-map', '1:a:0', '-fps_mode', 'vfr',
+    '-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '20k',
+    '-c:a', 'libopus', '-shortest', '-f', 'webm', output,
+  ]);
+  await writeFile(output, withoutDefaultDuration(await readFile(output)));
+}
+
+async function makeHighRateWebm(output) {
+  runFfmpeg([
+    '-f', 'lavfi', '-i', 'testsrc2=size=64x64:rate=130:duration=5.2',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=5.2',
+    '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libvpx', '-deadline', 'realtime',
+    '-cpu-used', '8', '-b:v', '20k', '-c:a', 'libopus', '-shortest', '-f', 'webm', output,
+  ]);
+  await writeFile(output, withoutDefaultDuration(await readFile(output)));
+}
+
+async function ffmpegShim(mode) {
+  const shimPath = path.join(workdir, `ffmpeg-${mode}.mjs`);
+  await writeFile(shimPath, `#!/usr/bin/env node
+import { spawn } from 'node:child_process';
+const real = ${JSON.stringify(ffmpegPath)};
+const args = process.argv.slice(2);
+const framesFlag = args.indexOf('-frames:v');
+const inspection = framesFlag >= 0 && args[framesFlag + 1] === '0';
+const audio = args.includes('pcm_s16le');
+if (!inspection && !audio) {
+  const frames = ${mode === 'zero-duration' ? 8 : 0};
+  const microseconds = ${mode === 'zero-duration' ? 0 : 5_200_000};
+  process.stdout.write('frame=' + frames + '\\nout_time_us=' + microseconds + '\\nprogress=end\\n');
+  process.exit(0);
+}
+const child = spawn(real, args, { stdio: 'inherit' });
+child.on('error', () => process.exit(1));
+child.on('exit', code => process.exit(code ?? 1));
+`);
+  await chmod(shimPath, 0o755);
+  return shimPath;
+}
+
+test('a Chrome-style variable-frame-rate WebM without an fps token derives a rate at or below 120', async () => {
+  const fixture = path.join(workdir, 'chrome-vfr.webm');
+  await makeVariableTimestampWebm(fixture);
+  const line = videoProbeLine(fixture);
+  assertChromeStyleProbe(line);
+  assert.match(line, /vp8/i);
+  const result = await prepareEnrollmentMedia(request(fixture));
+  assert.equal(result.source.container, 'webm');
+  assert.equal(result.source.mimeType, 'video/webm');
+  assert.equal(result.source.videoCodec, 'vp8');
+  assert.equal(result.source.audioCodec, 'opus');
+  assert.ok(result.source.videoDurationMs >= ENROLLMENT_MEDIA_LIMITS.minDurationMs);
+  assert.ok(result.source.videoDurationMs <= ENROLLMENT_MEDIA_LIMITS.maxDurationMs);
+  assert.deepEqual(await readdir(extractionRoot), []);
+});
+
+test('a variable-frame-rate WebM whose decoded rate is over 120 fps still fails', async () => {
+  const fixture = path.join(workdir, 'chrome-vfr-high.webm');
+  await makeHighRateWebm(fixture);
+  assertChromeStyleProbe(videoProbeLine(fixture));
+  await rejectsWithCode(prepareEnrollmentMedia(request(fixture)), 'FRAME_RATE_LIMIT');
+  assert.deepEqual(await readdir(extractionRoot), []);
+});
+
+test('a variable-frame-rate decode with zero frames or zero duration fails closed', async () => {
+  const fixture = path.join(workdir, 'chrome-vfr-zero.webm');
+  await makeVariableTimestampWebm(fixture);
+  assertChromeStyleProbe(videoProbeLine(fixture));
+  // A header-only WebM does not finish decode with frame=0, so the decode
+  // progress is mocked. Inspection still uses the real Chrome-style file.
+  const zeroFrames = await ffmpegShim('zero-frames');
+  const zeroDuration = await ffmpegShim('zero-duration');
+  await rejectsWithCode(prepareEnrollmentMedia({ ...request(fixture), ffmpegPath: zeroFrames }), 'FRAME_RATE_UNAVAILABLE');
+  await rejectsWithCode(prepareEnrollmentMedia({ ...request(fixture), ffmpegPath: zeroDuration }), 'FRAME_RATE_UNAVAILABLE');
   assert.deepEqual(await readdir(extractionRoot), []);
 });
 

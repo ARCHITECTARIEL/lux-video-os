@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { deflateSync } from 'node:zlib';
 import { expect, test } from '@playwright/test';
 
 const account = { ok: true, signedIn: true, email: 'owner@example.com', account: { accountId: 'owner-a', name: 'Owner' } };
@@ -14,7 +15,41 @@ const HASH_B = 'b'.repeat(64);
 const PHOTO_HASH = 'c'.repeat(64);
 const VOICE_HASH = 'd'.repeat(64);
 const phoneVideo = await readFile(new URL('../../public/assets/showcase/example-faq.mp4', import.meta.url));
-const photo = { name: 'portrait.png', mimeType: 'image/png', buffer: Buffer.from([137, 80, 78, 71, 1]) };
+const photo = { name: 'portrait.png', mimeType: 'image/png', buffer: tinyPng(640, 640) };
+
+function tinyPng(width, height) {
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3, 0x66)]);
+  const raw = Buffer.concat(Array.from({ length: height }, () => row));
+  const chunk = (tag, data) => {
+    const body = Buffer.concat([Buffer.from(tag), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 2;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
 const video = { name: 'phone-video.mp4', mimeType: 'video/mp4', buffer: phoneVideo };
 const voiceSample = (() => {
   const samples = 1_600;
@@ -120,6 +155,23 @@ async function mockApp(page, {
     body: `export async function upload(pathname, file, options) {
       window.__blobUploadCalls.push({ pathname, size: file.size, access: options.access, multipart: options.multipart, handleUploadUrl: options.handleUploadUrl, clientPayload: options.clientPayload });
       options.onUploadProgress?.({ percentage: 35 });
+      if (window.__uploadMode === 'hang') {
+        window.__uploadMode = 'succeed';
+        await new Promise((resolve, reject) => {
+          const fail = () => reject(Object.assign(new Error('The upload was cancelled.'), { name: 'AbortError' }));
+          if (options.abortSignal?.aborted) return fail();
+          options.abortSignal?.addEventListener('abort', fail, { once: true });
+          window.__releaseUpload = () => {
+            options.onUploadProgress?.({ percentage: 100 });
+            resolve();
+          };
+        });
+        return { pathname };
+      }
+      if (window.__uploadMode === 'fail-once') {
+        window.__uploadMode = 'succeed';
+        throw Object.assign(new Error('Failed to fetch'), { name: 'TypeError' });
+      }
       if (window.__failEnrollmentUploadOnce && sessionStorage.getItem('enrollment-upload-failed') !== '1') {
         sessionStorage.setItem('enrollment-upload-failed', '1');
         throw Object.assign(new Error('Private upload interrupted.'), { code: 'network_unavailable' });
@@ -245,27 +297,46 @@ async function openToVideo(page) {
   await page.goto('/identity.html');
   await page.locator('#empty-create-button').click();
   await page.locator('#photo-input').setInputFiles(photo);
+  await expect(page.locator('#photo-preview')).toBeVisible();
   await page.locator('#next-button').click();
   await expect(page.locator('[data-panel="2"]')).toBeVisible();
   await expect(page.locator('[data-panel="2"] legend')).toHaveText('Your Phone Video');
 }
 
-async function chooseVideo(page) {
+async function stageVideo(page) {
   await page.locator('#video-input').setInputFiles(video);
   await expect(page.locator('#video-metadata')).toContainText('seconds');
+  await expect(page.locator('#video-check-status')).toBeHidden();
+  await expect(page.locator('#video-actions')).toBeHidden();
+  await expect(page.locator('#next-button')).toBeHidden();
+}
+
+async function chooseVideo(page) {
+  await stageVideo(page);
   await page.getByRole('button', { name: 'Use this video' }).click();
+  await expect(page.locator('[data-panel="3"]')).toBeVisible();
 }
 
 async function openToConsent(page) {
   await openToVideo(page);
   await chooseVideo(page);
-  await page.locator('#next-button').click();
   await expect(page.locator('[data-panel="3"]')).toBeVisible();
+  await expect(page.locator('#next-button')).toBeVisible();
 }
 
 async function checkAllConsents(page) {
   for (const id of ['consent-face', 'consent-extraction', 'consent-voice', 'consent-process', 'consent-archive', 'consent-provider-exposure']) await page.locator(`#${id}`).check();
 }
+
+test('a signed-out session with an error explains that the session expired', async ({ page }) => {
+  await page.route('**/api/video-os-lite/session', route => route.fulfill({
+    json: { ok: true, signedIn: false, error: 'Your session expired. Sign in again.' },
+  }));
+  await page.goto('/identity.html');
+  await expect(page.getByRole('heading', { name: 'Sign in to open your Identity Studio.' })).toBeVisible();
+  await expect(page.locator('#signed-out-reason')).toHaveText('Your session expired. Sign in again.');
+  await expect(page.locator('#studio')).toBeHidden();
+});
 
 test('Identity Studio requires the existing authenticated workspace session', async ({ page }) => {
   await page.route('**/api/video-os-lite/session', route => route.fulfill({ status: 401, json: { ok: false, error: 'Sign in to render videos.' } }));
@@ -297,9 +368,652 @@ test('camera and microphone permission is requested only on Record and denial ex
   expect(await page.evaluate(() => window.__mediaCalls)).toBe(0);
   await page.getByRole('button', { name: 'Record video' }).click();
   await expect.poll(() => page.evaluate(() => window.__mediaCalls)).toBe(1);
-  await expect(page.locator('#video-error')).toContainText('not granted');
+  await expect(page.locator('#video-error')).toContainText('Camera or microphone access was denied');
   await expect(page.locator('#native-capture-label')).toBeVisible();
   await expect(page.getByText('Choose existing video')).toBeVisible();
+});
+
+async function installRecorder(page, { infiniteDuration = false } = {}) {
+  await page.addInitScript(({ infiniteDuration }) => {
+    window.__record = { started: 0, stopped: 0 };
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    canvas.getContext('2d').fillRect(0, 0, 32, 32);
+    const stream = canvas.captureStream(10);
+    const track = stream.getVideoTracks()[0];
+    const originalStop = track.stop.bind(track);
+    track.stop = () => { window.__record.trackStopped = true; originalStop(); };
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      writable: true,
+      value: { getUserMedia: async () => stream },
+    });
+    class FakeRecorder {
+      constructor(_stream, options = {}) {
+        this.mimeType = options.mimeType || 'video/webm';
+        this.state = 'inactive';
+        this.ondataavailable = null;
+        this.onstop = null;
+        this.onpause = null;
+        this.onresume = null;
+      }
+      start() {
+        this.state = 'recording';
+        window.__record.started += 1;
+      }
+      stop() {
+        if (this.state === 'inactive') return;
+        this.state = 'inactive';
+        window.__record.stopped += 1;
+        const blob = new Blob([Uint8Array.from([1, 2, 3, 4])], { type: this.mimeType.split(';')[0] });
+        this.ondataavailable?.({ data: blob });
+        this.onstop?.();
+      }
+      static isTypeSupported() { return true; }
+    }
+    window.MediaRecorder = FakeRecorder;
+    if (!infiniteDuration) return;
+    const src = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+    Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+      configurable: true,
+      get() { return src.get.call(this); },
+      set(value) {
+        src.set.call(this, value);
+        if (String(value).startsWith('blob:')) {
+          Object.defineProperty(this, 'duration', { configurable: true, get: () => Number.POSITIVE_INFINITY });
+          Object.defineProperty(this, 'videoWidth', { configurable: true, get: () => 720 });
+          Object.defineProperty(this, 'videoHeight', { configurable: true, get: () => 1280 });
+          queueMicrotask(() => this.onloadedmetadata?.());
+        }
+      },
+    });
+  }, { infiniteDuration });
+}
+
+test('Given a recording, When Record is pressed, Then a countdown runs, Stop waits 5 seconds, and 60 seconds stops it', async ({ page }) => {
+  await page.clock.install();
+  await installRecorder(page, { infiniteDuration: true });
+  await mockApp(page);
+  await openToVideo(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
+  await expect(page.locator('#teleprompter-script')).toContainText('Welcome to my Video OS.');
+  await expect(page.locator('#video-live')).toBeVisible();
+  const mirror = await page.locator('#video-live').evaluate(element => getComputedStyle(element).transform);
+  expect(mirror).toContain('matrix');
+  expect(mirror).not.toBe('none');
+  await page.clock.fastForward(3_000);
+  await expect(page.locator('#video-recording-state')).toBeVisible();
+  await expect(page.locator('#stop-recording')).toBeDisabled();
+  await expect(page.locator('#stop-hint')).toHaveText('Keep going, at least 5 seconds.');
+  await expect(page.locator('#recording-time')).toBeVisible();
+  await page.clock.fastForward(3_500);
+  await expect(page.locator('#stop-recording')).toBeDisabled();
+  await page.clock.fastForward(2_000);
+  await expect(page.locator('#stop-recording')).toBeEnabled();
+  await expect(page.locator('#stop-hint')).toBeHidden();
+  await page.clock.fastForward(56_000);
+  await expect.poll(() => page.evaluate(() => window.__record.stopped)).toBe(1);
+  await expect(page.locator('#video-preview')).toBeVisible();
+  await expect(page.locator('#video-check-status')).toBeHidden();
+});
+
+function boxesOverlap(a, b) {
+  return a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+}
+
+async function bandLayout(page) {
+  return page.evaluate(() => {
+    const stage = document.querySelector('#video-stage').getBoundingClientRect();
+    const band = document.querySelector('#teleprompter').getBoundingClientRect();
+    const face = document.querySelector('#face-guide').getBoundingClientRect();
+    const stop = document.querySelector('#stop-recording').getBoundingClientRect();
+    const script = document.querySelector('#teleprompter-script');
+    const scriptStyle = getComputedStyle(script);
+    const bandStyle = getComputedStyle(document.querySelector('#teleprompter'));
+    return {
+      stage: { top: stage.top, right: stage.right, bottom: stage.bottom, left: stage.left, width: stage.width, height: stage.height },
+      band: { top: band.top, right: band.right, bottom: band.bottom, left: band.left, height: band.height },
+      face: { top: face.top, right: face.right, bottom: face.bottom, left: face.left },
+      stop: { top: stop.top, right: stop.right, bottom: stop.bottom, left: stop.left, width: stop.width, height: stop.height },
+      color: scriptStyle.color,
+      background: bandStyle.backgroundColor,
+      backgroundImage: bandStyle.backgroundImage,
+      textShadow: scriptStyle.textShadow,
+      backdrop: bandStyle.backdropFilter || bandStyle.webkitBackdropFilter,
+      position: bandStyle.position,
+      transition: scriptStyle.transitionDuration,
+      motion: script.dataset.motion,
+      text: script.textContent,
+    };
+  });
+}
+
+function gradientStops(backgroundImage) {
+  const stops = [...backgroundImage.matchAll(/rgba?\(([^)]+)\)/g)].map(match => match[1].split(',').map(part => Number(part.trim())));
+  return stops.filter(stop => stop.length >= 3 && stop.every(Number.isFinite));
+}
+
+test('Given the camera is open, When the script band is showing, Then it stays inside the stage and off the face', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.clock.install();
+  await installRecorder(page, { infiniteDuration: true });
+  await mockApp(page);
+  await openToVideo(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
+  await page.clock.fastForward(3_000);
+  await expect(page.locator('#teleprompter')).toBeVisible();
+  await expect(page.locator('#face-guide')).toBeVisible();
+  const before = await page.locator('#teleprompter-script').textContent();
+  await page.clock.fastForward(3_500);
+  await page.clock.fastForward(2_000);
+  await page.clock.fastForward(4_000);
+  const stepped = await bandLayout(page);
+  const timer = await page.locator('#recording-time').textContent();
+  expect(stepped.transition === '0s' || stepped.transition.startsWith('0s')).toBe(true);
+  expect(stepped.motion).toBe('instant');
+  expect(stepped.text).toContain('natural speaking voice');
+  expect(stepped.text).not.toBe(before);
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 375, height: 667 },
+    { width: 1280, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const layout = await bandLayout(page);
+    expect(layout.position).toBe('absolute');
+    expect(layout.band.top).toBeGreaterThanOrEqual(layout.stage.top - 1);
+    expect(layout.band.left).toBeGreaterThanOrEqual(layout.stage.left - 1);
+    expect(layout.band.right).toBeLessThanOrEqual(layout.stage.right + 1);
+    expect(layout.band.bottom).toBeLessThanOrEqual(layout.stage.top + (layout.stage.height * 0.13) + 2);
+    expect(layout.band.bottom).toBeLessThanOrEqual(layout.face.top + 0.5);
+    expect(boxesOverlap(layout.band, layout.face)).toBe(false);
+    expect(boxesOverlap(layout.band, layout.stop)).toBe(false);
+    const scrim = gradientStops(layout.backgroundImage);
+    expect(layout.backgroundImage).toMatch(/linear-gradient/i);
+    expect(layout.background).not.toMatch(/rgba?\(\s*8\s*,\s*12\s*,\s*20/i);
+    expect(layout.backgroundImage).not.toMatch(/rgba?\(\s*8\s*,\s*12\s*,\s*20/i);
+    const solidAlpha = layout.background.match(/[\d.]+/g)?.map(Number).at(-1);
+    expect(solidAlpha === undefined ? 0 : solidAlpha).toBeLessThan(0.2);
+    expect(scrim.length).toBeGreaterThanOrEqual(2);
+    expect(scrim[0][3] ?? 1).toBeGreaterThan(0.4);
+    expect(scrim[0][3] ?? 1).toBeLessThan(0.7);
+    expect(scrim.at(-1)[3] ?? 1).toBeLessThan(0.05);
+    expect(layout.textShadow).not.toBe('none');
+    expect(layout.backdrop).toMatch(/blur/i);
+    const contrast = await page.evaluate(({ color, stop }) => {
+      const parse = value => value.match(/[\d.]+/g).map(Number);
+      const channel = value => {
+        const scaled = value / 255;
+        return scaled <= 0.04045 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+      };
+      const lum = ([r, g, b]) => (0.2126 * channel(r)) + (0.7152 * channel(g)) + (0.0722 * channel(b));
+      const ink = parse(color);
+      const alpha = stop[3] === undefined ? 1 : stop[3];
+      const over = light => stop.slice(0, 3).map((part, index) => (part * alpha) + (light[index] * (1 - alpha)));
+      const ratio = backgroundColor => {
+        const hi = Math.max(lum(ink), lum(backgroundColor));
+        const lo = Math.min(lum(ink), lum(backgroundColor));
+        return (hi + 0.05) / (lo + 0.05);
+      };
+      return Math.min(ratio(over([255, 255, 255])), ratio(over([0, 0, 0])));
+    }, { color: layout.color, stop: scrim[0] });
+    expect(contrast).toBeGreaterThanOrEqual(4.5);
+  }
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+  const dark = await bandLayout(page);
+  const darkStops = gradientStops(dark.backgroundImage);
+  expect(dark.color).toBe('rgb(255, 255, 255)');
+  expect(darkStops.at(-1)[3] ?? 1).toBeLessThan(0.05);
+  expect(dark.band.bottom).toBeLessThanOrEqual(dark.face.top + 0.5);
+  const safeArea = await page.evaluate(() => {
+    const found = [];
+    const visit = rules => {
+      for (const rule of rules) {
+        if (rule.selectorText?.split(',').map(part => part.trim()).includes('.teleprompter')) {
+          found.push({ media: rule.parentRule?.conditionText || '', padding: rule.style.padding, paddingTop: rule.style.paddingTop });
+        }
+        if (rule.cssRules) visit([...rule.cssRules]);
+      }
+    };
+    for (const sheet of document.styleSheets) {
+      try { visit([...sheet.cssRules]); } catch { /* a cross-origin sheet has no readable rules */ }
+    }
+    return found;
+  });
+  const baseBand = safeArea.find(rule => rule.padding && !rule.media.includes('719'));
+  const bleedBand = safeArea.find(rule => rule.media.includes('719') && rule.paddingTop.includes('safe-area-inset-top'));
+  expect(baseBand?.padding || '').not.toContain('safe-area');
+  expect(bleedBand?.paddingTop || '').toContain('safe-area-inset-top');
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.clock.fastForward(80);
+  await expect(page.locator('#teleprompter')).toBeHidden();
+  await expect(page.locator('#video-preview')).toBeVisible();
+});
+
+async function soilTeleprompter(page) {
+  await page.getByRole('button', { name: 'Pause script' }).click();
+  await expect(page.getByRole('button', { name: 'Resume script' })).toHaveAttribute('aria-pressed', 'true');
+  await page.evaluate(() => {
+    const band = document.querySelector('#teleprompter');
+    const script = document.querySelector('#teleprompter-script');
+    band.style.overflow = 'auto';
+    script.style.overflow = 'auto';
+    script.style.maxHeight = '8px';
+    script.textContent = 'with clear pacing\nand steady volume.';
+    script.dataset.line = '3';
+    band.scrollTop = 24;
+    script.scrollTop = 18;
+  });
+}
+
+async function expectFreshTeleprompter(page) {
+  const fresh = await page.evaluate(() => {
+    const script = document.querySelector('#teleprompter-script');
+    return {
+      text: script.textContent,
+      line: script.dataset.line,
+      bandScroll: document.querySelector('#teleprompter').scrollTop,
+      scriptScroll: script.scrollTop,
+      pressed: document.querySelector('#pause-script').getAttribute('aria-pressed'),
+      label: document.querySelector('#pause-script').textContent,
+    };
+  });
+  expect(fresh.text).toContain('Welcome to my Video OS.');
+  expect(fresh.text).not.toContain('steady volume');
+  expect(fresh.line).toBe('0');
+  expect(fresh.bandScroll).toBe(0);
+  expect(fresh.scriptScroll).toBe(0);
+  expect(fresh.pressed).toBe('false');
+  expect(fresh.label).toBe('Pause script');
+}
+
+test('Given a paused script, When Retake or Back cancels the take, Then the next clip starts at the beginning', async ({ page }) => {
+  await page.clock.install();
+  await installRecorder(page, { infiniteDuration: true });
+  await mockApp(page);
+  await openToVideo(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
+  await soilTeleprompter(page);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expectFreshTeleprompter(page);
+  await page.locator('#next-button').click();
+  await expect(page.locator('[data-panel="2"]')).toBeVisible();
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await page.clock.fastForward(3_000);
+  await page.clock.fastForward(3_500);
+  await page.clock.fastForward(2_000);
+  await page.clock.fastForward(4_000);
+  await expect(page.locator('#teleprompter-script')).toContainText('natural speaking voice');
+  await expect(page.locator('#recording-time')).toHaveText(/Recording 0:0\d/);
+  await soilTeleprompter(page);
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.clock.fastForward(80);
+  await expect(page.locator('#video-preview')).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Retake' }).click();
+  await expectFreshTeleprompter(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
+  await expectFreshTeleprompter(page);
+  await page.clock.fastForward(3_000);
+  await expect(page.locator('#recording-time')).toHaveText(/Recording 0:0[0-1]/);
+  await soilTeleprompter(page);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expectFreshTeleprompter(page);
+});
+
+test('Given a recording in progress, When Back is tapped, Then Record and Choose existing video return', async ({ page }) => {
+  await page.clock.install();
+  await page.addInitScript(() => {
+    window.__streams = [];
+    window.__liveTracks = () => window.__streams.flatMap(stream => stream.getTracks()).filter(track => track.readyState === 'live').length;
+    const canvas = document.createElement('canvas');
+    canvas.width = 16;
+    canvas.height = 16;
+    canvas.getContext('2d').fillRect(0, 0, 16, 16);
+    class FakeRecorder {
+      constructor(_stream, options = {}) {
+        this.mimeType = options.mimeType || 'video/webm';
+        this.state = 'inactive';
+        this.ondataavailable = null;
+        this.onstop = null;
+      }
+      start() { this.state = 'recording'; }
+      stop() {
+        if (this.state === 'inactive') return;
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob([Uint8Array.from([1, 2, 3, 4])], { type: 'video/webm' }) });
+        this.onstop?.();
+      }
+      static isTypeSupported() { return true; }
+    }
+    window.MediaRecorder = FakeRecorder;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          const base = canvas.captureStream(5);
+          const stream = new MediaStream([base.getVideoTracks()[0], base.getVideoTracks()[0].clone()]);
+          window.__streams.push(stream);
+          return stream;
+        },
+      },
+    });
+  });
+  await mockApp(page);
+  await openToVideo(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await page.clock.fastForward(3_000);
+  await expect(page.locator('#video-recording-state')).toBeVisible();
+  await expect(page.locator('#video-actions')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(2);
+  await page.clock.fastForward(3_500);
+  await page.clock.fastForward(2_000);
+  await expect(page.locator('#recording-time')).not.toHaveText('Recording 0:00');
+  await soilTeleprompter(page);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(0);
+  await expectFreshTeleprompter(page);
+  await expect(page.locator('#recording-time')).toHaveText('Recording 0:00');
+  await page.locator('#next-button').click();
+  await expect(page.locator('[data-panel="2"]')).toBeVisible();
+  await expect(page.locator('#video-actions')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record video' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Record video' })).toBeEnabled();
+  await expect(page.getByText('Choose existing video')).toBeVisible();
+  await expect(page.locator('#video-recording-state')).toBeHidden();
+  await expect(page.locator('#video-placeholder')).toBeVisible();
+});
+
+test('Given a live camera during the countdown, When Back or Close is used, Then no tracks stay live', async ({ page }) => {
+  await page.clock.install();
+  await page.addInitScript(() => {
+    window.__streams = [];
+    window.__liveTracks = () => window.__streams.flatMap(stream => stream.getTracks()).filter(track => track.readyState === 'live').length;
+    const track = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 16;
+      canvas.height = 16;
+      canvas.getContext('2d').fillRect(0, 0, 16, 16);
+      return canvas.captureStream(5).getVideoTracks()[0];
+    };
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          const stream = new MediaStream([track(), track()]);
+          window.__streams.push(stream);
+          return stream;
+        },
+      },
+    });
+  });
+  await mockApp(page);
+  await openToVideo(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(2);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(0);
+  await page.locator('#next-button').click();
+  await expect(page.locator('[data-panel="2"]')).toBeVisible();
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#countdown')).toHaveText('3');
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(2);
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#close-wizard').click();
+  await expect(page.locator('#wizard')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__liveTracks())).toBe(0);
+});
+
+test('Given a stopped recording, When the preview is ready, Then Retake restores the shutter and Use this video opens consent', async ({ page }) => {
+  await page.clock.install();
+  await installRecorder(page, { infiniteDuration: true });
+  await mockApp(page);
+  await openToVideo(page);
+  await expect(page.locator('#next-button')).toBeHidden();
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await page.clock.fastForward(3_000);
+  await page.clock.fastForward(5_200);
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.clock.fastForward(80);
+  await expect(page.locator('#video-check-status')).toBeHidden();
+  await expect(page.locator('#use-video')).toBeEnabled();
+  await expect(page.locator('#video-actions')).toBeHidden();
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.getByRole('button', { name: 'Retake' }).click();
+  await expect(page.locator('#video-preview')).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Retake' }).click();
+  await expect(page.locator('#record-button')).toBeVisible();
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await page.clock.fastForward(3_000);
+  await page.clock.fastForward(5_200);
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.clock.fastForward(80);
+  await expect(page.locator('#video-preview')).toBeVisible();
+  await page.getByRole('button', { name: 'Use this video' }).click();
+  await expect(page.locator('[data-panel="3"]')).toBeVisible();
+  await expect(page.locator('#next-button')).toBeVisible();
+  await expect(page.locator('#consent-face')).toBeVisible();
+});
+
+test('Given an uploaded file, When it is checked, Then the checking status is visible and actions are disabled until the preview appears', async ({ page }) => {
+  await mockApp(page);
+  await openToVideo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByText('Choose existing video')).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await Promise.all([
+    page.waitForFunction(() => {
+      const status = document.querySelector('#video-check-status');
+      const record = document.querySelector('#record-button');
+      const input = document.querySelector('#video-input');
+      return Boolean(status && !status.hidden && status.textContent.includes('Checking') && record?.disabled && input?.disabled);
+    }),
+    page.locator('#video-input').setInputFiles(video),
+  ]);
+  await expect(page.locator('#video-preview')).toBeVisible();
+  await expect(page.locator('#use-video')).toBeEnabled();
+  await expect(page.locator('#video-actions')).toBeHidden();
+  await expect(page.locator('#next-button')).toBeHidden();
+});
+
+test('Given no MediaRecorder, When the video step opens, Then the phone camera input is offered and follows the review path', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
+    window.MediaRecorder = undefined;
+  });
+  await mockApp(page);
+  await openToVideo(page);
+  await expect(page.locator('#native-capture-label')).toBeVisible();
+  await page.locator('#video-capture-input').setInputFiles(video);
+  await expect(page.locator('#video-preview')).toBeVisible();
+  await expect(page.locator('#use-video')).toBeEnabled();
+  await page.getByRole('button', { name: 'Use this video' }).click();
+  await expect(page.locator('[data-panel="3"]')).toBeVisible();
+});
+
+test('Given consent is complete, When the upload is in progress, Then percent, Cancel, and Retry are available and the file stays local', async ({ page }) => {
+  await page.addInitScript(() => { window.__uploadMode = 'hang'; });
+  await mockApp(page, { autoAdvance: true });
+  await openToConsent(page);
+  await page.locator('#identity-name').fill('Upload Owner');
+  for (const id of ['consent-face', 'consent-extraction', 'consent-voice', 'consent-process', 'consent-archive']) await page.locator(`#${id}`).check();
+  await page.locator('#next-button').click();
+  await expect(page.locator('#consent-error')).toContainText('All six authorizations are required.');
+  expect(await page.evaluate(() => window.__blobUploadCalls.length)).toBe(0);
+  await page.locator('#consent-provider-exposure').check();
+  await page.locator('#next-button').click();
+  await expect(page.locator('#upload-progress-label')).toContainText('35%');
+  await expect(page.locator('#upload-meter')).toHaveAttribute('value', '35');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('#upload-progress-label')).toContainText('still on this device');
+  await expect(page.locator('#retry-upload')).toBeVisible();
+  await page.evaluate(() => { window.__releaseUpload = null; });
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Enrollment is ready.' })).toBeVisible({ timeout: 12_000 });
+});
+
+test('Given a denied camera, When the browser is named, Then the message explains how to allow it without an exception name', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => { throw new DOMException('Denied', 'NotAllowedError'); } },
+    });
+  });
+  await mockApp(page);
+  await openToVideo(page);
+  await page.getByRole('button', { name: 'Record video' }).click();
+  await expect(page.locator('#video-error')).toContainText('Camera or microphone access was denied');
+  await expect(page.locator('#video-error')).not.toContainText('NotAllowedError');
+  await expect(page.locator('#video-error')).toContainText(/Chrome|Safari|Firefox|Edge|browser settings/);
+});
+
+test('Identity capture stays readable in light, dark, and reduced motion without recoloring the button', async ({ page }) => {
+  await mockApp(page);
+  await openToVideo(page);
+  for (const scheme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme: scheme, reducedMotion: 'reduce' });
+    const color = await page.locator('#record-button').evaluate(element => getComputedStyle(element).backgroundColor);
+    expect(color).toBe('rgb(36, 88, 211)');
+    const target = await page.locator('#record-button').evaluate(element => element.getBoundingClientRect().height);
+    expect(target).toBeGreaterThanOrEqual(44);
+  }
+  const pulse = await page.locator('.record-dot').evaluate(element => getComputedStyle(element).animationName);
+  expect(pulse).toBe('none');
+  const scriptSize = await page.locator('#teleprompter-script').evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+  expect(scriptSize).toBeGreaterThanOrEqual(15);
+});
+
+test('desktop Take a photo opens the camera and a denied camera falls back to Choose a portrait', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => { throw new DOMException('Denied', 'NotAllowedError'); } },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await expect(page.locator('#photo-error')).toContainText('Camera access was denied. Choose a portrait instead.');
+  await expect(page.locator('#photo-drop')).toBeVisible();
+  await expect(page.getByText('Choose a portrait', { exact: true })).toBeVisible();
+  await expect(page.locator('#photo-camera')).toBeHidden();
+});
+
+test('Take a photo uses the phone file input when the browser has no camera API', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByRole('button', { name: 'Take a photo' }).click(),
+  ]);
+  expect(chooser.isMultiple()).toBe(false);
+  await chooser.setFiles(photo);
+  await expect(page.locator('#photo-preview')).toBeVisible();
+});
+
+test('a phone Take a photo opens the native camera input instead of the in-page webcam', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__mediaCalls = 0;
+    const original = window.matchMedia.bind(window);
+    window.matchMedia = query => {
+      if (String(query).includes('pointer') && String(query).includes('coarse')) {
+        return { matches: true, media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } };
+      }
+      return original(query);
+    };
+    Object.defineProperty(navigator, 'userAgentData', { configurable: true, value: { mobile: true, brands: [] } });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => { window.__mediaCalls += 1; throw new Error('desktop camera'); } },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByRole('button', { name: 'Take a photo' }).click(),
+  ]);
+  expect(chooser.isMultiple()).toBe(false);
+  expect(await page.evaluate(() => window.__mediaCalls)).toBe(0);
+  await expect(page.locator('#photo-camera')).toBeHidden();
+});
+
+test('an in-page portrait capture stops the camera after Use photo and after Cancel', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__photoStops = 0;
+    const makeStream = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1280;
+      canvas.height = 720;
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#336699';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      const stream = canvas.captureStream(5);
+      for (const track of stream.getVideoTracks()) {
+        const stop = track.stop.bind(track);
+        track.stop = () => { window.__photoStops += 1; stop(); };
+      }
+      return stream;
+    };
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => makeStream() },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await expect(page.locator('#photo-live')).toBeVisible();
+  const shutter = page.locator('#photo-shutter');
+  await expect(shutter).toBeEnabled();
+  await shutter.click();
+  await page.getByRole('button', { name: 'Use photo' }).click();
+  await expect(page.locator('#photo-preview')).toBeVisible();
+  await expect(page.locator('#photo-camera')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__photoStops)).toBeGreaterThan(0);
+
+  await page.evaluate(() => { window.__photoStops = 0; });
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await expect(page.locator('#photo-shutter')).toBeEnabled();
+  await page.locator('#photo-camera-cancel').click();
+  await expect(page.locator('#photo-camera')).toBeHidden();
+  await expect(page.locator('#photo-drop')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__photoStops)).toBeGreaterThan(0);
+});
+
+test('a late photo permission result after closing stops its tracks', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__photoStops = 0;
+    const track = { kind: 'video', readyState: 'live', stop() { window.__photoStops += 1; } };
+    let resolveMedia;
+    window.__resolvePhoto = () => resolveMedia({ getTracks: () => [track] });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: () => new Promise(resolve => { resolveMedia = resolve; }) },
+    });
+  });
+  await mockApp(page);
+  await page.goto('/identity.html');
+  await page.locator('#empty-create-button').click();
+  await page.getByRole('button', { name: 'Take a photo' }).click();
+  await page.locator('#close-wizard').click();
+  await page.evaluate(() => window.__resolvePhoto());
+  await expect.poll(() => page.evaluate(() => window.__photoStops)).toBe(1);
+  await expect(page.locator('#wizard')).toBeHidden();
 });
 
 test('a late permission result after closing is discarded and its tracks stop', async ({ page }) => {
@@ -326,7 +1040,7 @@ test('a late permission result after closing is discarded and its tracks stop', 
 test('invalid replacement and dismissed Retake preserve the valid video', async ({ page }) => {
   await mockApp(page);
   await openToVideo(page);
-  await chooseVideo(page);
+  await stageVideo(page);
   const originalMetadata = await page.locator('#video-metadata').textContent();
   await page.locator('#video-input').setInputFiles({ name: 'broken.mp4', mimeType: 'video/mp4', buffer: Buffer.from('not-video') });
   await expect(page.locator('#video-error')).toContainText('previous valid video was kept');
@@ -465,7 +1179,8 @@ test('failed direct upload persists only resume metadata and resumes after reloa
   await page.locator('#identity-name').fill('Resume Owner');
   await checkAllConsents(page);
   await page.locator('#next-button').click();
-  await expect(page.locator('#enrollment-recovery-message')).toContainText('Private upload interrupted');
+  await expect(page.locator('#upload-progress-label')).toContainText('Private upload interrupted');
+  await expect(page.locator('#retry-upload')).toBeVisible();
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('luxVideoOsEnrollmentResumeV1:owner-a')));
   expect(Object.keys(stored).sort()).toEqual(['consentIdempotencyKey', 'createIdempotencyKey', 'enrollmentId', 'retryIdempotencyKey', 'revokeIdempotencyKey'].sort());
   expect(JSON.stringify(stored)).not.toContain('opaque-test-context');
@@ -680,6 +1395,47 @@ test('partial provider failure retries only the failed component and archive rem
   page.on('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: 'Archive' }).click();
   await expect(page.getByRole('heading', { name: 'Owner Studio' })).toHaveCount(0);
+});
+
+test('a failed enrollment with no retry stops the spinner and shows recovery actions', async ({ page }) => {
+  await page.clock.install();
+  const failed = enrollment('FAILED', {
+    failure: {
+      code: 'FRAME_RATE_UNAVAILABLE',
+      message: 'Enrollment source frame rate could not be verified.',
+      retryable: false,
+    },
+    retry: null,
+  });
+  let detailReads = 0;
+  page.on('request', request => {
+    const url = request.url();
+    if (request.method() === 'GET' && url.includes('/api/video-os-lite/enrollments') && url.includes('enrollmentId=')) detailReads += 1;
+  });
+  await mockApp(page, { initialEnrollment: failed });
+  await page.goto('/identity.html');
+  await page.getByRole('button', { name: 'Continue setup' }).click();
+
+  const recovery = page.locator('#enrollment-recovery');
+  await expect(page.locator('[data-panel="4"]')).toHaveAttribute('data-terminal', 'true');
+  await expect(page.getByRole('heading', { name: 'Setup could not finish' })).toBeVisible();
+  await expect(recovery).toContainText('frame rate we can verify');
+  await expect(recovery).not.toContainText('FRAME_RATE_UNAVAILABLE');
+  await expect(page.locator('#creating-heading')).toBeHidden();
+  await expect(recovery.getByRole('button', { name: 'Cancel setup' })).toBeVisible();
+  await expect(recovery.getByRole('button', { name: 'Start over' })).toBeVisible();
+  await expect(recovery.getByRole('button', { name: 'Retry', exact: true })).toBeHidden();
+  await expect(recovery.getByRole('button', { name: 'Check status' })).toBeHidden();
+  const spinner = await page.locator('[data-panel="4"] .processing-orbit').evaluate(element => {
+    const style = getComputedStyle(element);
+    return { animationName: style.animationName, display: style.display };
+  });
+  expect(spinner.display).toBe('none');
+  expect(spinner.animationName).toBe('none');
+
+  const readsAfterPaint = detailReads;
+  await page.clock.fastForward(12_000);
+  expect(detailReads).toBe(readsAfterPaint);
 });
 
 test('wizard remains keyboard-contained and restores focus', async ({ page }) => {

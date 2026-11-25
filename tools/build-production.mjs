@@ -12,6 +12,7 @@ import { identityEnrollmentHashWorkflowMetadata, identityEnrollmentExtractionWor
 import { writeReleaseBuildManifest, assertProductionWorkflowBoundary, captureSourceIdentity, assertStableDatabase, assertUnchangedBuildSource, quarantineBuildOutput, assertNoDefaultBuildOutput } from './release-build-manifest.mjs';
 import { assertDiagnosticBuildInputs, diagnosticChangedPaths, diagnosticDatabaseEvidence } from './db-binding-diagnostic-build-policy.mjs';
 import { stampWorkspaceGitIdentity } from './release-git-identity.mjs';
+import { assertStepFunctionFfmpeg } from './assert-step-ffmpeg.mjs';
 
 const root = new URL('../', import.meta.url);
 const output = new URL('../.vercel/output/', import.meta.url);
@@ -40,6 +41,7 @@ async function stageWorkflowFfmpeg(stepFunction) {
   const target = new URL('ffmpeg', stepFunction);
   await copyFile(cached, target);
   await chmod(target, 0o755);
+  await assertStepFunctionFfmpeg(fileURLToPath(stepFunction), { architecture: arch });
 }
 
 const target = process.argv.includes('--preview') ? 'preview' : 'production';
